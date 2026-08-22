@@ -112,7 +112,7 @@ export class ValueLedger {
           viewerId,
           searchBudget
         ),
-        seal: sealTeamBurden(before, beforePlayer, viewer.battleTeam)
+        seal: sealTeamBurden(before, beforePlayer, viewer.battleTeam, searchBudget)
       };
       const afterBurden = {
         lightning: this.simulationQuery.lightningOwnerDelta(
@@ -121,7 +121,7 @@ export class ValueLedger {
           viewerId,
           searchBudget
         ),
-        seal: sealTeamBurden(after, afterPlayer, viewer.battleTeam)
+        seal: sealTeamBurden(after, afterPlayer, viewer.battleTeam, searchBudget)
       };
       const fields = {};
       for (const key of new Set([

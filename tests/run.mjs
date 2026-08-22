@@ -87,6 +87,7 @@ import { CounterfactualTerms } from "../js/ai/search/CounterfactualTerms.js";
 import { FrontierValue } from "../js/ai/search/FrontierValue.js";
 import { SiblingTransitionTerms } from "../js/ai/search/SiblingTransitionTerms.js";
 import { Evaluator } from "../js/ai/value/Evaluator.js";
+import { StateValue } from "../js/ai/value/StateValue.js";
 import {
   HP_VALUE as OWNED_HP_VALUE,
   actionEconomicValue as ownedActionEconomicValue,
@@ -15253,6 +15254,98 @@ test("AI·模拟器：cooperative join project merge 与 raw 概率结果完全�
   assert.equal(diagnostics.rawProbabilityOperations, 0);
 });
 
+test("AI·概率：join 与 merge 保持完整字段、规范化和输出顺序", () => {
+  const left = [
+    { beta:2, probability:.2, conditions:{ z:1, shared:"a" }, alpha:1 },
+    { conditions:{ shared:"a", z:1 }, alpha:1, probability:.3, beta:2 },
+    { probability:.5, conditions:{ shared:"b" }, alpha:3, beta:4 }
+  ];
+  const right = [
+    { probability:.25, conditions:{ shared:"a", choice:"x" }, gamma:5 },
+    { gamma:6, probability:.75, conditions:{ choice:"y", shared:"a" } },
+    { probability:1, conditions:{ shared:"b" }, gamma:7 }
+  ];
+  const joined = joinStateProbabilityBranches(left, right);
+  assert.equal(JSON.stringify(joined), JSON.stringify([
+    {
+      alpha:1,
+      beta:2,
+      gamma:5,
+      probability:.125,
+      conditions:{ choice:"x", shared:"a", z:1 }
+    },
+    {
+      alpha:1,
+      beta:2,
+      gamma:6,
+      probability:.375,
+      conditions:{ choice:"y", shared:"a", z:1 }
+    },
+    {
+      alpha:3,
+      beta:4,
+      gamma:7,
+      probability:.5,
+      conditions:{ shared:"b" }
+    }
+  ]));
+  assert.equal(JSON.stringify(mergeStateProbabilityBranches([
+    { beta:2, probability:.4, conditions:{ z:1, shared:"a" }, alpha:1 },
+    { conditions:{ shared:"a", z:1 }, alpha:1, probability:.6, beta:2 }
+  ])), JSON.stringify([{
+    alpha:1,
+    beta:2,
+    probability:1,
+    conditions:{ shared:"a", z:1 }
+  }]));
+});
+
+test("AI·封印：SearchPrior 与 StateValue 的团队反制 join 继承 SearchBudget", () => {
+  const actor = makePlayer("seal-budget-actor", 0, "dawn", "ai", 3);
+  const holder = makePlayer("seal-budget-holder", 1, "dusk", "ai", 5);
+  const teammate = makePlayer("seal-budget-teammate", 2, "dusk", "ai", 4);
+  actor.hand.push(instance("seal"));
+  const { game } = makeGame([actor, holder, teammate]);
+  const state = structuredClone(createInitialSearchState(
+    actor.id,
+    game.state,
+    game.aiController.knowledge.remainingCounts(actor)
+  ));
+  const holderState = state.players.find((player) => player.id === holder.id);
+  for (const player of state.players.filter((entry) => entry.battleTeam === "dusk")) {
+    player.counterCountDistribution = Array.from({ length:96 }, (_, index) => ({
+      probability:1 / 96,
+      conditions:{ [`seal-counter-${player.id}`]:index },
+      counterCount:index % 2
+    }));
+  }
+  const expiredBudget = () => new SearchBudget({ timeBudget:0, now:() => 0 });
+  const priorBudget = expiredBudget();
+  assert.throws(
+    () => game.aiController.searchPrior.actionUtility(
+      { type:"card", card:instance("seal"), targets:[holderState] },
+      state.players.find((player) => player.id === actor.id),
+      state,
+      { searchBudget:priorBudget }
+    ),
+    (error) => priorBudget.isCurrentWorkInterruption(error)
+  );
+
+  holderState.statuses = ["sealed"];
+  holderState.sealedStatusStateBranches = [{ probability:1, conditions:{}, present:true }];
+  const stateBudget = expiredBudget();
+  const stateValue = new StateValue(
+    { stateUtility:() => 0 },
+    { lightningValues:() => [] }
+  );
+  assert.throws(
+    () => stateValue.stateUtility(state, actor.id, stateBudget),
+    (error) => stateBudget.isCurrentWorkInterruption(error)
+  );
+  assert.equal(sealCounterProbability(state, holderState) > 0, true);
+  game.dispose();
+});
+
 test("AI·模拟器：大型 energy common helper 可中断且完整路径与 raw 结果等价", () => {
   const energyBranches = Array.from({ length:40 }, (_, index) => ({
     probability:1 / 40,
@@ -16149,7 +16242,113 @@ test("AI·搜索：取消 depth 折损后无收益重复装备仍选择结束", 
   assert.deepEqual(game.aiController.planner.lastPlannedSequence.map((entry) => entry.type), ["end"]);
 });
 
-test("AI·搜索：零时间预算不启动昂贵 root clone 并安全结束", async () => {
+/*
+功能
+在同一逻辑手牌的两种实体排列下运行确定性 TIME 根搜索。
+
+调用方
+AI·搜索 root scheduling 手牌顺序不变回归。
+
+输入
+卡牌 definitionId 的实体排列。
+
+输出
+physical/scheduled/completed 根顺序、最终动作与 Planner 统计。
+
+读取状态
+独立测试 Game 的正式根候选与 SearchPrior 调度分数。
+
+写入状态
+只推进 Worker 等价的本地 SearchState 与确定性 SearchBudget。
+
+调用函数
+getActionCandidates、createInitialSearchState、Planner.plan。
+
+边界与不变量
+除 hand 数组顺序外局面、卡牌 ID、预算、价值与随机设置完全相同。
+*/
+async function runHandOrderSchedulingFixture(definitionOrder) {
+  const actor = makePlayer("schedule-order-actor", 0, "dawn", "ai", 2);
+  const enemyA = makePlayer("schedule-order-enemy-a", 1, "dusk", "ai", 2);
+  const ally = makePlayer("schedule-order-ally", 2, "dawn", "ai", 3);
+  const enemyB = makePlayer("schedule-order-enemy-b", 3, "dusk", "ai", 5);
+  enemyA.hand.push(instance("block", "schedule-order-enemy-block"));
+  enemyB.equipment = instance("energyDevice", "schedule-order-enemy-device");
+  actor.hand.push(...definitionOrder.map(
+    (definitionId) => instance(definitionId, `schedule-order-${definitionId}`)
+  ));
+  const { game } = makeGame([actor, enemyA, ally, enemyB]);
+  game.aiRandomnessRange = 0;
+  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  const planner = game.aiController.planner;
+  let deadlineExpired = false;
+  planner.searchBudgetFactory = () => new SearchBudget({
+    timeBudget:1,
+    now:() => deadlineExpired ? 1 : 0
+  });
+  const materializer = planner.candidateMaterializer;
+  const materialize = materializer.materialize.bind(materializer);
+  let completedRoots = 0;
+  materializer.materialize = (input) => {
+    const candidate = materialize(input);
+    if (candidate && input.depth === 1) {
+      completedRoots += 1;
+      if (completedRoots === 2) deadlineExpired = true;
+    }
+    return candidate;
+  };
+  const roots = game.aiController.getActionCandidates(actor);
+  const physicalRootOrder = roots.map((action) => ({
+    type:action.type,
+    cardId:action.card?.definitionId ?? action.skill?.id ?? null,
+    targetIds:(action.targets ?? []).map((target) => target.id),
+    selection:action.selection ?? null
+  }));
+  const selected = await planner.plan(
+    actor,
+    createInitialSearchState(
+      actor.id,
+      game.state,
+      game.aiController.knowledge.remainingCounts(actor)
+    ),
+    roots,
+    { gameId:game.state.gameId }
+  );
+  const stats = planner.lastSearchStats;
+  const semanticDescriptor = (descriptor) => ({
+    type:descriptor.type,
+    cardId:descriptor.cardId,
+    targetIds:descriptor.targetIds,
+    selection:descriptor.selection
+  });
+  const result = {
+    physicalRootOrder,
+    scheduledRootOrder:stats.scheduledRootOrder.map(semanticDescriptor),
+    completedRootSet:stats.rootWork
+      .filter((entry) => entry.completed)
+      .map((entry) => semanticDescriptor(entry.action)),
+    action:semanticDescriptor(describeAction(selected)),
+    stats
+  };
+  game.dispose();
+  return result;
+}
+
+test("AI·搜索：root scheduling 不受 hand 实体排列影响", async () => {
+  const definitions = ["assault", "charge", "destroy", "plunder", "harvest"];
+  const forward = await runHandOrderSchedulingFixture(definitions);
+  const reversed = await runHandOrderSchedulingFixture([...definitions].reverse());
+  assert.notDeepEqual(forward.physicalRootOrder, reversed.physicalRootOrder);
+  assert.deepEqual(forward.scheduledRootOrder, reversed.scheduledRootOrder);
+  assert.deepEqual(forward.completedRootSet, reversed.completedRootSet);
+  assert.deepEqual(forward.action, reversed.action);
+  assert.equal(forward.stats.stopReason, "TIME");
+  assert.equal(reversed.stats.stopReason, "TIME");
+  assert.equal(forward.stats.completedRootCandidateCount, 2);
+  assert.equal(reversed.stats.completedRootCandidateCount, 2);
+});
+
+test("AI·搜索：零时间预算不启动昂贵 root 且返回合法 provisional fallback", async () => {
   const actor = makePlayer("root-budget-actor", 0, "dawn"),
     enemy = makePlayer("root-budget-enemy", 1, "dusk"),
     card = instance("charge");
@@ -16169,17 +16368,70 @@ test("AI·搜索：零时间预算不启动昂贵 root clone 并安全结束", a
   };
   planner.candidateMaterializer.counterfactualTerms.evaluator = evaluatorStub;
   planner.candidateMaterializer.transitionValue.stateValue = evaluatorStub;
-  planner.candidateMaterializer.searchPrior = { actionUtility: () => 0, actionSearchPrior: () => 0 };
+  planner.candidateMaterializer.searchPrior = {
+    actionUtility:() => 0,
+    actionSearchPrior:() => 0,
+    rootSchedulingScore:() => 1
+  };
   const roots = Array.from(
     { length: 200 },
     (_, index) => ({ type: "card", card: { ...card, id: `root-${index}` }, targets: [] })
   );
   const action = await planner.plan(actor, visible, roots, { gameId: game.state.gameId });
-  assert.equal(action.type, "end");
+  assert.equal(action.card?.definitionId, "charge");
   assert.equal(evaluated, 0);
   assert.equal(planner.lastSearchStats.expanded, 0);
-  assert.equal(planner.lastSearchStats.abortedRootCandidateCount, 1);
+  assert.equal(planner.lastSearchStats.completedRootCandidateCount, 0);
   assert.equal(planner.lastSearchStats.rootCandidatesStartedAfterTime, 0);
+  assert.equal(planner.lastSearchStats.provisionalFallbackUsed, true);
+  assert.equal(planner.lastSearchStats.provisionalFallbackReason, "NO_COMPLETED_ROOT_TIME");
+  assert.equal(planner.lastSearchStats.provisionalFallbackAction.cardId, "charge");
+  assert.deepEqual(planner.lastPlannedSequence, []);
+});
+
+test("AI·搜索：首个昂贵 root 中断且无 incumbent 时不伪造 END", async () => {
+  const actor = makePlayer("provisional-expensive-actor", 0, "dawn", "ai", 1);
+  const enemy = makePlayer("provisional-expensive-enemy", 1, "dusk", "ai", 1);
+  const expensive = instance("assault"), valuable = instance("harvest");
+  actor.hand.push(expensive, valuable);
+  const { game } = makeGame([actor, enemy]);
+  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  const planner = game.aiController.planner;
+  let deadlineExpired = false;
+  planner.searchBudgetFactory = () => new SearchBudget({
+    timeBudget:1,
+    now:() => deadlineExpired ? 1 : 0
+  });
+  planner.simulatorFactory = (_state, { searchBudget }) => ({
+    apply:() => {
+      deadlineExpired = true;
+      searchBudget.checkpointCurrentWork();
+      assert.fail("昂贵 root 应在返回 partial state 前中断");
+    }
+  });
+  const selected = await planner.plan(actor, createInitialSearchState(
+    actor.id,
+    game.state,
+    game.aiController.knowledge.remainingCounts(actor)
+  ), [
+    { type:"card", card:expensive, targets:[enemy] },
+    { type:"card", card:valuable, targets:[] },
+    { type:"end" }
+  ], { gameId:game.state.gameId });
+  const stats = planner.lastSearchStats;
+  assert.notEqual(selected.type, "end");
+  assert.equal(selected.card?.id, stats.scheduledRootOrder[0].cardInstanceId);
+  assert.equal(stats.stopReason, "TIME");
+  assert.equal(stats.completedRootCandidateCount, 0);
+  assert.equal(stats.abortedRootCandidateCount, 1);
+  assert.equal(stats.provisionalFallbackUsed, true);
+  assert.equal(
+    stats.provisionalFallbackAction.cardInstanceId,
+    stats.scheduledRootOrder[0].cardInstanceId
+  );
+  assert.equal(stats.bestValueScore, null);
+  assert.deepEqual(planner.lastPlannedSequence, []);
+  game.dispose();
 });
 
 test("AI·搜索：规划异常会安全结束出牌并清理观察状态", async () => {
@@ -17174,6 +17426,180 @@ test("AI·搜索：足额与生产预算在同一高分支局面保留相同有�
   assert.equal(production.outcome.stats.workerReturned, true);
 });
 
+/*
+功能
+在真实 Worker 搜索边界运行聚能技能或回收站战术的两步组合夹具。
+
+调用方
+AI·搜索两步组合 TIME/COMPLETE 证据回归。
+
+输入
+夹具类型、本次搜索时间预算与确定性时钟步长。
+
+输出
+根候选数量、动作定义集合与 WorkerSearchOutcome。
+
+读取状态
+独立测试 Game 的正式根候选、SearchState、生产搜索配置与固定 SearchRng。
+
+写入状态
+只推进 Worker 本地 SearchState、SearchRng 与确定性测试时钟。
+
+调用函数
+makeGame、createInitialSearchState、createSearchRequest、describeRootSearchAction、runSearchRequest。
+
+边界与不变量
+同一夹具的 TIME/COMPLETE 除 timeBudgetMs 外完全相同；不得改 depth、beam、hidden samples、合法根或评分。
+*/
+async function runTwoStepHorizonFixture(kind, timeBudgetMs, tickMs) {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+  const actor = makePlayer(`horizon-${kind}-actor`, 0, "dawn", "ai", kind === "charge" ? 2 : 3);
+  const ally = makePlayer(`horizon-${kind}-ally`, 1, "dawn", "ai", 1);
+  const enemyA = makePlayer(`horizon-${kind}-enemy-a`, 2, "dusk", "ai", 4);
+  const enemyB = makePlayer(`horizon-${kind}-enemy-b`, 3, "dusk", "ai", 5);
+  if (kind === "charge") {
+    actor.energy = 1;
+    ally.hp = 1;
+    actor.hand.push(instance("charge"));
+  } else {
+    actor.hand.push(
+      instance("recycleDevice"),
+      instance("harvest")
+    );
+  }
+  const { game } = makeGame([actor, ally, enemyA, enemyB]);
+  game.aiRandomnessRange = 0;
+  game.aiController.searchRng = new SearchRng(20260822);
+  const roots = game.aiController.getActionCandidates(actor);
+  const searchState = createInitialSearchState(
+    actor.id,
+    game.state,
+    game.aiController.knowledge.remainingCounts(actor)
+  );
+  const request = createSearchRequest({
+    requestId:`horizon-${kind}-${timeBudgetMs}`,
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    searchState,
+    searchConfig:game.aiController.buildSearchConfig({ timeBudgetMs }),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActionDescriptors:roots.map(ActionDescriptor.describe),
+    rootSearchActions:roots.map(describeRootSearchAction)
+  });
+  let now = 0;
+  const outcome = await runSearchRequest(request, {
+    now:() => {
+      const current = now;
+      now += tickMs;
+      return current;
+    },
+    yieldControl:async () => true
+  });
+  const evidence = {
+    rootCandidateCount:roots.length,
+    rootCardIds:[...new Set(roots.map((action) => (
+      action.card?.definitionId ?? action.skill?.id ?? action.type
+    )))],
+    outcome
+  };
+  game.dispose();
+  return evidence;
+}
+
+test("AI·搜索：production TIME 在聚能后进入主动技能 depth2 并保持 COMPLETE 动作", async () => {
+  const production = await runTwoStepHorizonFixture(
+    "charge",
+    AI_RUNTIME_POLICY.searchTimeBudgetMs,
+    10
+  );
+  const full = await runTwoStepHorizonFixture("charge", 6000, 10);
+  assert.deepEqual(production.rootCardIds, ["charge", "end"]);
+  assert.deepEqual([
+    production.outcome.stats.physicalRootCount,
+    production.outcome.stats.uniqueRootCount,
+    production.outcome.stats.completedRootCandidateCount,
+    production.outcome.stats.abortedRootCandidateCount,
+    production.outcome.stats.depthReached,
+    production.outcome.stats.firstDepth2AtWorkCount,
+    production.outcome.stats.simulationCalls
+  ], [2, 2, 2, 0, 2, 2, 4]);
+  assert.deepEqual([
+    full.outcome.stats.physicalRootCount,
+    full.outcome.stats.uniqueRootCount,
+    full.outcome.stats.completedRootCandidateCount,
+    full.outcome.stats.abortedRootCandidateCount,
+    full.outcome.stats.depthReached,
+    full.outcome.stats.firstDepth2AtWorkCount,
+    full.outcome.stats.simulationCalls
+  ], [2, 2, 2, 0, 3, 2, 5]);
+  assert.equal(production.outcome.searchStopReason, "TIME");
+  assert.equal(full.outcome.searchStopReason, "COMPLETE");
+  assert.deepEqual(
+    production.outcome.stats.bestSequence.slice(0, 2).map((action) => action.cardId),
+    ["charge", "symbiosis"]
+  );
+  assert.equal(production.outcome.stats.bestSequence[1].targetId, "horizon-charge-ally");
+  assert.deepEqual(
+    production.outcome.actionDescriptor,
+    { ...full.outcome.actionDescriptor, cardInstanceId:production.outcome.actionDescriptor.cardInstanceId }
+  );
+  assertClose(
+    production.outcome.stats.bestValueScore,
+    full.outcome.stats.bestValueScore
+  );
+  assert.ok(production.outcome.stats.largestProbabilityOperation);
+  assert.ok(production.outcome.stats.probabilityWorldBranches > 0);
+});
+
+test("AI·搜索：production TIME 在回收站后进入战术 depth2 并保持 COMPLETE 动作", async () => {
+  const production = await runTwoStepHorizonFixture(
+    "recycle",
+    AI_RUNTIME_POLICY.searchTimeBudgetMs,
+    10
+  );
+  const full = await runTwoStepHorizonFixture("recycle", 6000, 10);
+  assert.deepEqual(production.rootCardIds, ["recycleDevice", "harvest", "end"]);
+  assert.deepEqual([
+    production.outcome.stats.physicalRootCount,
+    production.outcome.stats.uniqueRootCount,
+    production.outcome.stats.completedRootCandidateCount,
+    production.outcome.stats.abortedRootCandidateCount,
+    production.outcome.stats.depthReached,
+    production.outcome.stats.firstDepth2AtWorkCount,
+    production.outcome.stats.simulationCalls
+  ], [3, 3, 3, 0, 2, 2, 6]);
+  assert.deepEqual([
+    full.outcome.stats.physicalRootCount,
+    full.outcome.stats.uniqueRootCount,
+    full.outcome.stats.completedRootCandidateCount,
+    full.outcome.stats.abortedRootCandidateCount,
+    full.outcome.stats.depthReached,
+    full.outcome.stats.firstDepth2AtWorkCount,
+    full.outcome.stats.simulationCalls
+  ], [3, 3, 3, 0, 3, 2, 9]);
+  assert.equal(production.outcome.searchStopReason, "TIME");
+  assert.equal(full.outcome.searchStopReason, "COMPLETE");
+  assert.deepEqual(
+    production.outcome.stats.bestSequence.slice(0, 2).map((action) => action.cardId),
+    ["recycleDevice", "harvest"]
+  );
+  assert.deepEqual(
+    production.outcome.actionDescriptor,
+    { ...full.outcome.actionDescriptor, cardInstanceId:production.outcome.actionDescriptor.cardInstanceId }
+  );
+  assertClose(
+    production.outcome.stats.bestValueScore,
+    full.outcome.stats.bestValueScore
+  );
+  assert.ok(production.outcome.stats.largestProbabilityOperation);
+  assert.ok(production.outcome.stats.probabilityWorldBranches > 0);
+});
+
 test("AI·搜索：同定义实体动作只合并搜索等价分支并保留身份语义差异", async () => {
   const { deduplicateSearchEquivalentActions } = await import(
     "../js/ai/search/ActionGenerator.js"
@@ -17493,6 +17919,8 @@ test("AI·搜索 Root Safety：TIME 后不启动未物化 root 并返回完整 i
   assert.equal(planner.lastSearchStats.rootSafetyExpandedNodes, 0);
   assert.equal(planner.lastSearchStats.rootSafetySimulationCalls, 0);
   assert.equal(planner.lastSearchStats.rootCandidatesStartedAfterTime, 0);
+  assert.equal(planner.lastSearchStats.provisionalFallbackUsed, false);
+  assert.equal(planner.lastSearchStats.provisionalFallbackAction, null);
   assert.deepEqual(planner.lastSearchStats.rootWork.map((entry) => ({
     cardId:entry.action.cardInstanceId,
     completed:entry.completed

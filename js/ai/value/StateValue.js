@@ -6,7 +6,7 @@
 AIController、TransitionValue、ValueLedger、响应策略与正式边界。
 
 下游
-value/Evaluator 与 ValueSimulationQuery。
+value/Evaluator、SealValue 与 ValueSimulationQuery。
 
 状态边界
 只读过滤后的状态；不持有 Game，不写状态。
@@ -17,6 +17,7 @@ value/Evaluator 与 ValueSimulationQuery。
 架构约束
 本服务只补齐运行时领域输入，不拥有第二套 State Value 公式；stateUtility 公式只存在于 value/Evaluator。
 */
+import { sealTeamBurden } from "./SealValue.js";
 
 export class StateValue {
   /*
@@ -69,14 +70,23 @@ export class StateValue {
   无。
 
   调用函数
-  ValueSimulationQuery.lightningValues、Evaluator.stateUtility。
+ValueSimulationQuery.lightningValues、sealTeamBurden、Evaluator.stateUtility。
 
   边界与不变量
-  模拟结果先物化为纯值再交给 Evaluator；本层不复制任何估值公式；
-  父搜索存在时必须把同一个 SearchBudget 传给 ValueSimulationQuery。
+领域结果先物化为纯值再交给 Evaluator；本层不复制任何估值公式；
+父搜索存在时必须把同一个 SearchBudget 传给 Lightning 与 Seal 查询。
   */
   stateUtility(state, viewerId, searchBudget = null) {
     const lightningValues = this.simulationQuery.lightningValues(state, viewerId, searchBudget);
-    return this.evaluator.stateUtility(state, viewerId, lightningValues);
+    const viewer = state.players.find((player) => player.id === viewerId);
+    const sealValues = viewer
+      ? state.players.map((player) => sealTeamBurden(
+          state,
+          player,
+          viewer.battleTeam,
+          searchBudget
+        ))
+      : null;
+    return this.evaluator.stateUtility(state, viewerId, lightningValues, sealValues);
   }
 }

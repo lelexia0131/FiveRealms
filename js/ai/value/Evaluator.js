@@ -334,13 +334,13 @@ export class Evaluator {
 
   /*
   功能
-  把状态与调用层已计算的闪电值转换为唯一团队 State Value。
+把状态与调用层已计算的闪电、封印值转换为唯一团队 State Value。
 
   调用方
   状态价值运行时适配器与纯边界测试。
 
   输入
-  过滤后的状态、viewer ID，以及按 holder 顺序排列的闪电生命周期纯数值。
+过滤后的状态、viewer ID，以及按 holder 顺序排列的闪电与可选封印纯数值。
 
   输出
   viewer 团队视角的原始 State Value points；找不到 viewer 时返回负无穷。
@@ -355,17 +355,19 @@ export class Evaluator {
   playerValueTerms、sealTeamBurden、buildRadarJudgmentProbabilities。
 
   边界与不变量
-  闪电值由调用层以 State points 传入；本函数始终保留原始 State Value points，
+闪电与搜索期封印值由调用层以 State points 传入；无封印数组的独立调用保持 raw Domain 默认；
+本函数始终保留原始 State Value points，
   只有进入 Final Utility 的边界才执行 HP-equivalent 换算。
   */
-  stateUtility(state, viewerId, lightningValues = []) {
+  stateUtility(state, viewerId, lightningValues = [], sealValues = null) {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer) return -Infinity;
     const radarTacticProbability = buildRadarJudgmentProbabilities(
       state?.remainingCardCounts ?? null
     ).tactic;
     let score = 0;
-    for (const player of state.players) {
+    for (let playerIndex = 0; playerIndex < state.players.length; playerIndex += 1) {
+      const player = state.players[playerIndex];
       const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
       const { death, terms } = this.playerValueTerms(
         state,
@@ -374,7 +376,9 @@ export class Evaluator {
         radarTacticProbability
       );
       score += sign * (death + Object.values(terms).reduce((sum, value) => sum + value, 0))
-        - sealTeamBurden(state, player, viewer.battleTeam);
+        - (Array.isArray(sealValues)
+          ? Number(sealValues[playerIndex]) || 0
+          : sealTeamBurden(state, player, viewer.battleTeam));
     }
     for (const value of lightningValues) score += value;
     return score;

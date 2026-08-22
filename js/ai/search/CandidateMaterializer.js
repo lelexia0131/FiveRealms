@@ -77,6 +77,65 @@ export class CandidateMaterializer {
 
   /*
   功能
+  把根候选的廉价探索顺序评分委托给唯一 SearchPrior owner。
+
+  调用方
+  Planner 在任何 root materialization 前。
+
+  输入
+  根动作、行动者与根 SearchState。
+
+  输出
+  有限调度分数；缺少测试 stub 方法时兼容返回零。
+
+  读取状态
+  只读 SearchPrior 与输入动作/状态。
+
+  写入状态
+  无。
+
+  调用函数
+  SearchPrior.rootSchedulingScore。
+
+  边界与不变量
+  本适配器不拥有或修改评分，结果不得进入候选 value/prior。
+  */
+  rootSchedulingScore(action, player, visibleState) {
+    const score = this.searchPrior.rootSchedulingScore?.(action, player, visibleState) ?? 0;
+    return Number.isFinite(score) || score === Number.NEGATIVE_INFINITY ? score : 0;
+  }
+
+  /*
+  功能
+  返回不含实体手牌顺序与 card instance ID 的 root 调度语义键。
+
+  调用方
+  Planner 的确定性同分排序。
+
+  输入
+  根候选动作。
+
+  输出
+  ActionDescriptor 提供的稳定字符串键。
+
+  读取状态
+  只读动作公开搜索语义。
+
+  写入状态
+  无。
+
+  调用函数
+  ActionDescriptor.schedulingKey。
+
+  边界与不变量
+  type、definition/skill、目标顺序与 selection 必须保留；不得包含 hand index。
+  */
+  rootSchedulingKey(action) {
+    return this.actionDescriptor.schedulingKey(action);
+  }
+
+  /*
+  功能
   创建一次规划共用的领域转移上下文（context）。
 
   调用方

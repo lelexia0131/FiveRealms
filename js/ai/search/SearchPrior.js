@@ -40,6 +40,36 @@ export const STATE_UTILITY_PRIOR_WEIGHT = 0.4;
 const END_PRIOR_PENALTY = 0.8;
 const SKILL_THRESHOLD_PRIOR_BONUS = 4;
 
+/*
+功能
+估算 root 目标可被资源动作分支处理的公开资源数量。
+
+调用方
+SearchPrior.rootSchedulingScore。
+
+输入
+过滤玩家摘要或根动作携带的公开目标。
+
+输出
+手牌数量加至多一个装备资源的非负数量。
+
+读取状态
+目标 handCount/hand 与 equipmentDefinitionId/equipment。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只用于廉价分支工作估算，不读取隐藏牌身份或生成资源选择。
+*/
+function rootSchedulingResourceCount(entry) {
+  return (entry?.handCount ?? entry?.hand?.length ?? 0)
+    + (entry?.equipmentDefinitionId || entry?.equipment ? 1 : 0);
+}
+
 export class SearchPrior {
   /*
   功能
@@ -257,6 +287,145 @@ export class SearchPrior {
 
   /*
   功能
+  计算昂贵 root materialization 前的廉价、确定性探索顺序分数。
+
+  调用方
+  Planner 经 CandidateMaterializer 的 root scheduling 适配入口。
+
+  输入
+  根候选动作、行动者与过滤后的根 SearchState。
+
+输出
+  由有界机会收益除以估算分支工作得到的有限调度密度；end 始终排在合法 non-end 后。
+
+  读取状态
+  只读卡牌/角色静态值、公开阵营、目标 HP/资源、行动者能量门槛与现成 selection。
+
+  写入状态
+  无。
+
+  调用函数
+  CardValue 静态入口、getEquipmentKeepValueDeduction。
+
+  边界与不变量
+  不调用 Simulator、hidden-world query、Seal/Lightning/GlobalBenefit 动态模型或大型概率操作；
+  所有动作类别共用同一密度尺度，不设置类别 tier；
+  本分数不进入 Final Utility、TransitionValue、beam prior 或 COMPLETE 最终比较。
+  */
+  rootSchedulingScore(action, player, visible) {
+    const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
+    if (action.type === "end") return Number.NEGATIVE_INFINITY;
+    const actionTarget = action.targets?.[0];
+    const target = visible.players.find((entry) => entry.id === actionTarget?.id)
+      ?? actionTarget;
+    if (action.type === "skill") {
+      const missingHp = target ? Math.max(0, target.maxHp - target.hp) : 0;
+      const skillScores = {
+        breakArmy: actor.characterId
+          ? getRoleCardAiValue(actor.characterId, "assault")
+          : getBaseCardAiValue("assault"),
+        barrier:missingHp,
+        symbiosis:missingHp,
+        stealSkill:5 + Math.min(4, rootSchedulingResourceCount(target)),
+        burningField:BURNING_FIELD_SEARCH_PRIOR,
+        hunt:7 + (target?.hp <= 2 ? 7 : 0),
+        allIn:Math.max(0, actor.energy - 1) * 3,
+        resonance:5 + (target?.handCount <= 1 ? 3 : 0)
+      };
+      const branchingWork = action.skill?.targetType === "enemyWithCardsOrEquipment"
+        ? 1 + rootSchedulingResourceCount(target)
+        : 1;
+      const density = (Number(skillScores[action.skill?.id] ?? 4) || 0) / branchingWork;
+      return density / (1 + Math.abs(density));
+    }
+    const card = action.card;
+    if (!card?.definitionId) return 0;
+    let score = actor.characterId
+      ? getRoleCardAiValue(actor.characterId, card.definitionId)
+      : (Number.isFinite(card.aiValue)
+        ? card.aiValue
+        : getBaseCardAiValue(card.definitionId));
+    if (target) {
+      const enemy = target.battleTeam !== actor.battleTeam;
+      if (card.subtypes?.includes("attack") || card.definitionId === "duel") {
+        const missingHp = Math.max(0, target.maxHp - target.hp);
+        score += enemy
+          ? missingHp * 3 + (target.hp <= 2 ? 5 : 0) + (target.hp <= 1 ? 8 : 0)
+          : -12;
+        if (enemy && card.counterable === false && Number(card.baseDamage) > 0) {
+          score += Number(card.baseDamage) * HP_VALUE;
+        }
+      }
+      if (["plunder", "destroy"].includes(card.definitionId)) {
+        const equipmentWeight = target.equipmentDefinitionId || target.equipment
+          ? (card.definitionId === "plunder" ? 1 : 2)
+          : 0;
+        score += Math.min(
+          5,
+          (target.handCount ?? target.hand?.length ?? 0) + equipmentWeight
+        );
+        if (!enemy) score -= 30;
+      }
+    }
+    if (card.definitionId === "charge") {
+      score += Math.max(0, actor.maxEnergy - actor.energy) * 1.5
+        + (actor.activeSkillId && !actor.activeSkillUsed
+          && actor.energy < actor.activeSkillCost
+          && actor.energy + 1 >= actor.activeSkillCost
+          ? SKILL_THRESHOLD_PRIOR_BONUS
+          : 0);
+    }
+    if (card.definitionId === "transfer") {
+      const selectionScore = Number(action.selection?.score);
+      if (Number.isFinite(selectionScore)) score = selectionScore;
+    }
+    const equippedDefinitionId = actor.equipmentDefinitionId
+      ?? actor.equipment?.definitionId
+      ?? null;
+    if (card.category === "equipment" && equippedDefinitionId) {
+      score -= getEquipmentKeepValueDeduction(
+        actor.characterId ?? null,
+        card.definitionId,
+        equippedDefinitionId,
+        actor.equipmentRetentionProbability ?? 1
+      );
+    }
+    const targets = (action.targets ?? []).map((entry) => (
+      visible.players.find((playerEntry) => playerEntry.id === entry?.id) ?? entry
+    ));
+    let branchingWork = 1;
+    if (card.subtypes?.includes("hidden-selection")) {
+      const sourceId = action.selection?.sourceId;
+      const resourceOwner = sourceId
+        ? visible.players.find((entry) => entry.id === sourceId)
+        : target;
+      branchingWork += rootSchedulingResourceCount(resourceOwner);
+    }
+    if (card.subtypes?.includes("attack")) {
+      branchingWork += targets.reduce((sum, entry) => sum
+        + Math.max(0, Number(entry?.blockProbability) || 0)
+        + Math.max(0, Number(entry?.twoBlockProbability) || 0), 0);
+    }
+    if (card.counterable) {
+      const responders = card.counterScope === "target"
+        ? targets
+        : visible.players.filter((entry) => (
+            entry.alive && entry.battleTeam !== actor.battleTeam
+          ));
+      branchingWork += 1 + responders.reduce(
+        (sum, entry) => sum + Math.max(0, Number(entry.counterProbability) || 0),
+        0
+      );
+    }
+    if (!Number.isFinite(score)) return 0;
+    const density = score / branchingWork;
+    // 所有动作类别共用同一有界机会密度尺度；类别本身不构成探索优先级，
+    // 否则 basic/tactic/equipment 的固定分层会掩盖实际收益与分支成本。
+    return density / (1 + Math.abs(density));
+  }
+
+  /*
+  功能
   计算动作在 beam pruning/ranking 中的既有静态与上下文 prior。
 
   调用方
@@ -334,7 +503,8 @@ export class SearchPrior {
     const target = visible.players.find((entry) => entry.id === actionTarget?.id)
       ?? actionTarget;
     if (card.definitionId === "seal") {
-      value = sealUseValue(actor, target, visible) + identityDelta;
+      value = sealUseValue(actor, target, visible, options.searchBudget ?? null)
+        + identityDelta;
     }
     if (target) {
       const enemy = target.battleTeam !== player.battleTeam;

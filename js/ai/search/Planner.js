@@ -115,16 +115,144 @@ export class Planner {
 
   /*
   功能
+  把完整物化的子候选连接到父搜索节点。
+
+  调用方
+  plan 的 progressive depth-2 缓存、spine 与常规深层展开。
+
+  输入
+  父节点、完整子候选与当前深度。
+
+  输出
+  继承根动作、累计价值、序列和 provenance 的完整搜索节点。
+
+  读取状态
+  SearchPolicy 的 pruneScore 公式与父/子候选字段。
+
+  写入状态
+  无。
+
+  调用函数
+  SearchPolicy.pruneScore。
+
+  边界与不变量
+  只连接已经完整物化并完成 sibling terms 的候选；不得登记 partial state 或改变 final value。
+  */
+  buildChildNode(node, candidate, depth) {
+    const valueScore = node.valueScore + candidate.transitionValue;
+    return {
+      action:node.action,
+      state:candidate.state,
+      terminal:candidate.terminal,
+      valueScore,
+      pruneScore:this.searchPolicy.pruneScore(valueScore, candidate.prior, depth),
+      searchCredit:candidate.searchCredit,
+      sequence:[...node.sequence, candidate.action],
+      remainingProvenance:candidate.remainingProvenance,
+      remainingHistory:[
+        ...node.remainingHistory,
+        candidate.remainingProvenance
+      ],
+      frontierResidual:candidate.frontierResidual
+    };
+  }
+
+  /*
+  功能
+  从一个完整父状态生成并原子物化当前深度的全部直接子候选。
+
+  调用方
+  plan 的最高调度 root 预展开、progressive spine 与常规 beam 展开。
+
+  输入
+  父状态/provenance、深度、行动者、Simulator、SearchBudget、搜索上下文、结构和工作诊断。
+
+  输出
+  已完成 sibling terms 的完整子候选数组，以及会话是否在 yield 时取消。
+
+  读取状态
+  注入的深层动作生成、CandidateMaterializer、SearchBudget 与 yieldControl。
+
+  写入状态
+  SearchBudget 工作计数、搜索上下文诊断与 workDiagnostics 深度/分支计数。
+
+  调用函数
+  generateFromVisible、prepareCandidate、Simulator.apply、CandidateMaterializer.materialize/finalizeSiblings、yieldControl。
+
+  边界与不变量
+  cooperative interruption 只丢弃当前 partial child；返回数组只含完整候选，调用方可安全缓存并在 COMPLETE 中复用。
+  */
+  async materializeChildCandidates({
+    parentState,
+    parentProvenance,
+    depth,
+    player,
+    simulator,
+    budget,
+    context,
+    structure,
+    options,
+    workDiagnostics
+  }) {
+    const followActions = this.generateFromVisible(parentState, player.id, budget);
+    workDiagnostics.childBranches += followActions.length;
+    const candidates = [];
+    for (const action of followActions) {
+      if (budget.shouldStop()) break;
+      this.candidateMaterializer.observeCandidate(action, context);
+      const prepared = this.prepareCandidate(budget, depth, () => {
+        budget.observeSimulation();
+        const state = simulator.apply(parentState, action, player.id);
+        const candidate = this.candidateMaterializer.materialize({
+          action,
+          beforeState:parentState,
+          afterState:state,
+          player,
+          depth,
+          remainingProvenance:parentProvenance,
+          simulator,
+          context,
+          collectDiagnostics:false,
+          searchBudget:budget
+        });
+        return { state, candidate };
+      });
+      const candidate = prepared?.candidate ?? null;
+      if (!candidate) {
+        workDiagnostics.abortedCandidateCount += 1;
+        break;
+      }
+      candidate.completedAtWorkCount = budget.simulationCalls;
+      candidates.push(candidate);
+      budget.observeNode();
+      workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, depth);
+      if (depth === 2) {
+        workDiagnostics.firstDepth2AtWorkCount ??= candidate.completedAtWorkCount;
+      }
+      if (budget.expandedNodes % structure.yieldEvery === 0) {
+        budget.observeYield();
+        if (!(await this.yieldControl(options.gameId))) {
+          budget.cancel();
+          return { candidates:[], cancelled:true };
+        }
+      }
+    }
+    this.candidateMaterializer.finalizeSiblings(candidates);
+    return { candidates, cancelled:false };
+  }
+
+  /*
+  功能
   统一记录完成、预算中断或取消后的计划序列与搜索诊断。
 
   调用方
   plan 的正常收束和 yield 取消路径。
 
   输入
-  SearchBudget、结构配置、候选、context、根诊断条目与本次搜索工作诊断。
+  SearchBudget、结构配置、完整候选、provisional root、context、根诊断条目与本次搜索工作诊断。
 
   输出
-  选择动作；无选择或取消时返回终止动作。
+  返回完整候选动作；TIME/NODE 零完整 root 时返回明确标记的 provisional root；取消仍返回终止动作。
 
   读取状态
   budget 计数、候选序列、root/work diagnostics 与 CandidateMaterializer 的 context diagnostics。
@@ -136,13 +264,31 @@ export class Planner {
   CandidateMaterializer.describeSequence/contextDiagnostics、SearchBudget.diagnostics。
 
   边界与不变量
-  统计只描述实际执行；不得根据 stopReason 改写候选价值或补造节点。
+  统计只描述实际执行；provisional root 不得写入计划序列、best value 或完整候选计数。
   */
-  recordResult({ budget, structure, choice, context, rootLedgers, workDiagnostics }) {
+  recordResult({
+    budget,
+    structure,
+    choice,
+    provisionalRootFallback = null,
+    context,
+    rootLedgers,
+    workDiagnostics
+  }) {
+    const budgetStats = budget.diagnostics();
+    const provisionalFallbackUsed = !choice
+      && workDiagnostics.completedRootCandidateCount === 0
+      && ["TIME", "NODE"].includes(budgetStats.stopReason)
+      && Boolean(provisionalRootFallback);
+    const provisionalFallbackReason = provisionalFallbackUsed
+      ? `NO_COMPLETED_ROOT_${budgetStats.stopReason}`
+      : null;
+    const provisionalFallbackAction = provisionalFallbackUsed
+      ? this.candidateMaterializer.describeAction(provisionalRootFallback)
+      : null;
     this.lastPlannedSequence = this.candidateMaterializer.describeSequence(
       [...(choice?.sequence ?? [])]
     );
-    const budgetStats = budget.diagnostics();
     const contextStats = this.candidateMaterializer.contextDiagnostics(context);
     const slowestPreparation = budgetStats.preparations.reduce((slowest, entry) => (
       !slowest || entry.durationMs > slowest.durationMs ? entry : slowest
@@ -175,6 +321,12 @@ export class Planner {
       probabilityWorldBranches:budgetStats.probabilityWorldBranches,
       largestCooperativeProbabilityOperation:budgetStats.largestCooperativeProbabilityOperation,
       largestRawProbabilityOperation:budgetStats.largestRawProbabilityOperation,
+      largestProbabilityOperation:[
+        budgetStats.largestCooperativeProbabilityOperation,
+        budgetStats.largestRawProbabilityOperation
+      ].filter(Boolean).reduce((largest, operation) => (
+        !largest || operation.durationMs > largest.durationMs ? operation : largest
+      ), null),
       lastProbabilityOperation:budgetStats.lastProbabilityOperation,
       rawProbabilityDeadlineCrossings:budgetStats.rawProbabilityDeadlineCrossings,
       responseBranches:budgetStats.responseBranches,
@@ -201,9 +353,12 @@ export class Planner {
       bestSequence:this.lastPlannedSequence,
       bestRemainingProvenance:choice?.remainingHistory ?? [],
       bestValueScore:choice?.valueScore ?? null,
+      physicalRootCount:workDiagnostics.rootCandidateCount,
+      uniqueRootCount:workDiagnostics.uniqueRootCandidateCount,
       rootCandidateCount:workDiagnostics.rootCandidateCount,
       uniqueRootCandidateCount:workDiagnostics.uniqueRootCandidateCount,
       equivalentRootCandidatesEliminated:workDiagnostics.equivalentRootCandidatesEliminated,
+      scheduledRootOrder:workDiagnostics.scheduledRootOrder,
       completedRootCandidateCount:workDiagnostics.completedRootCandidateCount,
       abortedRootCandidateCount:workDiagnostics.abortedRootCandidateCount,
       abortedCandidateCount:workDiagnostics.abortedCandidateCount,
@@ -211,11 +366,18 @@ export class Planner {
       incumbentUpdateCount:workDiagnostics.incumbentUpdateCount,
       firstCompletedIncumbentAtWorkCount:workDiagnostics.firstCompletedIncumbentAtWorkCount,
       finalIncumbentAtWorkCount:workDiagnostics.finalIncumbentAtWorkCount,
+      depthReached:workDiagnostics.depthReached,
+      firstDepth2AtWorkCount:workDiagnostics.firstDepth2AtWorkCount,
+      provisionalFallbackUsed,
+      provisionalFallbackReason,
+      provisionalFallbackAction,
       activeRoot:workDiagnostics.activeRoot,
       rootWork:workDiagnostics.rootWork,
       rootLedgers
     };
-    return choice?.action ?? { type:"end" };
+    return choice?.action
+      ?? (provisionalFallbackUsed ? provisionalRootFallback : null)
+      ?? { type:"end" };
   }
 
   /*
@@ -229,7 +391,7 @@ export class Planner {
   行动者、根 SearchState、根候选动作与可选会话/诊断上下文。
 
   输出
-  当前最佳根动作；取消或无候选时安全返回终止动作。
+  当前最佳完整根动作；TIME/NODE 零完整 root 时返回已标记的合法 provisional root，取消时安全终止。
 
   读取状态
   SearchState、显式搜索归属模块、动作生成、预算与会话能力。
@@ -238,10 +400,13 @@ export class Planner {
   lastSearchStats、lastPlannedSequence 与注入能力的既有随机/让步序列。
 
   调用函数
-  simulatorFactory、searchBudgetFactory、CandidateMaterializer、SearchPolicy、generateFromVisible、yieldControl。
+  simulatorFactory、searchBudgetFactory、CandidateMaterializer root scheduling/materialization、SearchPolicy、generateFromVisible、yieldControl。
 
   边界与不变量
+  root 在昂贵物化前按 SearchPrior 廉价分数和稳定语义键排序，不得依赖 card instance ID 或 hand index；
+  progressive 只缓存完整子候选；常规逐层 beam 必须复用或补齐原有展开，COMPLETE 仍只从标准 final beam 选择；
   一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不执行未物化动作；
+  TIME/NODE 零完整 root 时只可返回调度最高的合法 non-end provisional root，且不得登记成 candidate/计划；
   根层已物化 end 可作为安全基线；未物化 end 只有在所有 non-end roots 都已比较且全为负时才能补算。
   NODE 中断且已知候选全为负时，只通过 SearchBudget 授权剩余 roots 的有限 depth-1 安全阶段；
   TIME 只返回 deadline 前已经完整 materialize 的 incumbent，绝不启动未物化 root；
@@ -254,10 +419,22 @@ export class Planner {
     const budget = this.searchBudgetFactory();
     const structure = this.searchPolicy.structure();
     const uniqueRootActions = this.deduplicateActions(rootActions);
+    const scheduledRootActions = uniqueRootActions.map((action) => ({
+      action,
+      score:this.candidateMaterializer.rootSchedulingScore(action, player, visibleState),
+      key:this.candidateMaterializer.rootSchedulingKey(action)
+    })).sort((left, right) => {
+      if (left.score !== right.score) return left.score > right.score ? -1 : 1;
+      return left.key.localeCompare(right.key);
+    }).map((entry) => entry.action);
+    const provisionalRootFallback = scheduledRootActions.find(
+      (action) => !this.candidateMaterializer.findTerminalAction([action])
+    ) ?? this.candidateMaterializer.findTerminalAction(scheduledRootActions)
+      ?? { type:"end" };
     const context = this.candidateMaterializer.createContext(
       player,
       visibleState,
-      uniqueRootActions
+      scheduledRootActions
     );
     const requestedRootCandidateCount = Number(options.rootCandidateCount);
     const rootCandidateCount = Number.isFinite(requestedRootCandidateCount)
@@ -274,6 +451,11 @@ export class Planner {
       incumbentUpdateCount:0,
       firstCompletedIncumbentAtWorkCount:null,
       finalIncumbentAtWorkCount:null,
+      depthReached:0,
+      firstDepth2AtWorkCount:null,
+      scheduledRootOrder:scheduledRootActions.map(
+        (action) => this.candidateMaterializer.describeAction(action)
+      ),
       activeRoot:null,
       rootWork:[]
     };
@@ -284,6 +466,7 @@ export class Planner {
         budget,
         structure,
         choice:null,
+        provisionalRootFallback,
         context,
         rootLedgers:[],
         workDiagnostics
@@ -299,6 +482,7 @@ export class Planner {
         budget,
         structure,
         choice:null,
+        provisionalRootFallback,
         context,
         rootLedgers:[],
         workDiagnostics
@@ -307,7 +491,8 @@ export class Planner {
 
     const rootCandidates = [];
     const rootLedgers = [];
-    for (const action of uniqueRootActions) {
+    const progressiveDepth2Candidates = new Map();
+    for (const action of scheduledRootActions) {
       // 与既有根语义一致：空结果时至少尝试第一个动作；之后只在新的原子物化前检查预算。
       if (rootCandidates.length && budget.shouldStop()) break;
       const rootDescriptor = this.candidateMaterializer.describeAction(action);
@@ -348,6 +533,7 @@ export class Planner {
       rootCandidates.push(candidate);
       budget.observeNode();
       workDiagnostics.completedRootCandidateCount += 1;
+      workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, 1);
       workDiagnostics.activeRoot = null;
       workDiagnostics.rootWork.push({
         action:rootDescriptor,
@@ -357,6 +543,38 @@ export class Planner {
       if (collectDiagnostics) {
         rootLedgers.push(this.candidateMaterializer.diagnosticEntry(candidate));
       }
+      if (uniqueRootActions.length <= structure.beamWidth
+        && workDiagnostics.completedRootCandidateCount === 1
+        && !candidate.terminal
+        && !budget.shouldStop()) {
+        // 全部 roots 能进入同一 beam 时，最高 SearchPrior root 必然属于原 depth-2
+        // 搜索空间。先完成这一层并缓存，可避免完整 root coverage 恰好耗尽 TIME；
+        // 常规 depth-2 随后复用缓存，因此 COMPLETE 不增删候选。
+        const expansion = await this.materializeChildCandidates({
+          parentState:state,
+          parentProvenance:candidate.remainingProvenance,
+          depth:2,
+          player,
+          simulator,
+          budget,
+          context,
+          structure,
+          options,
+          workDiagnostics
+        });
+        if (expansion.cancelled) {
+          return this.recordResult({
+            budget,
+            structure,
+            choice:null,
+            provisionalRootFallback,
+            context,
+            rootLedgers,
+            workDiagnostics
+          });
+        }
+        progressiveDepth2Candidates.set(action, expansion.candidates);
+      }
       if (budget.expandedNodes % structure.yieldEvery === 0) {
         budget.observeYield();
         if (!(await this.yieldControl(options.gameId))) {
@@ -365,6 +583,7 @@ export class Planner {
             budget,
             structure,
             choice:null,
+            provisionalRootFallback,
             context,
             rootLedgers,
             workDiagnostics
@@ -378,11 +597,11 @@ export class Planner {
     const initiallyMaterializedRootActions = new Set(
       rootCandidates.map((candidate) => candidate.action)
     );
-    const unmaterializedNonTerminalRoots = uniqueRootActions.filter((action) => (
+    const unmaterializedNonTerminalRoots = scheduledRootActions.filter((action) => (
       !this.candidateMaterializer.findTerminalAction([action])
       && !initiallyMaterializedRootActions.has(action)
     ));
-    const rootTerminalAction = this.candidateMaterializer.findTerminalAction(uniqueRootActions);
+    const rootTerminalAction = this.candidateMaterializer.findTerminalAction(scheduledRootActions);
     const unmaterializedRootTerminal = rootTerminalAction
       && !initiallyMaterializedRootActions.has(rootTerminalAction);
     const bestMaterializedNonTerminalRoot = rootCandidates
@@ -449,6 +668,7 @@ export class Planner {
         rootCandidates.push(candidate);
         budget.observeNode();
         workDiagnostics.completedRootCandidateCount += 1;
+        workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, 1);
         workDiagnostics.activeRoot = null;
         workDiagnostics.rootWork.push({
           action:rootDescriptor,
@@ -493,6 +713,91 @@ export class Planner {
     }
     bestSeenCandidate ??= activeBeam[0];
 
+    const progressiveNodesByDepth = new Map([[2, new Map()]]);
+    for (const [rootAction, nodeCandidates] of progressiveDepth2Candidates) {
+      const parent = beam.find((node) => node.action === rootAction);
+      if (!parent) continue;
+      const childNodes = nodeCandidates.map(
+        (candidate) => this.buildChildNode(parent, candidate, 2)
+      );
+      progressiveNodesByDepth.get(2).set(parent, childNodes);
+      for (let index = 0; index < childNodes.length; index += 1) {
+        const childNode = childNodes[index];
+        const nextBest = this.searchPolicy.bestByValue([
+          bestSeenCandidate,
+          childNode
+        ].filter(Boolean));
+        if (nextBest !== bestSeenCandidate) {
+          workDiagnostics.incumbentUpdateCount += 1;
+          const childCandidate = nodeCandidates[index];
+          workDiagnostics.firstCompletedIncumbentAtWorkCount ??=
+            childCandidate.completedAtWorkCount;
+          workDiagnostics.finalIncumbentAtWorkCount = childCandidate.completedAtWorkCount;
+        }
+        bestSeenCandidate = nextBest;
+      }
+    }
+
+    // 先沿当前 fully-materialized best 节点推进一条 spine，再执行标准逐层 beam。
+    // 每层结果按父节点身份缓存；父节点进入常规 beam 时直接复用，因此 COMPLETE
+    // 仍覆盖原有逐层候选，而 TIME 不必等同层所有 sibling 完成后才看见下一层。
+    let progressiveSpine = this.searchPolicy.bestByValue(
+      activeBeam.filter((node) => !node.terminal)
+    );
+    for (let depth = 2;
+      progressiveSpine && depth <= structure.depth && !budget.shouldStop();
+      depth += 1) {
+      workDiagnostics.activeRoot = this.candidateMaterializer.describeAction(
+        progressiveSpine.action
+      );
+      let depthCache = progressiveNodesByDepth.get(depth);
+      if (!depthCache) {
+        depthCache = new Map();
+        progressiveNodesByDepth.set(depth, depthCache);
+      }
+      let childNodes = depthCache.get(progressiveSpine) ?? null;
+      let childCandidates = null;
+      if (!childNodes) {
+        const expansion = await this.materializeChildCandidates({
+          parentState:progressiveSpine.state,
+          parentProvenance:progressiveSpine.remainingProvenance,
+          depth,
+          player,
+          simulator,
+          budget,
+          context,
+          structure,
+          options,
+          workDiagnostics
+        });
+        if (expansion.cancelled) break;
+        childCandidates = expansion.candidates;
+        childNodes = childCandidates.map(
+          (candidate) => this.buildChildNode(progressiveSpine, candidate, depth)
+        );
+        depthCache.set(progressiveSpine, childNodes);
+      }
+      for (let index = 0; index < childNodes.length; index += 1) {
+        const childNode = childNodes[index];
+        const nextBest = this.searchPolicy.bestByValue([
+          bestSeenCandidate,
+          childNode
+        ].filter(Boolean));
+        if (nextBest !== bestSeenCandidate) {
+          workDiagnostics.incumbentUpdateCount += 1;
+          const completedAtWorkCount = childCandidates?.[index]?.completedAtWorkCount
+            ?? budget.simulationCalls;
+          workDiagnostics.firstCompletedIncumbentAtWorkCount ??= completedAtWorkCount;
+          workDiagnostics.finalIncumbentAtWorkCount = completedAtWorkCount;
+        }
+        bestSeenCandidate = nextBest;
+      }
+      progressiveSpine = this.searchPolicy.bestByValue(
+        childNodes.filter((node) => !node.terminal)
+      );
+      workDiagnostics.activeRoot = null;
+    }
+
     for (let depth = 2; depth <= structure.depth; depth += 1) {
       if (budget.shouldStop() || activeBeam.every((node) => node.terminal)) break;
       const candidates = [];
@@ -503,75 +808,38 @@ export class Planner {
           continue;
         }
         workDiagnostics.activeRoot = this.candidateMaterializer.describeAction(node.action);
-        const followActions = this.generateFromVisible(node.state, player.id, budget);
-        workDiagnostics.childBranches += followActions.length;
-        const nodeCandidates = [];
-        for (const action of followActions) {
-          if (budget.shouldStop()) break;
-          this.candidateMaterializer.observeCandidate(action, context);
-          const prepared = this.prepareCandidate(budget, depth, () => {
-            budget.observeSimulation();
-            const state = simulator.apply(node.state, action, player.id);
-            const candidate = this.candidateMaterializer.materialize({
-              action,
-              beforeState:node.state,
-              afterState:state,
-              player,
-              depth,
-              remainingProvenance:node.remainingProvenance,
-              simulator,
-              context,
-              collectDiagnostics:false,
-              searchBudget:budget
-            });
-            return { state, candidate };
-          });
-          const state = prepared?.state ?? null;
-          const candidate = prepared?.candidate ?? null;
-          if (!candidate) {
-            workDiagnostics.abortedCandidateCount += 1;
-            break;
-          }
-          candidate.completedAtWorkCount = budget.simulationCalls;
-          nodeCandidates.push(candidate);
-          budget.observeNode();
-          if (budget.expandedNodes % structure.yieldEvery === 0) {
-            budget.observeYield();
-            if (!(await this.yieldControl(options.gameId))) {
-              budget.cancel();
-              return this.recordResult({
-                budget,
-                structure,
-                choice:null,
-                context,
-                rootLedgers,
-                workDiagnostics
-              });
-            }
-          }
+        const cachedChildNodes = progressiveNodesByDepth.get(depth)?.get(node) ?? null;
+        if (cachedChildNodes) {
+          candidates.push(...cachedChildNodes);
+          workDiagnostics.activeRoot = null;
+          continue;
         }
-        this.candidateMaterializer.finalizeSiblings(nodeCandidates);
+        const expansion = await this.materializeChildCandidates({
+          parentState:node.state,
+          parentProvenance:node.remainingProvenance,
+          depth,
+          player,
+          simulator,
+          budget,
+          context,
+          structure,
+          options,
+          workDiagnostics
+        });
+        if (expansion.cancelled) {
+          return this.recordResult({
+            budget,
+            structure,
+            choice:null,
+            provisionalRootFallback,
+            context,
+            rootLedgers,
+            workDiagnostics
+          });
+        }
+        const nodeCandidates = expansion.candidates;
         for (const candidate of nodeCandidates) {
-          const valueScore = node.valueScore + candidate.transitionValue;
-          const nextNode = {
-            action:node.action,
-            state:candidate.state,
-            terminal:candidate.terminal,
-            valueScore,
-            pruneScore:this.searchPolicy.pruneScore(
-              valueScore,
-              candidate.prior,
-              depth
-            ),
-            searchCredit:candidate.searchCredit,
-            sequence:[...node.sequence, candidate.action],
-            remainingProvenance:candidate.remainingProvenance,
-            remainingHistory:[
-              ...node.remainingHistory,
-              candidate.remainingProvenance
-            ],
-            frontierResidual:candidate.frontierResidual
-          };
+          const nextNode = this.buildChildNode(node, candidate, depth);
           candidates.push(nextNode);
           const nextBest = this.searchPolicy.bestByValue([
             bestSeenCandidate,
@@ -602,7 +870,7 @@ export class Planner {
     // 已物化 end 可在任何停止原因下比较；未物化 end 只有在全部 non-end
     // 根动作都已物化后才能恢复，不得越过同样未比较的 card/skill sibling。
     if (rootTerminalAction) {
-      const allNonTerminalRootsMaterialized = uniqueRootActions.every((action) => (
+      const allNonTerminalRootsMaterialized = scheduledRootActions.every((action) => (
         this.candidateMaterializer.findTerminalAction([action])
         || materializedRootActions.has(action)
       ));
@@ -654,6 +922,7 @@ export class Planner {
             budget,
             structure,
             choice,
+            provisionalRootFallback,
             context,
             rootLedgers,
             workDiagnostics
@@ -661,6 +930,7 @@ export class Planner {
         }
         budget.observeNode();
         workDiagnostics.completedRootCandidateCount += 1;
+        workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, 1);
         workDiagnostics.activeRoot = null;
         workDiagnostics.rootWork.push({
           action:rootDescriptor,
@@ -690,6 +960,7 @@ export class Planner {
       budget,
       structure,
       choice,
+      provisionalRootFallback,
       context,
       rootLedgers,
       workDiagnostics

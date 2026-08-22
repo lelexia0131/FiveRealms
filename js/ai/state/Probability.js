@@ -237,13 +237,13 @@ function branchState(branch = {}) {
 
 /*
 功能
-为条件和资源状态均规范化的完整分支生成稳定签名。
+为已经规范化的条件和资源状态生成稳定签名。
 
 调用方
-mergeProbabilityStateBranches。
+mergeProbabilityStateBranchesWithCheckpoint。
 
 输入
-完整概率状态分支。
+规范化条件与已排序状态字段。
 
 输出
 稳定 JSON 字符串。
@@ -255,16 +255,52 @@ mergeProbabilityStateBranches。
 无。
 
 调用函数
-normalizeConditions、branchState。
+JSON.stringify。
 
 边界与不变量
+调用方必须传入本次 operation 已经规范化的局部结果，避免为签名重复解析分支；
 只有条件和所有状态字段均相同的分支才共享签名。
 */
-function stateSignature(branch) {
+function stateSignatureFromNormalizedParts(conditions, state) {
   return JSON.stringify({
-    conditions:normalizeConditions(branch?.conditions),
-    state:branchState(branch)
+    conditions,
+    state
   });
+}
+
+/*
+功能
+为一次状态 join 局部预解析分支条件、状态字段与兼容比较条目。
+
+调用方
+joinProbabilityStateBranchesWithCheckpoint。
+
+输入
+已经过当前 partition merge 的概率状态分支。
+
+输出
+只在本次 join operation 内使用的预计算普通对象。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+branchState、normalizeConditions。
+
+边界与不变量
+不得修改或跨 operation 缓存输入分支；状态和条件各解析一次，概率值保持原分支数值。
+*/
+function prepareProbabilityStateBranch(branch) {
+  const state = branchState(branch);
+  return {
+    probability:branch.probability,
+    conditions:normalizeConditions(branch?.conditions),
+    state,
+    stateEntries:Object.entries(state)
+  };
 }
 
 /*
@@ -275,7 +311,7 @@ function stateSignature(branch) {
 joinProbabilityStateBranches。
 
 输入
-已联合基础分支与候选分支。
+已局部预计算的基础分支与候选分支。
 
 输出
 条件和同名状态字段均兼容时返回 true。
@@ -287,17 +323,15 @@ joinProbabilityStateBranches。
 无。
 
 调用函数
-conditionsCompatible、branchState。
+conditionsCompatible。
 
 边界与不变量
-同名状态字段取值冲突必须拒绝联合。
+同名状态字段取值冲突必须拒绝联合；不得在 base × candidate 比较中重新解析状态字段。
 */
 function stateBranchesCompatible(base, candidate) {
   if (!conditionsCompatible(base.conditions, candidate.conditions)) return false;
-  const baseState = branchState(base);
-  const candidateState = branchState(candidate);
-  return Object.entries(baseState).every(([key, value]) => (
-    candidateState[key] === undefined || Object.is(candidateState[key], value)
+  return base.stateEntries.every(([key, value]) => (
+    candidate.state[key] === undefined || Object.is(candidate.state[key], value)
   ));
 }
 
@@ -452,7 +486,7 @@ export function totalBranchProbability(branches = []) {
 无。
 
 调用函数
-branchState、normalizeConditions、stateSignature。
+branchState、normalizeConditions、stateSignatureFromNormalizedParts。
 
 边界与不变量
 状态不同的世界不得因条件相同而合并。
@@ -464,12 +498,14 @@ function mergeProbabilityStateBranchesWithCheckpoint(branches = [], checkpoint =
     const rawBranch = branches[index];
     const probability = Math.max(0, Number(rawBranch?.probability) || 0);
     if (probability <= PROBABILITY_EPSILON) continue;
+    const state = branchState(rawBranch);
+    const conditions = normalizeConditions(rawBranch?.conditions);
     const branch = {
-      ...branchState(rawBranch),
+      ...state,
       probability,
-      conditions:normalizeConditions(rawBranch?.conditions)
+      conditions
     };
-    const signature = stateSignature(branch);
+    const signature = stateSignatureFromNormalizedParts(conditions, state);
     const current = merged.get(signature);
     if (current) current.probability += probability;
     else merged.set(signature, branch);
@@ -555,7 +591,7 @@ Simulator 与多资源联合评分、状态契约测试。
 无。
 
 调用函数
-mergeProbabilityStateBranches、stateBranchesCompatible、branchState、normalizeConditions。
+mergeProbabilityStateBranches、prepareProbabilityStateBranch、stateBranchesCompatible、normalizeConditions。
 
 边界与不变量
 共享条件只条件化一次，独立条件才相乘，同名状态冲突必须排除。
@@ -567,15 +603,17 @@ function joinProbabilityStateBranchesWithCheckpoint(partitions, checkpoint = nul
     const partition = mergeProbabilityStateBranchesWithCheckpoint(rawPartition, checkpoint);
     if (partition === null) return null;
     if (!partition.length) return [];
+    const preparedJoined = joined.map(prepareProbabilityStateBranch);
+    const preparedPartition = partition.map(prepareProbabilityStateBranch);
     const next = [];
-    for (let baseIndex = 0; baseIndex < joined.length; baseIndex += 1) {
+    for (let baseIndex = 0; baseIndex < preparedJoined.length; baseIndex += 1) {
       if (baseIndex % 32 === 0 && checkpoint?.() === false) return null;
-      const base = joined[baseIndex];
+      const base = preparedJoined[baseIndex];
       const compatibleBranches = [];
       let denominator = 0;
-      for (let partitionIndex = 0; partitionIndex < partition.length; partitionIndex += 1) {
+      for (let partitionIndex = 0; partitionIndex < preparedPartition.length; partitionIndex += 1) {
         if (partitionIndex % 32 === 0 && checkpoint?.() === false) return null;
-        const candidate = partition[partitionIndex];
+        const candidate = preparedPartition[partitionIndex];
         if (!stateBranchesCompatible(base, candidate)) continue;
         compatibleBranches.push(candidate);
         denominator += Math.max(0, Number(candidate.probability) || 0);
@@ -585,8 +623,8 @@ function joinProbabilityStateBranchesWithCheckpoint(partitions, checkpoint = nul
         if (candidateIndex % 32 === 0 && checkpoint?.() === false) return null;
         const candidate = compatibleBranches[candidateIndex];
         next.push({
-          ...branchState(base),
-          ...branchState(candidate),
+          ...base.state,
+          ...candidate.state,
           probability:base.probability * candidate.probability / denominator,
           conditions:normalizeConditions({ ...base.conditions, ...candidate.conditions })
         });

@@ -185,7 +185,7 @@ export function tacticJudgmentProbability(remainingCardCounts = null) {
 sealOutcomeProbabilities、正式边界与直接领域测试。
 
 输入
-过滤状态与封印持有者。
+过滤状态、封印持有者与可选的状态分支联合能力。
 
 输出
 零到一的团队反制概率。
@@ -197,12 +197,17 @@ sealOutcomeProbabilities、正式边界与直接领域测试。
 无。
 
 调用函数
-clampProbability、joinProbabilityStateBranches、totalBranchProbability。
+clampProbability、joinStateBranches、totalBranchProbability。
 
 边界与不变量
-带共享 condition keys 的队友容量只条件化一次；只有缺少正式数量分支的旧状态才使用独立二元回退。
+带共享 condition keys 的队友容量只条件化一次；只有缺少正式数量分支的旧状态才使用独立二元回退；
+Domain 独立调用默认使用同步 raw join，搜索调用方可注入 cooperative join。
 */
-export function sealCounterProbability(state, holder) {
+export function sealCounterProbability(
+  state,
+  holder,
+  joinStateBranches = joinProbabilityStateBranches
+) {
   if (!holder?.alive) return 0;
   const team = (state?.players ?? [])
     .filter((player) => player.alive && player.battleTeam === holder.battleTeam);
@@ -222,7 +227,7 @@ export function sealCounterProbability(state, holder) {
     }));
   });
   if (!partitions.length) return 0;
-  const worlds = joinProbabilityStateBranches(...partitions);
+  const worlds = joinStateBranches(...partitions);
   return clampProbability(totalBranchProbability(worlds.filter(
     (world) => fields.some((field) => world[field] >= 1)
   )));
@@ -236,7 +241,7 @@ export function sealCounterProbability(state, holder) {
 value adapter、正式边界与直接领域测试。
 
 输入
-过滤状态与封印持有者。
+过滤状态、封印持有者与可选的状态分支联合能力。
 
 输出
 冻结的 present/countered/judgment/success/skipAction/cleared 概率对象。
@@ -251,11 +256,27 @@ value adapter、正式边界与直接领域测试。
 sealPresenceProbability、sealCounterProbability、tacticJudgmentProbability。
 
 边界与不变量
-countered、success、skipAction 互斥且总和等于 present；状态无论判定结果均清除。
+countered、success、skipAction 互斥且总和等于 present；状态无论判定结果均清除；
+presence 为零时直接返回冻结零值且不启动团队反制 join；
+未注入能力时保持 Domain raw 概率语义。
 */
-export function sealOutcomeProbabilities(state, holder) {
+export function sealOutcomeProbabilities(
+  state,
+  holder,
+  joinStateBranches = joinProbabilityStateBranches
+) {
   const present = sealPresenceProbability(holder);
-  const counter = sealCounterProbability(state, holder);
+  if (present <= 0) {
+    return Object.freeze({
+      present:0,
+      countered:0,
+      judgment:0,
+      success:0,
+      skipAction:0,
+      cleared:0
+    });
+  }
+  const counter = sealCounterProbability(state, holder, joinStateBranches);
   const tactic = tacticJudgmentProbability(state?.remainingCardCounts);
   const judgment = present * (1 - counter);
   return Object.freeze({

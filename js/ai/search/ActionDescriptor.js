@@ -20,6 +20,39 @@ Planner、AIController 重绑边界与搜索测试。
 
 /*
 功能
+递归规范动作描述中的数组和普通对象属性顺序。
+
+调用方
+schedulingKey。
+
+输入
+动作描述中的普通 data 值。
+
+输出
+属性顺序稳定且不共享可变容器的新值。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+自身递归调用。
+
+边界与不变量
+不得删除 selection 语义或重排数组；只规范普通对象键顺序。
+*/
+function normalizeDescriptorValue(value) {
+  if (Array.isArray(value)) return value.map(normalizeDescriptorValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, normalizeDescriptorValue(value[key])])
+  );
+}
+
+/*
+功能
 把动作中的实体引用转换为稳定的搜索描述。
 
 调用方
@@ -67,4 +100,42 @@ export function describeAction(action) {
   };
 }
 
-export const ActionDescriptor = Object.freeze({ describe:describeAction });
+/*
+功能
+为 root scheduling 生成不依赖实体手牌排列的稳定搜索语义键。
+
+调用方
+CandidateMaterializer.rootSchedulingKey。
+
+输入
+搜索候选动作。
+
+输出
+由 type、definition/skill、目标顺序与 selection 构成的稳定字符串。
+
+读取状态
+只读 action 已携带的公开搜索语义。
+
+写入状态
+无。
+
+调用函数
+describeAction、normalizeDescriptorValue、JSON.stringify。
+
+边界与不变量
+不得包含 card instance ID 或 hand index；目标数组顺序和 selection 必须保留。
+*/
+export function schedulingKey(action) {
+  const descriptor = describeAction(action);
+  return JSON.stringify(normalizeDescriptorValue({
+    type:descriptor.type,
+    cardId:descriptor.cardId,
+    targetIds:descriptor.targetIds,
+    selection:descriptor.selection
+  }));
+}
+
+export const ActionDescriptor = Object.freeze({
+  describe:describeAction,
+  schedulingKey
+});
