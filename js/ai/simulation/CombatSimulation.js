@@ -32,6 +32,7 @@ import { getDyingRescueResponderOrder } from "../../domain/rules/response/Respon
 import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
 import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js";
 import { PROBABILITY_CLASSIFICATION, PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, probabilityEventPartition, totalBranchProbability } from "../state/Probability.js";
+import { mutateHiddenPool, projectHiddenSummaries } from "../state/HiddenPool.js";
 import { clampProbability, unionProbability } from "./SimulationSupport.js";
 
 /*
@@ -157,8 +158,8 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   */
   applyDuel(state, actor, target, scale, damageContext = { cardDamage:true, emberTriggeredProbabilities:{} }) {
     const resolutionProbability = clampProbability(scale);
-    const actorDistribution = this.syncAssaultSummary(actor);
-    const targetDistribution = this.syncAssaultSummary(target);
+    const actorDistribution = actor.assaultCountDistribution ?? [{ count:0, probability:1 }];
+    const targetDistribution = target.assaultCountDistribution ?? [{ count:0, probability:1 }];
     const actorState = actorDistribution.map((branch) => ({
       probability:branch.probability,
       conditions:branch.conditions ?? {},
@@ -201,22 +202,53 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       expectedActorSpent += branch.probability * branch.actorSpent;
       expectedTargetSpent += branch.probability * branch.targetSpent;
     }
-    const actorRemainingDistribution = this.syncAssaultSummary(
-      actor,
-      this.projectProbabilityWork(outcomeWorlds, (branch) => ({
-        count:branch.actorCount - branch.actorSpent
-      }), "CombatSimulation.applyDuel:actor-remaining")
-    );
-    const targetRemainingDistribution = this.syncAssaultSummary(
-      target,
-      this.projectProbabilityWork(outcomeWorlds, (branch) => ({
-        count:branch.targetCount - branch.targetSpent
-      }), "CombatSimulation.applyDuel:target-remaining")
-    );
-    actor.handCount = Math.max(0, actor.handCount - expectedActorSpent);
-    target.handCount = Math.max(0, target.handCount - expectedTargetSpent);
+    const actorRemainingDistribution = this.projectProbabilityWork(outcomeWorlds, (branch) => ({
+      count:branch.actorCount - branch.actorSpent
+    }), "CombatSimulation.applyDuel:actor-remaining");
+    const targetRemainingDistribution = this.projectProbabilityWork(outcomeWorlds, (branch) => ({
+      count:branch.targetCount - branch.targetSpent
+    }), "CombatSimulation.applyDuel:target-remaining");
+    const actorKnownBefore = (Array.isArray(actor.hand) ? actor.hand : [])
+      .filter((entry) => entry.definitionId === "assault")
+      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+    const targetKnownBefore = (Array.isArray(target.hand) ? target.hand : [])
+      .filter((entry) => entry.definitionId === "assault")
+      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
     this.consumeKnownCardsFromHand(state, actor, "assault", expectedActorSpent);
     this.consumeKnownCardsFromHand(state, target, "assault", expectedTargetSpent);
+    const actorKnownAfter = (Array.isArray(actor.hand) ? actor.hand : [])
+      .filter((entry) => entry.definitionId === "assault")
+      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+    const targetKnownAfter = (Array.isArray(target.hand) ? target.hand : [])
+      .filter((entry) => entry.definitionId === "assault")
+      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+    const actorAnonymousSpent = Math.max(
+      0, expectedActorSpent - (actorKnownBefore - actorKnownAfter)
+    );
+    const targetAnonymousSpent = Math.max(
+      0, expectedTargetSpent - (targetKnownBefore - targetKnownAfter)
+    );
+    for (const [player, spent] of [
+      [actor, actorAnonymousSpent],
+      [target, targetAnonymousSpent]
+    ]) {
+      const whole = Math.floor(spent);
+      if (whole > 0) mutateHiddenPool(state.hiddenPoolState, {
+        type:"REMOVE",
+        sourceBucketId:player.id,
+        definitionId:"assault",
+        count:whole
+      });
+      if (spent - whole > PROBABILITY_EPSILON) mutateHiddenPool(state.hiddenPoolState, {
+        type:"REMOVE",
+        sourceBucketId:player.id,
+        definitionId:"assault",
+        probability:spent - whole
+      });
+    }
+    actor.handCount = Math.max(0, actor.handCount - expectedActorSpent);
+    target.handCount = Math.max(0, target.handCount - expectedTargetSpent);
+    projectHiddenSummaries(state);
     this.applyDamage(state, target, actor, DOMAIN_CARD_DEFINITIONS.duel.failDamage, {
       canBlock:false,
       eventBranches:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
@@ -480,15 +512,11 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       // 无条件的匿名容量分支在这里显式键化，使判定格挡身份、判定前容量和
       // 最终 blockCount 在后续世界中保持同一条件关联。
       const preJudgmentKey = this.nextProbabilityEventKey(state, "pre-judgment-blocks");
-      const preJudgmentBlockState = this.getBlockCountBranches(
-        target, state?.remainingCardCounts ?? null
-      ).map((branch, index) => ({
+      const preJudgmentBlockState = (target.blockCountDistribution ?? []).map((branch, index) => ({
         probability:branch.probability,
         conditions:{ ...branch.conditions, [preJudgmentKey]:`v${index}` },
         blockCount:branch.blockCount
       }));
-      target.blockCountDistribution = preJudgmentBlockState;
-      this.syncBlockSummary(target);
       const judgmentBlockCards = [];
       // 每个基础判定牌分别加入身份；判得格挡可在全部雷达槽位完成后用于当前响应。
       for (let slot = 0; slot < maximumRequirement; slot += 1) {
@@ -552,44 +580,17 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
                 requiredCount:getRequiredBlockCount(null, true)
               }
             ];
-      const blockState = this.getBlockCountBranches(target, state?.remainingCardCounts ?? null);
-      const blockWorlds = this.joinProbabilityWork(
-        [eventWorlds, requiredPartition, blockState],
+      const responseWorlds = this.joinProbabilityWork(
+        [eventWorlds, requiredPartition],
         "CombatSimulation.applyDamage:block"
-      );
-      const consumedBranches = [];
-      let blockedProbability = 0;
-      for (let index = 0; index < blockWorlds.length; index += 1) {
-        if (index % 32 === 0) this.checkpointSearchWork();
-        const branch = blockWorlds[index];
-        if (!branch.occurs || branch.blockCount < branch.requiredCount) continue;
-        consumedBranches.push(branch);
-        blockedProbability += Math.max(0, Number(branch.probability) || 0);
-      }
+      ).map((branch) => ({ ...branch, responseAllowed:true }));
+      const response = this.consumeBlockResponseWorlds(state, target, responseWorlds);
+      const blockedProbability = response.blockedProbability;
       blockedByCardChance = eventProbability > 0
         ? Math.min(1, blockedProbability / eventProbability)
         : 0;
       passChance = Math.max(0, Math.min(1, 1 - blockedByCardChance));
-      for (let index = 0; index < consumedBranches.length; index += 1) {
-        if (index % 32 === 0) this.checkpointSearchWork();
-        const branch = consumedBranches[index];
-        expectedBlockSpend += branch.probability * branch.requiredCount;
-      }
-      const remainingBlockBranches = this.projectProbabilityWork(blockWorlds, (branch) => ({
-        blockCount: branch.occurs && branch.blockCount >= branch.requiredCount
-          ? Math.max(0, branch.blockCount - branch.requiredCount)
-          : branch.blockCount
-      }), "CombatSimulation.applyDamage:block-remaining");
-      target.blockCountDistribution = remainingBlockBranches;
-      this.syncBlockSummary(target);
-      const identityWorlds = this.projectProbabilityWork(blockWorlds, (branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        requiredCount:branch.requiredCount,
-        blockUsed:Boolean(branch.occurs && branch.blockCount >= branch.requiredCount)
-      }), "CombatSimulation.applyDamage:block-identities");
-      this.consumeBlockIdentities(state, target, identityWorlds);
-      target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
+      expectedBlockSpend += response.expectedBlockSpend;
     }
     let damagePassProbability = eventProbability * passChance;
     if (attackOutcomeWorlds) {
@@ -797,43 +798,13 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     return actualDamage;
   }
 
-  /*
-  功能
-  扣减生命值分支并同步确定生命摘要，不在此重复结算救援。
-
-  调用方
-  需要绕过伤害/护盾响应的生命流失镜像入口。
-
-  输入
-  独立 SearchState、存活目标与正生命流失量。
-
-  输出
-  无返回值；目标生命与濒死结果已推进。
-
-  读取状态
-  目标 alive 与 hp。
-
-  写入状态
-  目标 hp，以及 resolveFatal 产生的救援/死亡状态。
-
-  调用函数
-  resolveFatal。
-
-  边界与不变量
-  本函数不触发格挡、护盾或伤后伤害钩子；救援只由 resolveFatal 结算一次。
-  */
-  applyHpLoss(state, target, amount) {
-    if (!target.alive || amount <= 0) return;
-    target.hp -= amount;
-    this.resolveFatal(state, target);
-  }
 
   /*
   功能
   在濒死世界中按合法救援资源和角色被动结算存活、死亡及资源消耗。
 
   调用方
-  applyDamage 与 applyHpLoss：在目标生命不大于零时结算救援和死亡。
+  applyDamage：在目标生命不大于零时结算救援和死亡。
 
   输入
   独立 SearchState、濒死目标与可空伤害来源。
@@ -876,17 +847,26 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       target.statuses = [];
       target.handCount = 0;
       target.hand = [];
-      target.expectedAssaultCount = 0;
-      target.assaultCountDistribution = [{ count:0, probability:1 }];
-      target.expectedRecoverCount = 0;
-      target.assaultResponseProbability = 0;
-      target.blockProbability = 0;
-      target.twoBlockProbability = 0;
-      target.counterProbability = 0;
-      target.counterCountDistribution = [{ probability:1, conditions:{}, counterCount:0 }];
-      if (Array.isArray(target.knownCards)) {
-        target.knownCards = target.knownCards.filter((entry) => entry.definitionId !== "counter");
-      }
+      target.knownCards = [];
+      const anonymousSlots = Math.max(
+        0,
+        Number(state.hiddenPoolState?.slotsByBucket?.[target.id]) || 0
+      );
+      const wholeSlots = Math.floor(anonymousSlots);
+      if (wholeSlots > 0) mutateHiddenPool(state.hiddenPoolState, {
+        type:"REMOVE",
+        sourceBucketId:target.id,
+        count:wholeSlots
+      });
+      if (anonymousSlots - wholeSlots > PROBABILITY_EPSILON) mutateHiddenPool(
+        state.hiddenPoolState,
+        {
+          type:"REMOVE",
+          sourceBucketId:target.id,
+          probability:anonymousSlots - wholeSlots
+        }
+      );
+      projectHiddenSummaries(state);
       this.setSimulatedEquipment(target, null, 0);
       this.clearHuntMarksBySource(state, target.id);
       const targetFact = roster.find((player) => player.id === target.id) ?? null;
@@ -922,8 +902,22 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         usedThisRound = true;
         remaining -= healing;
         healingApplied += healing;
-        rescuer.expectedRecoverCount = Math.max(0, available - spent);
+        const knownBefore = (Array.isArray(rescuer.hand) ? rescuer.hand : [])
+          .filter((entry) => entry.definitionId === "recover")
+          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+        this.consumeKnownCardsFromHand(state, rescuer, "recover", spent);
+        const knownAfter = (Array.isArray(rescuer.hand) ? rescuer.hand : [])
+          .filter((entry) => entry.definitionId === "recover")
+          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+        const anonymousSpent = Math.max(0, spent - (knownBefore - knownAfter));
+        if (anonymousSpent > PROBABILITY_EPSILON) mutateHiddenPool(state.hiddenPoolState, {
+          type:"REMOVE",
+          sourceBucketId:rescuer.id,
+          definitionId:"recover",
+          probability:anonymousSpent
+        });
         rescuer.handCount = Math.max(0, (rescuer.handCount ?? 0) - spent);
+        projectHiddenSummaries(state);
         if (canRejuvenate) {
           // 概率救援按实际消耗的期望调息推进回春：摸牌与次数消耗必须共享同一概率权重，
           // 并以每回合 2 次为上限，避免“摸牌按分数计、次数却完整消耗”的条件世界失配。
@@ -938,7 +932,6 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
             rescuer.rejuvenationTriggerCount = (rescuer.rejuvenationTriggerCount ?? 0) + consume;
           }
         }
-        this.consumeKnownCardsFromHand(state, rescuer, "recover", spent);
         this.simulateCoordination(state, rescuer, [target], spent);
       }
       rounds += 1;

@@ -180,7 +180,7 @@ function conditionSignature(conditions) {
 判断两个世界条件是否不存在同键冲突。
 
 调用方
-joinProbabilityStateBranches、partitionAvailabilityBranches。
+joinProbabilityStateBranches。
 
 输入
 两个条件键值对象。
@@ -1013,65 +1013,4 @@ export function binaryConditionPartition(key, presentProbability, presentMatches
     { probability, conditions:{ [key]:"present" }, matches:presentMatches },
     { probability:1 - probability, conditions:{ [key]:"absent" }, matches:absentMatches }
   ].filter((branch) => branch.probability > PROBABILITY_EPSILON);
-}
-
-/*
-功能
-用完整世界条件分区细分资源可用质量为匹配与保留两部分。
-
-调用方
-Simulator 条件化资源消费。
-
-输入
-资源可用分支与带 matches 字段的完整条件分区。
-
-输出
-分别合并的 matching 和 remaining 概率分支。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-getAvailabilityBranches、conditionsCompatible、normalizeConditions、mergeProbabilityBranches。
-
-边界与不变量
-共享条件只做条件化不重复相乘，匹配与保留质量共同覆盖原可用质量。
-*/
-export function partitionAvailabilityBranches(availabilityBranches, conditionPartition) {
-  const available = getAvailabilityBranches({ availabilityBranches }, 0);
-  const worlds = (conditionPartition?.length ? conditionPartition : [
-    { probability:1, conditions:{}, matches:true }
-  ]).filter((branch) => (Number(branch?.probability) || 0) > PROBABILITY_EPSILON);
-  const matching = [];
-  const remaining = [];
-
-  for (const availableBranch of available) {
-    const compatibleWorlds = worlds.filter((world) => (
-      conditionsCompatible(availableBranch.conditions, world.conditions ?? {})
-    ));
-    const denominator = compatibleWorlds.reduce(
-      (sum, world) => sum + (Number(world.probability) || 0),
-      0
-    );
-    if (denominator <= PROBABILITY_EPSILON) {
-      remaining.push(availableBranch);
-      continue;
-    }
-    for (const world of compatibleWorlds) {
-      const probability = availableBranch.probability * (Number(world.probability) || 0) / denominator;
-      const branch = {
-        probability,
-        conditions:normalizeConditions({ ...availableBranch.conditions, ...(world.conditions ?? {}) })
-      };
-      (world.matches ? matching : remaining).push(branch);
-    }
-  }
-
-  return {
-    matching:mergeProbabilityBranches(matching),
-    remaining:mergeProbabilityBranches(remaining)
-  };
 }

@@ -23,6 +23,12 @@ import {
   PROBABILITY_CLASSIFICATION,
   PROBABILITY_EPSILON
 } from "./Probability.js";
+import {
+  HIDDEN_POOL_DEFINITION_IDS,
+  createHiddenPoolState,
+  hypergeometricCountDistribution,
+  queryHiddenPool
+} from "./HiddenPool.js";
 
 const CARD_COUNTS = RULESET_DEFINITION.deckComposition;
 
@@ -58,100 +64,21 @@ function normalizeRemainingCardCounts(remainingCardCounts) {
   return Object.freeze({ ...remainingCardCounts });
 }
 
-/*
-功能
-计算组合数，供有限牌池的超几何概率使用。
 
-调用方
-hypergeometricCountDistribution。
 
-输入
-非负总体数与选择数。
 
-输出
-组合数；越界选择返回零。
 
-读取状态
-无。
 
-写入状态
-无。
 
-调用函数
-无。
 
-边界与不变量
-使用较短乘积路径降低浮点放大；当前牌组规模内结果保持有限。
-*/
-function combination(total, selected) {
-  if (selected < 0 || selected > total) return 0;
-  const count = Math.min(selected, total - selected);
-  let result = 1;
-  for (let index = 1; index <= count; index += 1) {
-    result = result * (total - count + index) / index;
-  }
-  return result;
-}
 
-/*
-功能
-计算有限剩余牌池无放回抽取的目标牌数量分布。
 
-调用方
-BeliefState 联合分配、ResponsePolicy、Simulation 动态 Belief 与正式概率测试。
 
-输入
-剩余总数 N、目标牌数 K、未知槽位数 n 与已知目标牌偏移。
 
-输出
-冻结且归一的 count/probability 分支数组。
 
-读取状态
-无。
 
-写入状态
-无。
 
-调用函数
-combination。
 
-边界与不变量
-概率严格采用 C(K,k)C(N-K,n-k)/C(N,n)；n>N 是非法知识快照并抛错。
-*/
-export function hypergeometricCountDistribution(
-  populationSize,
-  successCount,
-  draws,
-  offset = 0
-) {
-  const population = Math.max(0, Math.floor(Number(populationSize) || 0));
-  const successes = Math.max(0, Math.min(population, Math.floor(Number(successCount) || 0)));
-  const sampleSize = Math.max(0, Math.floor(Number(draws) || 0));
-  const knownOffset = Math.max(0, Math.floor(Number(offset) || 0));
-  if (sampleSize > population) {
-    throw new RangeError("超几何分布的未知槽位超过剩余牌池");
-  }
-  const denominator = combination(population, sampleSize);
-  if (denominator <= 0) {
-    return Object.freeze([Object.freeze({ count:knownOffset, probability:1 })]);
-  }
-  const minimum = Math.max(0, sampleSize - (population - successes));
-  const maximum = Math.min(sampleSize, successes);
-  const branches = [];
-  for (let count = minimum; count <= maximum; count += 1) {
-    const probability = combination(successes, count)
-      * combination(population - successes, sampleSize - count)
-      / denominator;
-    if (probability > PROBABILITY_EPSILON) {
-      branches.push({ count:knownOffset + count, probability });
-    }
-  }
-  const total = branches.reduce((sum, branch) => sum + branch.probability, 0);
-  return Object.freeze(branches.map((branch) => Object.freeze({
-    ...branch,
-    probability:branch.probability / total
-  })));
-}
 
 /*
 功能
@@ -194,148 +121,6 @@ export function hypergeometricProbabilityAtLeast(
   ).reduce((sum, branch) => sum + (branch.count >= required ? branch.probability : 0), 0);
 }
 
-/*
-功能
-为一个牌种枚举全部未知玩家从同一剩余牌池取得目标牌的联合分配世界。
-
-调用方
-createBeliefState。
-
-输入
-观察者 ID、Visible 玩家、合法 Knowledge、牌种与剩余牌计数。
-
-输出
-按玩家 ID 索引的冻结 Belief 数量估计。
-
-读取状态
-观察者手牌、其他玩家 handCount、合法已知牌与剩余计数。
-
-写入状态
-无。
-
-调用函数
-hypergeometricCountDistribution。
-
-边界与不变量
-同一牌种的所有未知玩家共享一个 condition key；联合世界中分配总量不得超过 K，
-且任何玩家的边际不得在后续联合时重新独立相乘。
-*/
-function createSharedCardEstimates(
-  viewerId,
-  players,
-  knowledgeState,
-  definitionId,
-  remainingCardCounts
-) {
-  const modelCounts = remainingCardCounts ?? CARD_COUNTS;
-  const countedPopulation = Object.values(modelCounts).reduce((sum, value) => (
-    sum + (Number.isFinite(Number(value)) ? Math.max(0, Math.floor(Number(value))) : 0)
-  ), 0);
-  const descriptors = players.filter((player) => player.id !== viewerId).map((player) => {
-    const knownCards = knowledgeState.knownCardsByPlayer[player.id] ?? [];
-    return {
-      id:player.id,
-      knownCount:knownCards.filter((card) => card.definitionId === definitionId).length,
-      unknownCount:Math.max(0, Math.floor(Number(player.handCount) || 0) - knownCards.length)
-    };
-  });
-  const totalUnknownSlots = descriptors.reduce((sum, descriptor) => sum + descriptor.unknownCount, 0);
-  // 正式 Remaining Knowledge 会列出全部定义；测试或窄调用方可只列目标定义。
-  // 未列出的槽位只能视为非目标牌，不能据此制造目标实例或拒绝合法的隐藏容量。
-  const population = Math.max(countedPopulation, totalUnknownSlots);
-  const successes = Math.max(
-    0,
-    Math.min(population, Math.floor(Number(modelCounts?.[definitionId]) || 0))
-  );
-  const worlds = [];
-  const allocation = {};
-  /*
-  功能
-  递归展开逐玩家条件超几何分配，并保留完整共享牌池状态。
-
-  调用方
-  createSharedCardEstimates 内部唯一入口。
-
-  输入
-  当前玩家下标、剩余 N/K 与累计联合概率。
-
-  输出
-  无；完成分配时向 worlds 加入独立快照。
-
-  读取状态
-  闭包 descriptors、allocation。
-
-  写入状态
-  闭包 allocation 与 worlds。
-
-  调用函数
-  hypergeometricCountDistribution、自身递归。
-
-  边界与不变量
-  每层同时扣除该玩家全部未知槽位和其中目标牌数，故后续玩家不能重复消费同一实例。
-  */
-  const visit = (index, remainingPopulation, remainingSuccesses, probability) => {
-    if (index >= descriptors.length) {
-      worlds.push({ probability, allocation:{ ...allocation } });
-      return;
-    }
-    const descriptor = descriptors[index];
-    const distribution = hypergeometricCountDistribution(
-      remainingPopulation,
-      remainingSuccesses,
-      descriptor.unknownCount
-    );
-    for (const branch of distribution) {
-      allocation[descriptor.id] = branch.count;
-      visit(
-        index + 1,
-        remainingPopulation - descriptor.unknownCount,
-        remainingSuccesses - branch.count,
-        probability * branch.probability
-      );
-    }
-  };
-  visit(0, population, successes, 1);
-  const conditionKey = `hidden-card-allocation:${definitionId}`;
-  const conditionedWorlds = worlds.map((world) => ({
-    ...world,
-    conditions:{
-      [conditionKey]:descriptors.map((descriptor) => (
-        `${descriptor.id}=${world.allocation[descriptor.id] ?? 0}`
-      )).join("|")
-    }
-  }));
-  const estimates = {};
-  for (const player of players) {
-    if (player.id === viewerId) {
-      const count = (player.hand ?? []).filter((card) => card.definitionId === definitionId).length;
-      estimates[player.id] = Object.freeze({
-        expected:count,
-        atLeastOne:count > 0 ? 1 : 0,
-        atLeastTwo:count > 1 ? 1 : 0,
-        distribution:Object.freeze([Object.freeze({ count, probability:1 })])
-      });
-      continue;
-    }
-    const descriptor = descriptors.find((entry) => entry.id === player.id);
-    const distribution = Object.freeze(conditionedWorlds.map((world) => Object.freeze({
-      count:descriptor.knownCount + (world.allocation[player.id] ?? 0),
-      probability:world.probability,
-      conditions:Object.freeze({ ...world.conditions })
-    })));
-    estimates[player.id] = Object.freeze({
-      expected:distribution.reduce((sum, branch) => sum + branch.count * branch.probability, 0),
-      atLeastOne:distribution.reduce(
-        (sum, branch) => sum + (branch.count >= 1 ? branch.probability : 0), 0
-      ),
-      atLeastTwo:distribution.reduce(
-        (sum, branch) => sum + (branch.count >= 2 ? branch.probability : 0), 0
-      ),
-      distribution
-    });
-  }
-  return Object.freeze(estimates);
-}
 
 /*
 功能
@@ -466,30 +251,55 @@ VisibleState 玩家槽位、Knowledge 合法记忆、卡牌配置密度。
 无。
 
 调用函数
-normalizeRemainingCardCounts、createCardEstimate。
+normalizeRemainingCardCounts、createHiddenPoolState、queryHiddenPool。
 
 边界与不变量
 同一输入必须确定性输出，任何敌方真实未知牌换面都不得改变结果。
 */
 export function createBeliefState(viewerId, visibleState, knowledgeState, remainingCardCounts = null) {
   const counts = normalizeRemainingCardCounts(remainingCardCounts);
-  const estimatesByDefinition = Object.fromEntries(
-    ["recover", "block", "counter", "assault"].map((definitionId) => [
-      definitionId,
-      createSharedCardEstimates(
-        viewerId,
-        visibleState.players,
-        knowledgeState,
-        definitionId,
-        counts
-      )
-    ])
-  );
+  const slotsByBucket = Object.fromEntries(visibleState.players.map((player) => {
+    const knownCards = player.id === viewerId
+      ? (player.hand ?? [])
+      : (knowledgeState.knownCardsByPlayer[player.id] ?? []);
+    return [player.id, player.id === viewerId
+      ? 0
+      : Math.max(0, Math.floor(Number(player.handCount) || 0) - knownCards.length)];
+  }));
+  const hiddenPoolState = createHiddenPoolState({
+    slotsByBucket,
+    cardCounts:counts ?? CARD_COUNTS
+  });
   const playersById = Object.fromEntries(visibleState.players.map((player) => {
-    const recover = estimatesByDefinition.recover[player.id];
-    const block = estimatesByDefinition.block[player.id];
-    const counter = estimatesByDefinition.counter[player.id];
-    const assault = estimatesByDefinition.assault[player.id];
+    const knownCards = player.id === viewerId
+      ? (player.hand ?? [])
+      : (knowledgeState.knownCardsByPlayer[player.id] ?? []);
+    const estimates = Object.fromEntries(HIDDEN_POOL_DEFINITION_IDS.map((definitionId) => {
+      const knownCount = knownCards.filter((card) => card.definitionId === definitionId).length;
+      const distribution = queryHiddenPool(hiddenPoolState, {
+        definitionId,
+        bucketId:player.id
+      }).distribution.map((branch) => Object.freeze({
+        count:branch.count + knownCount,
+        probability:branch.probability
+      }));
+      return [definitionId, {
+        distribution:Object.freeze(distribution),
+        expected:distribution.reduce(
+          (sum, branch) => sum + branch.count * branch.probability, 0
+        ),
+        atLeastOne:distribution.reduce(
+          (sum, branch) => sum + (branch.count >= 1 ? branch.probability : 0), 0
+        ),
+        atLeastTwo:distribution.reduce(
+          (sum, branch) => sum + (branch.count >= 2 ? branch.probability : 0), 0
+        )
+      }];
+    }));
+    const recover = estimates.recover;
+    const block = estimates.block;
+    const counter = estimates.counter;
+    const assault = estimates.assault;
     return [player.id, Object.freeze({
       expectedRecoverCount:recover.expected,
       recoverCountDistribution:recover.distribution,
@@ -507,6 +317,7 @@ export function createBeliefState(viewerId, visibleState, knowledgeState, remain
   return Object.freeze({
     classification:PROBABILITY_CLASSIFICATION.BELIEF_PROBABILITY,
     remainingCardCounts:counts,
+    hiddenPoolState,
     playersById:Object.freeze(playersById)
   });
 }

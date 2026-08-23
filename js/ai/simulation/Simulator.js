@@ -28,6 +28,7 @@ import {
   totalBranchProbability
 } from "../state/Probability.js";
 import { cloneSearchState } from "../state/SearchState.js";
+import { projectHiddenSummaries } from "../state/HiddenPool.js";
 import { hasPassiveSkill } from "../state/RuleProjection.js";
 
 import { clampProbability } from "./SimulationSupport.js";
@@ -64,16 +65,13 @@ class SimulatorCore {
   构造不得回读 GameState；initial 与输入及其他模拟器实例不共享可变对象；缺少资源 query 时仅保留直接测试的旧静态回退。
   */
   constructor(visibleState, options = {}) {
-    this.resourceSelectionPolicy = options.resourceSelectionPolicy ?? null;
     this.resourceValueQuery = options.resourceValueQuery ?? null;
     this.searchBudget = options.searchBudget ?? null;
     this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
     this.initial = cloneSearchState(visibleState);
     this.initializeEquipmentBaselines(this.initial);
-    this.initializeAssaultSummaries(this.initial);
-    this.initializeBlockCountDistributions(this.initial);
-    this.initializeCounterCountDistributions(this.initial);
+    projectHiddenSummaries(this.initial);
     this.initializeMomentumBranches(this.initial);
     // root 结算模拟守卫：目标级 root 的 apply 群伤循环会再次请求 counterDecision，避免递归。
     this._simulatingRootResolution = false;
@@ -434,8 +432,7 @@ class SimulatorCore {
     this.searchBudget?.observeClone?.();
     const cloned = cloneSearchState(state);
     this.initializeEquipmentBaselines(cloned);
-    this.initializeBlockCountDistributions(cloned);
-    this.initializeCounterCountDistributions(cloned);
+    projectHiddenSummaries(cloned);
     this.initializeMomentumBranches(cloned);
     this.syncActiveSkillCosts(cloned);
     return cloned;
@@ -1009,9 +1006,6 @@ class SimulatorCore {
     }
     const card = abstractAction.card;
     if (!card) return next;
-    const assaultAvailabilityBeforeUse = card.definitionId === "assault"
-      ? clampProbability(actor.assaultResponseProbability)
-      : 0;
     const targetId = abstractAction.targets?.[0]?.id;
     const target = next.players.find((player) => player.id === targetId);
     const targetBeforeResponse = state.players.find((player) => player.id === targetId);
@@ -1051,31 +1045,45 @@ class SimulatorCore {
       actor.hand = remainingProbability > 0 ? actor.hand : actor.hand.filter((entry) => entry.id !== card.id);
     }
     const executionProbability = this.eventProbability(cardEventWorlds);
-    if (card.definitionId === "assault" && assaultAvailabilityBeforeUse > PROBABILITY_EPSILON) {
-      this.consumeAssaultForOpportunity(actor,
-        Math.min(1, executionProbability / assaultAvailabilityBeforeUse));
-    }
     // restoreActorHand：root 效果估值专用。当前状态中 root 卡牌已经打出（资源已沉没），
     // 结算模拟时把这张卡的打出成本还原再扣，使资源账目净变化为 0，只体现 root 效果价值。
     const handRestore = abstractAction.restoreActorHand && executionProbability > PROBABILITY_EPSILON ? 1 : 0;
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - executionProbability + handRestore);
+    projectHiddenSummaries(next);
     if (executionProbability <= 0) return next;
     // card-scope 的取消概率与容量消费必须使用同一份 responder 评估；两者之间没有
     // 状态变化，因此重复计算 counterDecision 只会增加开销，不会提供新信息。
     const cardScopeCounterEvaluation = card.category === "tactic"
       && card.counterable !== false && card.counterScope !== "target"
       ? this.evaluateCardScopeCounterResponses(
-        next, actor, card, abstractAction.targets ?? [], abstractAction.selection ?? null
+        next,
+        actor,
+        card,
+        abstractAction.targets ?? [],
+        abstractAction.selection ?? null,
+        { createCondition:true }
       )
       : null;
-    const effectEventWorlds = card.counterScope === "target"
-      ? cardEventWorlds
-      : this.gateEventWorlds(
-        next,
+    let effectEventWorlds = cardEventWorlds;
+    if (card.counterScope !== "target" && cardScopeCounterEvaluation) {
+      const responseWorlds = this.joinProbabilityWork([
         cardEventWorlds,
-        cardScopeCounterEvaluation?.resolutionChance ?? 1,
-        `counter:${card.id ?? card.definitionId}`
+        cardScopeCounterEvaluation.responseWorlds
+      ], "Simulator.apply:card-scope-response");
+      cardScopeCounterEvaluation.responseWorlds = this.projectProbabilityWork(
+        responseWorlds,
+        (branch) => ({
+          responderId:branch.occurs ? branch.responderId : null,
+          availableKnownKeys:branch.availableKnownKeys ?? [],
+        }),
+        "Simulator.apply:card-scope-response-outcome"
       );
+      effectEventWorlds = this.projectProbabilityWork(
+        responseWorlds,
+        (branch) => ({ occurs:Boolean(branch.occurs && branch.responderId === null) }),
+        "Simulator.apply:card-scope-effect"
+      );
+    }
     const scale = this.eventProbability(effectEventWorlds);
     // card-scope 战术的生效概率与反制资源消费必须来自同一 responseEvaluation。
     // 这里兑现该评估的边际取消世界，使同一张反制不能既取消当前战术，又保留在
@@ -1187,7 +1195,7 @@ class SimulatorCore {
       conditions: {},
       anonymousCount: Math.max(0, (Number(actor.handCount) || 0) - explicitAfter)
     }];
-    this.syncCardEstimates(actor, state?.remainingCardCounts);
+    projectHiddenSummaries(state);
   }
 
   /*

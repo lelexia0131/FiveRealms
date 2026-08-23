@@ -45,7 +45,10 @@ import {
 } from "../state/RuleProjection.js";
 import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js";
 import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js";
-import { TransferPolicy } from "../policy/TransferPolicy.js";
+import {
+  buildTransferCandidates,
+  chooseBestPositiveTransfer
+} from "../policy/TransferPolicy.js";
 import { searchSemanticKey } from "./ActionDescriptor.js";
 import {
   PROBABILITY_EPSILON,
@@ -127,7 +130,6 @@ export class ActionGenerator {
   constructor({
     getRootContext = null,
     chooseTransferCombination = null,
-    transferPolicy,
     actionCandidatePolicy
   } = {}) {
     if (getRootContext === null && chooseTransferCombination === null) {
@@ -140,17 +142,12 @@ export class ActionGenerator {
         throw new TypeError("ActionGenerator 缺少依赖：chooseTransferCombination");
       }
     }
-    const resolvedTransferPolicy = transferPolicy ?? new TransferPolicy();
     const resolvedActionCandidatePolicy = actionCandidatePolicy ?? new ActionCandidatePolicy();
-    if (typeof resolvedTransferPolicy.choose !== "function") {
-      throw new TypeError("ActionGenerator 缺少依赖：transferPolicy");
-    }
     if (typeof resolvedActionCandidatePolicy.isLightningStrategicallyForbidden !== "function") {
       throw new TypeError("ActionGenerator 缺少依赖：actionCandidatePolicy");
     }
     this.getRootContext = getRootContext;
     this.chooseTransferCombination = chooseTransferCombination;
-    this.transferPolicy = resolvedTransferPolicy;
     this.actionCandidatePolicy = resolvedActionCandidatePolicy;
   }
 
@@ -546,13 +543,13 @@ export class ActionGenerator {
     const players = state?.players ?? [];
     const excludedCardIds = card.id ? new Set([card.id]) : null;
     const sources = this.getTransferSourcesFromRule(players, actor, card, excludedCardIds, isRangeLegal);
-    return this.transferPolicy.choose({
+    return chooseBestPositiveTransfer(buildTransferCandidates({
       actor,
       sources,
       excludedCardIds,
       remainingCardCounts,
       getReceivers:(from) => this.getTransferReceiversFromRule(players, actor, from, card, isRangeLegal)
-    });
+    }));
   }
 
   /*

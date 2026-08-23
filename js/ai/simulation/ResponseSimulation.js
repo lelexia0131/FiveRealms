@@ -23,6 +23,7 @@ import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjec
 import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
 import { planningCounterDecision, planningDynamicCounterGain } from "../policy/ResponsePolicy.js";
 import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, joinProbabilityStateBranches, probabilityEventPartition, totalBranchProbability } from "../state/Probability.js";
+import { mutateHiddenPool, projectHiddenSummaries } from "../state/HiddenPool.js";
 import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js";
 
 /*
@@ -51,798 +52,23 @@ Simulator.js 文件末尾的组合表达式：在模块加载时把响应资源�
 只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
 */
 export const withResponseSimulation = (Base) => class ResponseSimulation extends Base {
-  /*
-  功能
-  为全部玩家建立格挡数量与已知格挡身份分布，作为后续响应消费的唯一初始状态。
 
-  调用方
-  Simulator 构造与 clone：在任何伤害响应前建立全员格挡容量。
 
-  输入
-  独立 SearchState。
 
-  输出
-  无返回值；每名玩家的正式格挡分布和摘要已存在。
 
-  读取状态
-  players 的 hand/knownCards、handCount、existing block 分布与 remaining counts。
 
-  写入状态
-  缺失的 blockCountDistribution、blockProbability 与 twoBlockProbability。
 
-  调用函数
-  buildInitialBlockCountDistribution、syncBlockSummary。
 
-  边界与不变量
-  已有分布只规范不重采样；每名玩家的确定身份和匿名容量只能计入一次。
-  */
-  initializeBlockCountDistributions(state) {
-    for (const player of state?.players ?? []) {
-      if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
-        player.blockCountDistribution = this.buildInitialBlockCountDistribution(player, state?.remainingCardCounts ?? null);
-      }
-      this.syncBlockSummary(player);
-    }
-  }
 
-  /*
-  功能
-  合并已知格挡身份与未知手牌密度，构造玩家初始格挡数量概率分布。
 
-  调用方
-  initialize/get/syncCardEstimates：在正式格挡分布缺失时建立根分布。
 
-  输入
-  玩家过滤摘要与可选 remainingCardCounts。
 
-  输出
-  新的 blockCount 概率分支数组。
 
-  读取状态
-  合法 hand/knownCards availability、handCount、公开派生的格挡概率与未知池密度。
 
-  写入状态
-  无。
 
-  调用函数
-  cardAvailability、cardEstimateDistribution。
 
-  边界与不变量
-  确定身份优先；未知部分只用 Belief 密度，分支总质量必须归一。
-  */
-  buildInitialBlockCountDistribution(player, remainingCardCounts = null) {
-    const explicit = [
-      ...(Array.isArray(player.hand) ? player.hand : []),
-      ...(Array.isArray(player.knownCards) ? player.knownCards : [])
-    ].filter((card) => card?.definitionId === "block")
-      .reduce((sum, card) => sum + this.cardAvailability(card), 0);
-    if (explicit > PROBABILITY_EPSILON
-      && Math.abs(Number(player.handCount ?? 0) - explicit) < PROBABILITY_EPSILON) {
-      return [{ probability:1, conditions:{}, blockCount:Math.max(0, Math.round(explicit)) }];
-    }
-    if (explicit > PROBABILITY_EPSILON) {
-      return this.cardEstimateDistribution(player, "block", remainingCardCounts)
-        .map((branch) => ({ probability:branch.probability, conditions:{}, blockCount:branch.count }));
-    }
-    if (player.blockProbability == null) {
-      return this.cardEstimateDistribution(player, "block", remainingCardCounts)
-        .map((branch) => ({ probability:branch.probability, conditions:{}, blockCount:branch.count }));
-    }
-    const blockProbability = clampProbability(player.blockProbability ?? 0);
-    const twoBlockProbability = clampProbability(player.twoBlockProbability ?? 0);
-    if (blockProbability <= PROBABILITY_EPSILON) {
-      return [{ probability:1, conditions:{}, blockCount:0 }];
-    }
-    if (twoBlockProbability >= 1 - PROBABILITY_EPSILON) {
-      const count = Math.max(2, Math.ceil(Number(player.handCount) || 0));
-      return [{ probability:1, conditions:{}, blockCount:count }];
-    }
-    const branches = [
-      { probability:Math.max(0, 1 - blockProbability), conditions:{}, blockCount:0 },
-      { probability:Math.max(0, blockProbability - twoBlockProbability), conditions:{}, blockCount:1 },
-      { probability:twoBlockProbability, conditions:{}, blockCount:2 }
-    ].filter((branch) => branch.probability > PROBABILITY_EPSILON);
-    const total = branches.reduce((sum, branch) => sum + branch.probability, 0);
-    return total > 0
-      ? branches.map((branch) => ({ ...branch, probability:branch.probability / total }))
-      : [{ probability:1, conditions:{}, blockCount:0 }];
-  }
 
-  /*
-  功能
-  规范格挡数量分支，并同步期望数量、可响应概率与已知身份摘要。
 
-  调用方
-  格挡初始化、获得、失去与消费路径：把正式分布投影为兼容摘要。
-
-  输入
-  玩家摘要。
-
-  输出
-  规范化后的 blockCount 概率分支数组。
-
-  读取状态
-  player.blockCountDistribution。
-
-  写入状态
-  blockCountDistribution、blockProbability 与 twoBlockProbability。
-
-  调用函数
-  mergeProbabilityStateBranches。
-
-  边界与不变量
-  概率和至少一/两张摘要必须来自同一分布，不得单独调整。
-  */
-  syncBlockSummary(player) {
-    if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
-      player.blockCountDistribution = [{ probability:1, conditions:{}, blockCount:0 }];
-    }
-    const branches = this.projectProbabilityWork(
-      player.blockCountDistribution,
-      (branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions ?? {},
-        blockCount:Math.max(0, Math.floor(Number(branch.blockCount ?? branch.count) || 0))
-      }),
-      "ResponseSimulation.syncBlockSummary"
-    );
-    player.blockCountDistribution = branches;
-    player.blockProbability = branches.reduce(
-      (sum, branch) => sum + (branch.blockCount >= 1 ? branch.probability : 0), 0
-    );
-    player.twoBlockProbability = branches.reduce(
-      (sum, branch) => sum + (branch.blockCount >= 2 ? branch.probability : 0), 0
-    );
-    return branches;
-  }
-
-  /*
-  功能
-  返回玩家的正式格挡数量分支；缺失时从当前合法信息建立一次。
-
-  调用方
-  Combat、CardEffect 与 ResponseSimulation：取得可与当前条件世界连接的格挡容量。
-
-  输入
-  玩家摘要与可选 remainingCardCounts。
-
-  输出
-  不与内部数组共享条目的 blockCount 分支数组。
-
-  读取状态
-  已有 blockCountDistribution 或合法根信息。
-
-  写入状态
-  仅在分布缺失时写正式 block 分布及派生摘要。
-
-  调用函数
-  buildInitialBlockCountDistribution、syncBlockSummary。
-
-  边界与不变量
-  一次建立后复用同一容量世界；读取不得额外抽样未知手牌。
-  */
-  getBlockCountBranches(player, remainingCardCounts = null) {
-    if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
-      player.blockCountDistribution = this.buildInitialBlockCountDistribution(player, remainingCardCounts);
-    }
-    return this.syncBlockSummary(player).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      blockCount:branch.blockCount
-    }));
-  }
-
-  /*
-  功能
-  按已知格挡卡身份构造确定的格挡数量分支，不推测未知牌面。
-
-  调用方
-  随机失牌、格挡身份消费与雷达响应：区分确定身份和匿名容量。
-
-  输入
-  玩家自己的 hand 或合法 knownCards 表示。
-
-  输出
-  knownBlockCount 的完整条件分支数组。
-
-  读取状态
-  所有已知格挡身份的 availabilityStateBranches。
-
-  写入状态
-  无。
-
-  调用函数
-  getAvailabilityStateBranches、Probability 连接/投影 辅助函数。
-
-  边界与不变量
-  只统计确定身份；匿名格挡容量不在这里推测或补齐。
-  */
-  getKnownBlockCountBranches(player) {
-    const cards = [
-      ...(Array.isArray(player.hand) ? player.hand.filter((card) => card.definitionId === "block") : []),
-      ...(Array.isArray(player.knownCards) ? player.knownCards.filter((entry) => entry.definitionId === "block") : [])
-    ];
-    let branches = [{ probability:1, conditions:{}, knownBlockCount:0 }];
-    for (const card of cards) {
-      const availabilityState = this.getAvailabilityStateWork(
-        card,
-        "availabilityStateBranches",
-        1,
-        "ResponseSimulation.getKnownBlockCountBranches:availability"
-      ).map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        available:Boolean(branch.available)
-      }));
-      const joined = this.joinProbabilityWork(
-        [branches, availabilityState],
-        "ResponseSimulation.getKnownBlockCountBranches:join"
-      );
-      branches = this.projectProbabilityWork(
-        joined,
-        (branch) => ({ knownBlockCount:branch.knownBlockCount + (branch.available ? 1 : 0) }),
-        "ResponseSimulation.getKnownBlockCountBranches:project"
-      );
-    }
-    return branches;
-  }
-
-  /*
-  功能
-  确保玩家拥有完整格挡容量分布并同步所有派生摘要。
-
-  调用方
-  未知格挡获得/失去路径：在修改容量前确保正式分布存在。
-
-  输入
-  玩家摘要与可选 remainingCardCounts。
-
-  输出
-  规范化后的内部格挡分布。
-
-  读取状态
-  已有分布或合法根信息。
-
-  写入状态
-  仅在缺失时建立并同步 block 摘要。
-
-  调用函数
-  buildInitialBlockCountDistribution、syncBlockSummary。
-
-  边界与不变量
-  不得覆盖已推进的条件分支或重新应用根概率。
-  */
-  ensureBlockCountDistribution(player, remainingCardCounts = null) {
-    if (!Array.isArray(player.blockCountDistribution) || !player.blockCountDistribution.length) {
-      player.blockCountDistribution = this.buildInitialBlockCountDistribution(player, remainingCardCounts);
-    }
-    return this.syncBlockSummary(player);
-  }
-
-  /*
-  功能
-  为全部玩家建立反制数量与已知反制身份分布，作为锦囊响应消费的唯一初始状态。
-
-  调用方
-  Simulator 构造与 clone：在任何战术响应前建立全员反制容量。
-
-  输入
-  独立 SearchState。
-
-  输出
-  无返回值；每名玩家的正式反制分布和摘要已存在。
-
-  读取状态
-  players 的 hand/knownCards、handCount、existing counter 分布与 remaining counts。
-
-  写入状态
-  缺失的 counterCountDistribution 与 counterProbability。
-
-  调用函数
-  buildInitialCounterCountDistribution、syncCounterSummary。
-
-  边界与不变量
-  已有分布只规范不重采样；同一确定身份和匿名容量只能计入一次。
-  */
-  initializeCounterCountDistributions(state) {
-    for (const player of state?.players ?? []) {
-      if (!Array.isArray(player.counterCountDistribution) || !player.counterCountDistribution.length) {
-        player.counterCountDistribution = this.buildInitialCounterCountDistribution(
-          player, state?.remainingCardCounts ?? null
-        );
-      }
-      this.syncCounterSummary(player);
-    }
-  }
-
-  /*
-  功能
-  合并已知反制身份与未知手牌密度，构造玩家初始反制数量概率分布。
-
-  调用方
-  initialize/get/syncCardEstimates：在正式反制分布缺失时建立根分布。
-
-  输入
-  玩家过滤摘要与可选 remainingCardCounts。
-
-  输出
-  新的 counterCount 概率分支数组。
-
-  读取状态
-  合法 hand/knownCards availability、handCount、公开反制摘要与未知池密度。
-
-  写入状态
-  无。
-
-  调用函数
-  cardAvailability、cardEstimateDistribution。
-
-  边界与不变量
-  确定身份优先；未知部分只用 Belief 密度，分支总质量必须归一。
-  */
-  buildInitialCounterCountDistribution(player, remainingCardCounts = null) {
-    if (Array.isArray(player.hand)) {
-      // 当前 AI 自己拥有完整 hand：反制数量可直接由具体身份确定，不再按根密度估算。
-      const explicitCount = player.hand.filter((card) => card?.definitionId === "counter")
-        .reduce((sum, card) => sum + this.cardAvailability(card), 0);
-      return [{ probability:1, conditions:{}, counterCount:Math.max(0, Math.round(explicitCount)) }];
-    }
-    const explicit = [
-      ...(Array.isArray(player.hand) ? player.hand : []),
-      ...(Array.isArray(player.knownCards) ? player.knownCards : [])
-    ].filter((card) => card?.definitionId === "counter")
-      .reduce((sum, card) => sum + this.cardAvailability(card), 0);
-    if (explicit > PROBABILITY_EPSILON
-      && Math.abs(Number(player.handCount ?? 0) - explicit) < PROBABILITY_EPSILON) {
-      return [{ probability:1, conditions:{}, counterCount:Math.max(0, Math.round(explicit)) }];
-    }
-    if (explicit > PROBABILITY_EPSILON) {
-      return this.cardEstimateDistribution(player, "counter", remainingCardCounts)
-        .map((branch) => ({ probability:branch.probability, conditions:{}, counterCount:branch.count }));
-    }
-    if (player.counterProbability == null) {
-      return this.cardEstimateDistribution(player, "counter", remainingCardCounts)
-        .map((branch) => ({ probability:branch.probability, conditions:{}, counterCount:branch.count }));
-    }
-    const counterProbability = clampProbability(player.counterProbability ?? 0);
-    if (counterProbability <= PROBABILITY_EPSILON) {
-      return [{ probability:1, conditions:{}, counterCount:0 }];
-    }
-    const branches = [
-      { probability:Math.max(0, 1 - counterProbability), conditions:{}, counterCount:0 },
-      { probability:counterProbability, conditions:{}, counterCount:1 }
-    ].filter((branch) => branch.probability > PROBABILITY_EPSILON);
-    const total = branches.reduce((sum, branch) => sum + branch.probability, 0);
-    return total > 0
-      ? branches.map((branch) => ({ ...branch, probability:branch.probability / total }))
-      : [{ probability:1, conditions:{}, counterCount:0 }];
-  }
-
-  /*
-  功能
-  规范反制数量分支，并同步期望数量、可响应概率与已知身份摘要。
-
-  调用方
-  反制初始化、获得、失去与消费路径：把正式分布投影为响应概率。
-
-  输入
-  玩家摘要。
-
-  输出
-  规范化后的 counterCount 概率分支数组。
-
-  读取状态
-  player.counterCountDistribution。
-
-  写入状态
-  counterCountDistribution 与 counterProbability。
-
-  调用函数
-  mergeProbabilityStateBranches。
-
-  边界与不变量
-  counterProbability 必须由 count>=1 的同一分布投影，不能独立增减。
-  */
-  syncCounterSummary(player) {
-    if (!Array.isArray(player.counterCountDistribution) || !player.counterCountDistribution.length) {
-      player.counterCountDistribution = [{ probability:1, conditions:{}, counterCount:0 }];
-    }
-    const branches = this.projectProbabilityWork(
-      player.counterCountDistribution,
-      (branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions ?? {},
-        counterCount:Math.max(0, Math.floor(Number(branch.counterCount ?? branch.count) || 0))
-      }),
-      "ResponseSimulation.syncCounterSummary"
-    );
-    player.counterCountDistribution = branches;
-    const counterProbability = Math.max(0, Math.min(1, branches.reduce(
-      (sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0
-    )));
-    player.counterProbability = counterProbability >= 1 - PROBABILITY_EPSILON
-      ? 1
-      : counterProbability <= PROBABILITY_EPSILON ? 0 : counterProbability;
-    return branches;
-  }
-
-  /*
-  功能
-  返回玩家的正式反制数量分支；缺失时从当前合法信息建立一次。
-
-  调用方
-  Card/Response/Value 模拟：取得可与当前条件世界连接的反制容量。
-
-  输入
-  玩家摘要与可选 remainingCardCounts。
-
-  输出
-  不与内部数组共享条目的 counterCount 分支数组。
-
-  读取状态
-  已有 counterCountDistribution 或合法根信息。
-
-  写入状态
-  仅在分布缺失时写正式 counter 分布及派生摘要。
-
-  调用函数
-  buildInitialCounterCountDistribution、syncCounterSummary。
-
-  边界与不变量
-  一次建立后复用同一容量世界；读取不得额外抽样未知手牌。
-  */
-  getCounterCountBranches(player, remainingCardCounts = null) {
-    if (!Array.isArray(player.counterCountDistribution) || !player.counterCountDistribution.length) {
-      player.counterCountDistribution = this.buildInitialCounterCountDistribution(player, remainingCardCounts);
-    }
-    return this.syncCounterSummary(player).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      counterCount:branch.counterCount
-    }));
-  }
-
-  /*
-  功能
-  纯读取玩家反制数量分支，供不允许修改根 SearchState 的概率查询使用。
-
-  调用方
-  card-scope 与 target-scope 的反制结算概率查询。
-
-  输入
-  玩家过滤摘要与可选 remainingCardCounts。
-
-  输出
-  独立且规范化的 counterCount 概率分支。
-
-  读取状态
-  已有 counterCountDistribution，缺失时读取合法根信息建立临时分布。
-
-  写入状态
-  无。
-
-  调用函数
-  buildInitialCounterCountDistribution、mergeProbabilityStateBranches。
-
-  边界与不变量
-  查询冻结的根 SearchState 时不得调用会同步兼容摘要的写入 helper。
-  */
-  queryCounterCountBranches(player, remainingCardCounts = null) {
-    const source = Array.isArray(player?.counterCountDistribution)
-      && player.counterCountDistribution.length
-      ? player.counterCountDistribution
-      : this.buildInitialCounterCountDistribution(player, remainingCardCounts);
-    return this.projectProbabilityWork(source, (branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      counterCount:Math.max(0, Math.floor(Number(branch.counterCount ?? branch.count) || 0))
-    }), "ResponseSimulation.queryCounterCountBranches");
-  }
-
-  /*
-  功能
-  按已知反制卡身份构造确定的反制数量分支，不推测未知牌面。
-
-  调用方
-  随机失牌与目标反制身份选择：区分确定反制身份和匿名容量。
-
-  输入
-  玩家自己的 hand 或合法 knownCards 表示。
-
-  输出
-  knownCounterCount 的完整条件分支数组。
-
-  读取状态
-  所有已知反制身份的 availabilityStateBranches。
-
-  写入状态
-  无。
-
-  调用函数
-  getAvailabilityStateBranches、Probability 连接/投影 辅助函数。
-
-  边界与不变量
-  只统计确定身份；匿名反制容量不在这里推测。
-  */
-  getKnownCounterCountBranches(player) {
-    const cards = [
-      ...(Array.isArray(player.hand) ? player.hand.filter((card) => card.definitionId === "counter") : []),
-      ...(Array.isArray(player.knownCards) ? player.knownCards.filter((entry) => entry.definitionId === "counter") : [])
-    ];
-    let branches = [{ probability:1, conditions:{}, knownCounterCount:0 }];
-    for (const card of cards) {
-      const availabilityState = this.getAvailabilityStateWork(
-        card,
-        "availabilityStateBranches",
-        1,
-        "ResponseSimulation.getKnownCounterCountBranches:availability"
-      ).map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        available:Boolean(branch.available)
-      }));
-      const joined = this.joinProbabilityWork(
-        [branches, availabilityState],
-        "ResponseSimulation.getKnownCounterCountBranches:join"
-      );
-      branches = this.projectProbabilityWork(
-        joined,
-        (branch) => ({ knownCounterCount:branch.knownCounterCount + (branch.available ? 1 : 0) }),
-        "ResponseSimulation.getKnownCounterCountBranches:project"
-      );
-    }
-    return branches;
-  }
-
-  /*
-  功能
-  确保玩家拥有完整反制容量分布并同步所有派生摘要。
-
-  调用方
-  已知/未知反制获得与转移路径：在修改容量前确保正式分布存在。
-
-  输入
-  玩家摘要与可选 remainingCardCounts。
-
-  输出
-  规范化后的内部反制分布。
-
-  读取状态
-  已有分布或合法根信息。
-
-  写入状态
-  仅在缺失时建立并同步 counter 摘要。
-
-  调用函数
-  buildInitialCounterCountDistribution、syncCounterSummary。
-
-  边界与不变量
-  不得覆盖已推进的条件分支或重新应用根概率。
-  */
-  ensureCounterCountDistribution(player, remainingCardCounts = null) {
-    if (!Array.isArray(player.counterCountDistribution) || !player.counterCountDistribution.length) {
-      player.counterCountDistribution = this.buildInitialCounterCountDistribution(player, remainingCardCounts);
-    }
-    return this.syncCounterSummary(player);
-  }
-
-  /*
-  功能
-  当手牌确定为空时清零反制身份与容量分支，阻止过期概率继续响应。
-
-  调用方
-  任意失牌路径：手牌确定归零后清除过期反制身份和容量。
-
-  输入
-  玩家摘要。
-
-  输出
-  无返回值；非空手牌不变化。
-
-  读取状态
-  handCount、hand/knownCards 与 counter 分布。
-
-  写入状态
-  空手时写零 counterCountDistribution，移除反制身份并同步 counterProbability。
-
-  调用函数
-  syncCounterSummary。
-
-  边界与不变量
-  只在 handCount 确定为零时清理；不能因期望手牌偏低提前删除概率身份。
-  */
-  clearCountersWhenHandEmpty(player) {
-    if (!player || (player.handCount ?? 0) > PROBABILITY_EPSILON) return;
-    player.counterCountDistribution = [{ probability:1, conditions:{}, counterCount:0 }];
-    if (Array.isArray(player.hand)) {
-      player.hand = player.hand.filter((card) => card.definitionId !== "counter");
-    }
-    if (Array.isArray(player.knownCards)) {
-      player.knownCards = player.knownCards.filter((entry) => entry.definitionId !== "counter");
-    }
-    this.syncCounterSummary(player);
-  }
-
-  /*
-  功能
-  在获得已知反制卡的条件世界中增加反制容量并登记真实卡牌身份。
-
-  调用方
-  确定反制摸牌、转移与雷达获得路径：增加同一世界中的反制容量。
-
-  输入
-  SearchState、玩家与获得条件世界。
-
-  输出
-  无返回值；反制数量分布已加一并同步。
-
-  读取状态
-  当前 counterCountDistribution 与 remaining counts。
-
-  写入状态
-  counterCountDistribution 与 counterProbability。
-
-  调用函数
-  getCounterCountBranches、Probability 连接/投影 辅助函数、syncCounterSummary。
-
-  边界与不变量
-  只在 gainWorlds 的获得分支加一；身份写入由调用方拥有，不能在这里再加 handCount。
-  */
-  addKnownCounterToDistribution(state, player, gainWorlds) {
-    const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
-    const partition = gainWorlds.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      gained:Boolean(branch.occurs ?? branch.available)
-    }));
-    const joined = this.joinProbabilityWork(
-      [counterState, partition],
-      "ResponseSimulation.addKnownCounterToDistribution:join"
-    );
-    player.counterCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
-      counterCount:branch.counterCount + (branch.gained ? 1 : 0)
-    }), "ResponseSimulation.addKnownCounterToDistribution:project");
-    this.syncCounterSummary(player);
-  }
-
-  /*
-  功能
-  把转移牌携带的反制容量按同一转移世界加入接收者分布。
-
-  调用方
-  CardEffectSimulation.stealResourceToHand：把来源已确认丢失反制的世界交给接收者。
-
-  输入
-  SearchState、接收者与来源产生的 transferWorlds。
-
-  输出
-  无返回值；有效转移世界中的反制容量已增加。
-
-  读取状态
-  接收者当前反制分布。
-
-  写入状态
-  接收者 counterCountDistribution 与 counterProbability。
-
-  调用函数
-  addKnownCounterToDistribution。
-
-  边界与不变量
-  必须复用来源随机失牌的原条件世界，不得按平均密度重新猜测。
-  */
-  addTransferredCounterCapacity(state, player, transferWorlds) {
-    if (!player || !Array.isArray(transferWorlds) || !transferWorlds.length) return;
-    this.addKnownCounterToDistribution(state, player, transferWorlds);
-  }
-
-  /*
-  功能
-  在已知反制卡离手世界中移除其身份并扣减对应反制容量。
-
-  调用方
-  确定反制打出、弃置、破坏与转移路径：扣减对应世界中的容量。
-
-  输入
-  SearchState、玩家与身份离手条件世界。
-
-  输出
-  无返回值；反制数量分布已减一并同步。
-
-  读取状态
-  当前 counterCountDistribution 与 remaining counts。
-
-  写入状态
-  counterCountDistribution 与 counterProbability。
-
-  调用函数
-  getCounterCountBranches、Probability 连接/投影 辅助函数、syncCounterSummary。
-
-  边界与不变量
-  只在 removalWorlds 中减一且不低于零；具体身份由调用方消费，不能重复扣 handCount。
-  */
-  removeKnownCounterFromDistribution(state, player, removalWorlds) {
-    const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
-    const partition = removalWorlds.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      removed:Boolean(branch.occurs ?? branch.available)
-    }));
-    const joined = this.joinProbabilityWork(
-      [counterState, partition],
-      "ResponseSimulation.removeKnownCounterFromDistribution:join"
-    );
-    player.counterCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
-      counterCount:Math.max(0, branch.counterCount - (branch.removed ? 1 : 0))
-    }), "ResponseSimulation.removeKnownCounterFromDistribution:project");
-    this.syncCounterSummary(player);
-  }
-
-  /*
-  功能
-  按未知牌池反制密度把一次未知摸牌卷积进反制数量分布。
-
-  调用方
-  gainUnknownCardsWithCounterState：为一次未知摸牌卷积反制命中。
-
-  输入
-  SearchState、玩家与该张牌实际获得世界。
-
-  输出
-  无返回值；counterCountDistribution 已加入未知命中分支。
-
-  读取状态
-  当前反制分布与 remainingCardCounts 中 counter 密度。
-
-  写入状态
-  counterCountDistribution 与 counterProbability。
-
-  调用函数
-  remainingCardDensity、getCounterCountBranches、Probability 连接/合并 辅助函数。
-
-  边界与不变量
-  未知牌只有密度含义，不创建反制实体；发生/未命中质量必须保留。
-  */
-  addOneUnknownCardToCounterDistribution(state, player, gainWorlds) {
-    const density = remainingCardDensity(state?.remainingCardCounts, "counter");
-    const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
-    const partition = gainWorlds.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      gained:Boolean(branch.occurs ?? branch.available)
-    }));
-    const joined = this.joinProbabilityWork(
-      [counterState, partition],
-      "ResponseSimulation.addOneUnknownCardToCounterDistribution:join"
-    );
-    const outcomes = [];
-    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
-      if (branchIndex % 32 === 0) this.checkpointSearchWork();
-      const branch = joined[branchIndex];
-      if (branch.gained && density > 0) {
-        outcomes.push({
-          probability:branch.probability * (1 - density),
-          conditions:branch.conditions,
-          counterCount:branch.counterCount
-        });
-        outcomes.push({
-          probability:branch.probability * density,
-          conditions:branch.conditions,
-          counterCount:branch.counterCount + 1
-        });
-      } else {
-        outcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          counterCount:branch.counterCount
-        });
-      }
-    }
-    player.counterCountDistribution = this.mergeProbabilityWork(
-      outcomes,
-      "ResponseSimulation.addOneUnknownCardToCounterDistribution:merge"
-    );
-    this.syncCounterSummary(player);
-  }
 
   /*
   功能
@@ -915,7 +141,12 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         const cardGain = this.eventProbability(cardWorlds);
         if (cardGain <= PROBABILITY_EPSILON) break;
         player.handCount = (player.handCount ?? 0) + cardGain;
-        this.addOneUnknownCardToCounterDistribution(state, player, cardWorlds);
+        mutateHiddenPool(state.hiddenPoolState, {
+          type:"ADD",
+          targetBucketId:player.id,
+          probability:cardGain
+        });
+        projectHiddenSummaries(state);
         gained += cardGain;
         for (let index = 0; index < remainingByBranch.length; index += 1) {
           remainingByBranch[index] -= Math.min(1, remainingByBranch[index]);
@@ -935,501 +166,23 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       const cardGain = this.eventProbability(cardWorlds);
       if (cardGain <= PROBABILITY_EPSILON) break;
       player.handCount = (player.handCount ?? 0) + cardGain;
-      this.addOneUnknownCardToCounterDistribution(state, player, cardWorlds);
+      mutateHiddenPool(state.hiddenPoolState, {
+        type:"ADD",
+        targetBucketId:player.id,
+        probability:cardGain
+      });
+      projectHiddenSummaries(state);
       gained += cardGain;
       remaining -= cardProbability;
     }
     return gained;
   }
 
-  /*
-  功能
-  在获得已知格挡卡的条件世界中增加格挡容量并登记真实卡牌身份。
 
-  调用方
-  确定格挡摸牌、雷达获得与转移路径：增加同一世界中的格挡容量。
 
-  输入
-  SearchState、玩家与获得条件世界。
 
-  输出
-  无返回值；格挡分布与派生摘要已同步。
 
-  读取状态
-  当前 blockCountDistribution 与 remaining counts。
 
-  写入状态
-  blockCountDistribution、blockProbability 与 twoBlockProbability。
-
-  调用函数
-  getBlockCountBranches、Probability 连接/投影 辅助函数、syncBlockSummary。
-
-  边界与不变量
-  只在 gainWorlds 的获得分支加一；身份和 handCount 由调用方写入。
-  */
-  addKnownBlockToDistribution(state, player, gainWorlds) {
-    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
-    const partition = gainWorlds.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      gained:Boolean(branch.occurs ?? branch.available)
-    }));
-    const joined = this.joinProbabilityWork(
-      [blockState, partition],
-      "ResponseSimulation.addKnownBlockToDistribution:join"
-    );
-    player.blockCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
-      blockCount:branch.blockCount + (branch.gained ? 1 : 0)
-    }), "ResponseSimulation.addKnownBlockToDistribution:project");
-    this.syncBlockSummary(player);
-  }
-
-  /*
-  功能
-  在已知格挡卡离手世界中移除其身份并扣减对应格挡容量。
-
-  调用方
-  确定格挡打出、弃置、破坏与转移路径：扣减对应世界中的容量。
-
-  输入
-  SearchState、玩家与身份离手条件世界。
-
-  输出
-  无返回值；格挡分布与派生摘要已同步。
-
-  读取状态
-  当前 blockCountDistribution 与 remaining counts。
-
-  写入状态
-  blockCountDistribution、blockProbability 与 twoBlockProbability。
-
-  调用函数
-  getBlockCountBranches、Probability 连接/投影 辅助函数、syncBlockSummary。
-
-  边界与不变量
-  只在 removalWorlds 中减一且不低于零；具体身份与 handCount 由调用方统一消费。
-  */
-  removeKnownBlockFromDistribution(state, player, removalWorlds) {
-    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
-    const partition = removalWorlds.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      removed:Boolean(branch.occurs ?? branch.available)
-    }));
-    const joined = this.joinProbabilityWork(
-      [blockState, partition],
-      "ResponseSimulation.removeKnownBlockFromDistribution:join"
-    );
-    player.blockCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
-      blockCount:Math.max(0, branch.blockCount - (branch.removed ? 1 : 0))
-    }), "ResponseSimulation.removeKnownBlockFromDistribution:project");
-    this.syncBlockSummary(player);
-  }
-
-  /*
-  功能
-  按未知牌池格挡密度把一次未知摸牌卷积进格挡数量分布。
-
-  调用方
-  gainUnknownCardsWithCounterState：为一次未知摸牌卷积格挡命中。
-
-  输入
-  SearchState、玩家与该张牌实际获得世界。
-
-  输出
-  无返回值；blockCountDistribution 已加入未知命中分支。
-
-  读取状态
-  当前格挡分布与 remainingCardCounts 中 block 密度。
-
-  写入状态
-  blockCountDistribution、blockProbability 与 twoBlockProbability。
-
-  调用函数
-  remainingCardDensity、getBlockCountBranches、Probability 连接/合并 辅助函数。
-
-  边界与不变量
-  未知牌只有密度含义，不创建格挡实体；发生/未命中质量必须保留。
-  */
-  addOneUnknownCardToBlockDistribution(state, player, gainWorlds) {
-    const density = remainingCardDensity(state?.remainingCardCounts, "block");
-    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
-    const partition = gainWorlds.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      gained:Boolean(branch.occurs ?? branch.available)
-    }));
-    const joined = this.joinProbabilityWork(
-      [blockState, partition],
-      "ResponseSimulation.addOneUnknownCardToBlockDistribution:join"
-    );
-    const outcomes = [];
-    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
-      if (branchIndex % 32 === 0) this.checkpointSearchWork();
-      const branch = joined[branchIndex];
-      if (branch.gained && density > 0) {
-        outcomes.push({
-          probability:branch.probability * (1 - density),
-          conditions:branch.conditions,
-          blockCount:branch.blockCount
-        });
-        outcomes.push({
-          probability:branch.probability * density,
-          conditions:branch.conditions,
-          blockCount:branch.blockCount + 1
-        });
-      } else {
-        outcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          blockCount:branch.blockCount
-        });
-      }
-    }
-    player.blockCountDistribution = this.mergeProbabilityWork(
-      outcomes,
-      "ResponseSimulation.addOneUnknownCardToBlockDistribution:merge"
-    );
-    this.syncBlockSummary(player);
-  }
-
-  /*
-  功能
-  按条件化失去数量从未知格挡容量中抽样扣减，并保持概率质量守恒。
-
-  调用方
-  CardEffectSimulation 的未知失牌与转移：从匿名手牌中扣减格挡容量。
-
-  输入
-  SearchState、玩家、期望移除量、匿名容量、可选事件世界/标签与 handCount 更新选项。
-
-  输出
-  包含实际 removed 与共享 identityWorlds 的新对象。
-
-  读取状态
-  block 总容量、knownBlockCount、handCount 与匿名选择条件。
-
-  写入状态
-  blockCountDistribution、block 摘要，以及可选 handCount。
-
-  调用函数
-  getBlockCountBranches、getKnownBlockCountBranches、Probability 连接/投影 辅助函数。
-
-  边界与不变量
-  匿名身份选择必须与给定失牌世界相交；返回的 identityWorlds 供 counter 扣减复用。
-  */
-  removeUnknownCardsFromBlockDistribution(
-    state,
-    player,
-    expectedAmount,
-    unknownCount,
-    eventWorlds = null,
-    label = "unknown-removal",
-    adjustHandCount = true
-  ) {
-    this.ensureBlockCountDistribution(player, state?.remainingCardCounts ?? null);
-    const unknown = Math.max(0, Number(unknownCount) || 0);
-    const spent = Math.min(
-      Math.max(0, Number(expectedAmount) || 0),
-      unknown,
-      Math.max(0, Number(player.handCount) || 0)
-    );
-    if (spent <= PROBABILITY_EPSILON || unknown <= 0) return { removed:0, identityWorlds:[] };
-    const eventProbabilityValue = Array.isArray(eventWorlds) && eventWorlds.length
-      ? this.eventProbability(eventWorlds)
-      : 1;
-    const removalProbability = eventProbabilityValue > 0
-      ? Math.min(1, spent / eventProbabilityValue)
-      : 0;
-    let removalWorlds;
-    if (Array.isArray(eventWorlds) && eventWorlds.length) {
-      // 在效果世界内部按 spent 缩放“实际移除”事件，保证返回的移除期望等于 spent。
-      removalWorlds = this.gateEventWorlds(state, eventWorlds, removalProbability, `${label}:gate`);
-    } else {
-      removalWorlds = probabilityEventPartition(
-        this.nextProbabilityEventKey(state, label),
-        removalProbability,
-        "occurs"
-      );
-    }
-    const blockState = this.getBlockCountBranches(player, state?.remainingCardCounts ?? null);
-    const knownState = this.getKnownBlockCountBranches(player);
-    const joined = this.joinProbabilityWork(
-      [blockState, removalWorlds, knownState],
-      "ResponseSimulation.removeUnknownCardsFromBlockDistribution:join"
-    );
-    const outcomes = [];
-    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
-      if (branchIndex % 32 === 0) this.checkpointSearchWork();
-      const branch = joined[branchIndex];
-      const total = branch.blockCount;
-      const known = branch.knownBlockCount;
-      const anonymousBlocks = Math.max(0, Math.min(unknown, total - known));
-      const occurs = Boolean(branch.occurs);
-      if (occurs && anonymousBlocks > 0) {
-        const removalChance = Math.min(1, anonymousBlocks / unknown);
-        outcomes.push({
-          probability:branch.probability * removalChance,
-          conditions:branch.conditions,
-          blockCount:Math.max(0, total - 1),
-          occurs:true,
-          blockRemoved:true
-        });
-        outcomes.push({
-          probability:branch.probability * (1 - removalChance),
-          conditions:branch.conditions,
-          blockCount:total,
-          occurs:true,
-          blockRemoved:false
-        });
-      } else if (occurs) {
-        // 移除事件发生，但该世界没有匿名格挡可移除，移除的是匿名非格挡。
-        outcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          blockCount:total,
-          occurs:true,
-          blockRemoved:false
-        });
-      } else {
-        outcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          blockCount:total,
-          occurs:false,
-          blockRemoved:false
-        });
-      }
-    }
-    player.blockCountDistribution = this.projectProbabilityWork(
-      outcomes,
-      (branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        blockCount:branch.blockCount
-      }),
-      "ResponseSimulation.removeUnknownCardsFromBlockDistribution:remaining"
-    );
-    this.syncBlockSummary(player);
-    const identityWorlds = this.projectProbabilityWork(
-      outcomes,
-      (branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        occurs:branch.occurs,
-        blockRemoved:branch.blockRemoved
-      }),
-      "ResponseSimulation.removeUnknownCardsFromBlockDistribution:identity"
-    );
-    let removed = totalBranchProbability(identityWorlds.filter((branch) => branch.occurs));
-    if (Math.abs(removed - spent) <= PROBABILITY_EPSILON * 1e3) removed = spent;
-    if (adjustHandCount) player.handCount = Math.max(0, (player.handCount ?? 0) - removed);
-    return { removed, identityWorlds };
-  }
-
-  /*
-  功能
-  按条件化失去数量从未知反制容量中抽样扣减，并保持概率质量守恒。
-
-  调用方
-  CardEffectSimulation 的未知失牌与转移：复用身份世界扣减反制容量。
-
-  输入
-  SearchState、玩家、实际移除量、匿名容量、来自 block 路径的 identityWorlds 与更新选项。
-
-  输出
-  实际扣减后的期望移除量。
-
-  读取状态
-  counter 总容量、knownCounterCount 与共享匿名选择条件。
-
-  写入状态
-  counterCountDistribution、counterProbability，以及可选 handCount。
-
-  调用函数
-  getCounterCountBranches、getKnownCounterCountBranches、Probability 连接/投影 辅助函数。
-
-  边界与不变量
-  不得重新抽取匿名牌身份；必须复用 block 路径决定的同一失牌世界。
-  */
-  removeUnknownCardsFromCounterDistribution(
-    state,
-    player,
-    expectedAmount,
-    unknownCount,
-    eventWorlds = null,
-    label = "unknown-counter-removal",
-    adjustHandCount = true
-  ) {
-    this.ensureCounterCountDistribution(player, state?.remainingCardCounts ?? null);
-    const unknown = Math.max(0, Number(unknownCount) || 0);
-    const spent = Math.min(
-      Math.max(0, Number(expectedAmount) || 0),
-      unknown,
-      Math.max(0, Number(player.handCount) || 0)
-    );
-    if (spent <= PROBABILITY_EPSILON || unknown <= 0) return { removed:0, identityWorlds:[] };
-    const eventProbabilityValue = Array.isArray(eventWorlds) && eventWorlds.length
-      ? this.eventProbability(eventWorlds)
-      : 1;
-    const removalProbability = eventProbabilityValue > 0
-      ? Math.min(1, spent / eventProbabilityValue)
-      : 0;
-    let removalWorlds;
-    if (Array.isArray(eventWorlds) && eventWorlds.length) {
-      removalWorlds = this.gateEventWorlds(state, eventWorlds, removalProbability, `${label}:gate`);
-    } else {
-      removalWorlds = probabilityEventPartition(
-        this.nextProbabilityEventKey(state, label),
-        removalProbability,
-        "occurs"
-      );
-    }
-    const counterState = this.getCounterCountBranches(player, state?.remainingCardCounts ?? null);
-    const knownState = this.getKnownCounterCountBranches(player);
-    const joined = this.joinProbabilityWork(
-      [counterState, removalWorlds, knownState],
-      "ResponseSimulation.removeUnknownCardsFromCounterDistribution:join"
-    );
-    const outcomes = [];
-    for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
-      if (branchIndex % 32 === 0) this.checkpointSearchWork();
-      const branch = joined[branchIndex];
-      const total = branch.counterCount;
-      const known = branch.knownCounterCount;
-      const anonymousCounters = Math.max(0, Math.min(unknown, total - known));
-      const occurs = Boolean(branch.occurs);
-      if (occurs && anonymousCounters > 0) {
-        const removalChance = Math.min(1, anonymousCounters / unknown);
-        outcomes.push({
-          probability:branch.probability * removalChance,
-          conditions:branch.conditions,
-          counterCount:Math.max(0, total - 1),
-          occurs:true,
-          counterRemoved:true
-        });
-        outcomes.push({
-          probability:branch.probability * (1 - removalChance),
-          conditions:branch.conditions,
-          counterCount:total,
-          occurs:true,
-          counterRemoved:false
-        });
-      } else if (occurs) {
-        outcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          counterCount:total,
-          occurs:true,
-          counterRemoved:false
-        });
-      } else {
-        outcomes.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          counterCount:total,
-          occurs:false,
-          counterRemoved:false
-        });
-      }
-    }
-    player.counterCountDistribution = this.projectProbabilityWork(
-      outcomes,
-      (branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        counterCount:branch.counterCount
-      }),
-      "ResponseSimulation.removeUnknownCardsFromCounterDistribution:remaining"
-    );
-    this.syncCounterSummary(player);
-    const identityWorlds = this.projectProbabilityWork(
-      outcomes,
-      (branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        occurs:branch.occurs,
-        counterRemoved:branch.counterRemoved
-      }),
-      "ResponseSimulation.removeUnknownCardsFromCounterDistribution:identity"
-    );
-    let removed = totalBranchProbability(identityWorlds.filter((branch) => branch.occurs));
-    if (Math.abs(removed - spent) <= PROBABILITY_EPSILON * 1e3) removed = spent;
-    if (adjustHandCount) player.handCount = Math.max(0, (player.handCount ?? 0) - removed);
-    return { removed, identityWorlds };
-  }
-
-  /*
-  功能
-  在同一转移世界中耦合来源格挡容量减少与接收者容量增加。
-
-  调用方
-  CardEffectSimulation 的未知手牌转移/掠夺：同步来源和接收者的匿名响应容量。
-
-  输入
-  SearchState、来源、接收者、效果世界与来源匿名容量。
-
-  输出
-  实际转移的期望手牌数量。
-
-  读取状态
-  来源 block/counter 分布、双方 handCount 与 remaining counts。
-
-  写入状态
-  双方 handCount、block/counter 分布及派生摘要。
-
-  调用函数
-  removeUnknownCardsFromBlockDistribution、removeUnknownCardsFromCounterDistribution、响应容量增加 辅助函数。
-
-  边界与不变量
-  来源减一与接收者加一共享同一 transfer world；未知牌不产生 definitionId。
-  */
-  transferUnknownBlockCapacity(state, source, receiver, effectWorlds, unknownCount) {
-    const { removed, identityWorlds } = this.removeUnknownCardsFromBlockDistribution(
-      state,
-      source,
-      this.eventProbability(effectWorlds),
-      unknownCount,
-      effectWorlds,
-      "transfer-unknown",
-      false
-    );
-    if (removed <= PROBABILITY_EPSILON) return 0;
-    this.downgradePartialKnownCardsAfterRandomLoss(source);
-    const blockState = this.getBlockCountBranches(receiver, state?.remainingCardCounts ?? null);
-    const joined = this.joinProbabilityWork(
-      [blockState, identityWorlds],
-      "ResponseSimulation.transferUnknownBlockCapacity:block-join"
-    );
-    receiver.blockCountDistribution = this.projectProbabilityWork(joined, (branch) => ({
-      blockCount:branch.blockCount + (branch.occurs && branch.blockRemoved ? 1 : 0)
-    }), "ResponseSimulation.transferUnknownBlockCapacity:block-project");
-    this.syncBlockSummary(receiver);
-    const counterRemoval = this.removeUnknownCardsFromCounterDistribution(
-      state,
-      source,
-      removed,
-      unknownCount,
-      identityWorlds,
-      "transfer-unknown-counter",
-      false
-    );
-    source.handCount = Math.max(0, (source.handCount ?? 0) - removed);
-    this.clearCountersWhenHandEmpty(source);
-    const counterState = this.getCounterCountBranches(receiver, state?.remainingCardCounts ?? null);
-    const joinedCounter = this.joinProbabilityWork(
-      [counterState, counterRemoval.identityWorlds],
-      "ResponseSimulation.transferUnknownBlockCapacity:counter-join"
-    );
-    receiver.counterCountDistribution = this.projectProbabilityWork(joinedCounter, (branch) => ({
-      counterCount:branch.counterCount + (branch.occurs && branch.counterRemoved ? 1 : 0)
-    }), "ResponseSimulation.transferUnknownBlockCapacity:counter-project");
-    this.syncCounterSummary(receiver);
-    receiver.handCount = (receiver.handCount ?? 0) + removed;
-    this.syncCardEstimates(source, state?.remainingCardCounts);
-    this.syncCardEstimates(receiver, state?.remainingCardCounts);
-    return removed;
-  }
 
   /*
   功能
@@ -1576,6 +329,11 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     return Math.max(0, incomingDamage - expectedReduction);
   }
 
+
+
+
+
+
   /*
   功能
   汇总整张锦囊经过各反制响应后的最终生效概率。
@@ -1614,25 +372,34 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   tacticResolutionChance、consumeCountersForCardScope 与 Simulator.apply：冻结一次卡牌级反制链。
 
   输入
-  SearchState、行动者、战术牌、目标列表与可选 selection。
+  SearchState、行动者、战术牌、目标列表、可选 selection 与动态条件创建选项。
 
   输出
   包含 resolutionChance、联合响应世界和每名响应者边际消费质量的独立对象。
 
   读取状态
-  存活座次、共享 counterCountDistribution 与正式 counter decision。
+  存活座次、Counter finite-pool factor、确定身份与正式 counter decision。
 
   写入状态
   无。
 
   调用函数
-  queryCounterCountBranches、counterDecision、Probability 联合/投影辅助函数。
+  queryCounterCountBranches、counterDecision、
+  Probability 联合/投影辅助函数。
 
   边界与不变量
-  链顺序和奇偶翻转只计算一次；返回结果不得修改任何响应容量；
+  链顺序和奇偶翻转只计算一次；正式 factor 路径只在调用方要求时创建动态条件；
+  返回结果不得修改任何响应容量；
   join/project 中断时整个未完成响应 preparation 作废。
   */
-  evaluateCardScopeCounterResponses(state, actor, card, targets = [], selection = null) {
+  evaluateCardScopeCounterResponses(
+    state,
+    actor,
+    card,
+    targets = [],
+    selection = null,
+    options = {}
+  ) {
     this.checkpointSearchWork();
     const roster = projectCanonicalSeatRoster(state.players);
     const responderOrder = getCounterResponderOrder(roster, actor.id);
@@ -1646,10 +413,11 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       const decision = this.counterDecision(state, player, actor, card, targets, selection) === true;
       contenders.push({ player, counterProbability, decision, effectiveProbability:0 });
     }
+    void options;
     const active = contenders.filter((contender) => contender.decision);
     const partitions = active.map(({ player }) => {
       const field = `counterCount:${player.id}`;
-      return this.queryCounterCountBranches(player, state?.remainingCardCounts ?? null)
+      return (player.counterCountDistribution ?? [])
         .map((branch) => ({
           probability:branch.probability,
           conditions:branch.conditions,
@@ -1783,7 +551,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   targetResolutionChance(state, actor, card, target) {
     if (!isCounterEligible(card.category, card.counterable) || card.counterScope !== "target") return 1;
     if (this.counterDecision(state, target, actor, card, [target]) !== true) return 1;
-    return this.queryCounterCountBranches(target, state?.remainingCardCounts ?? null).reduce(
+    return (target.counterCountDistribution ?? []).reduce(
       (sum, branch) => sum + (branch.counterCount < 1 ? branch.probability : 0),
       0
     );
@@ -1877,7 +645,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   格挡选择、容量扣减和身份消费共享同一世界；雷达判定格挡按判定顺序只补足原格挡容量缺口。
   */
   consumeBlockResponseWorlds(state, target, attackWorlds, options = {}) {
-    const blockState = this.getBlockCountBranches(target, state?.remainingCardCounts ?? null);
+    const blockState = target.blockCountDistribution ?? [];
     const preJudgmentPartition = Array.isArray(options.preJudgmentBlockState)
       && options.preJudgmentBlockState.length
       ? options.preJudgmentBlockState.map((branch) => ({
@@ -1933,16 +701,6 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       blockedProbability += Math.max(0, Number(branch.probability) || 0);
       expectedBlockSpend += branch.probability * branch.requiredCount;
     }
-    const remainingBlockBranches = this.projectProbabilityWork(
-      joined,
-      (branch) => ({
-        blockCount:responseMatches(branch)
-          ? Math.max(0, branch.blockCount - branch.requiredCount)
-          : branch.blockCount
-      })
-    );
-    target.blockCountDistribution = remainingBlockBranches;
-    this.syncBlockSummary(target);
     const identityWorlds = joined.map((branch, index) => {
       if (index % 32 === 0) this.checkpointSearchWork();
       return {
@@ -1960,7 +718,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     const excludedCardIds = judgmentBlockCards.length
       ? new Set(judgmentBlockCards.map((card) => card.id ?? card.cardId))
       : null;
+    const knownBlockCards = [
+      ...(Array.isArray(target.hand) ? target.hand : []),
+      ...(Array.isArray(target.knownCards) ? target.knownCards : [])
+    ].filter((card) => card?.definitionId === "block" && !excludedCardIds?.has(card.id ?? card.cardId));
+    const knownBefore = knownBlockCards.reduce((sum, card) => sum + this.cardAvailability(card), 0);
     this.consumeBlockIdentities(state, target, identityWorlds, excludedCardIds);
+    const knownAfter = knownBlockCards.reduce((sum, card) => sum + this.cardAvailability(card), 0);
     this.checkpointSearchWork();
     if (judgmentBlockCards.length && preJudgmentPartition) {
       let joinedJudgments = joined;
@@ -2006,6 +770,23 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       }
     }
     target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
+    const anonymousSpend = Math.max(0, expectedBlockSpend - (knownBefore - knownAfter));
+    const wholeAnonymousSpend = Math.floor(anonymousSpend);
+    if (wholeAnonymousSpend > 0) mutateHiddenPool(state.hiddenPoolState, {
+      type:"REMOVE",
+      sourceBucketId:target.id,
+      definitionId:"block",
+      count:wholeAnonymousSpend
+    });
+    if (anonymousSpend - wholeAnonymousSpend > PROBABILITY_EPSILON) {
+      mutateHiddenPool(state.hiddenPoolState, {
+        type:"REMOVE",
+        sourceBucketId:target.id,
+        definitionId:"block",
+        probability:anonymousSpend - wholeAnonymousSpend
+      });
+    }
+    projectHiddenSummaries(state);
     const outcomeWorlds = this.projectProbabilityWork(
       joined,
       (branch) => ({
@@ -2077,8 +858,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       conditions:{},
       willing:counterDecision === true
     }];
-    const counterState = this.getCounterCountBranches(target, state?.remainingCardCounts ?? null);
-    const knownCounterState = this.getKnownCounterCountBranches(target);
+    const counterState = target.counterCountDistribution ?? [];
     const candidates = [
       ...(Array.isArray(target.hand) ? target.hand
         .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON && card.definitionId === "counter")
@@ -2087,6 +867,9 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         .filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON && entry.definitionId === "counter")
         .map((entry, index) => ({ key:`known:${entry.cardId ?? index}`, card:entry, definitionId:"counter" })) : [])
     ];
+    const knownBefore = candidates.reduce(
+      (sum, candidate) => sum + this.cardAvailability(candidate.card), 0
+    );
     const candidatePartitions = candidates.map((candidate, index) => (
       this.getAvailabilityStateWork(
         candidate.card,
@@ -2103,7 +886,6 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       effectWorlds,
       decisionPartition,
       counterState,
-      knownCounterState,
       ...candidatePartitions
     ], "ResponseSimulation.consumeTargetCounterResponseWorlds:candidate-worlds");
     const selectionKey = this.nextProbabilityEventKey(state, `counter-selection:${target.id ?? "unknown"}`);
@@ -2114,10 +896,9 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       const effectOccurs = Boolean(branch.occurs);
       const willing = Boolean(branch.willing);
       const counterCount = Math.max(0, Math.floor(Number(branch.counterCount) || 0));
-      const knownCount = Math.max(0, Math.floor(Number(branch.knownCounterCount) || 0));
-      const anonymousCount = Math.max(0, counterCount - knownCount);
       const available = candidates.map((_, index) => Boolean(branch[`c${index}`]));
       const availableCount = available.reduce((sum, value) => sum + (value ? 1 : 0), 0);
+      const anonymousCount = Math.max(0, counterCount - availableCount);
       const attempted = effectOccurs && willing && counterCount >= 1;
       if (!attempted) {
         outcomes.push({
@@ -2207,14 +988,19 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         && Math.max(0, Math.floor(Number(branch.counterCount) || 0)) >= 1
       )
     }));
-    const currentCounterState = this.getCounterCountBranches(target, state?.remainingCardCounts ?? null);
-    const joinedCount = this.joinProbabilityWork([currentCounterState, attemptedPartition]);
-    target.counterCountDistribution = this.projectProbabilityWork(joinedCount, (branch) => ({
-      counterCount:Math.max(0, branch.counterCount - (branch.occurs ? 1 : 0))
-    }));
-    this.syncCounterSummary(target);
     const attemptedProbability = this.eventProbability(attemptedPartition);
+    const knownAfter = candidates.reduce(
+      (sum, candidate) => sum + this.cardAvailability(candidate.card), 0
+    );
+    const anonymousSpend = Math.max(0, attemptedProbability - (knownBefore - knownAfter));
+    if (anonymousSpend > PROBABILITY_EPSILON) mutateHiddenPool(state.hiddenPoolState, {
+      type:"REMOVE",
+      sourceBucketId:target.id,
+      definitionId:"counter",
+      probability:anonymousSpend
+    });
     target.handCount = Math.max(0, (target.handCount ?? 0) - attemptedProbability);
+    projectHiddenSummaries(state);
 
     const outcomeWorlds = this.projectProbabilityWork(joined, (branch) => {
       const effectOccurs = Boolean(branch.occurs);

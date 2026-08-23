@@ -25,8 +25,14 @@ import {
 import { projectTransferRulePlayers } from "../state/RuleProjection.js";
 import { inAttackRange } from "../state/DistanceProbabilityBranches.js";
 import { CardSelectionPolicy } from "./CardSelectionPolicy.js";
-import { ResourceSelectionPolicy } from "./ResourceSelectionPolicy.js";
-import { TransferPolicy } from "./TransferPolicy.js";
+import {
+  buildResourceCandidates,
+  chooseContextualResourceCandidate
+} from "./ResourceSelectionPolicy.js";
+import {
+  buildTransferCandidates,
+  chooseBestPositiveTransfer
+} from "./TransferPolicy.js";
 
 export class CardSelectionBoundary {
   /*
@@ -71,14 +77,10 @@ export class CardSelectionBoundary {
       ? runtime.createSearchState
       : null;
     this.knowledge = knowledge;
-    this.resourcePolicy = policies.resourcePolicy ?? new ResourceSelectionPolicy();
     this.resourceValueQuery = policies.resourceValueQuery ?? null;
-    this.transferPolicy = policies.transferPolicy ?? new TransferPolicy();
     this.cardSelectionPolicy = policies.cardSelectionPolicy ?? new CardSelectionPolicy({
       random: () => this.random(),
-      remainingCounts: (actor) => this.knowledge?.remainingCounts?.(actor) ?? null,
-      resourcePolicy: this.resourcePolicy,
-      transferPolicy: this.transferPolicy
+      remainingCounts: (actor) => this.knowledge?.remainingCounts?.(actor) ?? null
     });
   }
 
@@ -126,7 +128,7 @@ export class CardSelectionBoundary {
     const knownIds = new Set(knownCards.map((entry) => entry.cardId));
     const unknownCards = eligibleCards.filter((card) => !knownIds.has(card.id));
     const equipmentDefinitionId = owner.equipment?.definitionId ?? null;
-    const candidates = this.resourcePolicy.buildCandidates({
+    const candidates = buildResourceCandidates({
       purpose,
       actor: searchActor,
       owner: searchOwner,
@@ -145,7 +147,7 @@ export class CardSelectionBoundary {
       purpose,
       candidates
     });
-    const selection = this.resourcePolicy.chooseContextual(evaluated);
+    const selection = chooseContextualResourceCandidate(evaluated);
     if (selection?.zone === "equipment" && owner.equipment) {
       return { card: owner.equipment, zone: "equipment" };
     }
@@ -356,70 +358,7 @@ export class CardSelectionBoundary {
     return this.cardSelectionPolicy.expectedCardValue(actor, owner, card);
   }
 
-  /*
-  功能
-  从合法来源候选中解析最佳转移来源实体。
 
-  调用方
-  分阶段转移选择流程。
-
-  输入
-  行动者与合法来源数组。
-
-  输出
-  当前来源实体或 null。
-
-  读取状态
-  Domain CardRules 合法接收者与 TransferPolicy。
-
-  写入状态
-  无。
-
-  调用函数
-  chooseTransferCombination。
-
-  边界与不变量
-  不移动手牌，最终真实结算仍需实体复核。
-  */
-  chooseTransferSource(actor, candidates) {
-    const plan = this.chooseTransferCombination(actor, CARD_DEFINITIONS.transfer, candidates);
-    return candidates.find((player) => player.id === plan?.sourceId) ?? null;
-  }
-
-  /*
-  功能
-  从合法接收者候选中解析最佳转移接收者实体。
-
-  调用方
-  分阶段转移选择流程。
-
-  输入
-  行动者、已选来源和合法接收者数组。
-
-  输出
-  当前接收者实体或 null。
-
-  读取状态
-  Domain CardRules 合法集合与 TransferPolicy。
-
-  写入状态
-  无。
-
-  调用函数
-  chooseTransferCombination。
-
-  边界与不变量
-  只限制调用方已经给出的 receiver ID。
-  */
-  chooseTransferReceiver(actor, from, candidates) {
-    const plan = this.chooseTransferCombination(
-      actor,
-      CARD_DEFINITIONS.transfer,
-      [from],
-      new Set(candidates.map((player) => player.id))
-    );
-    return candidates.find((player) => player.id === plan?.receiverId) ?? null;
-  }
 
   /*
   功能
@@ -455,7 +394,7 @@ export class CardSelectionBoundary {
   ) {
     const remainingCardCounts = this.knowledge?.remainingCounts?.(actor) ?? null;
     const players = this.getState()?.players ?? [];
-    return this.transferPolicy.choose({
+    return chooseBestPositiveTransfer(buildTransferCandidates({
       actor,
       sources,
       allowedReceiverIds,
@@ -469,7 +408,7 @@ export class CardSelectionBoundary {
         const receiverIds = getTransferReceiverIds(facts, actorFact, fromFact, card);
         return players.filter((player) => receiverIds.includes(player.id));
       }
-    });
+    }));
   }
 
   /*

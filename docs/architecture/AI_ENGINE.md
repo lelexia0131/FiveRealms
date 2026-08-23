@@ -1288,15 +1288,19 @@ P(X = k) = C(K, k) C(N - K, n - k) / C(N, n)
 - `K`：其中目标 definition 的剩余实例数；
 - `n`：该玩家扣除合法已知牌后的未知手牌槽位数。
 
-`hypergeometricCountDistribution` 直接维护 `0..n` 的 count distribution；`hypergeometricProbabilityAtLeast` 只从该分布求尾概率。动态整数未知槽位同样使用无放回分布，不再使用 `Binomial(n, K/N)`。
+`hypergeometricCountDistribution` 从合法 `kMin = max(0, n - (N - K))` 开始递推，只维护每名玩家最多 `n + 1` 个 count 分支；`hypergeometricProbabilityAtLeast` 只从该分布求尾概率。动态整数未知槽位同样使用无放回分布，不使用 `Binomial(n, K/N)`。
 
-同一 definition 在多个未知玩家之间使用逐玩家条件超几何分配。每层同时扣除该玩家消费的全部槽位与目标实例，并把完整联合分配写入稳定 condition key：
+根 `BeliefState` 不枚举多人联合 allocation，也不创建 `hidden-card-allocation:<definitionId>` condition。每个 tracked definition 只保存：
 
-```text
-hidden-card-allocation:<definitionId>
-```
+- 每名玩家的精确超几何边际；
+- 一个紧凑 finite-pool factor：`N`、`K`、逐玩家 anonymous slots 与逐玩家 count weights；
+- 每个 definition 一个空条件根 factor branch。
 
-因此同一牌种不会在多个玩家间超额分配，card-scope 反制、Seal team counter 与 Duel assault 世界可复用相关性。解析式 Belief 当前只精确保留“同一 definition 跨玩家”的相关性；不同 definition 之间的完整联合手牌身份仍由 Monte Carlo hidden worlds 表示，未进行指数级全局枚举。
+因此根分支复杂度为 `Θ(DPH)`，其中 `D` 是 tracked definition 数、`P` 是玩家数、`H` 是单玩家匿名槽位上限；禁止恢复 `O(D × (H + 1)^P)` 的根联合分配。finite-pool factor 通过多项式卷积积分未查询玩家，只在实际消费者需要相关性时执行精确局部查询：Seal team at-least-one、ordered Counter responder、responder consumption posterior 与目标级 Counter posterior 都直接条件化同一 Counter factor，不连接逐玩家边际假设独立。
+
+匿名物理牌发生 transfer、plunder、random loss、destroy 或 anonymous steal 时，Simulation 只为该次 mutation 创建一个共享 identity condition。Recover、Block、Counter、Assault 四个 factor 在同一 condition 下分别执行 success/failure 槽位变换；hidden-to-hidden 移动把同一槽位加入接收者，进入 viewer 手牌时改为互斥概率身份并从匿名 factor 移出。一个实体在一个世界只能有一个 identity，不允许各牌种独立重抽。
+
+解析式 Belief 精确保留同一 definition 跨玩家的有限池相关性，并通过局部共享 mutation condition 保留实际移动实体的跨 definition 互斥身份；`sampleHiddenWorlds` 仍是独立的有限 Monte Carlo 搜索估计，不承担根 exact probability 表示。
 
 ### 33.3 Response Policy 边界
 

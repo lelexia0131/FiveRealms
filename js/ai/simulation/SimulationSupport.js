@@ -17,20 +17,11 @@ Domain Card/Ruleset Definitions。
 架构约束
 不得包含规则执行、策略、价值或组件调度。
 */
-import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 
 const DECK_COMPOSITION = RULESET_DEFINITION.deckComposition;
 const TOTAL_CARD_COUNT = Object.values(DECK_COMPOSITION)
   .reduce((sum, count) => sum + count, 0);
-const BASIC_CARD_COUNT = Object.entries(DECK_COMPOSITION)
-  .filter(([definitionId]) => CARD_DEFINITIONS[definitionId]?.category === "basic")
-  .reduce((sum, [, count]) => sum + count, 0);
-const EQUIPMENT_CARD_COUNT = Object.entries(DECK_COMPOSITION)
-  .filter(([definitionId]) => CARD_DEFINITIONS[definitionId]?.category === "equipment")
-  .reduce((sum, [, count]) => sum + count, 0);
-const BLOCK_CARD_COUNT = DECK_COMPOSITION.block ?? 0;
-const OTHER_BASIC_CARD_COUNT = BASIC_CARD_COUNT - BLOCK_CARD_COUNT;
 
 /*
 功能
@@ -101,92 +92,6 @@ export const remainingCardDensity = (remainingCardCounts, definitionId) => {
   return Math.max(0, Math.min(1, count / total));
 };
 
-/*
-功能
-把确定雷达判定牌映射为基础、锦囊与装备三类互斥概率。
-
-调用方
-remainingRadarJudgmentProbabilities：剩余牌快照缺失时提供雷达判定类别先验。
-
-输入
-无。
-
-输出
-新的 block、otherBasic、equipment 三类概率对象。
-
-读取状态
-只读模块加载时由卡牌配置计算的类别数量常量。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-三类互斥并使用完整牌堆作分母；战术牌不属于雷达可获得的三类结果。
-*/
-export const fixedRadarJudgmentProbabilities = () => ({
-  block:BLOCK_CARD_COUNT / TOTAL_CARD_COUNT,
-  otherBasic:OTHER_BASIC_CARD_COUNT / TOTAL_CARD_COUNT,
-  equipment:EQUIPMENT_CARD_COUNT / TOTAL_CARD_COUNT
-});
-
-/*
-功能
-按剩余牌池密度构造雷达判定的三类互斥概率。
-
-调用方
-雷达判定兼容查询：从当前剩余牌池派生基础牌与装备类别概率。
-
-输入
-公开推导的 remainingCardCounts；允许缺失或空池。
-
-输出
-新的 block、otherBasic、equipment 概率对象。
-
-读取状态
-只读剩余定义计数与 CARD_DEFINITIONS 的类别。
-
-写入状态
-无。
-
-调用函数
-fixedRadarJudgmentProbabilities。
-
-边界与不变量
-仅统计仍为正数且有正式定义的牌；输出三类互斥，空池全部为零。
-*/
-export const remainingRadarJudgmentProbabilities = (remainingCardCounts) => {
-  if (!remainingCardCounts || typeof remainingCardCounts !== "object"
-    || Array.isArray(remainingCardCounts)) {
-    return fixedRadarJudgmentProbabilities();
-  }
-  const positiveCounts = {};
-  let total = 0;
-  for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
-    const value = Number(count);
-    if (!Number.isFinite(value) || value <= 0) continue;
-    positiveCounts[definitionId] = value;
-    total += value;
-  }
-  if (total <= 0) return { block:0, otherBasic:0, equipment:0 };
-  let block = 0;
-  let otherBasic = 0;
-  let equipment = 0;
-  for (const [definitionId, count] of Object.entries(positiveCounts)) {
-    const definition = CARD_DEFINITIONS[definitionId];
-    if (!definition) continue;
-    if (definitionId === "block") block += count;
-    else if (definition.category === "basic") otherBasic += count;
-    else if (definition.category === "equipment") equipment += count;
-  }
-  return {
-    block:Math.max(0, Math.min(1, block / total)),
-    otherBasic:Math.max(0, Math.min(1, otherBasic / total)),
-    equipment:Math.max(0, Math.min(1, equipment / total))
-  };
-};
 
 /*
 功能

@@ -33,6 +33,7 @@ import {
   probabilityEventPartition,
   totalBranchProbability
 } from "../state/Probability.js";
+import { projectHiddenSummaries } from "../state/HiddenPool.js";
 import {
   clampProbability,
   remainingCardDensity,
@@ -477,7 +478,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   角色被动对应的手牌、能量、标记、势能或一次性触发字段。
 
   调用函数
-  simulateSpyGapAfterLifeDamage、simulateAssaultAfterDamage 及资源/概率 辅助函数。
+  simulateSpyGapAfterLifeDamage 及资源/概率辅助函数。
 
   边界与不变量
   只在生命伤害世界触发；同一 damageContext 的一次性被动不得重复执行，调用顺序保持真实监听顺序。
@@ -671,7 +672,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       }
       revealMass -= positionProbability;
     }
-    this.syncCardEstimates(target, state?.remainingCardCounts ?? null);
+    projectHiddenSummaries(state);
   }
 
   /*
@@ -721,35 +722,6 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     );
   }
 
-  /*
-  功能
-  在突袭造成生命伤害后推进与伤害来源绑定的后置被动。
-
-  调用方
-  simulateAfterLifeDamage：只处理突袭来源绑定的伤后被动。
-
-  输入
-  SearchState、来源、目标、生命伤害概率与可选条件分支。
-
-  输出
-  无返回值；突袭伤后相关状态已推进。
-
-  读取状态
-  来源/目标角色、追猎标记与生命伤害世界。
-
-  写入状态
-  突袭后摸牌、标记清理或角色被动字段。
-
-  调用函数
-  gainUnknownCardsWithCounterState、clearHuntMarksBySource。
-
-  边界与不变量
-  非突袭或无生命伤害世界不得触发；同一来源标记只能消费一次。
-  */
-  simulateAssaultAfterDamage(state, source, target, lifeDamageProbability, lifeDamageBranches = null) {
-    return this.simulateAfterLifeDamage(state, source, target, lifeDamageProbability,
-      lifeDamageBranches, { cardDamage: true, emberTriggeredProbabilities: {} });
-  }
 
   /*
   功能

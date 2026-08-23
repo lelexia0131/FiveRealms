@@ -532,32 +532,4 @@ export class ResponseBoundary {
     return this.shouldRespond(responder, "counter", context, []);
   }
 
-  /*
-  功能
-  经正式 Policy 与窄 query 评估动态 root 反制。
-
-  调用方
-  正式调用方。
-
-  输入
-  响应者与当前 response root context。
-
-  输出
-  是否追加反制。
-
-  读取状态
-  当前过滤 response state 与 State Value。
-
-  写入状态
-  仅窄 query 的独立模拟 clone。
-
-  调用函数
-  shouldRespond。
-
-  边界与不变量
-  不 import 或构造 具体 Simulator，不建立第二套 ResponseSimulation。
-  */
-  dynamicRootCounterDecision(responder, context) {
-    return this.shouldRespond(responder, "counter", context, []);
-  }
 }

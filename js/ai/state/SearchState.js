@@ -209,6 +209,7 @@ export function createSearchState(visibleState, knowledgeState, beliefState, der
     phase:visibleState.phase,
     playPhaseEnded:false,
     remainingCardCounts:beliefState.remainingCardCounts,
+    hiddenPoolState:beliefState.hiddenPoolState,
     deckCount:visibleState.deckCount,
     discardCount:visibleState.discardCount,
     discardDefinitionIds:visibleState.discardDefinitionIds,

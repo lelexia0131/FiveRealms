@@ -60,9 +60,16 @@ import { createVisibleState } from "../js/ai/state/VisibleState.js";
 import { createKnowledgeState } from "../js/ai/state/Knowledge.js";
 import {
   createBeliefState,
-  hypergeometricCountDistribution,
   hypergeometricProbabilityAtLeast
 } from "../js/ai/state/BeliefState.js";
+import {
+  conditionHiddenPool,
+  createHiddenPoolState,
+  hypergeometricCountDistribution,
+  mutateHiddenPool,
+  projectHiddenSummaries,
+  queryHiddenPool
+} from "../js/ai/state/HiddenPool.js";
 import { cloneSearchState } from "../js/ai/state/SearchState.js";
 import {
   PROBABILITY_CLASSIFICATION,
@@ -73,7 +80,7 @@ import {
   projectProbabilityStateBranches as projectStateProbabilityBranches,
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
-import { Simulator } from "../js/ai/simulation/Simulator.js";
+import { Simulator as ProductionSimulator } from "../js/ai/simulation/Simulator.js";
 import { Planner } from "../js/ai/search/Planner.js";
 import { PatternMatcher } from "../js/ai/search/pattern/PatternMatcher.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
@@ -191,7 +198,9 @@ import {
   getRoleCardAiValue as ownedRoleCardAiValue
 } from "../js/ai/value/CardValue.js";
 import {
+  buildResourceCandidates,
   chooseBestResourceHandCandidate,
+  chooseContextualResourceCandidate,
   chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
@@ -238,9 +247,7 @@ import {
 import { dynamicRootFlipGain } from "../js/ai/simulation/RootResolutionQuery.js";
 import { ActionCandidatePolicy } from "../js/ai/policy/ActionCandidatePolicy.js";
 import { CardSelectionPolicy } from "../js/ai/policy/CardSelectionPolicy.js";
-import { ResourceSelectionPolicy } from "../js/ai/policy/ResourceSelectionPolicy.js";
 import { ResponsePolicy } from "../js/ai/policy/ResponsePolicy.js";
-import { TransferPolicy } from "../js/ai/policy/TransferPolicy.js";
 import { buildRadarJudgmentProbabilities as buildDomainRadarJudgmentProbabilities } from "../js/ai/domain/RadarModel.js";
 import {
   buildLightningHitDistribution as buildDomainLightningHitDistribution,
@@ -255,6 +262,118 @@ import {
   assessGlobalBenefitOutcome,
   buildMutualBenefitDraftOutcome
 } from "../js/ai/domain/GlobalBenefitModel.js";
+
+/*
+功能
+把历史手工 SearchState fixture 升级为 canonical HiddenPool fixture。
+
+调用方
+测试专用 Simulator 子类构造函数。
+
+输入
+测试创建的 SearchState 普通对象。
+
+输出
+带 hiddenPoolState 的同一对象。
+
+读取状态
+players 的 handCount、合法已知身份与 remainingCardCounts。
+
+写入状态
+仅写测试 fixture.hiddenPoolState。
+
+调用函数
+createHiddenPoolState、cardAvailability。
+
+边界与不变量
+生产代码没有 fallback；自己 hand 与合法 knownCards 已是确定身份，不得再次计入匿名槽。
+*/
+function upgradeHiddenPoolFixture(state) {
+  if (!state || state.hiddenPoolState) return state;
+  const slotsByBucket = Object.fromEntries((state.players ?? []).map((player) => {
+    const identities = Array.isArray(player.hand)
+      ? player.hand
+      : (Array.isArray(player.knownCards) ? player.knownCards : []);
+    const occupied = identities.reduce((sum, card) => sum + cardAvailability(card), 0);
+    return [player.id, Math.max(0, Math.round((Number(player.handCount) || 0) - occupied))];
+  }));
+  state.hiddenPoolState = createHiddenPoolState({
+    slotsByBucket,
+    cardCounts:state.remainingCardCounts ?? RULESET_DEFINITION.deckComposition
+  });
+  for (const player of state.players ?? []) {
+    const anonymousSlots = slotsByBucket[player.id] ?? 0;
+    if (anonymousSlots <= 0) continue;
+    const summaries = [
+      ["block", player.blockProbability, player.blockCountDistribution],
+      ["counter", player.counterProbability, player.counterCountDistribution],
+      ["assault", player.assaultResponseProbability, player.assaultCountDistribution]
+    ];
+    for (const [definitionId, rawProbability, sourceDistribution] of summaries) {
+      if (Array.isArray(sourceDistribution) && sourceDistribution.length) {
+        state.hiddenPoolState.marginalsByDefinition[definitionId][player.id] = sourceDistribution.map(
+          (branch) => ({
+            count:Math.max(0, Math.floor(Number(
+              branch.count ?? branch.blockCount ?? branch.counterCount
+            ) || 0)),
+            probability:branch.probability
+          })
+        );
+        state.hiddenPoolState.correlationMode = "marginalized";
+        continue;
+      }
+      if (!Number.isFinite(rawProbability)) continue;
+      const probability = Math.max(0, Math.min(1, rawProbability));
+      state.hiddenPoolState.marginalsByDefinition[definitionId][player.id] = [
+        { count:0, probability:1 - probability },
+        { count:1, probability }
+      ].filter((branch) => branch.probability > 0);
+      state.hiddenPoolState.correlationMode = "marginalized";
+    }
+  }
+  return projectHiddenSummaries(state);
+}
+
+class Simulator extends ProductionSimulator {
+  /*
+  功能
+  让直接构造 Simulator 的历史测试统一经过 canonical HiddenPool fixture。
+
+  调用方
+  tests/run.mjs 中的 Simulator 专项与 SearchState fixture。
+
+  输入
+  测试 SearchState 与正式 Simulator options。
+
+  输出
+  生产 Simulator 的测试子类实例。
+
+  读取状态
+  仅测试 fixture。
+
+  写入状态
+  upgradeHiddenPoolFixture 写入测试 fixture 后由生产构造克隆。
+
+  调用函数
+  upgradeHiddenPoolFixture、ProductionSimulator constructor。
+
+  边界与不变量
+  不改变生产模块；正式 createInitialSearchState 已有 HiddenPool 时保持原对象。
+  */
+  constructor(state, options = {}) {
+    super(upgradeHiddenPoolFixture(state), options);
+    return new Proxy(this, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args) => {
+          if (args[0]?.players) upgradeHiddenPoolFixture(args[0]);
+          return value.apply(target, args);
+        };
+      }
+    });
+  }
+}
 
 // Test Runner 与通用 Helpers
 const DOMAIN_CARD_DEFINITIONS = CARD_DEFINITIONS;
@@ -14049,6 +14168,105 @@ test("AI·可见状态：对未知调息只按公开手牌数估算而不读取�
   assert.equal(first, second);
 });
 
+test("AI·可见状态：隐藏手牌换位不改变 Belief、团队反制或 ordered responder", () => {
+  /*
+  功能
+  构造只改变敌方真实隐藏手牌排列的 SearchState 隐私夹具。
+
+  调用方
+  当前 hidden-hand permutation test。
+
+  输入
+  按敌方座次排列的三个真实定义 ID。
+
+  输出
+  当前 viewer 的 SearchState。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  makePlayer、makeGame、createInitialSearchState。
+
+  边界与不变量
+  三个夹具的公开字段和 Remaining Knowledge 必须相同，只有不可见 hand identity 换位。
+  */
+  function build(definitions) {
+    const viewer = makePlayer("privacy-viewer", 0, "dawn"),
+      first = makePlayer("privacy-b", 1, "dusk"),
+      second = makePlayer("privacy-c", 2, "dusk"),
+      third = makePlayer("privacy-d", 3, "dusk");
+    [first, second, third].forEach((player, index) => {
+      player.hand = [instance(definitions[index])];
+    });
+    const { game } = makeGame([viewer, first, second, third]);
+    return createInitialSearchState(
+      viewer.id,
+      game.state,
+      { counter:1, charge:2 }
+    );
+  }
+  const left = build(["counter", "charge", "charge"]);
+  const right = build(["charge", "counter", "charge"]);
+  assert.equal(
+    JSON.stringify(left.finitePoolStateBranchesByDefinition),
+    JSON.stringify(right.finitePoolStateBranchesByDefinition)
+  );
+  assert.deepEqual(
+    left.players.map((player) => player.counterCountDistribution),
+    right.players.map((player) => player.counterCountDistribution)
+  );
+  assertClose(
+    sealCounterProbability(left, left.players[1]),
+    sealCounterProbability(right, right.players[1]),
+    1e-12
+  );
+  /*
+  功能
+  投影隐私夹具的 ordered Counter responder 概率向量。
+
+  调用方
+  当前 hidden-hand permutation test。
+
+  输入
+  当前 viewer 的 SearchState。
+
+  输出
+  B/C/D/none 顺序的概率数组。
+
+  读取状态
+  Counter finite-pool factor 与玩家座次。
+
+  写入状态
+  无。
+
+  调用函数
+  Simulator.evaluateCardScopeCounterResponses、totalBranchProbability。
+
+  边界与不变量
+  ResponsePolicy 在夹具中固定愿意响应，比较项只允许由合法 Belief 决定。
+  */
+  function ordered(state) {
+    const simulator = new Simulator(state);
+    simulator.counterDecision = () => true;
+    const evaluation = simulator.evaluateCardScopeCounterResponses(
+      state,
+      state.players[0],
+      { ...CARD_DEFINITIONS.duel, id:"privacy-duel" },
+      [state.players[1]]
+    );
+    return ["privacy-b", "privacy-c", "privacy-d", null].map((responderId) => (
+      totalBranchProbability(evaluation.responseWorlds.filter(
+        (branch) => branch.responderId === responderId
+      ))
+    ));
+  }
+  assert.deepEqual(ordered(left), ordered(right));
+});
+
 test("AI·可见状态：携带剩余计数副本且不修改输入", () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const { game }
@@ -15324,6 +15542,7 @@ test("AI·封印：SearchPrior 与 StateValue 的团队反制 join 继承 Search
     game.state,
     game.aiController.knowledge.remainingCounts(actor)
   ));
+  delete state.finitePoolStateBranchesByDefinition;
   const holderState = state.players.find((player) => player.id === holder.id);
   for (const player of state.players.filter((entry) => entry.battleTeam === "dusk")) {
     player.counterCountDistribution = Array.from({ length:96 }, (_, index) => ({
@@ -25223,6 +25442,44 @@ test("AI·封印：未来反制先于剩余牌类别判定且全部概率互斥"
   assert.equal(JSON.stringify(counts), snapshot);
 });
 
+test("AI·封印：团队反制使用有限池相关性而非独立边际", () => {
+  const belief = createBeliefState(
+    "seal-pool-viewer",
+    {
+      players:[
+        { id:"seal-pool-viewer", handCount:0, hand:[] },
+        { id:"seal-pool-holder", handCount:1 },
+        { id:"seal-pool-ally", handCount:1 }
+      ]
+    },
+    {
+      knownCardsByPlayer:{ "seal-pool-holder":[], "seal-pool-ally":[] }
+    },
+    { counter:1, charge:1 }
+  );
+  const holder = {
+    id:"seal-pool-holder",
+    battleTeam:"dusk",
+    alive:true,
+    statuses:["sealed"],
+    ...belief.playersById["seal-pool-holder"]
+  };
+  const ally = {
+    id:"seal-pool-ally",
+    battleTeam:"dusk",
+    alive:true,
+    statuses:[],
+    ...belief.playersById["seal-pool-ally"]
+  };
+  const state = {
+    players:[holder, ally],
+    finitePoolStateBranchesByDefinition:belief.finitePoolStateBranchesByDefinition
+  };
+  assertClose(holder.counterProbability, 0.5);
+  assertClose(ally.counterProbability, 0.5);
+  assertClose(sealCounterProbability(state, holder), 1, 1e-12);
+});
+
 test("AI·封印：正式 SealModel 输出概率守恒、输入只读且别名入口一致", () => {
   const holder = {
     id: "domain-seal-holder", battleTeam: "dawn", alive: true, statuses: [], counterProbability: .25,
@@ -32774,7 +33031,198 @@ const counterAvailability = (entry) => entry.availabilityStateBranches.filter(
   (branch) => branch.available
 ).reduce((sum, branch) => sum + branch.probability, 0);
 
+/*
+功能
+从根 Belief 构造带正式有限池因子的最小可变 SearchState 测试夹具。
+
+调用方
+AI 反制与资源身份的 finite-pool differential tests。
+
+输入
+观察者 ID、玩家公开摘要与完整剩余牌计数。
+
+输出
+包含玩家精确边际和可变 factor 分支的独立 SearchState。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+createBeliefState、counterPlayer、structuredClone。
+
+边界与不变量
+其他玩家只提供 handCount/knownCards；不得把测试中的隐藏实际牌面传入 Belief。
+*/
+function createFormalFinitePoolState(viewerId, players, remainingCardCounts) {
+  const visiblePlayers = players.map((player) => ({
+    id:player.id,
+    handCount:player.handCount ?? 0,
+    ...(player.id === viewerId ? { hand:player.hand ?? [] } : {})
+  }));
+  const knownCardsByPlayer = Object.fromEntries(players
+    .filter((player) => player.id !== viewerId)
+    .map((player) => [player.id, player.knownCards ?? []]));
+  const belief = createBeliefState(
+    viewerId,
+    { players:visiblePlayers },
+    { knownCardsByPlayer },
+    remainingCardCounts
+  );
+  return {
+    remainingCardCounts:{ ...remainingCardCounts },
+    finitePoolStateBranchesByDefinition:structuredClone(
+      belief.finitePoolStateBranchesByDefinition
+    ),
+    probabilityEventCounter:0,
+    players:players.map((player, index) => ({
+      ...counterPlayer(player.id, player.battleTeam ?? (index === 0 ? "dawn" : "dusk")),
+      ...belief.playersById[player.id],
+      seatIndex:player.seatIndex ?? index,
+      ...player
+    }))
+  };
+}
+
 // ---- AI 响应模型·反制 ----
+
+test("AI·反制：有限池 ordered responder 概率与消费后验匹配 exhaustive oracle", () => {
+  const state = createFormalFinitePoolState(
+    "ordered-a",
+    [
+      { id:"ordered-a", seatIndex:0, battleTeam:"dawn", handCount:0, hand:[] },
+      { id:"ordered-b", seatIndex:1, battleTeam:"dusk", handCount:1, knownCards:[] },
+      { id:"ordered-c", seatIndex:2, battleTeam:"dusk", handCount:1, knownCards:[] },
+      { id:"ordered-d", seatIndex:3, battleTeam:"dusk", handCount:1, knownCards:[] }
+    ],
+    { counter:2, charge:3 }
+  );
+  const simulator = new Simulator(state);
+  simulator.counterDecision = () => true;
+  const actor = state.players[0];
+  const evaluation = simulator.evaluateCardScopeCounterResponses(
+    state,
+    actor,
+    { ...CARD_DEFINITIONS.duel, id:"ordered-duel" },
+    [state.players[1]],
+    null,
+    { createCondition:true }
+  );
+  const byResponder = Object.fromEntries(["ordered-b", "ordered-c", "ordered-d"].map(
+    (playerId) => [playerId, totalBranchProbability(
+      evaluation.responseWorlds.filter((branch) => branch.responderId === playerId)
+    )]
+  ));
+  assertClose(byResponder["ordered-b"], .4, 1e-12);
+  assertClose(byResponder["ordered-c"], .3, 1e-12);
+  assertClose(byResponder["ordered-d"], .2, 1e-12);
+  assertClose(totalBranchProbability(
+    evaluation.responseWorlds.filter((branch) => branch.responderId === null)
+  ), .1, 1e-12);
+  const responderKey = Object.keys(evaluation.responseWorlds[0].conditions).find(
+    (key) => key.startsWith("simulation:card-scope-counter-responder:")
+  );
+  assert.ok(responderKey);
+
+  simulator.consumeCountersForCardScope(
+    state,
+    actor,
+    { ...CARD_DEFINITIONS.duel, id:"ordered-duel" },
+    [state.players[1]],
+    null,
+    evaluation
+  );
+  const factorBranches = state.finitePoolStateBranchesByDefinition.counter;
+  /*
+  功能
+  读取指定 ordered responder 世界中一名玩家消费后的 Counter 期望。
+
+  调用方
+  当前 ordered responder posterior differential test。
+
+  输入
+  responder condition 值与待查询玩家 ID。
+
+  输出
+  对该 responder 事件归一后的匿名 Counter 期望。
+
+  读取状态
+  消费后的 Counter factor branches 与 responder condition key。
+
+  写入状态
+  无。
+
+  调用函数
+  finitePoolPlayerCountDistribution、totalBranchProbability。
+
+  边界与不变量
+  只在指定 responder 条件内归一；该夹具每个条件必须具有正概率质量。
+  */
+  function posterior(responderId, playerId) {
+    const branches = factorBranches.filter(
+      (branch) => branch.conditions[responderKey] === responderId
+    );
+    const mass = totalBranchProbability(branches);
+    return branches.reduce((sum, branch) => {
+      const expected = finitePoolPlayerCountDistribution(branch.model, playerId).reduce(
+        (inner, countBranch) => inner + countBranch.count * countBranch.probability, 0
+      );
+      return sum + branch.probability * expected / mass;
+    }, 0);
+  }
+  assertClose(posterior("ordered-b", "ordered-b"), 0, 1e-12);
+  assertClose(posterior("ordered-b", "ordered-c"), .25, 1e-12);
+  assertClose(posterior("ordered-b", "ordered-d"), .25, 1e-12);
+  assertClose(posterior("ordered-c", "ordered-b"), 0, 1e-12);
+  assertClose(posterior("ordered-c", "ordered-c"), 0, 1e-12);
+  assertClose(posterior("ordered-c", "ordered-d"), 1 / 3, 1e-12);
+  assertClose(posterior("ordered-d", "ordered-b"), 0, 1e-12);
+  assertClose(posterior("ordered-d", "ordered-c"), 0, 1e-12);
+  assertClose(posterior("ordered-d", "ordered-d"), 0, 1e-12);
+  assertClose(posterior("none", "ordered-b"), 0, 1e-12);
+  assertClose(posterior("none", "ordered-c"), 0, 1e-12);
+  assertClose(posterior("none", "ordered-d"), 0, 1e-12);
+});
+
+test("AI·反制：目标级有限池响应与消费 posterior 使用同一条件世界", () => {
+  const state = createFormalFinitePoolState(
+    "target-viewer",
+    [
+      { id:"target-viewer", seatIndex:0, battleTeam:"dawn", handCount:0, hand:[] },
+      { id:"target-counter", seatIndex:1, battleTeam:"dusk", handCount:1, knownCards:[] },
+      { id:"target-later", seatIndex:2, battleTeam:"dusk", handCount:1, knownCards:[] }
+    ],
+    { counter:2, charge:3 }
+  );
+  const simulator = new Simulator(state);
+  const target = state.players[1];
+  const response = simulator.consumeTargetCounterResponseWorlds(
+    state,
+    target,
+    [{ probability:1, conditions:{}, occurs:true }],
+    true
+  );
+  assertClose(totalBranchProbability(
+    response.outcomeWorlds.filter((branch) => branch.counterAttempted)
+  ), .4, 1e-12);
+  assertClose(totalBranchProbability(
+    response.effectPassWorlds.filter((branch) => branch.occurs)
+  ), .6, 1e-12);
+  const attemptedBranch = state.finitePoolStateBranchesByDefinition.counter.find(
+    (branch) => Object.values(branch.conditions).includes("anonymous")
+  );
+  assert.ok(attemptedBranch);
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(attemptedBranch.model, "target-counter"),
+    [{ count:0, probability:1 }]
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(attemptedBranch.model, "target-later"),
+    [{ count:0, probability:.75 }, { count:1, probability:.25 }]
+  );
+});
 
 test("AI·反制：不会直接反制己方正收益 root card", () => {
   const ember = makePlayer("ember", 0, "dawn", "ai", 4),
@@ -35099,7 +35547,7 @@ test("AI·反制容量：唯一匿名确定反制窃取后容量守恒", () => {
   assertClose(actor.counterCountDistribution.reduce((sum, branch) => sum + branch.probability, 0), 1);
 });
 
-test("AI·反制容量：唯一匿名50%反制窃取后与来源同条件世界", () => {
+test("AI·反制容量：唯一匿名50%反制窃取后立即边缘化身份历史", () => {
   const actor = counterPlayer(
     "a",
     "dawn",
@@ -35125,10 +35573,10 @@ test("AI·反制容量：唯一匿名50%反制窃取后与来源同条件世界"
   assertClose(byCount[0] ?? 0, .5);
   assertClose(byCount[1] ?? 0, .5);
   assertClose(actor.counterProbability, .5);
-  const count1Branches = actor.counterCountDistribution.filter((branch) => branch.counterCount === 1);
-  assert.ok(count1Branches.some((branch) => branch.conditions.anon === "yes"));
-  const count0Branches = actor.counterCountDistribution.filter((branch) => branch.counterCount === 0);
-  assert.ok(count0Branches.some((branch) => branch.conditions.anon === "no"));
+  assert.ok(actor.counterCountDistribution.every(
+    (branch) => Object.keys(branch.conditions ?? {}).length === 0
+  ));
+  assert.equal(JSON.stringify(state.hiddenPoolState).includes("anon"), false);
 });
 
 test("AI·反制容量：手牌与装备各有概率时只转移手牌世界反制", () => {
@@ -37399,6 +37847,178 @@ const projectAvailability = (branches, field) => branches.map(
   )
 );
 
+test("AI·资源身份：有限池匿名转移用单一身份事件同步四类 source/receiver posterior", () => {
+  const counts = { recover:1, block:1, counter:1, assault:1, charge:1 };
+  const state = createFormalFinitePoolState(
+    "factor-viewer",
+    [
+      { id:"factor-viewer", seatIndex:0, battleTeam:"dawn", handCount:0, hand:[] },
+      { id:"factor-source", seatIndex:1, battleTeam:"dusk", handCount:2, knownCards:[] },
+      { id:"factor-receiver", seatIndex:2, battleTeam:"dawn", handCount:1, knownCards:[] }
+    ],
+    counts
+  );
+  const simulator = new Simulator(state);
+  const source = state.players[1], receiver = state.players[2];
+  assertClose(simulator.transferUnknownCardIdentity(
+    state,
+    source,
+    receiver,
+    [{ probability:1, conditions:{}, occurs:true }],
+    2
+  ), 1, 1e-12);
+  const firstFactor = state.finitePoolStateBranchesByDefinition.recover;
+  const identityKey = Object.keys(firstFactor[0].conditions).find(
+    (key) => key === "simulation:finite-pool-anonymous-identity"
+  );
+  assert.ok(identityKey);
+  assert.deepEqual(
+    new Set(firstFactor.map((branch) => branch.conditions[identityKey])),
+    new Set(["recover", "block", "counter", "assault", "other"])
+  );
+  for (const definitionId of ["recover", "block", "counter", "assault"]) {
+    const branches = state.finitePoolStateBranchesByDefinition[definitionId];
+    assert.equal(branches.length, 5);
+    assert.ok(branches.every((branch) => Object.keys(branch.conditions).filter(
+      (key) => key.includes("anonymous-identity")
+    ).length === 1));
+    const successWorld = branches.find(
+      (branch) => branch.conditions[identityKey] === definitionId
+    );
+    assertFinitePoolDistributionClose(
+      finitePoolPlayerCountDistribution(successWorld.model, source.id),
+      [{ count:0, probability:1 }]
+    );
+    assertFinitePoolDistributionClose(
+      finitePoolPlayerCountDistribution(successWorld.model, receiver.id),
+      [{ count:1, probability:1 }]
+    );
+    const failureWorld = branches.find(
+      (branch) => branch.conditions[identityKey] === "other"
+    );
+    assertFinitePoolDistributionClose(
+      finitePoolPlayerCountDistribution(failureWorld.model, source.id),
+      [{ count:0, probability:.75 }, { count:1, probability:.25 }]
+    );
+    assertFinitePoolDistributionClose(
+      finitePoolPlayerCountDistribution(failureWorld.model, receiver.id),
+      [{ count:0, probability:.75 }, { count:1, probability:.25 }]
+    );
+  }
+});
+
+test("AI·资源身份：有限池匿名 plunder 只转移容量并保持共享身份后验", () => {
+  const state = createFormalFinitePoolState(
+    "plunder-viewer",
+    [
+      { id:"plunder-viewer", seatIndex:0, battleTeam:"dawn", handCount:0, hand:[] },
+      { id:"plunder-source", seatIndex:1, battleTeam:"dusk", handCount:1, knownCards:[] }
+    ],
+    { recover:1, block:1, counter:1, assault:1, charge:1 }
+  );
+  const simulator = new Simulator(state);
+  const actor = state.players[0], source = state.players[1];
+  assertClose(simulator.takeResourceToHand(
+    state,
+    actor,
+    source,
+    1,
+    "finite-pool-plunder",
+    { zone:"hand", selectionKind:"unknown", availableUnknownCount:1 }
+  ), 1, 1e-12);
+  assert.equal(actor.hand.length, 0);
+  assert.equal(actor.handCount, 1);
+  assert.equal(source.handCount, 0);
+  for (const definitionId of ["recover", "block", "counter", "assault"]) {
+    const factor = state.finitePoolStateBranchesByDefinition[definitionId];
+    assert.equal(factor.length, 5);
+    assert.ok(factor.every((branch) => branch.model.slotsByPlayer[actor.id] === 1));
+    assert.ok(factor.every((branch) => branch.model.slotsByPlayer[source.id] === 0));
+    const successWorld = factor.find(
+      (branch) => Object.values(branch.conditions).includes(definitionId)
+    );
+    const otherWorld = factor.find(
+      (branch) => Object.values(branch.conditions).includes("other")
+    );
+    assertFinitePoolDistributionClose(
+      finitePoolPlayerCountDistribution(successWorld.model, actor.id),
+      [{ count:1, probability:1 }]
+    );
+    assertFinitePoolDistributionClose(
+      finitePoolPlayerCountDistribution(otherWorld.model, actor.id),
+      [{ count:0, probability:1 }]
+    );
+  }
+  const identityConditions = state.finitePoolStateBranchesByDefinition.recover.map(
+    (branch) => Object.values(branch.conditions).find((value) => (
+      ["recover", "block", "counter", "assault", "other"].includes(value)
+    ))
+  );
+  assert.deepEqual(
+    new Set(identityConditions),
+    new Set(["recover", "block", "counter", "assault", "other"])
+  );
+});
+
+test("AI·资源身份：有限池匿名 destroy 从四类 factor 删除同一物理槽位", () => {
+  const state = createFormalFinitePoolState(
+    "destroy-viewer",
+    [
+      { id:"destroy-viewer", seatIndex:0, battleTeam:"dawn", handCount:0, hand:[] },
+      { id:"destroy-source", seatIndex:1, battleTeam:"dusk", handCount:1, knownCards:[] }
+    ],
+    { recover:1, block:1, counter:1, assault:1, charge:1 }
+  );
+  const simulator = new Simulator(state);
+  const actor = state.players[0], source = state.players[1];
+  assertClose(simulator.destroyResource(
+    state,
+    actor,
+    source,
+    1,
+    "finite-pool-destroy",
+    { zone:"hand", selectionKind:"unknown", availableUnknownCount:1 }
+  ), 1, 1e-12);
+  assert.equal(source.handCount, 0);
+  for (const branches of Object.values(state.finitePoolStateBranchesByDefinition)) {
+    assert.equal(branches.length, 5);
+    assert.ok(branches.every((branch) => branch.model.populationSize === 4));
+    assert.ok(branches.every((branch) => branch.model.slotsByPlayer[source.id] === 0));
+  }
+});
+
+test("AI·资源身份：有限池匿名 random loss 只创建一个共享 physical identity event", () => {
+  const state = createFormalFinitePoolState(
+    "loss-viewer",
+    [
+      { id:"loss-viewer", seatIndex:0, battleTeam:"dawn", handCount:0, hand:[] },
+      { id:"loss-source", seatIndex:1, battleTeam:"dusk", handCount:2, knownCards:[] }
+    ],
+    { recover:1, block:1, counter:1, assault:1, charge:1 }
+  );
+  const simulator = new Simulator(state);
+  const source = state.players[1];
+  const result = { counterRemovedWorlds:[] };
+  assertClose(simulator.removeOneRandomCardFromHand(
+    state,
+    source,
+    1,
+    { anonymousOnly:true, result }
+  ), 1, 1e-12);
+  assert.ok(result.finitePoolIdentityKey);
+  assert.equal(result.finitePoolIdentityWorlds.length, 5);
+  assert.deepEqual(
+    new Set(result.finitePoolIdentityWorlds.map(
+      (branch) => branch.conditions[result.finitePoolIdentityKey]
+    )),
+    new Set(["recover", "block", "counter", "assault", "other"])
+  );
+  for (const branches of Object.values(state.finitePoolStateBranchesByDefinition)) {
+    assert.ok(branches.every((branch) => branch.model.populationSize === 4));
+    assert.ok(branches.every((branch) => branch.model.slotsByPlayer[source.id] === 1));
+  }
+});
+
 test("AI·资源身份：部分概率转移中来源与接收者身份世界互补", () => {
   const state = {
     playPhaseEnded: false,
@@ -39342,6 +39962,135 @@ const makeRemainingKnowledge = (viewer, state = null) => {
   });
 };
 
+/*
+功能
+枚举小型有限牌池的全部物理成功位置，作为生产多项式算法的差分 oracle。
+
+调用方
+AI 剩余牌池的有限池边际、条件后验和物理槽位变换测试。
+
+输入
+不超过测试夹具边界的 N/K，以及按玩家 ID 给出的匿名槽位数。
+
+输出
+等概率物理世界数组，每个世界保存逐玩家成功数。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+仅测试使用且 N 不超过 12；生产代码不得调用或复制该指数枚举。
+*/
+function exhaustiveFinitePoolWorlds(populationSize, successCount, slotsByPlayer) {
+  const population = Math.max(0, Math.floor(Number(populationSize) || 0));
+  const successes = Math.max(0, Math.min(population, Math.floor(Number(successCount) || 0)));
+  assert.ok(population <= 12, "exhaustive finite-pool oracle 只允许小牌池");
+  const owners = Object.entries(slotsByPlayer).flatMap(([playerId, count]) => (
+    Array.from({ length:Math.max(0, Math.floor(Number(count) || 0)) }, () => playerId)
+  ));
+  assert.ok(owners.length <= population);
+  owners.push(...Array.from({ length:population - owners.length }, () => null));
+  const worlds = [];
+  for (let mask = 0; mask < 2 ** population; mask += 1) {
+    let selected = 0;
+    const counts = Object.fromEntries(Object.keys(slotsByPlayer).map((playerId) => [playerId, 0]));
+    let outsideCount = 0;
+    for (let position = 0; position < population; position += 1) {
+      if ((mask & (2 ** position)) === 0) continue;
+      selected += 1;
+      if (owners[position] !== null) counts[owners[position]] += 1;
+      else outsideCount += 1;
+    }
+    if (selected === successes) worlds.push({ probability:1, counts, outsideCount });
+  }
+  const total = worlds.length;
+  return worlds.map((world) => ({ ...world, probability:world.probability / total }));
+}
+
+/*
+功能
+把 exhaustive finite-pool worlds 投影为指定玩家的归一数量边际。
+
+调用方
+AI 剩余牌池 differential tests。
+
+输入
+物理世界、玩家 ID、可选数量变换和世界似然函数。
+
+输出
+按 count 升序的归一概率分布。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+调用方提供的 count/likelihood 纯函数。
+
+边界与不变量
+零似然世界不进入后验；返回概率质量必须为一。
+*/
+function exhaustiveFinitePoolMarginal(
+  worlds,
+  playerId,
+  countOf = (world) => world.counts[playerId] ?? 0,
+  likelihood = () => 1
+) {
+  const byCount = new Map();
+  let mass = 0;
+  for (const world of worlds) {
+    const weighted = world.probability * Math.max(0, Number(likelihood(world)) || 0);
+    if (weighted <= 0) continue;
+    const count = countOf(world);
+    byCount.set(count, (byCount.get(count) ?? 0) + weighted);
+    mass += weighted;
+  }
+  return [...byCount.entries()].sort(([left], [right]) => left - right)
+    .map(([count, probability]) => ({ count, probability:probability / mass }));
+}
+
+/*
+功能
+逐数量比较生产有限池分布与 exhaustive oracle。
+
+调用方
+AI 剩余牌池 differential tests。
+
+输入
+actual/expected count-probability 分布与容差。
+
+输出
+无返回值；差异超限时抛出断言。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+assertClose。
+
+边界与不变量
+缺失 count 按零概率比较，默认容差为 1e-12。
+*/
+function assertFinitePoolDistributionClose(actual, expected, tolerance = 1e-12) {
+  const actualByCount = new Map(actual.map((branch) => [branch.count, branch.probability]));
+  const expectedByCount = new Map(expected.map((branch) => [branch.count, branch.probability]));
+  const counts = new Set([...actualByCount.keys(), ...expectedByCount.keys()]);
+  for (const count of counts) {
+    assertClose(actualByCount.get(count) ?? 0, expectedByCount.get(count) ?? 0, tolerance);
+  }
+}
+
 test("AI·剩余牌池：超几何小牌池严格匹配无放回组合数学", () => {
   const distribution = hypergeometricCountDistribution(5, 2, 2);
   const byCount = Object.fromEntries(
@@ -39351,6 +40100,12 @@ test("AI·剩余牌池：超几何小牌池严格匹配无放回组合数学", (
   assertClose(byCount[1], 6 / 10);
   assertClose(hypergeometricProbabilityAtLeast(5, 2, 2, 1), 7 / 10);
   assertClose(hypergeometricProbabilityAtLeast(5, 2, 2, 2), 1 / 10);
+});
+
+test("AI·剩余牌池：超几何递推从合法 kMin 开始", () => {
+  assert.deepEqual(hypergeometricCountDistribution(5, 5, 3), [
+    { count:3, probability:1 }
+  ]);
 });
 
 test("AI·剩余牌池：公开牌、自牌与合法记忆共同条件化未知概率", () => {
@@ -39390,7 +40145,7 @@ test("AI·剩余牌池：公开牌、自牌与合法记忆共同条件化未知�
   assert.notEqual(conditioned, unconditioned);
 });
 
-test("AI·剩余牌池：多玩家共享牌池的联合世界不超额分配", () => {
+test("AI·剩余牌池：有限池因子保留跨玩家反相关且不生成根条件世界", () => {
   const visible = {
     players:[
       { id:"shared-viewer", handCount:0, hand:[] },
@@ -39405,22 +40160,348 @@ test("AI·剩余牌池：多玩家共享牌池的联合世界不超额分配", (
     "shared-viewer",
     visible,
     knowledge,
-    { counter:1, assault:2 }
+    { counter:1, charge:1 }
   );
-  const joined = joinStateProbabilityBranches(
-    belief.playersById["shared-a"].counterCountDistribution.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      aCount:branch.count
-    })),
-    belief.playersById["shared-b"].counterCountDistribution.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      bCount:branch.count
-    }))
+  const rootBranch = belief.finitePoolStateBranchesByDefinition.counter[0];
+  const aHasCounter = restrictFinitePoolPlayerCounts(
+    rootBranch.model, "shared-a", 1, 1
   );
-  assertClose(totalBranchProbability(joined), 1);
-  assert.ok(joined.every((branch) => branch.aCount + branch.bCount <= 1));
+  const bothHaveCounter = restrictFinitePoolPlayerCounts(
+    aHasCounter, "shared-b", 1, 1
+  );
+  assertClose(belief.playersById["shared-a"].counterProbability, 0.5);
+  assertClose(belief.playersById["shared-b"].counterProbability, 0.5);
+  assertClose(finitePoolRestrictionProbability(rootBranch.model, bothHaveCounter), 0);
+  assert.deepEqual(rootBranch.conditions, {});
+  assert.equal(JSON.stringify(belief).includes("hidden-card-allocation:"), false);
+});
+
+test("AI·剩余牌池：有限池边际、限制和消费后验逐项匹配 exhaustive oracle", () => {
+  const slotsByPlayer = { "pool-a":2, "pool-b":1 };
+  const oracle = exhaustiveFinitePoolWorlds(5, 2, slotsByPlayer);
+  const belief = createBeliefState(
+    "pool-viewer",
+    {
+      players:[
+        { id:"pool-viewer", handCount:0, hand:[] },
+        { id:"pool-a", handCount:2 },
+        { id:"pool-b", handCount:1 }
+      ]
+    },
+    { knownCardsByPlayer:{ "pool-a":[], "pool-b":[] } },
+    { counter:2, charge:3 }
+  );
+  const model = belief.finitePoolStateBranchesByDefinition.counter[0].model;
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(model, "pool-a"),
+    exhaustiveFinitePoolMarginal(oracle, "pool-a")
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(model, "pool-b"),
+    exhaustiveFinitePoolMarginal(oracle, "pool-b")
+  );
+
+  const responderModel = restrictFinitePoolPlayerCounts(model, "pool-a", 1, 2);
+  const responderMass = oracle.reduce(
+    (sum, world) => sum + (world.counts["pool-a"] >= 1 ? world.probability : 0), 0
+  );
+  assertClose(finitePoolRestrictionProbability(model, responderModel), responderMass, 1e-12);
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(responderModel, "pool-b"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "pool-b",
+      (world) => world.counts["pool-b"],
+      (world) => world.counts["pool-a"] >= 1 ? 1 : 0
+    )
+  );
+
+  const consumed = consumeFinitePoolPlayerSuccess(responderModel, "pool-a", 1);
+  const knownOutcome = consumed.find((outcome) => outcome.source === "known");
+  const anonymousOutcome = consumed.find((outcome) => outcome.source === "anonymous");
+  const knownMass = oracle.reduce((sum, world) => {
+    const count = world.counts["pool-a"];
+    return sum + (count >= 1 ? world.probability / (1 + count) : 0);
+  }, 0) / responderMass;
+  assertClose(knownOutcome.probability, knownMass, 1e-12);
+  assertClose(anonymousOutcome.probability, 1 - knownMass, 1e-12);
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(knownOutcome.model, "pool-b"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "pool-b",
+      (world) => world.counts["pool-b"],
+      (world) => world.counts["pool-a"] >= 1 ? 1 / (1 + world.counts["pool-a"]) : 0
+    )
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(anonymousOutcome.model, "pool-a"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "pool-a",
+      (world) => world.counts["pool-a"] - 1,
+      (world) => world.counts["pool-a"] >= 1
+        ? world.counts["pool-a"] / (1 + world.counts["pool-a"])
+        : 0
+    )
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(anonymousOutcome.model, "pool-b"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "pool-b",
+      (world) => world.counts["pool-b"],
+      (world) => world.counts["pool-a"] >= 1
+        ? world.counts["pool-a"] / (1 + world.counts["pool-a"])
+        : 0
+    )
+  );
+});
+
+test("AI·剩余牌池：有限池随机槽位成功和失败后验匹配 exhaustive oracle", () => {
+  const slotsByPlayer = { "slot-a":2, "slot-b":1 };
+  const oracle = exhaustiveFinitePoolWorlds(5, 2, slotsByPlayer);
+  const belief = createBeliefState(
+    "slot-viewer",
+    {
+      players:[
+        { id:"slot-viewer", handCount:0, hand:[] },
+        { id:"slot-a", handCount:2 },
+        { id:"slot-b", handCount:1 }
+      ]
+    },
+    { knownCardsByPlayer:{ "slot-a":[], "slot-b":[] } },
+    { counter:2, charge:3 }
+  );
+  const model = belief.finitePoolStateBranchesByDefinition.counter[0].model;
+  const successModel = removeFinitePoolPlayerSlot(model, "slot-a", true);
+  const failureModel = removeFinitePoolPlayerSlot(model, "slot-a", false);
+  assertClose(finitePoolPlayerSlotSuccessProbability(model, "slot-a"), 2 / 5, 1e-12);
+  assertClose(
+    finitePoolGroupAtLeastOneProbability(model, ["slot-a", "slot-b"]),
+    oracle.reduce(
+      (sum, world) => sum + (
+        world.counts["slot-a"] + world.counts["slot-b"] >= 1 ? world.probability : 0
+      ),
+      0
+    ),
+    1e-12
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(successModel, "slot-a"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "slot-a",
+      (world) => world.counts["slot-a"] - 1,
+      (world) => world.counts["slot-a"] / 2
+    )
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(successModel, "slot-b"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "slot-b",
+      (world) => world.counts["slot-b"],
+      (world) => world.counts["slot-a"] / 2
+    )
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(failureModel, "slot-a"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "slot-a",
+      (world) => world.counts["slot-a"],
+      (world) => (2 - world.counts["slot-a"]) / 2
+    )
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(failureModel, "slot-b"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "slot-b",
+      (world) => world.counts["slot-b"],
+      (world) => (2 - world.counts["slot-a"]) / 2
+    )
+  );
+  const transferredSuccess = addFinitePoolPlayerSlot(successModel, "slot-b", true);
+  const transferredFailure = addFinitePoolPlayerSlot(failureModel, "slot-b", false);
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(transferredSuccess, "slot-a"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "slot-a",
+      (world) => world.counts["slot-a"] - 1,
+      (world) => world.counts["slot-a"] / 2
+    )
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(transferredSuccess, "slot-b"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "slot-b",
+      (world) => world.counts["slot-b"] + 1,
+      (world) => world.counts["slot-a"] / 2
+    )
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(transferredFailure, "slot-a"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "slot-a",
+      (world) => world.counts["slot-a"],
+      (world) => (2 - world.counts["slot-a"]) / 2
+    )
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(transferredFailure, "slot-b"),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      "slot-b",
+      (world) => world.counts["slot-b"],
+      (world) => (2 - world.counts["slot-a"]) / 2
+    )
+  );
+});
+
+test("AI·剩余牌池：牌池外抽牌及移入玩家后验匹配 exhaustive oracle", () => {
+  const slotsByPlayer = { "outside-a":2, "outside-b":1 };
+  const outsideSlots = 2;
+  const oracle = exhaustiveFinitePoolWorlds(5, 2, slotsByPlayer);
+  const belief = createBeliefState(
+    "outside-viewer",
+    {
+      players:[
+        { id:"outside-viewer", handCount:0, hand:[] },
+        { id:"outside-a", handCount:2 },
+        { id:"outside-b", handCount:1 }
+      ]
+    },
+    { knownCardsByPlayer:{ "outside-a":[], "outside-b":[] } },
+    { counter:2, charge:3 }
+  );
+  const model = belief.finitePoolStateBranchesByDefinition.counter[0].model;
+  const successProbability = oracle.reduce(
+    (sum, world) => sum + world.probability * world.outsideCount / outsideSlots,
+    0
+  );
+  const actualSuccessProbability = finitePoolOutsideSlotSuccessProbability(model);
+  assertClose(actualSuccessProbability, successProbability, 1e-12);
+
+  const successModel = removeFinitePoolOutsideSlot(model, true);
+  const failureModel = removeFinitePoolOutsideSlot(model, false);
+  for (const playerId of Object.keys(slotsByPlayer)) {
+    assertFinitePoolDistributionClose(
+      finitePoolPlayerCountDistribution(successModel, playerId),
+      exhaustiveFinitePoolMarginal(
+        oracle,
+        playerId,
+        (world) => world.counts[playerId],
+        (world) => world.outsideCount / outsideSlots
+      )
+    );
+    assertFinitePoolDistributionClose(
+      finitePoolPlayerCountDistribution(failureModel, playerId),
+      exhaustiveFinitePoolMarginal(
+        oracle,
+        playerId,
+        (world) => world.counts[playerId],
+        (world) => (outsideSlots - world.outsideCount) / outsideSlots
+      )
+    );
+  }
+
+  const receiverId = "outside-a";
+  const gainedSuccess = addFinitePoolPlayerSlot(successModel, receiverId, true);
+  const gainedFailure = addFinitePoolPlayerSlot(failureModel, receiverId, false);
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(gainedSuccess, receiverId),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      receiverId,
+      (world) => world.counts[receiverId] + 1,
+      (world) => world.outsideCount / outsideSlots
+    )
+  );
+  assertFinitePoolDistributionClose(
+    finitePoolPlayerCountDistribution(gainedFailure, receiverId),
+    exhaustiveFinitePoolMarginal(
+      oracle,
+      receiverId,
+      (world) => world.counts[receiverId],
+      (world) => (outsideSlots - world.outsideCount) / outsideSlots
+    )
+  );
+  const actual = finitePoolPlayerCountDistribution(
+    moveFinitePoolOutsideSlotToPlayer(model, receiverId),
+    receiverId
+  );
+  const expected = exhaustiveFinitePoolMarginal(
+    oracle,
+    receiverId,
+    (world) => world.counts[receiverId],
+    () => 1
+  );
+  const expectedByCount = new Map();
+  for (const world of oracle) {
+    const successWeight = world.outsideCount / outsideSlots;
+    for (const [count, weight] of [
+      [world.counts[receiverId] + 1, successWeight],
+      [world.counts[receiverId], 1 - successWeight]
+    ]) {
+      expectedByCount.set(
+        count,
+        (expectedByCount.get(count) ?? 0) + world.probability * weight
+      );
+    }
+  }
+  const expectedGain = [...expectedByCount.entries()].sort(([left], [right]) => left - right)
+    .map(([count, probability]) => ({ count, probability }));
+  assertFinitePoolDistributionClose(actual, expectedGain);
+  const expectedCount = (distribution) => distribution.reduce(
+    (sum, branch) => sum + branch.count * branch.probability, 0
+  );
+  const atLeast = (distribution, minimum) => distribution.reduce(
+    (sum, branch) => sum + (branch.count >= minimum ? branch.probability : 0), 0
+  );
+  assertClose(expectedCount(actual), expectedCount(expected) + successProbability, 1e-12);
+  assertClose(atLeast(actual, 1), atLeast(expectedGain, 1), 1e-12);
+  assertClose(atLeast(actual, 2), atLeast(expectedGain, 2), 1e-12);
+});
+
+test("AI·剩余牌池：四名隐藏玩家根分支保持线性结构", () => {
+  const hiddenPlayers = Array.from({ length:4 }, (_, index) => ({
+    id:`linear-hidden-${index}`,
+    handCount:7
+  }));
+  const belief = createBeliefState(
+    "linear-viewer",
+    {
+      players:[
+        { id:"linear-viewer", handCount:0, hand:[] },
+        ...hiddenPlayers
+      ]
+    },
+    {
+      knownCardsByPlayer:Object.fromEntries(hiddenPlayers.map((player) => [player.id, []]))
+    },
+    CARD_COUNTS
+  );
+  const trackedFields = [
+    "recoverCountDistribution",
+    "blockCountDistribution",
+    "counterCountDistribution",
+    "assaultCountDistribution"
+  ];
+  const distributions = Object.values(belief.playersById).flatMap((player) => (
+    trackedFields.map((field) => player[field])
+  ));
+  assert.equal(distributions.reduce((sum, distribution) => sum + distribution.length, 0), 132);
+  assert.equal(Math.max(...distributions.map((distribution) => distribution.length)), 8);
+  for (const branches of Object.values(belief.finitePoolStateBranchesByDefinition)) {
+    assert.equal(branches.length, 1);
+    assert.deepEqual(branches[0].conditions, {});
+  }
+  assert.equal(JSON.stringify(belief).includes("hidden-card-allocation:"), false);
 });
 
 test("AI·剩余牌池：空公开状态返回完整计数", () => {
@@ -42313,16 +43394,10 @@ test("AI·评分：聚能能量增益只由 stateDelta 计价且旧 ×1.5 不再
 // ---- AI 评分·角色选牌 ----
 
 test("AI·角色选牌：正式 CardSelectionPolicy 的未知位置分布不随真实换面改变", () => {
-  const buildPolicy = () => {
-    const resourcePolicy = new ResourceSelectionPolicy();
-    const transferPolicy = new TransferPolicy();
-    return new CardSelectionPolicy({
-      random: () => .75,
-      remainingCounts: () => null,
-      resourcePolicy,
-      transferPolicy
-    });
-  };
+  const buildPolicy = () => new CardSelectionPolicy({
+    random: () => .75,
+    remainingCounts: () => null
+  });
   const actor = {
     id: "a", battleTeam: "dawn", characterId: "blade-walker",
     aiMemory: { knownCardsByPlayer: { e: {} } }
@@ -43187,7 +44262,6 @@ test("AI·资源选择：无效望远镜不压过未知手牌且真实与深层�
   const remaining = game.aiController.knowledge.remainingCounts(actor);
   const state = createInitialSearchState(actor.id, game.state, remaining);
   const simulator = new Simulator(state, {
-    resourceSelectionPolicy: game.aiController.resourceSelectionPolicy,
     resourceValueQuery: game.aiController.resourceValueQuery
   });
   const deepChoice = simulator.chooseSimulatedResourceSelection(
@@ -43214,7 +44288,7 @@ test("AI·资源选择：望远镜真实改变屏障距离时上下文收益可�
   const state = createInitialSearchState(actor.id, game.state, remaining);
   const searchActor = state.players[0], searchTarget = state.players[1];
   const unknownCount = searchTarget.handCount - (searchTarget.knownCards?.length ?? 0);
-  const candidates = game.aiController.resourceSelectionPolicy.buildCandidates({
+  const candidates = buildResourceCandidates({
     purpose: "destroy",
     actor: searchActor,
     owner: searchTarget,
@@ -43235,7 +44309,7 @@ test("AI·资源选择：望远镜真实改变屏障距离时上下文收益可�
   assert.ok(equipment.contextualStateDelta > 0);
   assert.ok(equipment.contextualUtility > unknown.contextualUtility);
   assert.equal(
-    game.aiController.resourceSelectionPolicy.chooseContextual(evaluated).zone,
+    chooseContextualResourceCandidate(evaluated).zone,
     "equipment"
   );
 });
@@ -43252,7 +44326,7 @@ test("AI·资源选择：掠夺无效望远镜仍计入接收方获得价值", (
   const state = createInitialSearchState(actor.id, game.state, remaining);
   const searchActor = state.players[0], searchTarget = state.players[1];
   const unknownCount = 1;
-  const destroyCandidates = game.aiController.resourceSelectionPolicy.buildCandidates({
+  const destroyCandidates = buildResourceCandidates({
     purpose: "destroy",
     actor: searchActor,
     owner: searchTarget,
@@ -43261,7 +44335,7 @@ test("AI·资源选择：掠夺无效望远镜仍计入接收方获得价值", (
     equipmentDefinitionId: "telescope",
     remainingCardCounts: remaining
   }).map((candidate) => ({ ...candidate, availableUnknownCount: unknownCount }));
-  const plunderCandidates = game.aiController.resourceSelectionPolicy.buildCandidates({
+  const plunderCandidates = buildResourceCandidates({
     purpose: "plunder",
     actor: searchActor,
     owner: searchTarget,
@@ -43289,8 +44363,8 @@ test("AI·资源选择：掠夺无效望远镜仍计入接收方获得价值", (
   assert.ok(Math.abs(destroyedEquipment.contextualStateDelta) < 1e-9);
   assert.ok(plunderedEquipment.acquisitionMaterial > 0);
   assert.ok(plunderedEquipment.contextualUtility > destroyedEquipment.contextualUtility);
-  assert.equal(game.aiController.resourceSelectionPolicy.chooseContextual(destroy).selectionKind, "unknown");
-  assert.equal(game.aiController.resourceSelectionPolicy.chooseContextual(plunder).zone, "equipment");
+  assert.equal(chooseContextualResourceCandidate(destroy).selectionKind, "unknown");
+  assert.equal(chooseContextualResourceCandidate(plunder).zone, "equipment");
 
   const after = structuredClone(state);
   const simulator = new Simulator(after);
@@ -43325,7 +44399,7 @@ test("AI·资源选择：已知牌不进入未知池且强制破坏精确身份�
   const resourceShape = simulator.buildSimulatedKnownCards(searchTarget);
   assert.equal(resourceShape.knownCards.length, 2);
   assert.equal(resourceShape.unknownCount, 0);
-  const candidates = game.aiController.resourceSelectionPolicy.buildCandidates({
+  const candidates = buildResourceCandidates({
     purpose: "destroy",
     actor: state.players[0],
     owner: searchTarget,
@@ -43390,7 +44464,6 @@ test("AI·资源选择：掠夺精确转移已知反制并同步双方容量", (
   game.rememberPrivateCard(actor, target, counter);
   const state = createInitialSearchState(actor.id, game.state, { charge: 4 });
   const contextualSimulator = new Simulator(state, {
-    resourceSelectionPolicy: game.aiController.resourceSelectionPolicy,
     resourceValueQuery: game.aiController.resourceValueQuery
   });
   const selection = contextualSimulator.chooseSimulatedResourceSelection(
@@ -44320,8 +45393,7 @@ test("AI·资源选择：掠夺模拟共享模块单一公式来源", async () =
 
 // ---- AI 评分·转移评分 ----
 
-test("AI·转移评分：TransferPolicy 实例与纯查询使用同一选择 owner", () => {
-  const policy = new TransferPolicy();
+test("AI·转移评分：候选构造与最终选择只使用同一组 canonical 函数", () => {
   const actor = {
     id: "a", seatIndex: 0, battleTeam: "dawn", characterId: "blade-walker",
     hp: 4, maxHp: 4, alive: true, aiMemory: { knownCardsByPlayer: {} }
@@ -44342,7 +45414,10 @@ test("AI·转移评分：TransferPolicy 实例与纯查询使用同一选择 own
     remainingCardCounts: null
   };
   const candidates = buildTransferCandidates(context);
-  assert.deepEqual(policy.choose(context), chooseBestPositiveTransfer(candidates));
+  assert.deepEqual(
+    chooseBestPositiveTransfer(buildTransferCandidates(context)),
+    chooseBestPositiveTransfer(candidates)
+  );
 });
 
 test("AI·转移评分：掠夺最终选择由上下文收益覆盖静态牌值排序", () => {

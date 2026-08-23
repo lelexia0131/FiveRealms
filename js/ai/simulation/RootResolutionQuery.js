@@ -18,6 +18,7 @@ ValueSimulationQuery 与固定响应回归测试。
 这是有界 Simulation query；不构造 Simulator、不决定响应策略、不拥有最终价值公式。
 */
 import { isGlobalBenefitCard } from "../domain/GlobalBenefitModel.js";
+import { conditionHiddenPool, projectHiddenSummaries } from "../state/HiddenPool.js";
 
 export const TARGET_SCOPE_CARDS = new Set(["shockwave", "provoke"]);
 
@@ -56,9 +57,20 @@ export function buildTargetScopedBase(simulator, state, rootSourceId, targets) {
   }
   for (const player of reduced.players) {
     if (!targetIds.has(player.id)) continue;
-    player.counterCountDistribution = [{ probability:1, conditions:{}, counterCount:0 }];
-    player.counterProbability = 0;
+    conditionHiddenPool(reduced.hiddenPoolState, {
+      type:"CONDITION",
+      definitionId:"counter",
+      bucketId:player.id,
+      maximum:0
+    });
+    if (Array.isArray(player.hand)) {
+      player.hand = player.hand.filter((card) => card.definitionId !== "counter");
+    }
+    if (Array.isArray(player.knownCards)) {
+      player.knownCards = player.knownCards.filter((card) => card.definitionId !== "counter");
+    }
   }
+  projectHiddenSummaries(reduced);
   return reduced;
 }
 

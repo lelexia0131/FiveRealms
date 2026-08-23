@@ -27,8 +27,6 @@ import { ValueSimulationQuery } from "../../../ai/simulation/ValueSimulationQuer
 import { ResourceValueQuery } from "../../../ai/simulation/ResourceValueQuery.js";
 import { Simulator } from "../../../ai/simulation/Simulator.js";
 import { ActionCandidatePolicy } from "../../../ai/policy/ActionCandidatePolicy.js";
-import { ResourceSelectionPolicy } from "../../../ai/policy/ResourceSelectionPolicy.js";
-import { TransferPolicy } from "../../../ai/policy/TransferPolicy.js";
 import {
   ActionGenerator,
   deduplicateSearchEquivalentActions
@@ -72,9 +70,8 @@ ActionGenerator 构造函数。
 边界与不变量
 不注入 getRootContext/chooseTransferCombination；root generate 调用会 fail fast。
 */
-function createDeepActionGenerator(transferPolicy, actionCandidatePolicy) {
+function createDeepActionGenerator(actionCandidatePolicy) {
   return new ActionGenerator({
-    transferPolicy,
     actionCandidatePolicy
   });
 }
@@ -169,7 +166,6 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     getMaxEnergy:getMaxEnergyForPlayer,
     getTurnEnergyBreakdown:getTurnEnergyBreakdownForPlayer
   });
-  const resourceSelectionPolicy = new ResourceSelectionPolicy();
   let resourceValueQuery = null;
   /*
   功能
@@ -197,7 +193,6 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   闭包允许在 ResourceValueQuery 初始化完成前声明，但只在组合完成后调用；不得依赖 main-thread 对象。
   */
   const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
-    resourceSelectionPolicy,
     resourceValueQuery,
     searchBudget:runtime.searchBudget ?? null
   });
@@ -231,9 +226,8 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     searchPrior,
     transitionValue
   });
-  const transferPolicy = new TransferPolicy();
   const actionCandidatePolicy = new ActionCandidatePolicy();
-  const actionGenerator = createDeepActionGenerator(transferPolicy, actionCandidatePolicy);
+  const actionGenerator = createDeepActionGenerator(actionCandidatePolicy);
   const searchPolicy = new SearchPolicy({
     random: () => rng.next(),
     getRandomnessRange: () => config.randomnessRange,

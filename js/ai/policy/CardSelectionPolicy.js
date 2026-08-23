@@ -19,8 +19,14 @@ ResourceSelectionPolicy、TransferPolicy 与 value/CardValue。
 */
 import { getBaseCardAiValue } from "../value/CardValue.js";
 import { getRoleCardAiValue } from "../value/CardValue.js";
-import { UNKNOWN_HAND_EXPECTED_VALUE } from "./TransferPolicy.js";
 import {
+  UNKNOWN_HAND_EXPECTED_VALUE,
+  chooseTransferHandCandidate
+} from "./TransferPolicy.js";
+import {
+  chooseBestResourceHandCandidate,
+  chooseDiscardCandidates,
+  chooseResourceZone,
   getResourceDefinitionUtility,
   getResourceUnknownUtility
 } from "./ResourceSelectionPolicy.js";
@@ -129,23 +135,15 @@ export class CardSelectionPolicy {
   边界与不变量
   不接受 Game 或 Controller；缺失必需能力立即抛错。
   */
-  constructor({ random, remainingCounts, resourcePolicy, transferPolicy } = {}) {
+  constructor({ random, remainingCounts } = {}) {
     if (typeof random !== "function") {
       throw new TypeError("CardSelectionPolicy 缺少依赖：random");
     }
     if (typeof remainingCounts !== "function") {
       throw new TypeError("CardSelectionPolicy 缺少依赖：remainingCounts");
     }
-    if (!resourcePolicy || typeof resourcePolicy.chooseHandCandidate !== "function") {
-      throw new TypeError("CardSelectionPolicy 缺少依赖：resourcePolicy");
-    }
-    if (!transferPolicy || typeof transferPolicy.chooseHandCandidate !== "function") {
-      throw new TypeError("CardSelectionPolicy 缺少依赖：transferPolicy");
-    }
     this.random = random;
     this.remainingCounts = remainingCounts;
-    this.resourcePolicy = resourcePolicy;
-    this.transferPolicy = transferPolicy;
   }
 
   /*
@@ -297,7 +295,7 @@ export class CardSelectionPolicy {
     while (selected.length < count && candidates.length) {
       let index = -1;
       if (purpose === "transfer") {
-        const candidate = this.transferPolicy.chooseHandCandidate(
+        const candidate = chooseTransferHandCandidate(
           actor,
           owner,
           context?.receiver,
@@ -332,7 +330,7 @@ export class CardSelectionPolicy {
             knownCards.push({ cardId: candidates[current].id, definitionId });
           }
         }
-        const candidate = this.resourcePolicy.chooseHandCandidate({
+        const candidate = chooseBestResourceHandCandidate({
           purpose,
           actor,
           owner,
@@ -409,7 +407,7 @@ export class CardSelectionPolicy {
             remainingCardCounts
           )
         : null;
-      const zoneChoice = this.resourcePolicy.chooseZone({
+      const zoneChoice = chooseResourceZone({
         purpose,
         actor,
         owner,
@@ -524,7 +522,7 @@ export class CardSelectionPolicy {
   实际实体解析和移动留在执行边界。
   */
   chooseDiscardIds(player, cards, count, context = {}) {
-    return this.resourcePolicy.chooseDiscards(player, cards, count, context)
+    return chooseDiscardCandidates(player, cards, count, context)
       .map((card) => card.id);
   }
 }

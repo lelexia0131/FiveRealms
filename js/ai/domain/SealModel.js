@@ -21,8 +21,10 @@ import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions
 import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 import { hasStatus } from "../../domain/rules/status/StatusRules.js";
 import { projectRulePlayer } from "../state/RuleProjection.js";
+import { queryHiddenPool } from "../state/HiddenPool.js";
 import {
   clampProbability,
+  getAvailabilityStateBranches,
   joinProbabilityStateBranches,
   mergeProbabilityStateBranches,
   totalBranchProbability
@@ -191,16 +193,18 @@ sealOutcomeProbabilities、正式边界与直接领域测试。
 零到一的团队反制概率。
 
 读取状态
-存活同阵营玩家的共享 counterCountDistribution；旧状态仅有 counterProbability 时使用二元回退。
+存活同阵营玩家的 Counter finite-pool factor 与合法已知反制身份；旧状态使用数量分支回退。
 
 写入状态
 无。
 
 调用函数
-clampProbability、joinStateBranches、totalBranchProbability。
+clampProbability、queryHiddenPool、getAvailabilityStateBranches、
+joinStateBranches、totalBranchProbability。
 
 边界与不变量
-带共享 condition keys 的队友容量只条件化一次；只有缺少正式数量分支的旧状态才使用独立二元回退；
+正式状态直接查询同一 HiddenPool；已知身份的共享 condition keys 只条件化一次；
+只有缺少 HiddenPool 的旧状态才使用数量分支回退；
 Domain 独立调用默认使用同步 raw join，搜索调用方可注入 cooperative join。
 */
 export function sealCounterProbability(
@@ -211,6 +215,36 @@ export function sealCounterProbability(
   if (!holder?.alive) return 0;
   const team = (state?.players ?? [])
     .filter((player) => player.alive && player.battleTeam === holder.battleTeam);
+  if (state?.hiddenPoolState) {
+    const knownFields = [];
+    const knownPartitions = [];
+    for (const player of team) {
+      const cards = [
+        ...(Array.isArray(player.hand) ? player.hand : []),
+        ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+      ].filter((card) => card?.definitionId === "counter");
+      for (const card of cards) {
+        const field = `knownCounter:${player.id}:${knownFields.length}`;
+        knownFields.push(field);
+        knownPartitions.push(getAvailabilityStateBranches(card).map((branch) => ({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          [field]:Boolean(branch.available)
+        })));
+      }
+    }
+    const worlds = knownPartitions.length
+      ? joinStateBranches(...knownPartitions)
+      : [{ probability:1, conditions:{} }];
+    const knownProbability = totalBranchProbability(worlds.filter(
+      (world) => knownFields.some((field) => world[field])
+    ));
+    const anonymousProbability = queryHiddenPool(state.hiddenPoolState, {
+      definitionId:"counter",
+      groupBucketIds:team.map((player) => player.id)
+    }).probability;
+    return clampProbability(1 - (1 - knownProbability) * (1 - anonymousProbability));
+  }
   const fields = team.map((player) => `counterCount:${player.id}`);
   const partitions = team.map((player, index) => {
     const source = Array.isArray(player.counterCountDistribution)

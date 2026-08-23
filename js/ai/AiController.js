@@ -51,9 +51,7 @@ import { Evaluator } from "./value/Evaluator.js";
 import { ValueLedger } from "./value/ValueLedger.js";
 import { ActionCandidatePolicy } from "./policy/ActionCandidatePolicy.js";
 import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js";
-import { ResourceSelectionPolicy } from "./policy/ResourceSelectionPolicy.js";
 import { ResponsePolicy } from "./policy/ResponsePolicy.js";
-import { TransferPolicy } from "./policy/TransferPolicy.js";
 import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js";
 
 /*
@@ -172,7 +170,6 @@ export class AIController {
       getMaxEnergy: (player) => this.getMaxEnergy(player),
       getTurnEnergyBreakdown: (player) => this.getTurnEnergyBreakdown(player)
     });
-    this.resourceSelectionPolicy = new ResourceSelectionPolicy();
     /*
     功能
     为 main-thread 组合根创建共享资源决策语义的独立 Simulator。
@@ -199,7 +196,6 @@ export class AIController {
     闭包允许在 ResourceValueQuery 初始化完成前声明，但只在组合完成后调用；不得回读 Game。
     */
     const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
-      resourceSelectionPolicy: this.resourceSelectionPolicy,
       resourceValueQuery: this.resourceValueQuery ?? null,
       searchBudget:runtime.searchBudget ?? null
     });
@@ -233,12 +229,9 @@ export class AIController {
       searchPrior: this.searchPrior,
       transitionValue: this.transitionValue
     });
-    this.transferPolicy = new TransferPolicy();
     this.cardSelectionPolicy = new CardSelectionPolicy({
       random: () => this.searchRng.next(),
-      remainingCounts: (actor) => this.knowledge.remainingCounts(actor),
-      resourcePolicy: this.resourceSelectionPolicy,
-      transferPolicy: this.transferPolicy
+      remainingCounts: (actor) => this.knowledge.remainingCounts(actor)
     });
     this.actionCandidatePolicy = new ActionCandidatePolicy();
     this.responseDecisionPolicy = new ResponsePolicy({ assessGlobalBenefit });
@@ -251,9 +244,7 @@ export class AIController {
       )
     }, this.knowledge, {
       cardSelectionPolicy: this.cardSelectionPolicy,
-      resourcePolicy: this.resourceSelectionPolicy,
       resourceValueQuery: this.resourceValueQuery,
-      transferPolicy: this.transferPolicy
     });
     this.responsePolicy = new ResponseBoundary({
       getState: () => this.getState(),
@@ -277,7 +268,6 @@ export class AIController {
         };
       },
       chooseTransferCombination: (...args) => cardSelector.chooseTransferCombination(...args),
-      transferPolicy: this.transferPolicy,
       actionCandidatePolicy: this.actionCandidatePolicy
     });
 
@@ -1481,32 +1471,4 @@ export class AIController {
     return assessment;
   }
 
-  /*
-  功能
-  在重定向备选目标中保持既有首项选择语义。
-
-  调用方
-  统一响应流程。
-
-  输入
-  当前 Player 与合法替代目标数组。
-
-  输出
-  首个目标；空数组时为 null。
-
-  读取状态
-  无。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  不增加评分、随机或目标重排。
-  */
-  chooseRedirectTarget(_player, alternatives) {
-    return alternatives[0] ?? null;
-  }
 }

@@ -25,6 +25,7 @@ import {
 } from "../domain/LightningModel.js";
 import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolutionQuery.js";
 import { HP_VALUE } from "../value/Economics.js";
+import { conditionHiddenPool, projectHiddenSummaries } from "../state/HiddenPool.js";
 
 export class ValueSimulationQuery {
   /*
@@ -531,27 +532,30 @@ export class ValueSimulationQuery {
     this.checkpointSearchWork(searchBudget);
     const simulator = this.simulatorFactory(before, { searchBudget });
     const actualAfter = after ?? simulator.apply(before, action, actorId);
-    const counterfactualPlayers = before.players.map((player) => {
-      if (player.id !== defenderId) return player;
-      const next = { ...player };
-      if (opts.removeBlock) {
-        next.blockCountDistribution = [{ probability: 1, conditions: {}, blockCount: 0 }];
-        next.blockProbability = 0;
-        next.twoBlockProbability = 0;
+    const counterfactualBefore = simulator.clone(before);
+    const defender = counterfactualBefore.players.find((player) => player.id === defenderId);
+    for (const [definitionId, remove] of [
+      ["block", opts.removeBlock],
+      ["counter", opts.removeCounter],
+      ["recover", opts.removeRecover]
+    ]) {
+      if (!remove) continue;
+      conditionHiddenPool(counterfactualBefore.hiddenPoolState, {
+        type:"CONDITION",
+        definitionId,
+        bucketId:defenderId,
+        maximum:0
+      });
+      if (Array.isArray(defender?.hand)) {
+        defender.hand = defender.hand.filter((card) => card.definitionId !== definitionId);
       }
-      if (opts.removeCounter) {
-        next.counterCountDistribution = [{ probability: 1, conditions: {}, counterCount: 0 }];
-        next.counterProbability = 0;
+      if (Array.isArray(defender?.knownCards)) {
+        defender.knownCards = defender.knownCards.filter(
+          (card) => card.definitionId !== definitionId
+        );
       }
-      if (opts.removeRecover) {
-        next.expectedRecoverCount = 0;
-        if (Array.isArray(next.hand)) {
-          next.hand = next.hand.filter((card) => card.definitionId !== "recover");
-        }
-      }
-      return next;
-    });
-    const counterfactualBefore = { ...before, players: counterfactualPlayers };
+    }
+    projectHiddenSummaries(counterfactualBefore);
     this.checkpointSearchWork(searchBudget);
     const counterfactualAfter = this.simulatorFactory(
       counterfactualBefore,
