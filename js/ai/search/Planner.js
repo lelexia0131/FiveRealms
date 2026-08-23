@@ -146,7 +146,8 @@ export class Planner {
       node.activePatternProposals,
       candidate.action,
       depth - 1,
-      node.completedPatternIds
+      node.completedPatternIds,
+      node.state
     );
     return {
       action:node.action,
@@ -175,27 +176,32 @@ export class Planner {
   root node 构造与 buildChildNode。
 
   输入
-  尚在匹配的 proposals、当前动作、零基 step 索引与此前已完成的 Pattern IDs。
+  尚在匹配的 proposals、当前动作、零基 step 索引、此前已完成的 Pattern IDs 与动作生成时的 SearchState。
 
   输出
   仍可继续的 proposals、本步新完成 proposals 和继承后的完成 Pattern IDs。
 
   读取状态
-  CandidateMaterializer 的 ActionDescriptor semantic key。
+  PatternMatcher 的 exact/selector step contract 与只读 SearchState assertions。
 
   写入状态
   无。
 
   调用函数
-  CandidateMaterializer.childSchedulingKey。
+  PatternMatcher.matchesStep。
 
   边界与不变量
   metadata 不进入 value/prune score；只有当前完整节点动作匹配完整 proposal step 时才可完成 Pattern。
   */
-  advancePatternState(proposals, action, stepIndex, completedPatternIds = []) {
-    const actionKey = this.candidateMaterializer.childSchedulingKey(action);
+  advancePatternState(
+    proposals,
+    action,
+    stepIndex,
+    completedPatternIds = [],
+    state = null
+  ) {
     const matched = (proposals ?? []).filter(
-      (proposal) => proposal.stepKeys[stepIndex] === actionKey
+      (proposal) => this.patternMatcher.matchesStep(proposal, stepIndex, action, state)
     );
     const newlyCompletedPatternProposals = matched.filter(
       (proposal) => proposal.stepKeys.length === stepIndex + 1
@@ -253,8 +259,9 @@ export class Planner {
     if (!proposals.length) return scheduled.map((entry) => entry.action);
     let promotedEntry = null;
     for (const proposal of proposals) {
-      const key = proposal.stepKeys[0];
-      promotedEntry = scheduled.find((entry) => entry.key === key) ?? null;
+      promotedEntry = scheduled.find(
+        (entry) => this.patternMatcher.matchesStep(proposal, 0, entry.action, state)
+      ) ?? null;
       if (promotedEntry) break;
     }
     if (!promotedEntry) return scheduled.map((entry) => entry.action);
@@ -272,7 +279,8 @@ export class Planner {
   materializeChildCandidates。
 
   输入
-  当前合法动作、行动者、生成这些动作的 post-state 与按 proposal 顺序排列的 guided semantic keys。
+  当前合法动作、行动者、生成这些动作的 post-state、按优先级排列的 proposals 或兼容 semantic keys，
+  以及当前零基 step index。
 
   输出
   guided intent 优先、其余动作按现有 SearchPrior/coarse intent/search-semantic secondary key 排列的新数组。
@@ -290,20 +298,28 @@ export class Planner {
   只改变探索顺序，不改变合法集合、Final Utility 或 incumbent 规则；
   guided 与普通同分都不得读取 hand index 或 card instance ID；同 intent 的执行分支必须稳定排序。
   */
-  scheduleChildActions(actions, player, state, guidedStepKeys = []) {
-    const guidedRanks = new Map();
-    for (const [index, key] of guidedStepKeys.entries()) {
-      if (!guidedRanks.has(key)) guidedRanks.set(key, index);
+  scheduleChildActions(actions, player, state, guidance = [], stepIndex = 0) {
+    const legacyGuidedRanks = new Map();
+    for (const [index, key] of guidance.entries()) {
+      if (typeof key === "string" && !legacyGuidedRanks.has(key)) {
+        legacyGuidedRanks.set(key, index);
+      }
     }
     return (actions ?? []).map((action) => ({
       action,
       score:this.candidateMaterializer.childSchedulingScore(action, player, state),
       key:this.candidateMaterializer.childSchedulingKey(action),
+      guidedRank:guidance.findIndex((proposal) => typeof proposal !== "string"
+        && this.patternMatcher.matchesStep(proposal, stepIndex, action, state)),
       secondaryKey:this.candidateMaterializer.schedulingSecondaryKey?.(action)
         ?? this.candidateMaterializer.childSchedulingKey(action)
     })).sort((left, right) => {
-      const leftRank = guidedRanks.get(left.key) ?? Number.POSITIVE_INFINITY;
-      const rightRank = guidedRanks.get(right.key) ?? Number.POSITIVE_INFINITY;
+      const leftRank = left.guidedRank >= 0
+        ? left.guidedRank
+        : legacyGuidedRanks.get(left.key) ?? Number.POSITIVE_INFINITY;
+      const rightRank = right.guidedRank >= 0
+        ? right.guidedRank
+        : legacyGuidedRanks.get(right.key) ?? Number.POSITIVE_INFINITY;
       if (leftRank !== rightRank) return leftRank < rightRank ? -1 : 1;
       if (left.score !== right.score) return left.score > right.score ? -1 : 1;
       const intentOrder = left.key.localeCompare(right.key);
@@ -475,27 +491,47 @@ export class Planner {
     maxNewCandidates = Number.POSITIVE_INFINITY,
     workDiagnostics
   }) {
-    const guidedStepKeys = activePatternProposals.map(
-      (proposal) => proposal.stepKeys[depth - 1]
-    ).filter(Boolean);
     const followActions = resumeExpansion?.actions ?? this.scheduleChildActions(
       this.generateFromVisible(parentState, player.id, budget),
       player,
       parentState,
-      guidedStepKeys
+      activePatternProposals,
+      depth - 1
     );
     if (!resumeExpansion) workDiagnostics.childBranches += followActions.length;
+    if (!resumeExpansion) {
+      for (const proposal of activePatternProposals) {
+        const resolvable = followActions.some(
+          (action) => this.patternMatcher.matchesStep(
+            proposal,
+            depth - 1,
+            action,
+            parentState
+          )
+        );
+        if (resolvable
+          || workDiagnostics.completedPatternProposalKeys.has(proposal.semanticKey)
+          || workDiagnostics.abortedPatternProposalKeys.has(proposal.semanticKey)) continue;
+        workDiagnostics.abortedPatternProposalKeys.add(proposal.semanticKey);
+        workDiagnostics.abortedPatternCount += 1;
+      }
+    }
     const candidates = [...(resumeExpansion?.candidates ?? [])];
     let nextActionIndex = resumeExpansion?.nextActionIndex ?? 0;
     let newCandidateCount = 0;
     const requestedCandidateLimit = Number.isFinite(maxNewCandidates)
       ? Math.max(0, Math.floor(maxNewCandidates))
       : Number.POSITIVE_INFINITY;
-    const firstActionKey = followActions[nextActionIndex]
-      ? this.candidateMaterializer.childSchedulingKey(followActions[nextActionIndex])
-      : null;
+    const firstAction = followActions[nextActionIndex] ?? null;
+    const firstActionMatchesGuidance = firstAction !== null
+      && activePatternProposals.some((proposal) => this.patternMatcher.matchesStep(
+        proposal,
+        depth - 1,
+        firstAction,
+        parentState
+      ));
     const candidateLimit = guidedContinuationOnly
-      && !guidedStepKeys.includes(firstActionKey)
+      && !firstActionMatchesGuidance
       ? 0
       : requestedCandidateLimit;
     while (nextActionIndex < followActions.length && newCandidateCount < candidateLimit) {
@@ -522,9 +558,13 @@ export class Planner {
       const candidate = prepared?.candidate ?? null;
       if (!candidate) {
         workDiagnostics.abortedCandidateCount += 1;
-        const actionKey = this.candidateMaterializer.childSchedulingKey(action);
         for (const proposal of activePatternProposals) {
-          if (proposal.stepKeys[depth - 1] !== actionKey
+          if (!this.patternMatcher.matchesStep(
+            proposal,
+            depth - 1,
+            action,
+            parentState
+          )
             || workDiagnostics.completedPatternProposalKeys.has(proposal.semanticKey)
             || workDiagnostics.abortedPatternProposalKeys.has(proposal.semanticKey)) continue;
           workDiagnostics.abortedPatternProposalKeys.add(proposal.semanticKey);
@@ -723,7 +763,7 @@ export class Planner {
   行动者、根 SearchState、根候选动作与可选会话/诊断上下文。
 
   输出
-  当前最佳完整根动作；TIME/NODE 零完整 root 时返回已标记的合法 provisional root，取消时安全终止。
+  当前最佳完整根动作；TIME/NODE 零完整 root 时返回不受 Pattern promotion 影响的合法 provisional root，取消时安全终止。
 
   读取状态
   SearchState、PatternMatcher proposal、显式搜索归属模块、动作生成、预算与会话能力。
@@ -740,8 +780,9 @@ export class Planner {
   Pattern 只可正向安排 guided root/continuation，ordinary challenger 必须先获得 root coverage；
   每个 continuation 从当前 post-state legal actions 解析，Pattern metadata 不进入 value 或 final incumbent rule；
   progressive 只缓存完整子候选；常规逐层 beam 必须复用或补齐原有展开，COMPLETE 仍只从标准 final beam 选择；
-  一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；TIME/NODE 绝不执行未物化动作；
-  TIME/NODE 零完整 root 时只可返回调度最高的合法 non-end provisional root，且不得登记成 candidate/计划；
+  一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；未物化动作不得伪装成完整 incumbent；
+  TIME/NODE 零完整 root 时，结束不会强制弃牌则优先返回合法 terminal；已知会强制弃牌时才退回基础调度首个 non-end；
+  Pattern promotion 不得把未完整物化的 guided root 变成实际选择；provisional fallback 不登记成 candidate/计划；
   根层已物化 end 可作为安全基线；未物化 end 只有在所有 non-end roots 都已比较且全为负时才能补算。
   NODE 中断且已知候选全为负时，只通过 SearchBudget 授权剩余 roots 的有限 depth-1 安全阶段；
   TIME 只返回 deadline 前已经完整 materialize 的 incumbent，绝不启动未物化 root；
@@ -761,15 +802,31 @@ export class Planner {
       structure
     });
     const patternProposals = patternMatch.proposals ?? [];
+    const ordinaryRootActions = this.scheduleRootActions(
+      uniqueRootActions,
+      player,
+      visibleState
+    );
     const scheduledRootActions = this.scheduleRootActions(
       uniqueRootActions,
       player,
       visibleState,
       patternProposals
     );
-    const provisionalRootFallback = scheduledRootActions.find(
+    const rootTerminalAction = this.candidateMaterializer.findTerminalAction(
+      ordinaryRootActions
+    );
+    const visiblePlayer = visibleState.players?.find((entry) => entry.id === player.id) ?? player;
+    const visibleHandCount = Number(
+      visiblePlayer.handCount ?? visiblePlayer.hand?.length ?? player.hand?.length ?? 0
+    );
+    const terminalForcesDiscard = visibleHandCount > Math.max(0, Number(visiblePlayer.hp) || 0);
+    const ordinaryNonTerminalFallback = ordinaryRootActions.find(
       (action) => !this.candidateMaterializer.findTerminalAction([action])
-    ) ?? this.candidateMaterializer.findTerminalAction(scheduledRootActions)
+    );
+    const provisionalRootFallback = terminalForcesDiscard
+      ? ordinaryNonTerminalFallback ?? rootTerminalAction
+      : rootTerminalAction ?? ordinaryNonTerminalFallback
       ?? { type:"end" };
     const context = this.candidateMaterializer.createContext(
       player,
@@ -906,7 +963,9 @@ export class Planner {
         const rootPatternState = this.advancePatternState(
           patternProposals,
           progressiveRoot.action,
-          0
+          0,
+          [],
+          visibleState
         );
         const expansion = await this.materializeChildCandidates({
           parentState:progressiveRoot.state,
@@ -962,7 +1021,6 @@ export class Planner {
       !this.candidateMaterializer.findTerminalAction([action])
       && !initiallyMaterializedRootActions.has(action)
     ));
-    const rootTerminalAction = this.candidateMaterializer.findTerminalAction(scheduledRootActions);
     const unmaterializedRootTerminal = rootTerminalAction
       && !initiallyMaterializedRootActions.has(rootTerminalAction);
     const bestMaterializedNonTerminalRoot = rootCandidates
@@ -1057,7 +1115,7 @@ export class Planner {
         candidateLedger:candidate.candidateLedger,
         frontierResidual:candidate.frontierResidual,
         completedAtWorkCount:candidate.completedAtWorkCount,
-        ...this.advancePatternState(patternProposals, candidate.action, 0)
+        ...this.advancePatternState(patternProposals, candidate.action, 0, [], visibleState)
       };
     });
     for (const node of beam) this.observeCompletedPatterns(node, workDiagnostics);
