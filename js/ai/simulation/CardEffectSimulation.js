@@ -1501,13 +1501,13 @@ clampProbability。
 
   /*
   功能
-  按 ResourceSelectionPolicy 的选择从模拟手牌消费确定实体或未知位置。
+  按调用方已确定的 ResourceSelectionPolicy 选择消费模拟手牌实体。
 
   调用方
   ResponseSimulation.simulateGuardianAid：在完整确定手牌中按正式保留策略弃牌。
 
   输入
-  World、玩家、期望弃牌量与可选结果收集器/事件标签。
+  World、玩家、期望弃牌量与含 selectedCardId 的结果收集器/事件标签。
 
   输出
   实际消费的期望数量。
@@ -1519,24 +1519,29 @@ clampProbability。
   牌 availability、hand/handCount 与 block/counter/assault/recover 摘要。
 
   调用函数
-  buildDiscardKeepValueContext、getDiscardKeepValue、响应容量移除 辅助函数。
+  响应容量移除与 availability 辅助函数；getDiscardKeepValue 仅服务非响应旧调用的延后迁移路径。
 
   边界与不变量
-  每轮只消费当前最低保留值实体；选择与移除共享事件世界，匿名手牌不得进入本路径。
+  Guardian 调用必须传入 Policy 已选择的实体；其他既有调用未指定时保持原最低保留值行为，
+  选择与移除共享事件世界，匿名手牌不得进入本路径。
   */
   consumeChosenHandCard(state, player, spend, options = {}) {
     let remaining = Math.max(0, Number(spend) || 0);
     let totalSpent = 0;
     const result = options.result ?? null;
     while (remaining > PROBABILITY_EPSILON && (player.handCount ?? 0) > PROBABILITY_EPSILON) {
-      const context = this.buildDiscardKeepValueContext(state, player);
+      const context = options.selectedCardId
+        ? null
+        : this.buildDiscardKeepValueContext(state, player);
       const candidates = player.hand
-        .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON)
-        .sort((left, right) => (
-          getDiscardKeepValue(player, left, context) - getDiscardKeepValue(player, right, context)
-        ));
+        .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON);
       if (!candidates.length) break;
-      const chosen = candidates[0];
+      const chosen = options.selectedCardId
+        ? candidates.find((card) => (card.id ?? card.cardId) === options.selectedCardId)
+        : candidates.sort((left, right) => (
+            getDiscardKeepValue(player, left, context) - getDiscardKeepValue(player, right, context)
+          ))[0];
+      if (!chosen) break;
       const availableProbability = this.cardAvailability(chosen);
       const spent = Math.min(1, remaining, availableProbability);
       const spendWorlds = this.getEventWorlds(

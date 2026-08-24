@@ -18,9 +18,8 @@ MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与�
 子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
 import { createInitialWorld } from "./state/StateContracts.js";
-import { deriveCurrentCardCounts } from "./state/Fact.js";
+import { deriveCurrentCardCounts, hasFactStatus } from "./state/Fact.js";
 import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js";
-import { ResponseBoundary } from "./policy/ResponseBoundary.js";
 import {
   ActionGenerator,
   deduplicateSearchEquivalentActions
@@ -35,8 +34,12 @@ import { createSearchRequest } from "./search/SearchRequest.js";
 import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js";
 import { Evaluator } from "./value/Evaluator.js";
 import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js";
-import { ResponsePolicy } from "./policy/ResponsePolicy.js";
-import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js";
+import { chooseDiscardCandidates } from "./policy/ResourceSelectionPolicy.js";
+import { getCharacterRoleTags } from "./policy/CharacterRoleMetadata.js";
+import { projectCanonicalSeatRoster } from "./state/RuleProjection.js";
+import {
+  nextLightningReceiverId as nextDomainLightningReceiverId
+} from "../domain/rules/status/StatusRules.js";
 
 export const SEARCH_RESULT_STATUS = Object.freeze({
   ACCEPTED:"ACCEPTED",
@@ -126,6 +129,66 @@ function decisionNow() {
   return globalThis.performance?.now?.() ?? Date.now();
 }
 
+/*
+功能
+把真实或过滤 Player 转成 Evaluator 可读的公开响应视图。
+
+调用方
+AIController.buildResponseDecisionContext。
+
+输入
+Player 或玩家快照。
+
+输出
+不含 hand 实体和 Game 引用的公开响应视图。
+
+读取状态
+公开生命、护盾、能量、阵营、角色、状态、装备和手牌数量。
+
+写入状态
+无。
+
+调用函数
+getCharacterRoleTags。
+
+边界与不变量
+其他玩家真实 hand definitionId 永不进入输出；响应者自己的合法定义另行显式提供。
+*/
+function responsePlayerView(player) {
+  if (!player) return null;
+  return {
+    id:player.id,
+    seatIndex:player.seatIndex,
+    alive:Boolean(player.alive),
+    battleTeam:player.battleTeam,
+    controllerType:player.controllerType,
+    characterId:player.characterId ?? player.character?.id ?? null,
+    roleTags:[...(player.roleTags ?? getCharacterRoleTags(
+      player.characterId ?? player.character?.id
+    ))],
+    tags:[...(player.tags ?? [])],
+    hp:Number(player.hp ?? 0),
+    maxHp:Number(player.maxHp ?? player.hp ?? 0),
+    shield:Number(player.shield ?? 0),
+    energy:Number(player.energy ?? 0),
+    handCount:Number(player.handCount ?? player.hand?.length ?? 0),
+    hasEquipment:Boolean(player.equipment ?? player.equipmentDefinitionId),
+    equipmentDefinitionId:player.equipment?.definitionId
+      ?? player.equipmentDefinitionId
+      ?? null,
+    statuses:Array.isArray(player.statuses)
+      ? [...player.statuses]
+      : { ...(player.statuses ?? {}) },
+    passiveSkillIds:[...(player.character?.passiveSkillIds ?? [])],
+    momentum:Number(player.turnFlags?.momentum ?? player.momentum ?? 0),
+    assaultBonus:Number(player.statuses?.allIn?.assaultBonus ?? player.assaultBonus ?? 0),
+    guardianAidUsed:Boolean(
+      player.turnFlags?.guardianAidUsed
+      ?? ((player.guardianAidUsedProbability ?? 0) >= 1)
+    )
+  };
+}
+
 export class AIController {
   /*
   功能
@@ -182,6 +245,7 @@ export class AIController {
     this.getDyingRescueOrder = dependencies.getDyingRescueOrder;
     this.isSmallTeam = dependencies.isSmallTeam;
     this.getForceAiRescueHuman = dependencies.getForceAiRescueHuman;
+    this.forceAiRescueHuman = this.getForceAiRescueHuman();
     this.yieldControl = dependencies.yieldControl;
     this.createId = dependencies.createId;
     this.searchRng = dependencies.searchRng;
@@ -211,7 +275,6 @@ export class AIController {
       getTurnEnergyBreakdown: (player) => this.getTurnEnergyBreakdown(player),
       getDifficultyMultiplier:() => this.getDifficultyMultiplier()
     });
-    this.responseDecisionPolicy = new ResponsePolicy({ assessGlobalBenefit });
     /*
     功能
     为 main-thread 组合根创建共享资源决策语义的独立 Simulator。
@@ -239,8 +302,14 @@ export class AIController {
     */
     const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
       searchBudget:runtime.searchBudget ?? null,
-      decideCounter:(...args) => this.responseDecisionPolicy.decidePlanningCounter(...args),
-      decideLeverageAssault:(...args) => this.responseDecisionPolicy.decideLeverageAssault(...args)
+      decideCounter:(...args) => this.stateEvaluator.decidePlanningCounter(...args),
+      decideLeverageAssault:(...args) => this.stateEvaluator.decideLeverageAssault(...args),
+      decideBlock:(...args) => this.stateEvaluator.decidePlanningBlock(...args),
+      decideGuardianAid:(...args) => this.stateEvaluator.decidePlanningGuardianAid(...args),
+      decideDyingRescue:(...args) => this.stateEvaluator.decidePlanningDyingRescue(...args),
+      selectGuardianAidDiscard:(player, cards, context) => (
+        chooseDiscardCandidates(player, cards, 1, context)[0] ?? null
+      )
     });
     this.valueSimulationQuery = new ValueSimulationQuery(
       this.stateEvaluator,
@@ -268,20 +337,6 @@ export class AIController {
       cardSelectionPolicy: this.cardSelectionPolicy,
       resourceValueQuery: this.resourceValueQuery,
     });
-    this.responsePolicy = new ResponseBoundary({
-      getState: () => this.getState(),
-      getDyingRescueOrder: (target) => this.getDyingRescueOrder(target),
-      isSmallTeam: (player) => this.isSmallTeam(player),
-      forceAiRescueHuman: this.getForceAiRescueHuman(),
-      remainingCounts: (actor) => deriveCurrentCardCounts(actor, this.getState())
-    }, {
-      responsePolicy: this.responseDecisionPolicy,
-      simulationQuery: this.valueSimulationQuery,
-      stateValue: this.stateValue,
-      evaluator:this.stateEvaluator,
-      actionGenerator:this.actionGenerator
-    });
-
   }
 
   /*
@@ -940,7 +995,7 @@ export class AIController {
   无。
 
   边界与不变量
-  只读诊断，不得被 ResponsePolicy、CardSelectionPolicy、搜索或 RNG 使用。
+  只读诊断，不得被 Evaluator response willingness、CardSelectionPolicy、搜索或 RNG 使用。
   */
   getLastMainThreadOperationDiagnostics() {
     return this.lastMainThreadOperationDiagnostics
@@ -1200,6 +1255,202 @@ export class AIController {
 
   /*
   功能
+  把真实响应参数转换成 Evaluator 使用的 plain DecisionContext。
+
+  调用方
+  shouldRespond、assessDyingRescue 与响应专项查询。
+
+  输入
+  响应者、响应类型、真实公开上下文和合法响应卡数组。
+
+  输出
+  不含 Game/Simulator 引用且只暴露合法信息的 DecisionContext。
+
+  读取状态
+  当前 GameState、Fact、Team Rules、Dying order 与显式 Value/Domain query。
+
+  写入状态
+  只有被调用的未知位置/状态查询可能写 query 私有缓存；真实状态不变。
+
+  调用函数
+  responsePlayerView、createInitialWorld、ValueSimulationQuery 与既有 Domain/Value 辅助函数。
+
+  边界与不变量
+  Controller 只负责 runtime entity/context binding；所有价值比较由同一 Evaluator 完成，昂贵查询惰性且每分支至多一次。
+  */
+  buildResponseDecisionContext(responder, type, rawContext, cards = []) {
+    const rawPlayers = this.getState().players;
+    const players = rawPlayers.map(responsePlayerView);
+    const byId = new Map(players.map((player) => [player.id, player]));
+    const responderView = byId.get(responder.id);
+    const publicContext = {
+      ...rawContext,
+      target:byId.get(rawContext.target?.id) ?? null,
+      source:byId.get(rawContext.source?.id) ?? null,
+      rootSource:byId.get(rawContext.rootSource?.id) ?? null,
+      statusCounterContext:rawContext.statusCounterContext
+        ? { ...rawContext.statusCounterContext }
+        : null
+    };
+    let remainingCardCounts;
+    /*
+    功能
+    在一次响应决策内惰性读取并复用同一份 canonical remaining counts。
+
+    调用方
+    buildResponseDecisionContext 的状态、guardian 与 dynamic query 闭包。
+
+    输入
+    无；闭包捕获当前 responder。
+
+    输出
+    Fact 返回的当前确定牌池计数。
+
+    读取状态
+    当前 GameState 与观察者合法信息。
+
+    写入状态
+    只写本次 DecisionContext 的局部缓存。
+
+    调用函数
+    deriveCurrentCardCounts。
+
+    边界与不变量
+    同一响应窗口最多计算一次，不跨决策复用或暴露真实未知牌。
+    */
+    const getRemainingCardCounts = () => {
+      if (remainingCardCounts === undefined) {
+        remainingCardCounts = deriveCurrentCardCounts(responder, this.getState());
+      }
+      return remainingCardCounts;
+    };
+    const needsRemainingCounts = type === "counter" || type === "skill" || type === "dyingRescue";
+    if (needsRemainingCounts) getRemainingCardCounts();
+    const rescueOrder = type === "dyingRescue"
+      ? this.getDyingRescueOrder(rawContext.target ?? responder)
+          .map((player) => byId.get(player.id))
+          .filter(Boolean)
+      : [];
+    return {
+      responder:responderView,
+      responseType:type,
+      context:publicContext,
+      cards,
+      players,
+      rescueOrder,
+      responderHandDefinitionIds:(responder.hand ?? []).map((card) => card.definitionId),
+      knownCardsByPlayer:responder.aiMemory.knownCardsByPlayer,
+      remainingCardCounts:needsRemainingCounts ? remainingCardCounts : null,
+      isSmallTeam:this.isSmallTeam(responder),
+      forceAiRescueHuman:this.forceAiRescueHuman,
+      leverageMetrics:() => {
+        const target = rawContext.target ?? responder;
+        const world = createInitialWorld(responder.id, this.getState());
+        return this.stateEvaluator.leverageResponseMetrics(
+          responderView,
+          byId.get(target.id),
+          responder.aiMemory,
+          world,
+          getRemainingCardCounts()
+        );
+      },
+      guardianAidValues:() => {
+        const target = rawContext.target;
+        const world = createInitialWorld(
+          responder.id,
+          this.getState(),
+          getRemainingCardCounts()
+        );
+        return this.valueSimulationQuery.guardianAidValues(
+          world,
+          responder.id,
+          target.id,
+          rawContext.source?.id ?? null,
+          Math.max(0, Number(rawContext.amount) || 0),
+          this.stateValue
+        );
+      },
+      lightningCounterTerms:() => {
+        const holder = rawPlayers.find((player) => (
+          player.id === rawContext.statusCounterContext?.holderId && player.alive
+        ));
+        if (!holder
+          || !hasFactStatus(holder, "lightning")
+          || holder.battleTeam !== responder.battleTeam) {
+          return { valid:false, noCounterBurden:0, withCounterBurden:0 };
+        }
+        const world = createInitialWorld(
+          responder.id,
+          this.getState(),
+          getRemainingCardCounts()
+        );
+        const worldHolder = world.players.find((player) => player.id === holder.id);
+        const receiverId = nextDomainLightningReceiverId(
+          projectCanonicalSeatRoster(rawPlayers),
+          holder.id
+        );
+        const worldReceiver = world.players.find((player) => player.id === receiverId);
+        return this.valueSimulationQuery.lightningCounterTerms(
+          world,
+          worldHolder,
+          worldReceiver,
+          responder.id
+        );
+      },
+      sealCounterTerms:() => {
+        const holder = rawPlayers.find((player) => (
+          player.id === rawContext.statusCounterContext?.holderId && player.alive
+        ));
+        if (!holder
+          || !hasFactStatus(holder, "sealed")
+          || holder.battleTeam !== responder.battleTeam) {
+          return { valid:false, preventedBurden:0 };
+        }
+        const world = createInitialWorld(
+          responder.id,
+          this.getState(),
+          getRemainingCardCounts()
+        );
+        const probabilityHolder = world.players.find((player) => player.id === holder.id);
+        return this.stateEvaluator.sealCounterTerms(
+          probabilityHolder,
+          world,
+          getRemainingCardCounts()
+        );
+      },
+      dynamicRootFlipGain:() => {
+        const rootCard = rawContext.rootCard ?? rawContext.card;
+        if (!rootCard?.definitionId || rootCard.category !== "tactic") return null;
+        const rootSourceId = rawContext.rootSourceId
+          ?? rawContext.rootSource?.id
+          ?? rawContext.source?.id
+          ?? null;
+        const world = createInitialWorld(
+          responder.id,
+          this.getState(),
+          getRemainingCardCounts()
+        );
+        const rootAction = this.actionGenerator.createRootResolutionAction(
+          world,
+          rootCard,
+          rootSourceId,
+          Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
+          { publicTransferContext:rawContext.publicTransferContext ?? null }
+        );
+        if (!rootAction) return null;
+        return this.valueSimulationQuery.dynamicRootFlipGain(
+          world,
+          responder.id,
+          rootAction,
+          rawContext.counterDepth ?? 0,
+          this.stateValue
+        );
+      }
+    };
+  }
+
+  /*
+  功能
   判断 AI 是否在当前响应窗口使用候选响应。
 
   调用方
@@ -1212,22 +1463,24 @@ export class AIController {
   是否响应的布尔值。
 
   读取状态
-  当前 GameState、Fact、评估与响应策略。
+  当前 GameState、Fact、runtime binding 与 Evaluator。
 
   写入状态
   无。
 
   调用函数
-  ResponseBoundary.shouldRespond。
+  buildResponseDecisionContext、Evaluator.shouldRespond。
 
   边界与不变量
   候选牌默认空数组；门面不得构造或泄露额外隐藏信息。
   */
   shouldRespond(player, type, context, cards = []) {
     const startedAt = decisionNow();
-    const decision = this.responsePolicy.shouldRespond(player, type, context, cards);
+    const decision = this.stateEvaluator.shouldRespond(
+      this.buildResponseDecisionContext(player, type, context, cards)
+    );
     this.recordMainThreadOperation(
-      "ResponseBoundary.shouldRespond",
+      "AIController.shouldRespond",
       startedAt,
       { candidateCount:Array.isArray(cards) ? cards.length : "unavailable" }
     );
@@ -1245,29 +1498,72 @@ export class AIController {
   响应者与濒死目标真实实体。
 
   输出
-  ResponseBoundary 生成的救援 assessment object。
+  Evaluator 生成的救援 assessment object。
 
   读取状态
-  ResponseBoundary 读取的当前公开状态、合法记忆与 Probability。
+  Controller 绑定的当前公开状态、合法记忆与 Probability。
 
   写入状态
   无。
 
   调用函数
-  ResponseBoundary.assessDyingRescue。
+  buildResponseDecisionContext、Evaluator.assessDyingRescue。
 
   边界与不变量
   Controller 只暴露窄查询；不得让 Application 直接访问 Policy 内部 owner。
   */
   assessDyingRescue(responder, target) {
     const startedAt = decisionNow();
-    const assessment = this.responsePolicy.assessDyingRescue(responder, target);
+    const decision = this.buildResponseDecisionContext(
+      responder,
+      "dyingRescue",
+      { target },
+      []
+    );
+    const assessment = this.stateEvaluator.assessDyingRescue({
+      responder:decision.responder,
+      target:decision.context.target,
+      rescueOrder:decision.rescueOrder,
+      responderHandDefinitionIds:decision.responderHandDefinitionIds,
+      knownCardsByPlayer:decision.knownCardsByPlayer,
+      recoverDensity:decision.recoverDensity,
+      remainingCardCounts:decision.remainingCardCounts
+    });
     this.recordMainThreadOperation(
-      "ResponseBoundary.assessDyingRescue",
+      "AIController.assessDyingRescue",
       startedAt,
       { candidateCount:this.getState()?.players?.length }
     );
     return assessment;
+  }
+
+  /*
+  功能
+  通过 Controller runtime binding 评估护援响应。
+
+  调用方
+  护援专项测试与真实响应入口。
+
+  输入
+  守誓者与公开伤害上下文。
+
+  输出
+  是否发动护援。
+
+  读取状态
+  当前 GameState、Probability 与窄 simulation query。
+
+  写入状态
+  无。
+
+  调用函数
+  shouldRespond。
+
+  边界与不变量
+  与 skill 响应窗口共用同一 Evaluator willingness，Controller 不增加阈值。
+  */
+  shouldUseGuardianAid(responder, context) {
+    return this.shouldRespond(responder, "skill", context, []);
   }
 
 }

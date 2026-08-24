@@ -51,7 +51,7 @@ class SimulatorCore {
   Planner 与有界 Value/Root simulation query：为一次搜索或配对查询创建模拟生命周期。
 
   输入
-  已过滤的 World 根快照，以及可选 SearchBudget 与 ResponsePolicy decision capabilities。
+  已过滤的 World 根快照，以及可选 SearchBudget、Evaluator response willingness 与 ResourceSelection entity choice capabilities。
 
   输出
   持有独立 initial 世界的 Simulator 实例。
@@ -60,22 +60,34 @@ class SimulatorCore {
   只读输入 World。
 
   写入状态
-  实例 initial、搜索预算、只读 decision capabilities、概率摘要初始化结果与 root 递归守卫。
+  实例 initial、搜索预算、只读 willingness capabilities、概率摘要初始化结果与 root 递归守卫。
 
   调用函数
   cloneWorld、各 Simulation 组件初始化器。
 
   边界与不变量
-  构造不得回读 GameState；Policy capability 只返回 boolean；initial 与输入及其他实例不共享可变对象。
+  构造不得回读 GameState；Evaluator capability 只返回 boolean 且必须全部显式注入；
+  initial 与输入及其他实例不共享可变对象。
   */
   constructor(visibleState, options = {}) {
     this.searchBudget = options.searchBudget ?? null;
-    this.decideCounter = typeof options.decideCounter === "function"
-      ? options.decideCounter
-      : () => false;
-    this.decideLeverageAssault = typeof options.decideLeverageAssault === "function"
-      ? options.decideLeverageAssault
-      : () => false;
+    const decisionCapabilities = [
+      "decideCounter",
+      "decideLeverageAssault",
+      "decideBlock",
+      "decideGuardianAid",
+      "decideDyingRescue"
+    ];
+    for (const name of decisionCapabilities) {
+      if (typeof options[name] !== "function") {
+        throw new TypeError(`Simulator 缺少 Evaluator capability：${name}`);
+      }
+      this[name] = options[name];
+    }
+    if (typeof options.selectGuardianAidDiscard !== "function") {
+      throw new TypeError("Simulator 缺少 ResourceSelectionPolicy capability：selectGuardianAidDiscard");
+    }
+    this.selectGuardianAidDiscard = options.selectGuardianAidDiscard;
     this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
     this.initial = cloneWorld(visibleState);

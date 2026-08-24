@@ -17,7 +17,6 @@ Simulator、canonical Probability、闪电概率辅助函数与纯 value/Evaluat
 架构约束
 本模块只做有界 simulation query，不搜索、不生成动作，也不拥有最终价值组合公式。
 */
-import { Simulator } from "./Simulator.js";
 import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolutionQuery.js";
 import { HP_VALUE } from "../value/Economics.js";
 import { exposureComponents } from "../value/ThreatValue.js";
@@ -38,7 +37,7 @@ export class ValueSimulationQuery {
   AIController 组合根（统一组装依赖的位置）。
 
   输入
-  不含 Simulator 的 value/Evaluator，以及可选 Simulator factory。
+  正式 Evaluator 与显式 Simulator factory。
 
   输出
   可复用的有界模拟查询实例。
@@ -55,12 +54,10 @@ export class ValueSimulationQuery {
   边界与不变量
   缓存仅以 World 对象生命周期为界，不跨状态对象复用结果；组合根 factory 保证嵌套资源效果使用正式 query 语义。
   */
-  constructor(
-    evaluator,
-    simulatorFactory = (state, runtime = {}) => new Simulator(state, {
-      searchBudget:runtime.searchBudget ?? null
-    })
-  ) {
+  constructor(evaluator, simulatorFactory) {
+    if (typeof simulatorFactory !== "function") {
+      throw new TypeError("ValueSimulationQuery 缺少依赖：simulatorFactory");
+    }
     this.evaluator = evaluator;
     this.simulatorFactory = simulatorFactory;
     this.lightningLifecycleCache = new WeakMap();
@@ -230,7 +227,7 @@ export class ValueSimulationQuery {
   计算一枚闪电对 viewer 阵营造成的预期负担。
 
   调用方
-  ResponseBoundary 与正式边界。
+  AIController response runtime boundary 与正式价值边界。
 
   输入
   状态、holder、viewer ID、可选存在概率与父 SearchBudget。
@@ -265,7 +262,7 @@ export class ValueSimulationQuery {
   计算状态反制把同一枚闪电转交 receiver 后的阵营负担。
 
   调用方
-  ResponseBoundary 与正式边界。
+  AIController response runtime boundary 与正式价值边界。
 
   输入
   状态、旧 holder、新 receiver、viewer ID 与父 SearchBudget。
@@ -299,6 +296,53 @@ export class ValueSimulationQuery {
     }
     previous.lightningStatusProbability = 0;
     return this.lightningTeamBurden(transferred, nextHolder, viewerId, 1, searchBudget);
+  }
+
+  /*
+  功能
+  返回闪电状态反制 STAY/TRANSFER 两个世界的纯负担项。
+
+  调用方
+  AIController.buildResponseDecisionContext 的 lightningCounterTerms 惰性查询。
+
+  输入
+  当前 World、旧 holder、可空新 holder、viewer ID 与父 SearchBudget。
+
+  输出
+  `{valid:true, noCounterBurden, withCounterBurden}`。
+
+  读取状态
+  当前闪电生命周期与传递后的独立克隆。
+
+  写入状态
+  只写底层独立克隆和 query 私有缓存。
+
+  调用函数
+  lightningTeamBurden、lightningTransferredBurden。
+
+  边界与不变量
+  Controller 只绑定实体；两个价值世界只在本查询中各计算一次，不修改真实 World。
+  */
+  lightningCounterTerms(state, holder, receiver, viewerId, searchBudget = null) {
+    return {
+      valid:true,
+      noCounterBurden:this.lightningTeamBurden(
+        state,
+        holder,
+        viewerId,
+        null,
+        searchBudget
+      ),
+      withCounterBurden:receiver
+        ? this.lightningTransferredBurden(
+            state,
+            holder,
+            receiver,
+            viewerId,
+            searchBudget
+          )
+        : 0
+    };
   }
 
   /*
@@ -383,7 +427,7 @@ export class ValueSimulationQuery {
   为护援 Policy 构造 STAY/AID 两个配对模拟世界并返回纯价值结果。
 
   调用方
-  ResponseBoundary 正式边界 注入的 guardianAidValues query。
+  AIController response runtime boundary 注入的 guardianAidValues query。
 
   输入
   过滤状态、守誓者/目标/来源 ID、伤害量、完整 State Value 入口与父 SearchBudget。
@@ -442,10 +486,10 @@ export class ValueSimulationQuery {
 
   /*
   功能
-  为 ResponsePolicy 查询追加一张反制翻转 root 结局的纯价值增量。
+  为 Evaluator response willingness 追加一张反制翻转 root 结局的纯价值增量。
 
   调用方
-  ResponseBoundary 正式边界 注入的 dynamicRootFlipGain query。
+  AIController response runtime boundary 注入的 dynamicRootFlipGain query。
 
   输入
   当前过滤 response state、响应者/root 信息、目标 ID、公开选择上下文、State Value 与父 SearchBudget。

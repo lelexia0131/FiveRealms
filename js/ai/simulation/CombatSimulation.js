@@ -781,7 +781,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
 
   /*
   功能
-  在濒死世界中按合法救援资源和角色被动结算存活、死亡及资源消耗。
+  在濒死世界中按已确定救援意愿、合法资源和角色被动结算存活、死亡及资源消耗。
 
   调用方
   applyDamage：在目标生命不大于零时结算救援和死亡。
@@ -793,13 +793,14 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   无返回值；目标存活、死亡或被救援后的状态已完成。
 
   读取状态
-  同阵营座次、调息容量、角色被动、击杀来源与奖励配置。
+  同阵营座次、Evaluator 救援意愿、调息容量、角色被动、击杀来源与奖励配置。
 
   写入状态
   救援者手牌/调息/回春，目标生命与全部死亡清理字段，攻击者击杀摸牌。
 
   调用函数
-  consumeKnownCardsFromHand、simulateCoordination、setSimulatedEquipment、clearHuntMarksBySource、gainUnknownCardsWithCounterState。
+  decideDyingRescue、consumeKnownCardsFromHand、simulateCoordination、setSimulatedEquipment、
+  clearHuntMarksBySource、gainUnknownCardsWithCounterState。
 
   边界与不变量
   救援按目标优先再顺时针盟友顺序；死亡清理和击杀奖励最多执行一次，不产生半存活状态。
@@ -845,7 +846,24 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       ],
       definitionId:"recover"
     }).expected;
-    const capacity = allies.reduce((sum, player) => sum + recoverCapacity(player), 0);
+    const rescuers = [];
+    for (const player of allies) {
+      const available = Math.max(0, recoverCapacity(player));
+      rescuers.push({
+        player,
+        available,
+        willing:available > PROBABILITY_EPSILON && this.decideDyingRescue(
+          state,
+          player,
+          target,
+          { need, available }
+        ) === true
+      });
+    }
+    const capacity = rescuers.reduce(
+      (sum, entry) => sum + (entry.willing ? entry.available : 0),
+      0
+    );
     if (capacity < need) {
       target.alive = false;
       target.hp = 0;
@@ -894,8 +912,10 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     let rounds = 0;
     while (remaining > PROBABILITY_EPSILON && rounds < maxRounds) {
       let usedThisRound = false;
-      for (const rescuer of allies) {
+      for (const entry of rescuers) {
         if (remaining <= PROBABILITY_EPSILON) break;
+        if (!entry.willing) continue;
+        const rescuer = entry.player;
         const available = Math.max(0, recoverCapacity(rescuer));
         if (available <= PROBABILITY_EPSILON) continue;
         const canRejuvenate = hasPassiveSkill(rescuer, "rejuvenation")

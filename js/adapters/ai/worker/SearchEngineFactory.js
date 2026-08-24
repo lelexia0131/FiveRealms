@@ -20,8 +20,6 @@ AI value/policy/simulation/search modules 与 Domain Definitions/Rules。
 import { getMaxEnergy, getTurnEnergyBreakdown } from "../../../domain/rules/team/TeamRules.js";
 import { sampleProbabilityWorlds } from "../../../ai/state/Probability/Probability.js";
 import { Evaluator } from "../../../ai/value/Evaluator.js";
-import { assessGlobalBenefit } from "../../../ai/value/GlobalBenefitValue.js";
-import { ResponsePolicy } from "../../../ai/policy/ResponsePolicy.js";
 import { StateValue } from "../../../ai/value/StateValue.js";
 import { ValueLedger } from "../../../ai/value/ValueLedger.js";
 import { ValueSimulationQuery } from "../../../ai/simulation/ValueSimulationQuery.js";
@@ -35,6 +33,7 @@ import { Pattern } from "../../../ai/Searcher/Pattern/Pattern.js";
 import { Searcher } from "../../../ai/search/Searcher.js";
 import { SearchBudget } from "../../../ai/search/SearchBudget.js";
 import { SearchPrior } from "../../../ai/search/SearchPrior.js";
+import { chooseDiscardCandidates } from "../../../ai/policy/ResourceSelectionPolicy.js";
 import { tacticResolutionScale } from "../../../ai/search/TacticResolutionQuery.js";
 import { SearchRng } from "../../../ai/search/SearchRng.js";
 
@@ -129,7 +128,6 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     getTurnEnergyBreakdown:getTurnEnergyBreakdownForPlayer,
     getDifficultyMultiplier:() => config.difficultyMultiplier
   });
-  const responsePolicy = new ResponsePolicy({ assessGlobalBenefit });
   /*
   功能
   为 Worker search runtime 创建共享资源决策语义的独立 Simulator。
@@ -157,8 +155,14 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   */
   const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
     searchBudget:runtime.searchBudget ?? null,
-    decideCounter:(...args) => responsePolicy.decidePlanningCounter(...args),
-    decideLeverageAssault:(...args) => responsePolicy.decideLeverageAssault(...args)
+    decideCounter:(...args) => stateEvaluator.decidePlanningCounter(...args),
+    decideLeverageAssault:(...args) => stateEvaluator.decideLeverageAssault(...args),
+    decideBlock:(...args) => stateEvaluator.decidePlanningBlock(...args),
+    decideGuardianAid:(...args) => stateEvaluator.decidePlanningGuardianAid(...args),
+    decideDyingRescue:(...args) => stateEvaluator.decidePlanningDyingRescue(...args),
+    selectGuardianAidDiscard:(player, cards, context) => (
+      chooseDiscardCandidates(player, cards, 1, context)[0] ?? null
+    )
   });
   const valueSimulationQuery = new ValueSimulationQuery(
     stateEvaluator,

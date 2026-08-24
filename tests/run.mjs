@@ -93,7 +93,12 @@ import { SEARCH_RESULT_STATUS } from "../js/ai/AiController.js";
 import { Action, createAction } from "../js/ai/search/Action.js";
 import { ThreatCalculator } from "../js/ai/value/ThreatValue.js";
 import { HP_RISK_OPTION_WEIGHT } from "../js/ai/value/ThreatValue.js";
-import { Evaluator, privatePeekInformationValue } from "../js/ai/value/Evaluator.js";
+import {
+  Evaluator,
+  counterOpportunityCost,
+  planningCounterDecision,
+  privatePeekInformationValue
+} from "../js/ai/value/Evaluator.js";
 import { CounterfactualTerms } from "../js/ai/search/CounterfactualTerms.js";
 import { StateValue } from "../js/ai/value/StateValue.js";
 import {
@@ -204,7 +209,11 @@ import {
   getResourceUnknownUtility
 } from "../js/ai/policy/ResourceSelectionPolicy.js";
 import { CardSelectionBoundary } from "../js/ai/policy/CardSelectionBoundary.js";
-import { getDiscardKeepValue, rankDiscardCandidates } from "../js/ai/policy/ResourceSelectionPolicy.js";
+import {
+  chooseDiscardCandidates,
+  getDiscardKeepValue,
+  rankDiscardCandidates
+} from "../js/ai/policy/ResourceSelectionPolicy.js";
 import {
   assaultThreat,
   equipmentThreatSynergy,
@@ -221,13 +230,8 @@ import {
   assessGlobalBenefit,
   mutualBenefitDraftValues
 } from "../js/ai/value/GlobalBenefitValue.js";
-import {
-  counterOpportunityCost,
-  planningCounterDecision
-} from "../js/ai/policy/ResponsePolicy.js";
 import { dynamicRootFlipGain } from "../js/ai/simulation/RootResolutionQuery.js";
 import { CardSelectionPolicy } from "../js/ai/policy/CardSelectionPolicy.js";
-import { ResponsePolicy } from "../js/ai/policy/ResponsePolicy.js";
 import {
   assessGlobalBenefitOutcome,
   buildMutualBenefitDraftOutcome
@@ -275,6 +279,8 @@ function upgradeProbabilityFixture(state) {
   return state;
 }
 
+const testResponseEvaluator = new Evaluator();
+
 class Simulator extends ProductionSimulator {
   /*
   功能
@@ -302,7 +308,17 @@ class Simulator extends ProductionSimulator {
   不改变生产模块；正式 createInitialWorld 已有 ProbabilityState 时保持原对象。
   */
   constructor(state, options = {}) {
-    super(upgradeProbabilityFixture(state), options);
+    super(upgradeProbabilityFixture(state), {
+      decideCounter:() => false,
+      decideLeverageAssault:() => false,
+      decideBlock:(...args) => testResponseEvaluator.decidePlanningBlock(...args),
+      decideGuardianAid:(...args) => testResponseEvaluator.decidePlanningGuardianAid(...args),
+      decideDyingRescue:(...args) => testResponseEvaluator.decidePlanningDyingRescue(...args),
+      selectGuardianAidDiscard:(player, cards, context) => (
+        chooseDiscardCandidates(player, cards, 1, context)[0] ?? null
+      ),
+      ...options
+    });
     return new Proxy(this, {
       get(target, property, receiver) {
         const value = Reflect.get(target, property, receiver);
@@ -755,7 +771,7 @@ function assertNoHiddenSelectionLeak(value, hiddenCards) {
 }
 
 function forceAvailableAiCounters(game, capturedContexts = []) {
-  game.aiController.responsePolicy.shouldRespond = (_responder, type, context, cards) => {
+  game.aiController.shouldRespond = (_responder, type, context, cards) => {
     capturedContexts.push(context);
     return type === "counter" && cards.length > 0;
   };
@@ -6488,7 +6504,7 @@ test("转移：隐藏转移传给 AI 响应策略的公开上下文不含锁定�
   const { game }
     = makeGame([actor, from, responder, receiver], { random: () => 0 });
   let receivedContext = null;
-  game.aiController.responsePolicy.shouldRespond = (_player, _type, context) => {
+  game.aiController.shouldRespond = (_player, _type, context) => {
     receivedContext = context;
     return false;
   };
@@ -6525,7 +6541,7 @@ test("转移：响应期间手牌换序后仍移动反制前锁定的同一实�
   responder.hand.push(instance("counter"));
   const { game }
     = makeGame([actor, from, responder, receiver], { random: () => 0 });
-  game.aiController.responsePolicy.shouldRespond = () => {
+  game.aiController.shouldRespond = () => {
     from.hand.reverse();
     return false;
   };
@@ -6546,7 +6562,7 @@ test("转移：被反制后锁定手牌仍留在来源区域", async () => {
   responder.hand.push(instance("counter"));
   const { game }
     = makeGame([actor, from, responder, receiver], { random: () => 0 });
-  game.aiController.responsePolicy.shouldRespond = () => true;
+  game.aiController.shouldRespond = () => true;
   await game.playCard(actor, use, [], { sourceId: from.id, receiverId: receiver.id, zone: "hand" });
   assert.ok(from.hand.includes(locked));
   assert.ok(!receiver.hand.includes(locked));
@@ -6565,7 +6581,7 @@ test("转移：伪造装备区转移不会开启反制窗口或生成公开转�
   const { game }
     = makeGame([actor, from, responder, receiver]);
   let publicContext = null;
-  game.aiController.responsePolicy.shouldRespond = (_player, _type, context) => {
+  game.aiController.shouldRespond = (_player, _type, context) => {
     publicContext = context.publicTransferContext;
     return false;
   };
@@ -7302,7 +7318,7 @@ test("借势：真人把自己设为借势第二目标并阵亡后不恢复继�
     = makeGame([actor, first, ally]);
   const prompts = [];
   ui.setPrompt = (message) => prompts.push(message);
-  game.aiController.responsePolicy.shouldRespond = (_responder, type) => type === "leverageAssault";
+  game.aiController.shouldRespond = (_responder, type) => type === "leverageAssault";
   await game.playCard(
     actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
       equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
@@ -7771,7 +7787,7 @@ function makeFrArchCounterOrderFixture() {
     responder.hand.push({ ...CARD_DEFINITIONS.counter, id: `fr-counter-card-${responder.id}` });
   }
   const calls = [];
-  game.aiController.responsePolicy.shouldRespond = (responder, type, context, cards) => {
+  game.aiController.shouldRespond = (responder, type, context, cards) => {
     calls.push({
       responderId: responder.id,
       type,
@@ -12434,7 +12450,7 @@ test("AI·响应窗口：实际有响应牌但策略放弃时仍保留伪装等�
     timingBoundaries += 1;
     return !game.state.isDisposed;
   };
-  game.aiController.responsePolicy.shouldRespond = () => {
+  game.aiController.shouldRespond = () => {
     policyCalls += 1;
     return false;
   };
@@ -13473,7 +13489,8 @@ test("AI·架构：Simulation facade 与五个效果组件保持单向依赖和�
     source.searcher,
     /from\s+["'][^"']*(?:\/simulation\/|\/policy\/|\/domain\/|AiController)[^"']*["']/
   );
-  assert.match(source.valueQuery, /from "\.\/Simulator\.js/);
+  assert.doesNotMatch(source.valueQuery, /from "\.\/Simulator\.js/);
+  assert.match(source.valueQuery, /simulatorFactory/);
   assert.match(source.response, /consumeBlockResponseWorlds[\s\S]*consumeTargetCounterResponseWorlds/);
   assert.doesNotMatch(source.response, /GlobalBenefitValue|ResponsePolicy\.js/);
   assert.match(source.combat, /applyDamage[\s\S]*resolveFatal[\s\S]*healFrom/);
@@ -13496,6 +13513,258 @@ test("AI·架构：Simulation facade 与五个效果组件保持单向依赖和�
   await assert.rejects(access(projectFile("js/ai/simulation/SimulationSupport.js")));
 });
 
+/*
+功能
+验证响应与战斗语义只由 Evaluator、Probability、Simulator 和 AIController 四个正式 owner 承担。
+
+调用方
+AI 架构测试分组。
+
+输入
+无。
+
+输出
+Promise；所有 owner、删除路径和依赖边界成立时完成。
+
+读取状态
+当前 production source files。
+
+写入状态
+无。
+
+调用函数
+readFile、access、assert。
+
+边界与不变量
+旧 Policy/Boundary 不得存在；Simulation 只消费 boolean willingness，且只能通过 Probability facade 读取容量。
+*/
+async function responseCombatSemanticClosure() {
+  const paths = {
+    controller:"js/ai/AiController.js",
+    evaluator:"js/ai/value/Evaluator.js",
+    simulator:"js/ai/simulation/Simulator.js",
+    response:"js/ai/simulation/ResponseSimulation.js",
+    combat:"js/ai/simulation/CombatSimulation.js",
+    worker:"js/adapters/ai/worker/SearchEngineFactory.js"
+  };
+  const source = Object.fromEntries(await Promise.all(
+    Object.entries(paths).map(async ([name, path]) => [
+      name,
+      await readFile(projectFile(path), "utf8")
+    ])
+  ));
+  await assert.rejects(access(projectFile("js/ai/policy/ResponsePolicy.js")));
+  await assert.rejects(access(projectFile("js/ai/policy/ResponseBoundary.js")));
+  assert.match(source.evaluator, /shouldRespond\(decision\)/);
+  assert.match(source.evaluator, /decidePlanningCounter[\s\S]*decidePlanningDyingRescue/);
+  assert.match(source.controller, /buildResponseDecisionContext[\s\S]*stateEvaluator\.shouldRespond/);
+  assert.doesNotMatch(source.controller, /ResponsePolicy|ResponseBoundary/);
+  assert.doesNotMatch(
+    source.controller,
+    /threatPriority\(|turnOpportunityValue|probabilityFromCurrentCounts|tacticJudgmentProbability|\.(?:sort|reduce)\(/
+  );
+  assert.match(source.response, /this\.decideBlock/);
+  assert.match(source.response, /this\.decideGuardianAid/);
+  assert.match(source.combat, /this\.decideDyingRescue/);
+  assert.match(source.simulator, /selectGuardianAidDiscard/);
+  assert.match(source.worker, /stateEvaluator\.decidePlanningCounter/);
+  for (const name of ["evaluator", "response", "combat"]) {
+    assert.doesNotMatch(source[name], /Probability\/(?:Branch|Pool)\.js/, name);
+  }
+  for (const name of ["response", "combat"]) {
+    assert.doesNotMatch(source[name], /from\s+["'][^"']*\/(?:policy|value)\//, name);
+    assert.doesNotMatch(source[name], /\.(?:sort|toSorted)\(/, name);
+  }
+}
+
+test(
+  "AI·架构：响应与战斗语义归 Evaluator/Probability/Simulator/Controller",
+  responseCombatSemanticClosure
+);
+
+/*
+功能
+验证 Simulator 只执行已由 Evaluator 确定的 Block、Guardian 与 Rescue 布尔选择。
+
+调用方
+AI 核心链路测试分组。
+
+输入
+无。
+
+输出
+无；接受与拒绝世界均满足资源和生命状态断言。
+
+读取状态
+canonical Probability fixture 与 Domain response/combat rules。
+
+写入状态
+仅写每个独立测试 World。
+
+调用函数
+Simulator.consumeBlockResponseWorlds、simulateGuardianAid、resolveFatal。
+
+边界与不变量
+拒绝不得消费资源；接受只消费一次；capacity 仍由 Probability 决定，死亡清理仍由 CombatSimulation 决定。
+*/
+function responseWillingnessTransitionGate() {
+  const blockTarget = {
+    id:"closure-block-target",
+    seatIndex:0,
+    battleTeam:"dawn",
+    characterId:"blade-walker",
+    alive:true,
+    hp:4,
+    maxHp:4,
+    shield:0,
+    handCount:1,
+    hand:[{ id:"closure-block", definitionId:"block", availability:1 }],
+    knownCards:[],
+    statuses:[]
+  };
+  const acceptedBlockState = {
+    remainingCardCounts:{ block:0, counter:0, recover:0, assault:3 },
+    players:[blockTarget]
+  };
+  const rejectedBlockState = structuredClone(acceptedBlockState);
+  let acceptedBlockCalls = 0;
+  let rejectedBlockCalls = 0;
+  const attackWorlds = [{
+    probability:1,
+    conditions:{},
+    occurs:true,
+    responseAllowed:true,
+    requiredCount:1,
+    originalRequiredCount:1
+  }];
+  const acceptedBlock = new Simulator(acceptedBlockState, {
+    decideBlock:() => (acceptedBlockCalls += 1, true)
+  }).consumeBlockResponseWorlds(acceptedBlockState, acceptedBlockState.players[0], attackWorlds);
+  const rejectedBlock = new Simulator(rejectedBlockState, {
+    decideBlock:() => (rejectedBlockCalls += 1, false)
+  }).consumeBlockResponseWorlds(rejectedBlockState, rejectedBlockState.players[0], attackWorlds);
+  assert.equal(acceptedBlock.blockedProbability, 1);
+  assert.equal(acceptedBlockState.players[0].handCount, 0);
+  assert.equal(rejectedBlock.blockedProbability, 0);
+  assert.equal(rejectedBlockState.players[0].handCount, 1);
+  assert.equal(acceptedBlockCalls, 1);
+  assert.equal(rejectedBlockCalls, 1);
+
+  const guardianState = {
+    remainingCardCounts:{ block:0, counter:0, recover:0, assault:3 },
+    players:[
+      {
+        id:"closure-protected",
+        seatIndex:0,
+        battleTeam:"dawn",
+        characterId:"blade-walker",
+        alive:true,
+        hp:3,
+        maxHp:4,
+        shield:0,
+        handCount:0,
+        hand:[],
+        knownCards:[],
+        statuses:[]
+      },
+      {
+        id:"closure-guardian",
+        seatIndex:1,
+        battleTeam:"dawn",
+        characterId:"oath-warden",
+        alive:true,
+        hp:4,
+        maxHp:4,
+        shield:0,
+        handCount:1,
+        hand:[{ id:"closure-guardian-card", definitionId:"charge", availability:1 }],
+        knownCards:[],
+        statuses:[],
+        guardianAidUsed:false,
+        guardianAidUsedProbability:0
+      }
+    ]
+  };
+  const rejectedGuardianState = structuredClone(guardianState);
+  let acceptedGuardianCalls = 0;
+  let rejectedGuardianCalls = 0;
+  let guardianSelectionCalls = 0;
+  const acceptedGuardianDamage = new Simulator(guardianState, {
+    decideGuardianAid:() => (acceptedGuardianCalls += 1, true),
+    selectGuardianAidDiscard:(player, cards, context) => (
+      guardianSelectionCalls += 1,
+      chooseDiscardCandidates(player, cards, 1, context)[0] ?? null
+    )
+  }).simulateGuardianAid(guardianState, guardianState.players[0], 1, 1);
+  const rejectedGuardianDamage = new Simulator(rejectedGuardianState, {
+    decideGuardianAid:() => (rejectedGuardianCalls += 1, false)
+  }).simulateGuardianAid(rejectedGuardianState, rejectedGuardianState.players[0], 1, 1);
+  assert.equal(acceptedGuardianDamage, 0);
+  assert.equal(guardianState.players[1].handCount, 0);
+  assert.equal(rejectedGuardianDamage, 1);
+  assert.equal(rejectedGuardianState.players[1].handCount, 1);
+  assert.equal(acceptedGuardianCalls, 1);
+  assert.equal(rejectedGuardianCalls, 1);
+  assert.equal(guardianSelectionCalls, 1);
+
+  const rescueState = {
+    remainingCardCounts:{ block:0, counter:0, recover:0, assault:3 },
+    players:[
+      {
+        id:"closure-dying",
+        seatIndex:0,
+        battleTeam:"dawn",
+        characterId:"blade-walker",
+        alive:true,
+        hp:0,
+        maxHp:4,
+        shield:0,
+        handCount:0,
+        hand:[],
+        knownCards:[],
+        statuses:[],
+        equipmentDefinitionId:null
+      },
+      {
+        id:"closure-rescuer",
+        seatIndex:1,
+        battleTeam:"dawn",
+        characterId:"blade-walker",
+        alive:true,
+        hp:3,
+        maxHp:4,
+        shield:0,
+        handCount:1,
+        hand:[{ id:"closure-recover", definitionId:"recover", availability:1 }],
+        knownCards:[],
+        statuses:[],
+        rejuvenationTriggerCount:0
+      }
+    ]
+  };
+  const rejectedRescueState = structuredClone(rescueState);
+  let acceptedRescueCalls = 0;
+  let rejectedRescueCalls = 0;
+  new Simulator(rescueState, {
+    decideDyingRescue:() => (acceptedRescueCalls += 1, true)
+  }).resolveFatal(rescueState, rescueState.players[0]);
+  new Simulator(rejectedRescueState, {
+    decideDyingRescue:() => (rejectedRescueCalls += 1, false)
+  }).resolveFatal(rejectedRescueState, rejectedRescueState.players[0]);
+  assert.equal(rescueState.players[0].alive, true);
+  assert.equal(rescueState.players[0].hp, 1);
+  assert.equal(rescueState.players[1].handCount, 0);
+  assert.equal(rejectedRescueState.players[0].alive, false);
+  assert.equal(rejectedRescueState.players[1].handCount, 1);
+  assert.equal(acceptedRescueCalls, 1);
+  assert.equal(rejectedRescueCalls, 1);
+}
+
+test(
+  "AI·核心链路：Block/Guardian/Rescue willingness 与 transition 分离",
+  responseWillingnessTransitionGate
+);
+
 test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 service locator", async () => {
   const aiRoot = projectFile("js/ai");
   const files = (await listJavaScriptFiles(aiRoot)).map((file) => nodePath.normalize(file));
@@ -13512,6 +13781,7 @@ test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 ser
     "discardScoring", "resourceSelectionValue", "transferScoring", "sealScoring",
     "lightningScoring", "AiGlobalBenefit", "AiPlanner", "AiActionGenerator",
     "AiCardSelector", "AiResponsePolicy", "AiValueSimulationQuery",
+    "ResponsePolicy", "ResponseBoundary",
     "Planner", "SearchPolicy", "TransitionValue", "FrontierValue",
     "CandidateMaterializer", "SiblingTransitionTerms", "SearchResult"
   ]);
@@ -14497,7 +14767,7 @@ test("AI·World：隐藏手牌换位不改变 ProbabilityState、团队反制或
   Simulator.evaluateCardScopeCounterResponses、totalBranchProbability。
 
   边界与不变量
-  ResponsePolicy 在夹具中固定愿意响应，比较项只允许由合法 Belief 决定。
+  Evaluator 在夹具中固定愿意响应，比较项只允许由合法 Belief 决定。
   */
   function ordered(state) {
     const simulator = new Simulator(state);
@@ -18224,7 +18494,7 @@ test("AI·搜索：主线程 Response 与 contextual resource query 只记录 fo
     [instance("block")]
   );
   const responseDiagnostics = game.aiController.getLastMainThreadOperationDiagnostics();
-  assert.equal(responseDiagnostics.operation, "ResponseBoundary.shouldRespond");
+  assert.equal(responseDiagnostics.operation, "AIController.shouldRespond");
   assert.equal(responseDiagnostics.candidateCount, 1);
   assert.equal(responseDiagnostics.worldCount, "unavailable");
   assert.ok(responseDiagnostics.durationMs >= 0);
@@ -24502,7 +24772,7 @@ test("AI·借势：在已用次数耗尽时仍能评估并接受残血击杀", (
   assert.equal(usable.length, 1);
   assert.equal(usable[0], assault);
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       first, "leverageAssault", { target: second, equipment }, usable
     ),
     true
@@ -24570,7 +24840,7 @@ test("AI·借势：响应使用统一策略且仍通过普通突袭流程", asyn
   first.equipment = equipment;
   const { game }
     = makeGame([actor, first]);
-  game.aiController.responsePolicy.shouldRespond = (_responder, type) => type === "leverageAssault";
+  game.aiController.shouldRespond = (_responder, type) => type === "leverageAssault";
   await game.playCard(
     actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
       equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
@@ -24580,7 +24850,7 @@ test("AI·借势：响应使用统一策略且仍通过普通突袭流程", asyn
   assert.ok(game.state.deck.discardPile.includes(assault));
 });
 
-test("AI·借势：搜索模拟只消费 ResponsePolicy 的确定 boolean choice", () => {
+test("AI·借势：搜索模拟只消费 Evaluator 的确定 boolean choice", () => {
   const actor = makePlayer("leverage-policy-actor", 0, "dawn", "ai", 3);
   const first = makePlayer("leverage-policy-first", 1, "dusk", "ai", 3);
   actor.hand.push(instance("leverage"));
@@ -24591,7 +24861,7 @@ test("AI·借势：搜索模拟只消费 ResponsePolicy 的确定 boolean choice
   const visibleFirst = world.players.find((player) => player.id === first.id);
   const visibleEnemy = world.players.find((player) => player.id === actor.id);
   assert.equal(
-    game.aiController.responseDecisionPolicy.decideLeverageAssault(
+    game.aiController.stateEvaluator.decideLeverageAssault(
       world,
       visibleFirst,
       visibleEnemy
@@ -24599,7 +24869,7 @@ test("AI·借势：搜索模拟只消费 ResponsePolicy 的确定 boolean choice
     true
   );
   assert.equal(
-    game.aiController.responseDecisionPolicy.decideLeverageAssault(
+    game.aiController.stateEvaluator.decideLeverageAssault(
       world,
       visibleFirst,
       { ...visibleEnemy, battleTeam:visibleFirst.battleTeam }
@@ -24617,7 +24887,7 @@ test("AI·借势：响应通过可见快照评估真实玩家状态", () => {
   first.equipment = equipment;
   const { game }
     = makeGame([actor, first]);
-  const decision = game.aiController.responsePolicy.shouldRespond(
+  const decision = game.aiController.shouldRespond(
     first, "leverageAssault", { target: actor, equipment }, [assault]
   );
   assert.equal(typeof decision, "boolean");
@@ -24713,7 +24983,7 @@ test("AI·借势：相同公开手牌数下有突袭与无突袭拒绝经过相�
     first.hand.push(instance(withAssault ? "assault" : "charge"));
     const { game, ui }
       = makeGame([actor, first]);
-    game.aiController.responsePolicy.shouldRespond = () => false;
+    game.aiController.shouldRespond = () => false;
     const prompts = [];
     ui.setPrompt = (message) => prompts.push(message);
     await game.playCard(
@@ -26399,11 +26669,11 @@ test("AI·封印：只在状态触发时为己方评估反制机会成本", () =
     statusCounterContext: { statusId: "sealed", holderId: holder.id, holderName: holder.name }
   };
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(ally, "counter", context, [instance("counter")]),
+    game.aiController.shouldRespond(ally, "counter", context, [instance("counter")]),
     true
   );
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(enemy, "counter", context, [instance("counter")]),
+    game.aiController.shouldRespond(enemy, "counter", context, [instance("counter")]),
     false
   );
 });
@@ -26555,7 +26825,7 @@ test("AI·闪电：己方进入 burden 比较而敌方 holder 被硬保护拒绝
   };
   const context = { statusCounterContext: { holderId: holderAlly.id, holderName: holderAlly.name } };
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(responder, "counter", context, [instance("counter")]),
+    game.aiController.shouldRespond(responder, "counter", context, [instance("counter")]),
     true
   );
   assert.deepEqual(allyBurdenQueries, ["stay", "transfer"]);
@@ -26580,7 +26850,7 @@ test("AI·闪电：己方进入 burden 比较而敌方 holder 被硬保护拒绝
     statusCounterContext: { holderId: holderEnemy.id, holderName: holderEnemy.name }
   };
   assert.equal(
-    game2.aiController.responsePolicy.shouldRespond(
+    game2.aiController.shouldRespond(
       responder2, "counter", context2, [instance("counter")]
     ),
     false
@@ -30500,7 +30770,7 @@ test("AI·守誓者：1HP队友面临将通过的真实伤害时使用护援", (
   guardian.hand.push(instance("charge"));
   const { game } = makeGame([source, target, guardian]);
   assert.equal(
-    game.aiController.responsePolicy.shouldUseGuardianAid(
+    game.aiController.shouldUseGuardianAid(
       guardian, { target, source, amount: 1 }
     ),
     true,
@@ -30517,7 +30787,7 @@ test("AI·守誓者：伤害会被目标护盾完全吸收时不使用护援", (
   guardian.hand.push(instance("charge"));
   const { game } = makeGame([source, target, guardian]);
   assert.equal(
-    game.aiController.responsePolicy.shouldUseGuardianAid(
+    game.aiController.shouldUseGuardianAid(
       guardian, { target, source, amount: 1 }
     ),
     false,
@@ -30542,7 +30812,7 @@ test("AI·守誓者：敌方已兑现突袭不再重复计未来库存时非致�
   };
   const { game } = makeGame([source, target, guardian]);
   assert.equal(
-    game.aiController.responsePolicy.shouldUseGuardianAid(
+    game.aiController.shouldUseGuardianAid(
       guardian, { target, source, amount: 1 }
     ),
     true,
@@ -30559,7 +30829,7 @@ test("AI·守誓者：护援额度本全局回合已用时不重复使用", () =
   const { game } = makeGame([source, target, guardian]);
   guardian.turnFlags.guardianAidUsed = true;
   assert.equal(
-    game.aiController.responsePolicy.shouldUseGuardianAid(
+    game.aiController.shouldUseGuardianAid(
       guardian, { target, source, amount: 1 }
     ),
     false,
@@ -30573,14 +30843,14 @@ test("AI·守誓者：护援拒绝非合法场景（自己/敌方/无手牌/零�
     guardian = makePlayer("aid-guard-guardian", 2, "dawn", "ai", 1);
   guardian.hand.push(instance("charge"));
   const { game } = makeGame([source, ally, guardian]);
-  const policy = game.aiController.responsePolicy;
+  const policy = game.aiController;
   assert.equal(policy.shouldUseGuardianAid(guardian, { target: guardian, source, amount: 1 }), false, "不能护援自己");
   assert.equal(policy.shouldUseGuardianAid(guardian, { target: source, source, amount: 1 }), false, "不能护援敌方");
   assert.equal(policy.shouldUseGuardianAid(guardian, { target: ally, source, amount: 0 }), false, "零伤害不护援");
   const emptyGuardian = makePlayer("aid-guard-empty", 3, "dawn", "ai", 1);
   const { game: game2 } = makeGame([source, ally, emptyGuardian]);
   assert.equal(
-    game2.aiController.responsePolicy.shouldUseGuardianAid(emptyGuardian, { target: ally, source, amount: 1 }),
+    game2.aiController.shouldUseGuardianAid(emptyGuardian, { target: ally, source, amount: 1 }),
     false,
     "无手牌不能护援"
   );
@@ -30770,7 +31040,7 @@ test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突�
   // 便宜牌 + 高价值格挡：确定性反事实知道会弃便宜牌，AID 收益超过未来额度成本。
   const cheap = makeGuardianAidFlipGame(["charge", "block"]);
   assert.equal(
-    cheap.game.aiController.responsePolicy.shouldUseGuardianAid(
+    cheap.game.aiController.shouldUseGuardianAid(
       cheap.guardian, { target: cheap.target, source: cheap.source, amount: 1 }
     ),
     true,
@@ -30780,7 +31050,7 @@ test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突�
   // 同一额度成本下护援本次确定伤害仍为净正收益。
   const forcedExpensive = makeGuardianAidFlipGame(["block"]);
   assert.equal(
-    forcedExpensive.game.aiController.responsePolicy.shouldUseGuardianAid(
+    forcedExpensive.game.aiController.shouldUseGuardianAid(
       forcedExpensive.guardian, { target: forcedExpensive.target, source: forcedExpensive.source, amount: 1 }
     ),
     true,
@@ -30791,7 +31061,7 @@ test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突�
 test("AI·守誓者：敌方已兑现突袭时即使弃关键防御牌护援仍为正收益", () => {
   const fixture = makeGuardianAidFlipGame(["block", "counter"]);
   assert.equal(
-    fixture.game.aiController.responsePolicy.shouldUseGuardianAid(
+    fixture.game.aiController.shouldUseGuardianAid(
       fixture.guardian, { target: fixture.target, source: fixture.source, amount: 1 }
     ),
     true,
@@ -33855,7 +34125,7 @@ test("AI·反制：不会直接反制己方正收益 root card", () => {
   // 炎术师（己方）打互利，追猎者（同阵营）持有反制：root 生效对我方有正向受益，首张
   // 反制受保护，不得消耗反制取消队友的正收益牌（即便己方人数较少、净受益为负）。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(hunter, "counter", { source: ember, card }, [counter]),
+    game.aiController.shouldRespond(hunter, "counter", { source: ember, card }, [counter]),
     false
   );
 });
@@ -33872,7 +34142,7 @@ test("AI·反制：敌方取消己方牌时可以反反制", () => {
   // 我方追加反制可恢复 root，恢复价值超过机会成本 → 允许反反制。首张反制保护只约束
   // depth=0，不因"当前 target 是敌人或队友"机械决定后续层。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       hunter, "counter",
       { source: duskA, card: counter, rootCard: root, rootSourceId: ember.id, counterDepth: 1 },
       [counter]
@@ -33894,12 +34164,12 @@ test("AI·反制：三层 counter chain 能理解最终 root outcome", () => {
   // 每一层都用同一个 parity/root-outcome 比较：depth 偶数 root 生效、奇数被取消。
   // depth0：敌方互利 root 生效对我方（2 人）明显不利 → 反制。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(hunter, "counter", { source: duskA, card: root }, [counter]),
+    game.aiController.shouldRespond(hunter, "counter", { source: duskA, card: root }, [counter]),
     true
   );
   // depth1：root 已被取消，恢复后对敌方（3 人）明显有利 → 反反制恢复 root。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       duskB, "counter",
       { source: hunter, card: counter, rootCard: root, rootSourceId: duskA.id, counterDepth: 1 },
       [counter]
@@ -33908,7 +34178,7 @@ test("AI·反制：三层 counter chain 能理解最终 root outcome", () => {
   );
   // depth2：root 恢复生效对我方又不利 → 再次反制取消。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       hunter, "counter",
       { source: duskB, card: counter, rootCard: root, rootSourceId: duskA.id, counterDepth: 2 },
       [counter]
@@ -33947,7 +34217,7 @@ test("AI·反制：低收益 root effect 时可以保留 counter", () => {
   // 2v2：互利 root 生效对双方价值相当，反制翻转结局几乎无净改善，收益明显低于反制牌
   // 机会成本 → 保留反制，不无脑救。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
 });
@@ -33967,13 +34237,13 @@ test("AI·反制：counter opportunity cost 只计一次", () => {
   enemyB.hp -= 1;
   enemyC.hp -= 1;
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     true
   );
   // 净差值 2（低于 2.8）时不反制：边界精确对应单次机会成本。
   enemyB.hp = enemyB.maxHp;
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
 });
@@ -33991,7 +34261,7 @@ test("AI·反制：掠夺目标唯一反制用掉后空手时敌方不反反制"
   // depth1：root 掠夺被取消（奇偶=奇数），恢复它只能从空手目标掠夺 → 实际收益≈0，
   // 低于反制牌机会成本，因此不反反制。该判断基于"恢复后掠夺能拿到什么"，与卡名无关。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       enemyA, "counter",
       { source: playerB, card: counter, rootCard: root, rootSourceId: enemyA.id, counterDepth: 1, rootTargetIds: ["player-b"] },
       [counter]
@@ -34015,7 +34285,7 @@ test("AI·反制：掠夺目标反制后仍持有高价值牌且收益超过机�
   // depth1：恢复掠夺可拿 B 的已知突袭，收益（约 4+）超过单次机会成本（2.8）→ 反反制。
   // 若机会成本被计两次（5.6）则不会反制，因此该断言同时证明机会成本只计一次。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       enemyA, "counter",
       { source: playerB, card: counter, rootCard: root, rootSourceId: enemyA.id, counterDepth: 1, rootTargetIds: ["player-b"] },
       [counter]
@@ -34066,9 +34336,9 @@ test("AI·反制：真实反制链空手掠夺恢复无收益时不反反制且 
   // B 手中只有反制：AI 掠夺预选必然指向它。
   game.aiController.cardSelector.chooseZoneCard = () => ({ card: bCounter, zone: "hand" });
   const captured = [];
-  const originalShouldRespond = game.aiController.responsePolicy.shouldRespond
-    .bind(game.aiController.responsePolicy);
-  game.aiController.responsePolicy.shouldRespond = (...args) => {
+  const originalShouldRespond = game.aiController.shouldRespond
+    .bind(game.aiController);
+  game.aiController.shouldRespond = (...args) => {
     captured.push(args);
     return originalShouldRespond(...args);
   };
@@ -34172,7 +34442,7 @@ test("AI·反制：目标级震荡按目标当前护盾/存活状态决定是否
   // 目标无盾：震荡 1 伤可造成 HP 损失，防止伤害的收益超过机会成本 → 反制。
   target.shield = 0;
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       target, "counter",
       { source, card: root, rootCard: root, rootSourceId: source.id, counterDepth: 0, rootTargetIds: ["target"] },
       [counter]
@@ -34182,7 +34452,7 @@ test("AI·反制：目标级震荡按目标当前护盾/存活状态决定是否
   // 目标有足够护盾：震荡伤害被盾吸收，收益低于机会成本 → 保留反制。
   target.shield = 3;
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       target, "counter",
       { source, card: root, rootCard: root, rootSourceId: source.id, counterDepth: 0, rootTargetIds: ["target"] },
       [counter]
@@ -34202,7 +34472,7 @@ test("AI·反制：转移/借势 root 走统一动态估值且缺失选择上下
   // transfer root：链上下文未携带公开转移来源/接收者 → 无法模拟具体转移 → 安全降级不反制。
   const transferRoot = instance("transfer");
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       B, "counter",
       { source: A, card: transferRoot, rootCard: transferRoot, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["b"] },
       [counter]
@@ -34211,7 +34481,7 @@ test("AI·反制：转移/借势 root 走统一动态估值且缺失选择上下
   );
   // transfer root：提供公开转移上下文 → 走统一动态估值并返回布尔决策。
   B.hand = [instance("assault")];
-  const transferDecision = game.aiController.responsePolicy.shouldRespond(
+  const transferDecision = game.aiController.shouldRespond(
     B, "counter",
     {
       source: A, card: transferRoot, rootCard: transferRoot, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["b"],
@@ -34223,7 +34493,7 @@ test("AI·反制：转移/借势 root 走统一动态估值且缺失选择上下
   // leverage root：第一目标未持有装备 → 借势失去收益 → 不反制。
   const leverageRoot = instance("leverage");
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       B, "counter",
       { source: A, card: leverageRoot, rootCard: leverageRoot, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["c", "b"] },
       [counter]
@@ -34244,7 +34514,7 @@ test("AI·反制：队友正收益 root 不会被己方直接反制", () => {
   allyA.aiMemory.knownCardsByPlayer["enemy-b"] = { [enemyB.hand[0].id]: "assault" };
   // depth0：队友的掠夺生效对己方为正（从敌人手里拿牌）→ 反制只会让己方更差 → 不反制。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       teammate, "counter", { source: allyA, card: root }, [counter]
     ),
     false
@@ -34264,7 +34534,7 @@ test("AI·反制：敌方取消己方掠夺后队友可在收益足够时反反�
   teammate.aiMemory.knownCardsByPlayer["enemy-b"] = { [enemyB.hand[0].id]: "assault" };
   // depth1：敌方反制已取消队友掠夺，恢复它可从敌人手里拿牌，收益超过机会成本 → 反反制。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       teammate, "counter",
       { source: enemyB, card: counter, rootCard: root, rootSourceId: allyA.id, counterDepth: 1, rootTargetIds: ["enemy-b"] },
       [counter]
@@ -34314,7 +34584,7 @@ test("AI·反制：共生 root 按当前缺血量估值，目标满血时恢复�
   enemyA.hp = enemyA.maxHp;
   enemyB.hp = enemyB.maxHp;
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
 });
@@ -34335,7 +34605,7 @@ test("AI·反制：规划 counterDecision 与真实 shouldRespond 一致——�
   assert.equal(new Simulator(visible).counterDecision(visible, visibleResponder, A, root, [{ id: "t" }]), false);
   // 真实侧：同一 root 空手局面 → 不反制。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       R, "counter",
       { source: A, card: root, rootCard: root, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["t"] },
       [counter]
@@ -34363,7 +34633,7 @@ test("AI·反制：规划 counterDecision 与真实 shouldRespond 一致——�
   // 恢复掠夺可拿到高价值已知牌，规划与真实决策都允许反制。
   assert.equal(decision, true);
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       R, "counter",
       { source: A, card: root, rootCard: root, rootSourceId: A.id, counterDepth: 0, rootTargetIds: ["t"] },
       [counter]
@@ -34397,6 +34667,221 @@ test("AI·反制：规划 counterDecision 只在 gain 严格高于 cost 时响�
   assert.equal(high, true);
 });
 
+/*
+功能
+验证 Counter willingness、finite-pool capacity、多人顺序与 transition payment 相互独立。
+
+调用方
+AI 响应模型·反制测试分组。
+
+输入
+无。
+
+输出
+无；六类确定性 Counter 契约均满足断言。
+
+读取状态
+canonical ProbabilityState、Domain Counter responder order 与合法已知身份。
+
+写入状态
+仅写各自独立测试 World 的 Counter capacity、身份与 handCount。
+
+调用函数
+Simulator.consumeTargetCounterResponseWorlds、evaluateCardScopeCounterResponses、consumeCountersForCardScope。
+
+边界与不变量
+Evaluator boolean 不得变成概率；同一有限池决定匿名容量；首名响应者只支付一次且后续身份不可复活。
+*/
+function counterWillingnessCapacityTransitionGate() {
+  const effectWorlds = [{ probability:1, conditions:{}, occurs:true }];
+  const knownState = {
+    remainingCardCounts:{ counter:0, assault:1 },
+    players:[{
+      id:"closure-known-counter",
+      seatIndex:0,
+      battleTeam:"dawn",
+      characterId:"blade-walker",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:1,
+      hand:[{ id:"closure-counter-card", definitionId:"counter", availability:1 }],
+      knownCards:[],
+      statuses:[]
+    }]
+  };
+  const knownTarget = knownState.players[0];
+  const knownSimulator = new Simulator(knownState);
+  const knownAccepted = knownSimulator.consumeTargetCounterResponseWorlds(
+    knownState,
+    knownTarget,
+    effectWorlds,
+    true
+  );
+  assert.equal(knownAccepted.outcomeWorlds[0].counterConsumed, true);
+  assert.equal(knownTarget.handCount, 0);
+  assert.equal(knownTarget.hand.length, 0);
+  const knownSecond = knownSimulator.consumeTargetCounterResponseWorlds(
+    knownState,
+    knownTarget,
+    effectWorlds,
+    true
+  );
+  assert.equal(knownSecond.outcomeWorlds[0].counterConsumed, false);
+  assert.equal(knownSecond.outcomeWorlds[0].effectPasses, true);
+
+  const anonymousState = {
+    remainingCardCounts:{ counter:1 },
+    players:[{
+      id:"closure-anonymous-counter",
+      seatIndex:0,
+      battleTeam:"dawn",
+      characterId:"blade-walker",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:1,
+      knownCards:[],
+      statuses:[]
+    }]
+  };
+  const anonymousAccepted = new Simulator(anonymousState).consumeTargetCounterResponseWorlds(
+    anonymousState,
+    anonymousState.players[0],
+    effectWorlds,
+    true
+  );
+  assert.equal(anonymousAccepted.outcomeWorlds[0].counterAvailable, true);
+  assert.equal(anonymousAccepted.outcomeWorlds[0].counterConsumed, true);
+  assert.equal(anonymousState.players[0].handCount, 0);
+
+  const noCapacityState = {
+    remainingCardCounts:{ counter:0, assault:1 },
+    players:[{
+      id:"closure-no-counter",
+      seatIndex:0,
+      battleTeam:"dawn",
+      characterId:"blade-walker",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:1,
+      knownCards:[],
+      statuses:[]
+    }]
+  };
+  const willingWithoutCapacity = new Simulator(noCapacityState)
+    .consumeTargetCounterResponseWorlds(
+      noCapacityState,
+      noCapacityState.players[0],
+      effectWorlds,
+      true
+    );
+  assert.equal(willingWithoutCapacity.outcomeWorlds[0].counterWilling, true);
+  assert.equal(willingWithoutCapacity.outcomeWorlds[0].counterAvailable, false);
+  assert.equal(willingWithoutCapacity.outcomeWorlds[0].effectPasses, true);
+  assert.equal(noCapacityState.players[0].handCount, 1);
+
+  const unwillingState = {
+    remainingCardCounts:{ counter:0, assault:1 },
+    players:[{
+      id:"closure-unwilling-counter",
+      seatIndex:0,
+      battleTeam:"dawn",
+      characterId:"blade-walker",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      shield:0,
+      handCount:1,
+      hand:[{ id:"closure-kept-counter", definitionId:"counter", availability:1 }],
+      knownCards:[],
+      statuses:[]
+    }]
+  };
+  const capacityWithoutWillingness = new Simulator(unwillingState)
+    .consumeTargetCounterResponseWorlds(
+      unwillingState,
+      unwillingState.players[0],
+      effectWorlds,
+      false
+    );
+  assert.equal(capacityWithoutWillingness.outcomeWorlds[0].counterWilling, false);
+  assert.equal(capacityWithoutWillingness.outcomeWorlds[0].counterAvailable, true);
+  assert.equal(capacityWithoutWillingness.outcomeWorlds[0].effectPasses, true);
+  assert.equal(unwillingState.players[0].handCount, 1);
+
+  const actor = {
+    id:"closure-counter-actor",
+    seatIndex:0,
+    battleTeam:"dusk",
+    characterId:"blade-walker",
+    alive:true,
+    hp:4,
+    maxHp:4,
+    shield:0,
+    handCount:0,
+    hand:[],
+    knownCards:[],
+    statuses:[]
+  };
+  const firstResponder = {
+    id:"closure-counter-first",
+    seatIndex:1,
+    battleTeam:"dawn",
+    characterId:"blade-walker",
+    alive:true,
+    hp:4,
+    maxHp:4,
+    shield:0,
+    handCount:1,
+    knownCards:[{ cardId:"closure-first-known", definitionId:"counter", availability:1 }],
+    statuses:[]
+  };
+  const secondResponder = {
+    id:"closure-counter-second",
+    seatIndex:2,
+    battleTeam:"dawn",
+    characterId:"blade-walker",
+    alive:true,
+    hp:4,
+    maxHp:4,
+    shield:0,
+    handCount:1,
+    knownCards:[{ cardId:"closure-second-known", definitionId:"counter", availability:1 }],
+    statuses:[]
+  };
+  const teamState = {
+    remainingCardCounts:{ counter:0, assault:1 },
+    players:[actor, firstResponder, secondResponder]
+  };
+  let willingnessCalls = 0;
+  const teamSimulator = new Simulator(teamState, {
+    decideCounter:() => (willingnessCalls += 1, true)
+  });
+  const card = { ...CARD_DEFINITIONS.scout, id:"closure-counter-root" };
+  const evaluation = teamSimulator.evaluateCardScopeCounterResponses(
+    teamState,
+    actor,
+    card,
+    []
+  );
+  assert.equal(evaluation.responseWorlds[0].responderId, firstResponder.id);
+  assert.equal(willingnessCalls, 2);
+  teamSimulator.consumeCountersForCardScope(teamState, actor, card, [], null, evaluation);
+  assert.equal(firstResponder.handCount, 0);
+  assert.equal(secondResponder.handCount, 1);
+  assert.equal(willingnessCalls, 2);
+}
+
+test(
+  "AI·反制：确定意愿、有限池容量、多人顺序与一次支付分离",
+  counterWillingnessCapacityTransitionGate
+);
+
 // ---- AI 响应模型·反制概率 ----
 
 test("AI·反制概率：Policy heuristic 必须经过确定阈值而不是解释为自然概率", () => {
@@ -34427,8 +34912,8 @@ test("AI·反制概率：Policy heuristic 必须经过确定阈值而不是解�
   assert.equal(decide(counterOpportunityCost() + 0.01), true);
 });
 
-test("AI·反制概率：正式 ResponsePolicy 对未知敌方换面保持相同响应", () => {
-  const policy = new ResponsePolicy({ assessGlobalBenefit });
+test("AI·反制概率：正式 Evaluator 对未知敌方换面保持相同响应", () => {
+  const policy = new Evaluator();
   const makeDecision = (hiddenDefinitionId) => ({
     responder: {
       id: "r", battleTeam: "dawn", controllerType: "ai", alive: true,
@@ -34529,7 +35014,7 @@ test("AI·反制概率：不会反制对己方净治疗明显有利的共生", (
   ally.hp -= 1;
   const { game }
     = makeGame([a, ally, enemy]);
-  const use = game.aiController.responsePolicy.shouldRespond(
+  const use = game.aiController.shouldRespond(
     a, "counter", { source: enemy, card: instance("symbiosis") }, [instance("counter")]
   );
   assert.equal(use, false);
@@ -34547,14 +35032,14 @@ test("AI·反制概率：对互利按 root outcome 与选牌顺序决定是否�
   const card = instance("mutualBenefit"), counter = instance("counter");
   // 2v3：敌方互利使敌方先选且多拿一张，root 生效对我方明显不利 → 反制。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       smallA, "counter", { source: largeA, card }, [counter]
     ),
     true
   );
   // 队友互利受首张反制保护 → 不反制。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       smallB, "counter", { source: smallA, card }, [counter]
     ),
     false
@@ -34562,7 +35047,7 @@ test("AI·反制概率：对互利按 root outcome 与选牌顺序决定是否�
   largeC.alive = false;
   // 2v2：双方选牌价值相当，反制收益低于机会成本 → 不反制。
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       smallA, "counter", { source: largeA, card }, [counter]
     ),
     false
@@ -34583,21 +35068,21 @@ test("AI·反制概率：对共生按双方本次实际治疗量与反制机会�
   ally.hp -= 1;
   enemyA.hp -= 1;
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
   // 差值小于反制牌机会成本（counter.aiValue × 0.35）时保留反制，不无脑救。
   ally.hp = ally.maxHp;
   enemyB.hp -= 1;
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
   // 差值达到/超过机会成本才反制：我方满血、三名敌人受损 → net=-3，收益超过成本。
   a.hp = a.maxHp;
   enemyC.hp -= 1;
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     true
   );
 });
@@ -34644,16 +35129,16 @@ test("AI·反制概率：模拟器与真实策略使用相同的全体受益反�
     realLarge = real.game.state.players[1],
     realCard = instance("mutualBenefit");
   assert.equal(
-    real.game.aiController.responsePolicy.shouldRespond(realSmall, "counter", { source: realLarge, card: realCard }, [instance("counter")]),
+    real.game.aiController.shouldRespond(realSmall, "counter", { source: realLarge, card: realCard }, [instance("counter")]),
     true
   );
   assert.equal(
-    real.game.aiController.responsePolicy.shouldRespond(realSmallB, "counter", { source: realSmall, card: realCard }, [instance("counter")]),
+    real.game.aiController.shouldRespond(realSmallB, "counter", { source: realSmall, card: realCard }, [instance("counter")]),
     false
   );
   real.game.state.players[4].alive = false;
   assert.equal(
-    real.game.aiController.responsePolicy.shouldRespond(realSmall, "counter", { source: realLarge, card: realCard }, [instance("counter")]),
+    real.game.aiController.shouldRespond(realSmall, "counter", { source: realLarge, card: realCard }, [instance("counter")]),
     false
   );
 });
@@ -37592,7 +38077,7 @@ test("AI·格挡概率：格挡决策随可用格挡数单调且先验证实际�
     ally2 = makePlayer("block-ally-2", 3, "dawn"),
     enemy2 = makePlayer("block-enemy-2", 4, "dusk");
   const { game }
-    = makeGame([responder, ally1, enemy1, ally2, enemy2]), policy = game.aiController.responsePolicy;
+    = makeGame([responder, ally1, enemy1, ally2, enemy2]), policy = game.aiController;
   const decisions = [];
   for (const count of [1, 2, 3]) {
     responder.hand = [
@@ -37651,7 +38136,7 @@ test("AI·格挡概率：真实响应预览连势孤注且不重复计算破势"
     if (exposeWeakness) source.statuses.exposeWeakness = { stacks: exposeWeakness };
     target.hp = 3;
     target.hand.push(block, instance("charge"), instance("shield"), instance("assault"));
-    const rawAmounts = [], policy = game.aiController.responsePolicy,
+    const rawAmounts = [], policy = game.aiController,
       originalShouldRespond = policy.shouldRespond.bind(policy);
     policy.shouldRespond = (responder, type, context, cards) => {
       if (type === "block") rawAmounts.push(context.amount);
@@ -37810,7 +38295,7 @@ test("AI·突袭次数槽：攻击与技能次数槽选择执行概率最高的�
 Belief 调息密度与目标角色标签。
 
 输出
-正式 ResponsePolicy 及其 plain DecisionContext。
+正式 Evaluator 及其 plain DecisionContext。
 
 读取状态
 无。
@@ -37819,7 +38304,7 @@ Belief 调息密度与目标角色标签。
 无。
 
 调用函数
-ResponsePolicy。
+Evaluator。
 
 边界与不变量
 剩余牌计数与密度一致；未知槽位不携带真实 definitionId。
@@ -37840,7 +38325,7 @@ function makeProbabilisticRescueDecision(recoverDensity, roleTags = []) {
   };
   const recoverCount = Math.round(recoverDensity * 100);
   return {
-    policy:new ResponsePolicy({ assessGlobalBenefit }),
+    policy:new Evaluator(),
     decision: {
       responder,
       target,
@@ -37923,10 +38408,10 @@ test("AI·救援：已知1+2协作容量足够时连续救活负2血队友", asy
   ally1.aiMemory.knownCardsByPlayer[ally2.id] = Object.fromEntries(
     ally2.hand.map((card) => [card.id, card.definitionId])
   );
-  const assessment = game.aiController.responsePolicy.assessDyingRescue(ally1, target);
+  const assessment = game.aiController.assessDyingRescue(ally1, target);
   assert.equal(assessment.guaranteedSurvivable, true);
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(ally1, "dyingRescue", { target }, [ally1.hand[0]]),
+    game.aiController.shouldRespond(ally1, "dyingRescue", { target }, [ally1.hand[0]]),
     true
   );
   await game.dyingWorkflow.enter(target, enemy);
@@ -37965,7 +38450,7 @@ test("AI·救援：强制救援：AI 只剩最后一张调息时也必须救真�
   ally.hand = [instance("recover")];
   const { game }
     = makeGame([human, ally, enemy]);
-  game.aiController.responsePolicy.shouldRespond = () => false;
+  game.aiController.shouldRespond = () => false;
   await game.dyingWorkflow.enter(human, enemy);
   assert.equal(human.hp, 1);
   assert.equal(ally.hand.length, 0);
@@ -37980,7 +38465,7 @@ test("AI·救援：强制救援：AI 只有1点生命时也必须救真人", asy
   ally.hand.push(instance("recover"));
   const { game }
     = makeGame([human, ally, enemy]);
-  game.aiController.responsePolicy.shouldRespond = () => false;
+  game.aiController.shouldRespond = () => false;
   await game.dyingWorkflow.enter(human, enemy);
   assert.equal(human.hp, 1);
   assert.equal(ally.hp, 1);
@@ -37996,7 +38481,7 @@ test("AI·救援：强制救援：AI 评分函数返回 false 时仍绕过策略
   const { game }
     = makeGame([human, ally, enemy]);
   let policyCalls = 0;
-  game.aiController.responsePolicy.shouldRespond = () => {
+  game.aiController.shouldRespond = () => {
     policyCalls += 1;
     return false;
   };
@@ -38058,7 +38543,7 @@ test("AI·救援：强制救援：真人负1血时两名 AI 各用一张并救�
   allyB.hand.push(instance("recover"));
   const { game }
     = makeGame([human, allyA, allyB, enemy]);
-  game.aiController.responsePolicy.shouldRespond = () => false;
+  game.aiController.shouldRespond = () => false;
   await game.dyingWorkflow.enter(human, enemy);
   assert.equal(human.alive, true);
   assert.equal(human.hp, 1);
@@ -38074,7 +38559,7 @@ test("AI·救援：强制救援：真人负2血时同一 AI 跨三轮连续使�
   ally.hand.push(instance("recover"), instance("recover"), instance("recover"));
   const { game }
     = makeGame([human, ally, enemy]);
-  game.aiController.responsePolicy.shouldRespond = () => false;
+  game.aiController.shouldRespond = () => false;
   await game.dyingWorkflow.enter(human, enemy);
   assert.equal(human.alive, true);
   assert.equal(human.hp, 1);
@@ -38092,7 +38577,7 @@ test("AI·救援：确定必败：多张调息仍不足时不开始救援", asyn
   allyB.hand.push(instance("recover"));
   const { game }
     = makeGame([human, allyA, allyB, enemy]);
-  game.aiController.responsePolicy.shouldRespond = () => false;
+  game.aiController.shouldRespond = () => false;
   await game.dyingWorkflow.enter(human, enemy);
   assert.equal(human.hp, 0);
   assert.equal(human.alive, false);
@@ -38136,7 +38621,7 @@ test("AI·救援：强制救援：关闭配置后恢复普通 AI 救援策略", 
     = makeGame([human, ally, enemy]);
   game.forceAiRescueHuman = false;
   let policyCalls = 0;
-  game.aiController.responsePolicy.shouldRespond = () => {
+  game.aiController.shouldRespond = () => {
     policyCalls += 1;
     return false;
   };
@@ -38174,7 +38659,7 @@ test("AI·救援：强制救援：AI 自己濒死时仍然固定自救", async (
   const { game }
     = makeGame([target, enemy]);
   let policyCalls = 0;
-  game.aiController.responsePolicy.shouldRespond = () => {
+  game.aiController.shouldRespond = () => {
     policyCalls += 1;
     return false;
   };
@@ -38237,13 +38722,13 @@ test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", (
     = makeGame([a, ally, enemy]);
   a.hand.push(instance("recover"));
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       a, "dyingRescue", { target: a }, [instance("recover")]
     ),
     true
   );
   assert.equal(
-    game.aiController.responsePolicy.shouldRespond(
+    game.aiController.shouldRespond(
       enemy, "dyingRescue", { target: a }, [instance("recover")]
     ),
     false

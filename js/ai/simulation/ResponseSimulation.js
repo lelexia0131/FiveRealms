@@ -6,7 +6,7 @@
 Simulator 正式模拟门面与 Combat/Card/Status 模拟组件。
 
 下游
-state/Probability、composition 注入的 ResponsePolicy boolean capability 与共享 simulation runtime。
+state/Probability、composition 注入的 Evaluator boolean willingness、ResourceSelection entity choice 与共享 simulation runtime。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本及其概率分支。
@@ -15,7 +15,7 @@ state/Probability、composition 注入的 ResponsePolicy boolean capability 与�
 未知手牌只按合法 knownCards、handCount 与 remaining counts 建模。
 
 架构约束
-不得读取 Game/UI/Controller/Planner，不得复制 Policy、Value 或真实规则实现。
+不得读取 Game/UI/Controller/Planner/Evaluator，不得复制 willingness、Value 或真实规则实现。
 */
 import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js";
@@ -278,7 +278,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
 
   /*
   功能
-  按守护者意愿、可用格挡与目标伤害世界结算护援及其资源消耗。
+  按已确定守护者意愿、可用手牌与目标伤害世界结算护援及其资源消耗。
 
   调用方
   CombatSimulation.applyDamage：在伤害穿过响应后结算守护援助。
@@ -290,13 +290,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   护援后剩余的期望伤害量。
 
   读取状态
-  存活盟友、守护技能可用性、格挡/手牌资源与正式 Policy 意愿。
+  存活盟友、守护技能可用性、手牌资源与正式 Evaluator 意愿。
 
   写入状态
   守护者格挡/手牌/响应分布及可选伤害 outcome。
 
   调用函数
-  seatOrderFrom、ResponsePolicy query、consumeChosenHandCard/consumeRandomHandCards。
+  decideGuardianAid、selectGuardianAidDiscard、consumeChosenHandCard/consumeRandomHandCards。
 
   边界与不变量
   护援按座次和可用资源依次结算；每名守护者每个伤害世界最多响应一次。
@@ -320,8 +320,25 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       const handAvailability = Math.min(1, Math.max(0, Number(guardian.handCount) || 0));
       const triggerProbability = remainingTriggerProbability * (1 - oldUsedProbability) * handAvailability;
       if (triggerProbability <= 0) continue;
+      const willing = this.decideGuardianAid(state, guardian, target, {
+        incomingDamage,
+        eventProbability:probability,
+        triggerProbability,
+        options
+      }) === true;
+      if (!willing) continue;
       if (this.hasCompleteCertainHand(guardian)) {
-        this.consumeChosenHandCard(state, guardian, triggerProbability, options);
+        const context = this.buildDiscardKeepValueContext(state, guardian);
+        const selected = this.selectGuardianAidDiscard(
+          guardian,
+          guardian.hand,
+          context
+        );
+        if (!selected) continue;
+        this.consumeChosenHandCard(state, guardian, triggerProbability, {
+          ...options,
+          selectedCardId:selected.id ?? selected.cardId ?? null
+        });
       } else {
         this.consumeRandomHandCards(state, guardian, triggerProbability);
       }
@@ -510,7 +527,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   目标效果最终生效概率；非目标级可反制战术返回一。
 
   读取状态
-  目标 counter 分布与正式 counter decision。
+  目标 Counter capacity 与正式 Evaluator counter willingness。
 
   写入状态
   无。
@@ -531,10 +548,10 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
 
   /*
   功能
-  根据阵营关系、效果价值与当前状态作出确定的规划反制决策。
+  请求 Evaluator 对当前规划反制窗口作出确定意愿判断。
 
   调用方
-  card-scope 与 target-scope 响应查询：请求正式 ResponsePolicy 的规划反制决策。
+  card-scope 与 target-scope 响应查询。
 
   输入
   World、响应者、行动者、卡牌、目标列表与可选 selection。
@@ -549,10 +566,10 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   无。
 
   调用函数
-  注入的 decideCounter capability。
+  注入的 Evaluator decideCounter capability。
 
   边界与不变量
-  Simulation 不复制策略公式；root 递归守卫只阻止重复反事实，不改变普通响应。
+  Simulation 不复制价值公式；root 递归守卫只阻止重复反事实，不改变普通响应。
   */
   counterDecision(state, responder, actor, card, targets, selection = null) {
     return this.decideCounter(state, responder, actor, card, targets, selection, {
@@ -586,6 +603,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   格挡选择、容量扣减和身份消费共享同一世界；雷达判定格挡按判定顺序只补足原格挡容量缺口。
   */
   consumeBlockResponseWorlds(state, target, attackWorlds, options = {}) {
+    const willing = this.decideBlock(state, target, attackWorlds, options) === true;
     const blockState = queryPlayerHandProbability(
       state.probabilityState, target, "block"
     ).distribution.map(({ count, ...branch }) => ({ ...branch, blockCount:count }));
@@ -628,7 +646,8 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     必须同时发生、允许响应、未被雷达免疫且容量足够；不能跨条件世界借用格挡。
     */
     const responseMatches = (branch) => Boolean(
-      branch.occurs
+      willing
+      && branch.occurs
       && branch.responseAllowed !== false
       && branch.requiredCount > 0
       && branch.blockCount >= branch.requiredCount
