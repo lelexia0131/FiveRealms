@@ -192,6 +192,7 @@ export class InteractionController {
       return {
         firstTargetId:firstTarget.id,
         equipmentCardId:equipment.id,
+        equipmentDefinitionId:equipment.definitionId,
         secondTargetId:secondTarget.id
       };
     }

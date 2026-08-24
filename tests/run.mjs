@@ -6621,7 +6621,8 @@ test("借势：真人借势无普通突袭敌人时仍可选择同阵营第一�
   controller.requestConfirmation = async (_title, summary) => { confirmation = summary; return true; };
   const selection = await controller.requestCardFlow(game, actor, use, []);
   assert.deepEqual(
-    selection, { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+    selection, { firstTargetId: first.id, equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
   );
   assert.deepEqual(prompts, [
     "选择一名有装备且有可选第二目标的其他角色",
@@ -6632,6 +6633,54 @@ test("借势：真人借势无普通突袭敌人时仍可选择同阵营第一�
     `${actor.name}要求${first.name}对${actor.name}使用「突袭」；若拒绝，${actor.name}将获得其「${equipment.name}」。`
   );
   assert.doesNotMatch(confirmation, /以.*为代价|真实突袭/);
+});
+
+test("借势：真人最终确认返回完整装备身份并进入响应与嵌套突袭", async () => {
+  const actor = makePlayer("human-leverage-actor", 0, "dawn", "human"),
+    first = makePlayer("human-leverage-first", 1, "dusk", "human"),
+    use = instance("leverage"),
+    equipment = instance("energyDevice"),
+    assault = instance("assault");
+  actor.hand.push(use);
+  first.hand.push(assault);
+  first.equipment = equipment;
+  const { game, ui }
+    = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
+  let call = 0;
+  const controller = new InteractionController({
+    requestTarget: async (players) => {
+      call += 1;
+      return call === 1
+        ? players.find((player) => player.id === first.id)
+        : players.find((player) => player.id === actor.id);
+    }
+  });
+  controller.requestConfirmation = async () => true;
+  let selection = null;
+  let intent = null;
+  game.ui.requestCardFlow = async (...args) => {
+    selection = await controller.requestCardFlow(...args);
+    intent = game.cardIntentRuntime.prepareLeverageIntent(actor, selection);
+    return selection;
+  };
+
+  const hp = actor.hp;
+  assert.equal(await game.handleHumanCard(use.id), true);
+  assert.deepEqual(selection, {
+    firstTargetId: first.id,
+    equipmentCardId: equipment.id,
+    equipmentDefinitionId: equipment.definitionId,
+    secondTargetId: actor.id
+  });
+  assert.ok(intent);
+  assert.equal(intent.equipmentCard, equipment);
+  assert.ok(ui.responseRequests.some((request) => (
+    request.type === "leverageAssault" && request.legalCardIds.includes(assault.id)
+  )));
+  assert.equal(first.turnFlags.attackUsed, 1);
+  assert.ok(actor.hp < hp);
+  assert.ok(game.state.deck.discardPile.includes(assault));
+  assert.ok(game.state.deck.discardPile.includes(use));
 });
 
 test("借势：第一目标没有距离合法第二目标时仍被排除", () => {
@@ -6690,7 +6739,8 @@ test("借势：可指定距离外队友为第一目标且只检查其对第二�
     actor,
     use,
     [],
-    { firstTargetId: farAlly.id, equipmentCardId: equipment.id, secondTargetId: enemy.id }
+    { firstTargetId: farAlly.id, equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId, secondTargetId: enemy.id }
   );
   assert.equal(farAlly.equipment, null);
   assert.ok(actor.hand.includes(equipment));
@@ -6742,7 +6792,8 @@ test("借势：无合法突袭时不弹响应窗口并把同一装备实例移�
   const { game, ui }
     = makeGame([actor, first]);
   const selection = {
-    firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id
+    firstTargetId: first.id, equipmentCardId: equipment.id,
+    equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id
   };
   assert.equal(await game.playCard(actor, use, [], selection), true);
   assert.equal(ui.responseRequests.some((request) => request.type === "leverageAssault"), false);
@@ -6765,7 +6816,8 @@ test("借势：主动拒绝统一转移装备且不消耗第一目标突袭", as
   const { game, ui }
     = makeGame([actor, first], { response: () => false });
   await game.playCard(
-    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
   );
   assert.ok(first.hand.includes(assault));
   assert.ok(actor.hand.includes(equipment));
@@ -6793,7 +6845,8 @@ test("借势：成功响应使用真实突袭并完整复用次数、伤害、�
     );
   const hp = actor.hp;
   await game.playCard(
-    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
   );
   assert.equal(first.equipment, equipment);
   assert.equal(first.turnFlags.attackUsed, 1);
@@ -6828,7 +6881,8 @@ test("借势：忽略第一目标已用突袭次数并完整执行真实突袭",
   );
   assert.equal(
     await game.playCard(
-      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+        equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
     ),
     true
   );
@@ -6892,7 +6946,8 @@ test("借势：已用次数耗尽且手中没有突袭时仍转移装备", async
   first.turnFlags.attackUsed = first.turnFlags.attackLimit;
   assert.equal(
     await game.playCard(
-      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+        equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
     ),
     true
   );
@@ -6921,7 +6976,8 @@ test("借势：锁定望远镜时响应前不卸装，仍按该武器修正后�
   assert.equal(ActionLegality.getDistance(game, first, actor), 1);
   assert.ok(ActionLegality.getLegalAssaultTargets(game, first).includes(actor));
   await game.playCard(
-    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
   );
   assert.equal(first.equipment, equipment);
   assert.equal(first.turnFlags.attackUsed, 1);
@@ -6935,31 +6991,40 @@ test("借势：只接受唯一ID对应的原装备且不会用同名替代", asy
     use = instance("leverage");
   actor.hand.push(use);
   first.equipment = original;
-  const { game }
+  const { game, ui }
     = makeGame([actor, first]);
   assert.equal(
     await game.playCard(
       actor,
       use,
       [],
-      { firstTargetId: first.id, equipmentCardId: replacement.id, secondTargetId: actor.id }
+      { firstTargetId: first.id, equipmentCardId: replacement.id,
+        equipmentDefinitionId: original.definitionId, secondTargetId: actor.id }
     ),
     false
   );
   assert.ok(actor.hand.includes(use));
   assert.equal(first.equipment, original);
+  const selection = {
+    firstTargetId: first.id,
+    equipmentCardId: original.id,
+    equipmentDefinitionId: original.definitionId,
+    secondTargetId: actor.id
+  };
+  const intent = game.cardIntentRuntime.prepareLeverageIntent(actor, selection);
+  assert.ok(intent);
+  assert.equal(intent.equipmentCard, original);
   game.eventDispatcher.on("beforeCardResolve", "test:replace-leverage-equipment", (event) => {
     if (event.card === use) first.equipment = replacement;
   });
   assert.equal(
-    await game.playCard(
-      actor, use, [], { firstTargetId: first.id, equipmentCardId: original.id, secondTargetId: actor.id }
-    ),
+    await game.playCard(actor, use, [], selection),
     true
   );
   assert.equal(first.equipment, replacement);
   assert.ok(!actor.hand.includes(original));
   assert.ok(!actor.hand.includes(replacement));
+  assert.equal(ui.responseRequests.some((request) => request.type === "leverageAssault"), false);
   assert.ok(game.state.logs.some((entry) => entry.message.includes("指定装备已离开装备区")));
 });
 
@@ -6973,7 +7038,8 @@ test("借势：并发重复提交只结算和转移一次", async () => {
   const { game }
     = makeGame([actor, first]);
   const selection = {
-    firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id
+    firstTargetId: first.id, equipmentCardId: equipment.id,
+    equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id
   };
   const results = await Promise.all(
     [game.playCard(actor, use, [], selection), game.playCard(actor, use, [], selection)]
@@ -7002,7 +7068,8 @@ test("借势：响应前任一目标离场会取消且不按拒绝转移装备",
       actor,
       use,
       [],
-      { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: second.id }
+      { firstTargetId: first.id, equipmentCardId: equipment.id,
+        equipmentDefinitionId: equipment.definitionId, secondTargetId: second.id }
     );
     assert.equal(first.equipment, equipment);
     assert.ok(!actor.hand.includes(equipment));
@@ -7059,7 +7126,8 @@ test("借势：可指定距离内同阵营第二目标且核心接受该选择",
     = makeGame([actor, first, ally]);
   assert.equal(
     await game.playCard(
-      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: ally.id }
+      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+        equipmentDefinitionId: equipment.definitionId, secondTargetId: ally.id }
     ),
     true
   );
@@ -7091,7 +7159,8 @@ test("借势：真人借势可选择距离内同阵营第二目标", async () =>
   controller.requestConfirmation = async () => true;
   const selection = await controller.requestCardFlow(game, actor, use, []);
   assert.deepEqual(
-    selection, { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: ally.id }
+    selection, { firstTargetId: first.id, equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId, secondTargetId: ally.id }
   );
 });
 
@@ -7133,7 +7202,8 @@ test("借势：真人把自己设为借势第二目标并阵亡后不恢复继�
   ui.setPrompt = (message) => prompts.push(message);
   game.aiController.responsePolicy.shouldRespond = (_responder, type) => type === "leverageAssault";
   await game.playCard(
-    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
   );
   assert.equal(actor.alive, false);
   assert.equal(game.pendingHumanPlayEnd, false);
@@ -7155,7 +7225,8 @@ test("借势：人类多张突袭无需选牌也能使用且只消耗一张", as
   const hp = actor.hp;
   assert.equal(
     await game.playCard(
-      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+        equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
     ),
     true
   );
@@ -7183,7 +7254,8 @@ test("借势：人类多张突袭拒绝时转移装备且不消耗突袭", async
     = makeGame([actor, first], { response: () => false });
   assert.equal(
     await game.playCard(
-      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+        equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
     ),
     true
   );
@@ -11957,6 +12029,7 @@ test("调律师：借势第一目标或第二目标为队友均触发且两个�
     assert.equal(await game.playCard(tuner, use, [], {
       firstTargetId: first.id,
       equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId,
       secondTargetId: second.id
     }), true, current.id);
     assert.equal(tuner.turnFlags.coordinationTriggered, true, current.id);
@@ -11991,6 +12064,7 @@ test("调律师：借势被反制取消时没有有效目标且不触发协调",
   assert.equal(await game.playCard(tuner, use, [], {
     firstTargetId: first.id,
     equipmentCardId: equipment.id,
+    equipmentDefinitionId: equipment.definitionId,
     secondTargetId: second.id
   }), true);
   assert.equal(first.equipment, equipment);
@@ -24321,7 +24395,8 @@ test("AI·借势：响应使用统一策略且仍通过普通突袭流程", asyn
     = makeGame([actor, first]);
   game.aiController.responsePolicy.shouldRespond = (_responder, type) => type === "leverageAssault";
   await game.playCard(
-    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+    actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
   );
   assert.equal(first.turnFlags.attackUsed, 1);
   assert.equal(first.equipment, equipment);
@@ -24465,7 +24540,8 @@ test("AI·借势：相同公开手牌数下有突袭与无突袭拒绝经过相�
     const prompts = [];
     ui.setPrompt = (message) => prompts.push(message);
     await game.playCard(
-      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+      actor, use, [], { firstTargetId: first.id, equipmentCardId: equipment.id,
+        equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
     );
     return {
       thinking: ui.thinking.map((entry) => entry[0]),
@@ -53955,7 +54031,8 @@ test("生命周期：借势内嵌突袭异常只失败清理突袭牌且外层�
       actor,
       leverage,
       [],
-      { firstTargetId: first.id, equipmentCardId: equipment.id, secondTargetId: actor.id }
+      { firstTargetId: first.id, equipmentCardId: equipment.id,
+        equipmentDefinitionId: equipment.definitionId, secondTargetId: actor.id }
     ),
     true
   );
