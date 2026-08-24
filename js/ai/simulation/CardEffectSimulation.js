@@ -6,7 +6,7 @@
 Simulator 正式模拟门面、CombatSimulation 与 SkillEffectSimulation。
 
 下游
-Response/Combat/Status 组件、Domain CardRules、正式资源 Policy 与 Probability。
+Response/Combat/Status 组件、Domain CardRules 与 Probability。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本。
@@ -39,7 +39,6 @@ import {
   getRangeConditionBranches,
   inAttackRange
 } from "../state/DistanceProbabilityBranches.js";
-import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js";
 
 /*
 功能
@@ -1032,7 +1031,7 @@ clampProbability。
   对一个已明确指定的资源候选执行 Destroy removal 或 Plunder ownership transfer。
 
   调用方
-  ResourceValueQuery：为每个候选生成不会递归选择的 after-state。
+  Controller 资源反事实编排：为每个候选生成不会递归选择的 after-state。
 
   输入
   独立 World、其中的 actor/target、purpose 与确定候选描述。
@@ -1050,7 +1049,7 @@ clampProbability。
   takeResourceToHand、destroyResource 的 forcedSelection 入口。
 
   边界与不变量
-  必须提供候选；本入口绝不调用 chooseSimulatedResourceSelection，known 缺失时不得退化为匿名随机消费。
+  必须提供候选；本入口不产生选择，known 缺失时不得退化为匿名随机消费。
   */
   applyForcedResourceSelection(state, actor, target, purpose, selection) {
     if (!selection || !actor || !target) return 0;
@@ -1432,7 +1431,7 @@ clampProbability。
   从搜索状态构造与真实弃牌策略一致的距离、装备与资源保留上下文。
 
   调用方
-  consumeChosenHandCard：为守护援助的确定弃牌调用正式保留价值策略。
+  Guardian 与 mandatory discard 的外部 resolved-choice capability。
 
   输入
   World 与待弃牌玩家。
@@ -1501,47 +1500,49 @@ clampProbability。
 
   /*
   功能
-  按调用方已确定的 ResourceSelectionPolicy 选择消费模拟手牌实体。
+  按调用方已确定的实体 ID 顺序消费模拟手牌资源。
 
   调用方
-  ResponseSimulation.simulateGuardianAid：在完整确定手牌中按正式保留策略弃牌。
+  ResponseSimulation.simulateGuardianAid 与 Simulator.applyMandatoryDiscard。
 
   输入
-  World、玩家、期望弃牌量与含 selectedCardId 的结果收集器/事件标签。
+  World、玩家、期望弃牌量与含 selectedCardId/selectedCardIds 的结果收集器和事件标签。
 
   输出
   实际消费的期望数量。
 
   读取状态
-  确定 hand、保留价值上下文及各响应/突袭/调息摘要。
+  确定 hand、调用方已解析的实体 ID 及各响应/突袭/调息摘要。
 
   写入状态
   牌 availability、hand/handCount 与 block/counter/assault/recover 摘要。
 
   调用函数
-  响应容量移除与 availability 辅助函数；getDiscardKeepValue 仅服务非响应旧调用的延后迁移路径。
+  响应容量移除与 availability 辅助函数。
 
   边界与不变量
-  Guardian 调用必须传入 Policy 已选择的实体；其他既有调用未指定时保持原最低保留值行为，
+  缺少 selected identity 时必须零消费；forced known 缺失不得改选其它牌；
   选择与移除共享事件世界，匿名手牌不得进入本路径。
   */
   consumeChosenHandCard(state, player, spend, options = {}) {
     let remaining = Math.max(0, Number(spend) || 0);
     let totalSpent = 0;
     const result = options.result ?? null;
+    const selectedCardIds = Array.isArray(options.selectedCardIds)
+      ? [...options.selectedCardIds]
+      : (options.selectedCardId ? [options.selectedCardId] : []);
+    let selectedIndex = 0;
     while (remaining > PROBABILITY_EPSILON && (player.handCount ?? 0) > PROBABILITY_EPSILON) {
-      const context = options.selectedCardId
-        ? null
-        : this.buildDiscardKeepValueContext(state, player);
       const candidates = player.hand
         .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON);
       if (!candidates.length) break;
-      const chosen = options.selectedCardId
-        ? candidates.find((card) => (card.id ?? card.cardId) === options.selectedCardId)
-        : candidates.sort((left, right) => (
-            getDiscardKeepValue(player, left, context) - getDiscardKeepValue(player, right, context)
-          ))[0];
+      const selectedCardId = selectedCardIds[selectedIndex];
+      if (!selectedCardId) break;
+      const chosen = candidates.find(
+        (card) => (card.id ?? card.cardId) === selectedCardId
+      );
       if (!chosen) break;
+      selectedIndex += 1;
       const availableProbability = this.cardAvailability(chosen);
       const spent = Math.min(1, remaining, availableProbability);
       const spendWorlds = this.getEventWorlds(
@@ -1604,13 +1605,13 @@ clampProbability。
   实际转移的期望质量。
 
   读取状态
-  策略选择、目标装备/手牌身份与响应容量。
+  调用方已解析的 selection、目标装备/手牌身份与响应容量。
 
   写入状态
   双方装备、hand/knownCards、handCount 与响应/卡牌摘要。
 
   调用函数
-  normalizeResourceEffectWorlds、可选 chooseSimulatedResourceSelection、transferKnownCardIdentity 与匿名转移 辅助函数。
+  normalizeResourceEffectWorlds、transferKnownCardIdentity 与匿名转移辅助函数。
 
   边界与不变量
   来源减少与行动者获得必须共享同一世界；未知手牌只能作为匿名容量转移；强制 known 缺失时不得随机替换。
@@ -1675,13 +1676,13 @@ clampProbability。
   实际移除的期望质量。
 
   读取状态
-  策略选择、目标装备/手牌身份与响应容量。
+  调用方已解析的 selection、目标装备/手牌身份与响应容量。
 
   写入状态
   目标装备、hand/knownCards、handCount 与响应/卡牌摘要。
 
   调用函数
-  normalizeResourceEffectWorlds、可选 chooseSimulatedResourceSelection、确定/匿名消费 辅助函数。
+  normalizeResourceEffectWorlds 与确定/匿名消费辅助函数。
 
   边界与不变量
   要求完整 state/actor/target 签名；只删除目标资源，不向行动者创建牌身份；强制 known 缺失时不得随机替换。

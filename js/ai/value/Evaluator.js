@@ -30,7 +30,17 @@ import {
   tacticJudgmentProbability
 } from "../state/Probability/Probability.js";
 import { sealTeamBurden } from "./SealValue.js";
-import { cardAvailability, getBaseCardAiValue, roleCardDelta } from "./CardValue.js";
+import {
+  cardAvailability,
+  getBaseCardAiValue,
+  getDiscardKeepValue,
+  getResourceDefinitionUtility,
+  getResourceUnknownUtility,
+  getRoleCardAiValue,
+  getUnknownAcquisitionUtility,
+  roleCardDelta,
+  skillThresholdOptionPolicyValue
+} from "./CardValue.js";
 import {
   ENERGY_STATE_WEIGHT,
   HP_VALUE,
@@ -545,6 +555,456 @@ export function planningCounterDecision(
   return gain > counterOpportunityCost();
 }
 
+/*
+功能
+按单卡保留价值稳定排列弃牌候选。
+
+调用方
+chooseDiscardCandidates 与直接价值测试。
+
+输入
+玩家、合法卡牌数组与公开弃牌上下文。
+
+输出
+新的保留价值升序数组。
+
+读取状态
+CardValue 单卡 primitive。
+
+写入状态
+无；不修改输入数组。
+
+调用函数
+getDiscardKeepValue。
+
+边界与不变量
+同分保持输入顺序；本函数拥有最终排序而不拥有单卡价值公式。
+*/
+export function rankDiscardCandidates(player, cards, context = {}) {
+  return [...cards].sort((left, right) => (
+    getDiscardKeepValue(player, left, context) - getDiscardKeepValue(player, right, context)
+  ));
+}
+
+/*
+功能
+从合法卡牌候选中选择指定数量的最低保留价值实体。
+
+调用方
+Evaluator.resolveDiscardCandidates、AI runtime 与测试。
+
+输入
+玩家、合法卡牌、数量与公开弃牌上下文。
+
+输出
+按稳定顺序选择的卡牌数组。
+
+读取状态
+CardValue 单卡 primitive。
+
+写入状态
+无。
+
+调用函数
+rankDiscardCandidates。
+
+边界与不变量
+数量向下取整并限制为非负；不解析匿名实体或移动卡牌。
+*/
+export function chooseDiscardCandidates(player, cards, count, context = {}) {
+  return rankDiscardCandidates(player, cards, context)
+    .slice(0, Math.max(0, Math.floor(Number(count) || 0)));
+}
+
+/*
+功能
+从合法已知手牌候选与一个聚合匿名候选中选择最高资源效用项。
+
+调用方
+Evaluator resource resolution 与直接测试。
+
+输入
+用途、双方公开信息、known candidates、匿名数量与 Belief counts。
+
+输出
+known/unknown 选择描述或 null。
+
+读取状态
+CardValue 的 known/unknown resource primitives。
+
+写入状态
+无。
+
+调用函数
+getResourceDefinitionUtility、getResourceUnknownUtility。
+
+边界与不变量
+匿名严格高于最佳已知才胜出；同分保持已知和输入顺序，unknown 不含实体身份。
+*/
+export function chooseBestResourceHandCandidate({
+  purpose,
+  actor,
+  owner,
+  knownCards,
+  unknownCount,
+  remainingCardCounts
+}) {
+  const knownList = Array.isArray(knownCards) ? knownCards : [];
+  const hasUnknown = Number(unknownCount) > 0;
+  let best = null;
+  for (const entry of knownList) {
+    const utility = getResourceDefinitionUtility(purpose, actor, owner, entry.definitionId);
+    if (!best || utility > best.utility) {
+      best = {
+        selectionKind:"known",
+        cardId:entry.cardId,
+        definitionId:entry.definitionId,
+        utility
+      };
+    }
+  }
+  if (!best && hasUnknown) {
+    return {
+      selectionKind:"unknown",
+      cardId:null,
+      definitionId:null,
+      utility:getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts)
+    };
+  }
+  if (best && hasUnknown) {
+    const unknownUtility = getResourceUnknownUtility(
+      purpose, actor, owner, remainingCardCounts
+    );
+    if (unknownUtility > best.utility) {
+      return {
+        selectionKind:"unknown",
+        cardId:null,
+        definitionId:null,
+        utility:unknownUtility
+      };
+    }
+  }
+  return best;
+}
+
+/*
+功能
+在合法手牌候选与公开装备候选之间执行稳定资源区域比较。
+
+调用方
+Evaluator resource resolution 与直接测试。
+
+输入
+用途、双方公开信息、手牌候选和装备 definitionId。
+
+输出
+hand/equipment 选择描述或 null。
+
+读取状态
+CardValue resource primitive。
+
+写入状态
+无。
+
+调用函数
+getResourceDefinitionUtility。
+
+边界与不变量
+同分手牌优先；不移动或解析真实实体。
+*/
+export function chooseResourceZone({
+  purpose,
+  actor,
+  owner,
+  handCandidate,
+  equipmentDefinitionId
+}) {
+  const handUtility = handCandidate ? handCandidate.utility : null;
+  const equipmentChoice = equipmentDefinitionId ? {
+    zone:"equipment",
+    selectionKind:"equipment",
+    cardId:null,
+    definitionId:equipmentDefinitionId,
+    utility:getResourceDefinitionUtility(purpose, actor, owner, equipmentDefinitionId)
+  } : null;
+  if (handUtility !== null && (equipmentChoice === null || handUtility >= equipmentChoice.utility)) {
+    return {
+      zone:"hand",
+      selectionKind:handCandidate.selectionKind,
+      cardId:handCandidate.cardId ?? null,
+      definitionId:handCandidate.definitionId ?? null,
+      utility:handUtility
+    };
+  }
+  return equipmentChoice;
+}
+
+/*
+功能
+为一次资源反事实整理 known、anonymous 与 equipment 候选及其 CardValue primitives。
+
+调用方
+AiController contextual resource orchestration 与直接测试。
+
+输入
+用途、双方公开字段、合法 known identities、匿名容量、装备与 Belief counts。
+
+输出
+按 known、unknown、equipment 稳定顺序排列的局部候选数组。
+
+读取状态
+CardValue resource/acquisition/threshold primitives。
+
+写入状态
+无。
+
+调用函数
+getResourceDefinitionUtility、getResourceUnknownUtility、getUnknownAcquisitionUtility。
+
+边界与不变量
+unknown 最多一个且不携带实体身份；该局部记录不成为跨模块 canonical DTO。
+*/
+export function buildResourceCandidates({
+  purpose,
+  actor,
+  owner,
+  knownCards,
+  unknownCount,
+  equipmentDefinitionId,
+  remainingCardCounts
+}) {
+  const candidates = [];
+  for (const entry of Array.isArray(knownCards) ? knownCards : []) {
+    candidates.push({
+      zone:"hand",
+      selectionKind:"known",
+      cardId:entry.cardId,
+      definitionId:entry.definitionId,
+      staticUtility:getResourceDefinitionUtility(purpose, actor, owner, entry.definitionId),
+      acquisitionUtility:purpose === "plunder" ? getBaseCardAiValue(entry.definitionId) : 0
+    });
+  }
+  if (Number(unknownCount) > 0) {
+    candidates.push({
+      zone:"hand",
+      selectionKind:"unknown",
+      cardId:null,
+      definitionId:null,
+      staticUtility:getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts),
+      acquisitionUtility:purpose === "plunder"
+        ? getUnknownAcquisitionUtility(remainingCardCounts)
+        : 0
+    });
+  }
+  if (equipmentDefinitionId) {
+    candidates.push({
+      zone:"equipment",
+      selectionKind:"equipment",
+      cardId:null,
+      definitionId:equipmentDefinitionId,
+      staticUtility:getResourceDefinitionUtility(
+        purpose, actor, owner, equipmentDefinitionId
+      ),
+      acquisitionUtility:purpose === "plunder"
+        ? getBaseCardAiValue(equipmentDefinitionId)
+        : 0,
+      skillThresholdOption:skillThresholdOptionPolicyValue(
+        actor, owner, equipmentDefinitionId
+      )
+    });
+  }
+  return candidates;
+}
+
+/*
+功能
+从已完成 after-state 估值的资源候选中选择最高上下文收益项。
+
+调用方
+AiController contextual resource orchestration 与直接测试。
+
+输入
+带 contextualUtility/staticUtility 的候选数组。
+
+输出
+最佳候选描述或 null。
+
+读取状态
+只读候选分项。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+上下文收益优先、静态值只破同分，最终保持输入顺序。
+*/
+export function chooseContextualResourceCandidate(candidates) {
+  let best = null;
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    if (!Number.isFinite(candidate?.contextualUtility)) continue;
+    if (!best
+      || candidate.contextualUtility > best.contextualUtility + 1e-9
+      || (Math.abs(candidate.contextualUtility - best.contextualUtility) <= 1e-9
+        && candidate.staticUtility > best.staticUtility)) {
+      best = candidate;
+    }
+  }
+  return best ? { ...best, utility:best.contextualUtility } : null;
+}
+
+/*
+功能
+从公开合法牌池中按角色 CardValue 稳定选择最佳实体 ID。
+
+调用方
+Evaluator.choosePublicCardId、AIController 与直接测试。
+
+输入
+当前玩家和公开卡牌数组。
+
+输出
+最佳 cardId 或 null。
+
+读取状态
+CardValue 角色 primitive。
+
+写入状态
+无。
+
+调用函数
+getRoleCardAiValue。
+
+边界与不变量
+同分保持公开池原始顺序。
+*/
+export function choosePublicCardId(player, cards) {
+  let best = null;
+  let bestValue = Number.NEGATIVE_INFINITY;
+  for (const card of cards ?? []) {
+    const value = getRoleCardAiValue(player.characterId, card.definitionId);
+    if (value > bestValue) {
+      best = card;
+      bestValue = value;
+    }
+  }
+  return best?.id ?? null;
+}
+
+/*
+功能
+从自己合法手牌中按角色 CardValue 稳定选择最低价值实体 ID。
+
+调用方
+AIController hidden-card runtime resolution。
+
+输入
+当前玩家与已过滤实体候选。
+
+输出
+最低价值 cardId 或 null。
+
+读取状态
+CardValue 角色 primitive。
+
+写入状态
+无。
+
+调用函数
+getRoleCardAiValue。
+
+边界与不变量
+同分保持输入位置；只比较调用方合法提供的已知实体。
+*/
+export function chooseLowestRoleCardId(player, cards) {
+  let best = null;
+  let bestValue = Number.POSITIVE_INFINITY;
+  for (const card of cards ?? []) {
+    const value = getRoleCardAiValue(player.characterId, card.definitionId);
+    if (value < bestValue) {
+      best = card;
+      bestValue = value;
+    }
+  }
+  return best?.id ?? null;
+}
+
+/*
+功能
+从合法记忆覆盖的候选位置中按全局 CardValue 稳定选择最低价值实体 ID。
+
+调用方
+AIController 的 scout/spy-gap 与默认隐藏选择。
+
+输入
+cardId→definitionId 合法记忆映射和已过滤实体候选。
+
+输出
+最低合法已知 cardId 或 null。
+
+读取状态
+CardValue 基础 primitive。
+
+写入状态
+无。
+
+调用函数
+getBaseCardAiValue。
+
+边界与不变量
+不读取没有合法记忆的实体 definitionId；同分保持输入位置。
+*/
+export function chooseLowestKnownCardId(known, cards) {
+  let best = null;
+  let bestValue = Number.POSITIVE_INFINITY;
+  for (const card of cards ?? []) {
+    const definitionId = known?.[card.id];
+    if (!definitionId) continue;
+    const value = getBaseCardAiValue(definitionId);
+    if (value < bestValue) {
+      best = card;
+      bestValue = value;
+    }
+  }
+  return best?.id ?? null;
+}
+
+/*
+功能
+为非 destroy/plunder 的历史 hidden-zone 场景选择手牌或公开装备描述。
+
+调用方
+AIController.chooseZoneCard fallback。
+
+输入
+行动者、资源拥有者、一个手牌候选与当前装备。
+
+输出
+hand/equipment 描述或 null。
+
+读取状态
+公开装备 CardValue 与目标手牌数量。
+
+写入状态
+无。
+
+调用函数
+getBaseCardAiValue。
+
+边界与不变量
+保持冻结的公开装备七点阈值；不读取隐藏手牌定义。
+*/
+export function chooseDefaultZoneSelection({ actor, owner, handCard, equipment }) {
+  if (equipment && (!owner.hand.length
+    || (actor.id !== owner.id && getBaseCardAiValue(equipment.definitionId) >= 7))) {
+    return { zone:"equipment", cardId:equipment.id ?? null };
+  }
+  if (handCard) return { zone:"hand", cardId:handCard.id };
+  return equipment ? { zone:"equipment", cardId:equipment.id ?? null } : null;
+}
+
 export class Evaluator {
   /*
   功能
@@ -578,6 +1038,91 @@ export class Evaluator {
   } = {}) {
     this.energyRules = Object.freeze({ getMaxEnergy, getTurnEnergyBreakdown });
     this.getDifficultyMultiplier = getDifficultyMultiplier;
+  }
+
+  /*
+  功能
+  把弃牌候选解析为稳定的已选实体数组。
+
+  调用方
+  AIController、main-thread/Worker Simulator composition。
+
+  输入
+  玩家、合法卡牌、数量与公开弃牌上下文。
+
+  输出
+  最低保留价值的卡牌数组。
+
+  读取状态
+  CardValue discard primitive。
+
+  写入状态
+  无。
+
+  调用函数
+  chooseDiscardCandidates。
+
+  边界与不变量
+  本方法只决定身份，不移动卡牌；Simulator 必须只消费返回的 ID。
+  */
+  resolveDiscardCandidates(player, cards, count, context = {}) {
+    return chooseDiscardCandidates(player, cards, count, context);
+  }
+
+  /*
+  功能
+  把一次已执行的资源反事实转换为可比较的 contextual candidate value。
+
+  调用方
+  AIController.chooseContextualZoneCard。
+
+  输入
+  before/after World、行动者、用途、候选、应用概率与 StateValue raw delta。
+
+  输出
+  附带 contextual/material/threshold 分项的新候选记录。
+
+  读取状态
+  公开装备材料差、候选 CardValue primitives 与冻结资源材料尺度。
+
+  写入状态
+  无。
+
+  调用函数
+  equipmentMaterialDelta。
+
+  边界与不变量
+  不启动 Simulator/StateValue；每个候选的 clone、transition 和 state delta 由 composition 恰好执行一次。
+  */
+  evaluateResourceTransitionCandidate({
+    before,
+    after,
+    actorId,
+    purpose,
+    candidate,
+    appliedProbability,
+    rawStateDelta
+  }) {
+    if (appliedProbability <= PROBABILITY_EPSILON) {
+      return { ...candidate, contextualUtility:-Infinity, appliedProbability:0 };
+    }
+    const equipmentMaterialDelta = this.equipmentMaterialDelta(before, after, actorId);
+    const contextualStateDelta = rawStateDelta - equipmentMaterialDelta;
+    const acquisitionMaterial = purpose === "plunder"
+      ? candidate.acquisitionUtility * RESOURCE_MATERIAL_SCALE * appliedProbability
+      : 0;
+    const skillThresholdOption = (Number(candidate.skillThresholdOption) || 0)
+      * appliedProbability;
+    return {
+      ...candidate,
+      appliedProbability,
+      rawStateDelta,
+      equipmentMaterialDelta,
+      contextualStateDelta,
+      acquisitionMaterial,
+      skillThresholdOption,
+      contextualUtility:contextualStateDelta + acquisitionMaterial + skillThresholdOption
+    };
   }
 
   /*
@@ -1395,7 +1940,7 @@ export class Evaluator {
   投影一次状态变化中静态装备资产与角色装备差量的团队价值贡献。
 
   调用方
-  ResourceValueQuery：把长期资产先验与当前已兑现装备效果分离。
+  Controller 资源反事实编排：把长期资产先验与当前已兑现装备效果分离。
 
   输入
   before/after World 与 viewer ID。

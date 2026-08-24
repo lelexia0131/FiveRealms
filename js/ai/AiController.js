@@ -26,17 +26,24 @@ import {
 } from "./search/ActionGenerator.js";
 import { StateValue } from "./value/StateValue.js";
 import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js";
-import { ResourceValueQuery } from "./simulation/ResourceValueQuery.js";
 import { Simulator } from "./simulation/Simulator.js";
 import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILE } from "./policy/AiRuntimePolicy.js";
 import { actionIntentKey, sameAction } from "./search/Action.js";
 import { createSearchRequest } from "./search/SearchRequest.js";
 import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js";
-import { Evaluator } from "./value/Evaluator.js";
-import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js";
-import { chooseDiscardCandidates } from "./policy/ResourceSelectionPolicy.js";
+import {
+  Evaluator,
+  buildResourceCandidates,
+  chooseBestResourceHandCandidate,
+  chooseContextualResourceCandidate,
+  chooseDefaultZoneSelection,
+  chooseLowestKnownCardId,
+  chooseLowestRoleCardId,
+  choosePublicCardId
+} from "./value/Evaluator.js";
 import { getCharacterRoleTags } from "./policy/CharacterRoleMetadata.js";
 import { projectCanonicalSeatRoster } from "./state/RuleProjection.js";
+import { inAttackRange } from "./state/DistanceProbabilityBranches.js";
 import {
   nextLightningReceiverId as nextDomainLightningReceiverId
 } from "../domain/rules/status/StatusRules.js";
@@ -280,7 +287,7 @@ export class AIController {
     为 main-thread 组合根创建共享资源决策语义的独立 Simulator。
 
     调用方
-    ValueSimulationQuery 与 ResourceValueQuery。
+    ValueSimulationQuery 与 Controller 的有界资源反事实编排。
 
     输入
     当前查询或搜索节点的 World，以及可选搜索工作诊断上下文。
@@ -307,35 +314,18 @@ export class AIController {
       decideBlock:(...args) => this.stateEvaluator.decidePlanningBlock(...args),
       decideGuardianAid:(...args) => this.stateEvaluator.decidePlanningGuardianAid(...args),
       decideDyingRescue:(...args) => this.stateEvaluator.decidePlanningDyingRescue(...args),
-      selectGuardianAidDiscard:(player, cards, context) => (
-        chooseDiscardCandidates(player, cards, 1, context)[0] ?? null
-      )
+      resolveDiscardCandidates:(...args) => this.stateEvaluator.resolveDiscardCandidates(...args)
     });
+    this.simulatorFactory = simulatorFactory;
     this.valueSimulationQuery = new ValueSimulationQuery(
       this.stateEvaluator,
       simulatorFactory
     );
     this.stateValue = new StateValue(this.stateEvaluator, this.valueSimulationQuery);
-    this.resourceValueQuery = new ResourceValueQuery({
-      stateValue: this.stateValue,
-      evaluator: this.stateEvaluator,
-      simulatorFactory
-    });
-    this.cardSelectionPolicy = new CardSelectionPolicy({
-      random: () => this.searchRng.next(),
-      remainingCounts: (actor) => deriveCurrentCardCounts(actor, this.getState())
-    });
     this.cardSelector = new CardSelectionBoundary({
       random: () => this.searchRng.next(),
       getState: () => this.getState(),
-      getEnemies: (player) => this.getEnemies(player),
-      remainingCounts: (actor) => deriveCurrentCardCounts(actor, this.getState()),
-      createWorld: (viewerId, remainingCardCounts) => createInitialWorld(
-        viewerId, this.getState(), remainingCardCounts
-      )
-    }, {
-      cardSelectionPolicy: this.cardSelectionPolicy,
-      resourceValueQuery: this.resourceValueQuery,
+      remainingCounts: (actor) => deriveCurrentCardCounts(actor, this.getState())
     });
   }
 
@@ -995,7 +985,7 @@ export class AIController {
   无。
 
   边界与不变量
-  只读诊断，不得被 Evaluator response willingness、CardSelectionPolicy、搜索或 RNG 使用。
+  只读诊断，不得被 Evaluator response willingness、runtime card resolution、搜索或 RNG 使用。
   */
   getLastMainThreadOperationDiagnostics() {
     return this.lastMainThreadOperationDiagnostics
@@ -1073,6 +1063,102 @@ export class AIController {
 
   /*
   功能
+  编排 destroy/plunder 的有界反事实，并把 Evaluator 胜者解析为当前真实实体。
+
+  调用方
+  chooseZoneCard 的 resource purpose 分支。
+
+  输入
+  行动者、资源拥有者、purpose、排除 ID 与冻结的 remaining counts。
+
+  输出
+  `{card, zone}` 或 null。
+
+  读取状态
+  当前合法实体、World 投影、Simulator transition、StateValue 与 Evaluator comparison。
+
+  写入状态
+  只在 anonymous 胜出时推进 AI RNG；真实 GameState 不变。
+
+  调用函数
+  createInitialWorld、Simulator.applyForcedResourceSelection、StateValue.transitionDelta、Evaluator resource methods。
+
+  边界与不变量
+  Controller 不写价值公式；每个候选恰好一次 clone/forced transition/state delta，unknown 只在胜出后解析物理位置。
+  */
+  chooseContextualZoneCard(
+    actor,
+    owner,
+    purpose,
+    excludedCardIds,
+    remainingCardCounts
+  ) {
+    const world = createInitialWorld(actor.id, this.getState(), remainingCardCounts);
+    const searchActor = world.players.find((player) => player.id === actor.id);
+    const searchOwner = world.players.find((player) => player.id === owner.id);
+    if (!searchActor || !searchOwner) return null;
+    const eligibleCards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
+    const eligibleIds = new Set(eligibleCards.map((card) => card.id));
+    const knownCards = (searchOwner.knownCards ?? []).filter(
+      (entry) => eligibleIds.has(entry.cardId)
+    );
+    const knownIds = new Set(knownCards.map((entry) => entry.cardId));
+    const unknownCards = eligibleCards.filter((card) => !knownIds.has(card.id));
+    const candidates = buildResourceCandidates({
+      purpose,
+      actor:searchActor,
+      owner:searchOwner,
+      knownCards,
+      unknownCount:unknownCards.length,
+      equipmentDefinitionId:owner.equipment?.definitionId ?? null,
+      remainingCardCounts
+    }).map((candidate) => ({
+      ...candidate,
+      availableUnknownCount:unknownCards.length
+    }));
+    const simulator = this.simulatorFactory(world);
+    const evaluated = [];
+    for (const candidate of candidates) {
+      const after = simulator.clone(world);
+      const afterActor = after.players.find((player) => player.id === searchActor.id);
+      const afterOwner = after.players.find((player) => player.id === searchOwner.id);
+      const appliedProbability = simulator.applyForcedResourceSelection(
+        after,
+        afterActor,
+        afterOwner,
+        purpose,
+        candidate
+      );
+      const rawStateDelta = appliedProbability > 0
+        ? this.stateValue.transitionDelta(world, after, searchActor.id)
+        : 0;
+      evaluated.push(this.stateEvaluator.evaluateResourceTransitionCandidate({
+        before:world,
+        after,
+        actorId:searchActor.id,
+        purpose,
+        candidate,
+        appliedProbability,
+        rawStateDelta
+      }));
+    }
+    const selection = chooseContextualResourceCandidate(evaluated);
+    if (selection?.zone === "equipment" && owner.equipment) {
+      return { card:owner.equipment, zone:"equipment" };
+    }
+    if (selection?.selectionKind === "known") {
+      const card = eligibleCards.find((entry) => entry.id === selection.cardId) ?? null;
+      return card ? { card, zone:"hand" } : null;
+    }
+    if (selection?.selectionKind === "unknown" && unknownCards.length) {
+      const index = Math.floor(this.searchRng.next() * unknownCards.length);
+      return { card:unknownCards[index] ?? unknownCards[0], zone:"hand" };
+    }
+    return null;
+  }
+
+  /*
+  功能
   选择需要弃置的实体牌。
 
   调用方
@@ -1091,16 +1177,32 @@ export class AIController {
   无。
 
   调用函数
-  CardSelectionBoundary.chooseDiscards。
+  inAttackRange、Evaluator.resolveDiscardCandidates。
 
   边界与不变量
   门面不改动选择结果或牌序。
   */
   chooseDiscards(player, count) {
     const startedAt = decisionNow();
-    const cards = this.cardSelector.chooseDiscards(player, count);
+    const enemies = this.getEnemies(player);
+    const state = this.getState();
+    const stranded = enemies.length > 0 && !enemies.some(
+      (enemy) => inAttackRange({ state }, player, enemy)
+    );
+    const cards = this.stateEvaluator.resolveDiscardCandidates(
+      player,
+      player.hand,
+      count,
+      {
+        stranded,
+        equippedDefinitionId:player.equipment?.definitionId
+          ?? player.equipmentDefinitionId
+          ?? null,
+        equipmentRetentionProbability:player.equipmentRetentionProbability ?? 1
+      }
+    );
     this.recordMainThreadOperation(
-      "CardSelectionBoundary.chooseDiscards",
+      "Evaluator.resolveDiscardCandidates",
       startedAt,
       { candidateCount:player?.hand?.length }
     );
@@ -1163,20 +1265,88 @@ export class AIController {
   随机源序列。
 
   调用函数
-  CardSelectionBoundary.chooseHiddenCards。
+  Evaluator card/resource comparison、CardSelectionBoundary transfer residue 与 search RNG。
 
   边界与不变量
-  未知牌只能按位置采样，调用次数和随机数顺序保持选择器既有语义。
+  未知牌只能按位置采样；除 transfer residue 外，价值比较只发生在 Evaluator。
   */
-  chooseHiddenCards(...args) {
+  chooseHiddenCards(
+    actor,
+    owner,
+    count,
+    excludedCardIds = null,
+    context = null,
+    resourceCounts = null
+  ) {
     const startedAt = decisionNow();
-    const cards = this.cardSelector.chooseHiddenCards(...args);
+    const candidates = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
+    const purpose = context?.purpose ?? null;
+    if (purpose === "transfer") {
+      const cards = this.cardSelector.chooseTransferCards({
+        actor,
+        owner,
+        cards:candidates,
+        count,
+        receiver:context?.receiver,
+        excludedCardIds,
+        remainingCardCounts:resourceCounts
+      });
+      this.recordMainThreadOperation(
+        "CardSelectionBoundary.chooseTransferCards",
+        startedAt,
+        { candidateCount:candidates.length }
+      );
+      return cards;
+    }
+    const selected = [];
+    const known = actor.aiMemory?.knownCardsByPlayer?.[owner.id] ?? {};
+    const remainingCardCounts = resourceCounts !== null
+      ? resourceCounts
+      : ((purpose === "destroy" || purpose === "plunder")
+        ? deriveCurrentCardCounts(actor, this.getState())
+        : null);
+    while (selected.length < count && candidates.length) {
+      let selectedId = null;
+      if (actor.id === owner.id) {
+        selectedId = chooseLowestRoleCardId(actor, candidates);
+      } else if (purpose === "destroy" || purpose === "plunder") {
+        const knownCards = candidates
+          .map((card) => ({ cardId:card.id, definitionId:known[card.id] }))
+          .filter((entry) => entry.definitionId);
+        const choice = chooseBestResourceHandCandidate({
+          purpose,
+          actor,
+          owner,
+          knownCards,
+          unknownCount:candidates.length - knownCards.length,
+          remainingCardCounts
+        });
+        if (choice?.selectionKind === "known") selectedId = choice.cardId;
+        else if (choice?.selectionKind === "unknown") {
+          const unknown = candidates.filter((card) => !known[card.id]);
+          selectedId = unknown[Math.floor(this.searchRng.next() * unknown.length)]?.id ?? null;
+        }
+      } else if (purpose === "scout" || purpose === "spy-gap") {
+        const unknown = candidates.filter((card) => !known[card.id]);
+        selectedId = unknown.length
+          ? unknown[Math.floor(this.searchRng.next() * unknown.length)]?.id ?? null
+          : chooseLowestKnownCardId(known, candidates);
+      } else {
+        selectedId = chooseLowestKnownCardId(known, candidates);
+        if (!selectedId) {
+          selectedId = candidates[Math.floor(this.searchRng.next() * candidates.length)]?.id ?? null;
+        }
+      }
+      const index = candidates.findIndex((card) => card.id === selectedId);
+      if (index < 0) break;
+      selected.push(candidates.splice(index, 1)[0]);
+    }
     this.recordMainThreadOperation(
-      "CardSelectionBoundary.chooseHiddenCards",
+      "AIController.resolveHiddenCards",
       startedAt,
-      { candidateCount:Array.isArray(args[1]?.hand) ? args[1].hand.length : "unavailable" }
+      { candidateCount:owner?.hand?.length ?? "unavailable" }
     );
-    return cards;
+    return selected;
   }
 
   /*
@@ -1199,18 +1369,51 @@ export class AIController {
   可能消费随机源序列。
 
   调用函数
-  CardSelectionBoundary.chooseZoneCard。
+  chooseContextualZoneCard、chooseHiddenCards、Evaluator.chooseDefaultZoneSelection。
 
   边界与不变量
   不读取未知牌定义，真实执行仍按实体身份复核。
   */
-  chooseZoneCard(...args) {
+  chooseZoneCard(actor, owner, context = null, excludedCardIds = null) {
     const startedAt = decisionNow();
-    const selection = this.cardSelector.chooseZoneCard(...args);
-    const owner = args[1];
+    if (!owner?.alive) return null;
+    const purpose = context?.purpose ?? null;
+    const remainingCardCounts = purpose === "destroy" || purpose === "plunder"
+      ? deriveCurrentCardCounts(actor, this.getState())
+      : null;
+    let selection = null;
+    if (purpose === "destroy" || purpose === "plunder") {
+      selection = this.chooseContextualZoneCard(
+        actor,
+        owner,
+        purpose,
+        excludedCardIds,
+        remainingCardCounts
+      );
+    } else {
+      const [handCard] = this.chooseHiddenCards(
+        actor,
+        owner,
+        1,
+        excludedCardIds,
+        context,
+        remainingCardCounts
+      );
+      const descriptor = chooseDefaultZoneSelection({
+        actor,
+        owner,
+        handCard:handCard ?? null,
+        equipment:owner.equipment ?? null
+      });
+      if (descriptor?.zone === "equipment" && owner.equipment) {
+        selection = { card:owner.equipment, zone:"equipment" };
+      } else if (descriptor?.zone === "hand" && handCard?.id === descriptor.cardId) {
+        selection = { card:handCard, zone:"hand" };
+      }
+    }
     const handCount = Array.isArray(owner?.hand) ? owner.hand.length : Number.NaN;
     this.recordMainThreadOperation(
-      "CardSelectionBoundary.chooseZoneCard",
+      "AIController.resolveZoneCard",
       startedAt,
       { candidateCount:Number.isFinite(handCount) ? handCount + (owner?.equipment ? 1 : 0) : "unavailable" }
     );
@@ -1237,18 +1440,19 @@ export class AIController {
   无。
 
   调用函数
-  CardSelectionBoundary.choosePublicCard。
+  Evaluator.choosePublicCardId。
 
   边界与不变量
   门面不改变同分时的原始顺序。
   */
-  choosePublicCard(...args) {
+  choosePublicCard(player, cards) {
     const startedAt = decisionNow();
-    const card = this.cardSelector.choosePublicCard(...args);
+    const cardId = choosePublicCardId(player, cards);
+    const card = cards.find((candidate) => candidate.id === cardId) ?? null;
     this.recordMainThreadOperation(
-      "CardSelectionBoundary.choosePublicCard",
+      "Evaluator.choosePublicCardId",
       startedAt,
-      { candidateCount:Array.isArray(args[1]) ? args[1].length : "unavailable" }
+      { candidateCount:Array.isArray(cards) ? cards.length : "unavailable" }
     );
     return card;
   }

@@ -3,7 +3,7 @@
 拥有 AI 在合法转移来源、接收者与手牌候选之间的局部评分和稳定选择。
 
 上游
-AIController、CardSelectionPolicy、ActionGenerator 与正式边界。
+AIController、CardSelectionBoundary、ActionGenerator 与正式边界。
 
 下游
 value/CardValue、value/ThreatValue 与 state/Probability。
@@ -19,7 +19,8 @@ value/CardValue、value/ThreatValue 与 state/Probability。
 */
 import {
   getBaseCardAiValue,
-  getRoleCardAiValue
+  getRoleCardAiValue,
+  UNKNOWN_HAND_EXPECTED_VALUE
 } from "../value/CardValue.js";
 import { ThreatCalculator } from "../value/ThreatValue.js";
 import { getCharacterRoleTags } from "./CharacterRoleMetadata.js";
@@ -30,7 +31,7 @@ import {
 } from "../state/Probability/Probability.js";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
-export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
+export { UNKNOWN_HAND_EXPECTED_VALUE };
 const HUMAN_ALLY_HAND_PROTECTION = 7;
 const MIN_ENEMY_REDISTRIBUTION_THREAT_GAP = 4;
 const MIN_ENEMY_REDISTRIBUTION_UTILITY = 5;
@@ -481,7 +482,7 @@ function transferCardUtility(actor, from, receiver, sourceValue, receiverValue) 
 在一个合法 source/receiver 对的已知与未知手牌候选中选择最佳候选。
 
 调用方
-evaluateTransferCombination、CardSelectionPolicy 与测试。
+evaluateTransferCombination、CardSelectionBoundary 与测试。
 
 输入
 观察者、合法来源/接收者、排除 ID 与 Belief counts。

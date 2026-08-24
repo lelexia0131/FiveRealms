@@ -1,9 +1,9 @@
 /*
 模块职责
-唯一拥有 Policy Value（用于选择/保留而非最终结算的策略价值）所需的卡牌静态基础值、角色差量、装备保留折损与机会成本公式。
+唯一拥有 card/resource Policy Value primitives，包括静态值、角色差量、保留折损、弃置、获得与匿名期望。
 
 上游
-价值评估、弃牌、资源选择、转移策略、模拟器与搜索先验。
+Evaluator、TransferPolicy、State Value 与 Search Prior。
 
 下游
 稳定卡牌和角色配置。
@@ -12,14 +12,20 @@
 只读传入的卡牌、角色与可见状态字段；不写任何状态。
 
 信息边界
-只使用公开配置、当前角色自己的卡牌或已经过滤的可见卡牌条目。
+只使用公开配置、自己卡牌、合法记忆、过滤后的 known identity 或聚合 Belief counts。
 
 架构约束
-静态卡片值不得直接成为最终 Transition Value；状态存量只可经 State Value 的前后差进入最终价值，所有调用路径必须复用本模块的唯一公式。
+不得选择最终候选、导入 Evaluator/Simulator 或执行资源 transition；静态值不得直接成为最终 Transition Value。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { CHARACTER_BY_ID, CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js";
 import { HP_VALUE } from "./Economics.js";
+
+export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
+export const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
+export const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
+// 该值只表示资源选择中的技能门槛策略选择权，不是概率、State/Final Utility 或单位换算。
+export const SKILL_THRESHOLD_POLICY_BONUS = 4;
 
 export const CARD_AI_VALUES = Object.freeze({
   assault: 4,
@@ -516,4 +522,260 @@ export function cardOpportunityCost(card, player) {
       recover: definitionId === "recover" ? 1 : 0
     }
   };
+}
+
+/*
+功能
+计算单张手牌在自主弃牌场景下的保留价值。
+
+调用方
+Evaluator 的 discard candidate 比较。
+
+输入
+资源拥有者、合法候选卡和距离/装备上下文。
+
+输出
+数值保留价值；越低越应优先弃置。
+
+读取状态
+只读玩家公开资源、卡牌定义与角色卡牌价值。
+
+写入状态
+无。
+
+调用函数
+getRoleCardAiValue、getEquipmentKeepValueDeduction。
+
+边界与不变量
+只拥有单卡 valuation，不决定候选胜负；数值和角色差量保持冻结。
+*/
+export function getDiscardKeepValue(player, card, context = {}) {
+  const definition = CARD_DEFINITIONS[card?.definitionId] ?? {};
+  const category = card?.category ?? definition.category;
+  const usageMode = card?.usageMode ?? definition.usageMode;
+  let score = getRoleCardAiValue(player?.characterId, card.definitionId);
+  if (category === "equipment") {
+    score -= getEquipmentKeepValueDeduction(
+      player?.characterId,
+      card.definitionId,
+      context.equippedDefinitionId ?? null,
+      context.equipmentRetentionProbability ?? 1
+    );
+  }
+  if ((player?.hp ?? 0) <= 2 && usageMode === "response") {
+    score += (player?.hp ?? 0) <= 1
+      ? RESPONSE_SURVIVAL_BONUS_LETHAL
+      : RESPONSE_SURVIVAL_BONUS_DANGER;
+  }
+  if (context.stranded && card.definitionId === "assault") score += 5;
+  if ((player?.hp ?? 0) >= (player?.maxHp ?? 0) && card.definitionId === "recover") score -= 2;
+  if ((player?.hp ?? 0) <= 2 && card.definitionId === "recover") score += 7;
+  if ((player?.hp ?? 0) <= 2 && card.definitionId === "block") score += 6;
+  if (card.definitionId === "symbiosis") score -= 5;
+  return score;
+}
+
+/*
+功能
+计算一张合法已知资源在破坏或掠夺中的卡牌材料价值。
+
+调用方
+Evaluator 的资源候选估值。
+
+输入
+用途、行动者、资源拥有者与合法已知 definitionId。
+
+输出
+冻结的资源 primitive value。
+
+读取状态
+双方角色与阵营公开字段。
+
+写入状态
+无。
+
+调用函数
+getRoleCardAiValue。
+
+边界与不变量
+只接受 destroy/plunder；不比较候选、不决定区域或实体。
+*/
+export function getResourceDefinitionUtility(purpose, actor, owner, definitionId) {
+  if (purpose === "destroy") {
+    return getRoleCardAiValue(owner.characterId, definitionId);
+  }
+  if (purpose === "plunder") {
+    const actorValue = getRoleCardAiValue(actor.characterId, definitionId);
+    const ownerValue = getRoleCardAiValue(owner.characterId, definitionId);
+    return owner.battleTeam === actor.battleTeam
+      ? actorValue - ownerValue
+      : actorValue + ownerValue;
+  }
+  throw new Error(`getResourceDefinitionUtility 非法 purpose：${String(purpose)}`);
+}
+
+/*
+功能
+计算匿名手牌资源在破坏或掠夺中的 Belief 期望价值。
+
+调用方
+Evaluator 的资源候选估值。
+
+输入
+用途、双方公开身份和可选 remaining counts。
+
+输出
+动态加权期望；无有效计数时返回冻结固定期望。
+
+读取状态
+只读 Belief remaining counts。
+
+写入状态
+无。
+
+调用函数
+getResourceDefinitionUtility。
+
+边界与不变量
+不接收未知实体 definitionId；unknown 始终保持聚合表示。
+*/
+export function getResourceUnknownUtility(
+  purpose,
+  actor,
+  owner,
+  remainingCardCounts = null
+) {
+  if (remainingCardCounts !== null && typeof remainingCardCounts === "object") {
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
+      if (!Number.isFinite(count) || count <= 0) continue;
+      const utility = getResourceDefinitionUtility(purpose, actor, owner, definitionId);
+      weightedSum += count * utility;
+      totalWeight += count;
+    }
+    if (totalWeight > 0) return weightedSum / totalWeight;
+  }
+  if (purpose === "destroy") return UNKNOWN_HAND_EXPECTED_VALUE;
+  if (purpose === "plunder") {
+    return owner.battleTeam === actor.battleTeam ? 0 : UNKNOWN_HAND_EXPECTED_VALUE * 2;
+  }
+  throw new Error(`getResourceUnknownUtility 非法 purpose：${String(purpose)}`);
+}
+
+/*
+功能
+计算接收方获得一张匿名牌的基础材料期望。
+
+调用方
+Evaluator 的 plunder candidate 估值。
+
+输入
+Belief remaining counts；允许为 null。
+
+输出
+基础 CardValue 加权期望；无有效计数时返回冻结未知期望。
+
+读取状态
+只读 remaining counts 与基础卡值。
+
+写入状态
+无。
+
+调用函数
+getBaseCardAiValue。
+
+边界与不变量
+只计算匿名材料 primitive，不绑定或展开隐藏实体身份。
+*/
+export function getUnknownAcquisitionUtility(remainingCardCounts = null) {
+  if (remainingCardCounts !== null && typeof remainingCardCounts === "object") {
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
+      if (!Number.isFinite(count) || count <= 0) continue;
+      weightedSum += count * getBaseCardAiValue(definitionId);
+      totalWeight += count;
+    }
+    if (totalWeight > 0) return weightedSum / totalWeight;
+  }
+  return UNKNOWN_HAND_EXPECTED_VALUE;
+}
+
+/*
+功能
+计算移除充能桩时原持有者失去的下一回合技能门槛策略价值。
+
+调用方
+Evaluator 的 equipment resource candidate 估值。
+
+输入
+资源行动者、原持有者与公开装备 definitionId。
+
+输出
+行动者视角的资源 primitive value；敌方损失为正，同阵营损失为负。
+
+读取状态
+公开能量、回合能量增益和主动技能门槛摘要。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+保持冻结的四点门槛选择权；该值不是概率、State Utility 或 Final Utility。
+*/
+export function skillThresholdOptionPolicyValue(actor, owner, equipmentDefinitionId) {
+  if (equipmentDefinitionId !== "energyDevice" || !owner?.activeSkillId) return 0;
+  const skillCost = Math.max(0, Number(owner.activeSkillCost) || 0);
+  const skillLimit = Math.max(0, Number(owner.activeSkillLimit) || 0);
+  if (skillCost <= 0 || skillLimit <= 0) return 0;
+  const cap = Math.max(0, Number(owner.maxEnergy) || 0);
+  const currentEnergy = Math.max(0, Number(owner.energy) || 0);
+  const withoutGain = Math.max(0, Number(owner.turnEnergyGainWithoutEquipment) || 0);
+  const equipmentGain = Math.max(0, Number(owner.energyDeviceTurnEnergyGain) || 0);
+  const withoutEnergy = Math.min(cap, currentEnergy + withoutGain);
+  const withEnergy = Math.min(cap, withoutEnergy + equipmentGain);
+  const withoutAffordableUses = Math.min(skillLimit, Math.floor(withoutEnergy / skillCost));
+  const withAffordableUses = Math.min(skillLimit, Math.floor(withEnergy / skillCost));
+  const localValue = Math.max(0, withAffordableUses - withoutAffordableUses)
+    * SKILL_THRESHOLD_POLICY_BONUS;
+  return owner.battleTeam === actor?.battleTeam ? -localValue : localValue;
+}
+
+/*
+功能
+计算观察者对自己或他人一张手牌的合法单卡期望价值。
+
+调用方
+AIController/测试的 card value 查询边界。
+
+输入
+观察者、资源拥有者与真实 Card token。
+
+输出
+自己手牌的角色值、合法记忆的基础值，或匿名固定期望。
+
+读取状态
+观察者自己的 definitionId 或合法 aiMemory。
+
+写入状态
+无。
+
+调用函数
+getRoleCardAiValue、getBaseCardAiValue。
+
+边界与不变量
+其他玩家未知实体的 definitionId 永不读取；unknown token 只返回聚合期望。
+*/
+export function getObservedCardValue(actor, owner, card) {
+  if (actor.id === owner.id) {
+    return getRoleCardAiValue(actor.characterId, card.definitionId);
+  }
+  const definitionId = actor.aiMemory?.knownCardsByPlayer?.[owner.id]?.[card.id] ?? null;
+  return definitionId
+    ? getBaseCardAiValue(definitionId)
+    : UNKNOWN_HAND_EXPECTED_VALUE;
 }

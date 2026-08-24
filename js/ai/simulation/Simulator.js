@@ -51,7 +51,7 @@ class SimulatorCore {
   Planner 与有界 Value/Root simulation query：为一次搜索或配对查询创建模拟生命周期。
 
   输入
-  已过滤的 World 根快照，以及可选 SearchBudget、Evaluator response willingness 与 ResourceSelection entity choice capabilities。
+  已过滤的 World 根快照，以及可选 SearchBudget、Evaluator response willingness 与 resolved discard capability。
 
   输出
   持有独立 initial 世界的 Simulator 实例。
@@ -84,10 +84,13 @@ class SimulatorCore {
       }
       this[name] = options[name];
     }
-    if (typeof options.selectGuardianAidDiscard !== "function") {
-      throw new TypeError("Simulator 缺少 ResourceSelectionPolicy capability：selectGuardianAidDiscard");
+    if (typeof options.resolveDiscardCandidates !== "function") {
+      throw new TypeError("Simulator 缺少 Evaluator capability：resolveDiscardCandidates");
     }
-    this.selectGuardianAidDiscard = options.selectGuardianAidDiscard;
+    this.resolveDiscardCandidates = options.resolveDiscardCandidates;
+    this.selectGuardianAidDiscard = (player, cards, context) => (
+      this.resolveDiscardCandidates(player, cards, 1, context)[0] ?? null
+    );
     this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
     this.initial = cloneWorld(visibleState);
@@ -1013,8 +1016,8 @@ class SimulatorCore {
   consumeChosenHandCard、syncCardEstimates。
 
   边界与不变量
-  总手牌数以 handCount 为准，不得用 hand.length 掩盖匿名容量；完整确定手牌仍走正式保留价值选择，
-  混合状态先消费匿名容量，再对剩余已知身份做保留价值选择；不虚构 definitionId，
+  总手牌数以 handCount 为准，不得用 hand.length 掩盖匿名容量；完整确定手牌先请求 Evaluator resolved IDs，
+  混合状态先消费匿名容量，再对剩余已知身份请求同一 resolved capability；不虚构 definitionId，
   行动者未存活或手牌不超上限时为空操作。
   */
   applyMandatoryDiscard(state, actor) {
@@ -1032,8 +1035,15 @@ class SimulatorCore {
       return;
     }
     if (this.hasCompleteCertainHand(actor)) {
+      const selected = this.resolveDiscardCandidates(
+        actor,
+        actor.hand,
+        remaining,
+        this.buildDiscardKeepValueContext(state, actor)
+      );
       this.consumeChosenHandCard(state, actor, remaining, {
-        label:"end-hand-limit-discard"
+        label:"end-hand-limit-discard",
+        selectedCardIds:selected.map((card) => card.id ?? card.cardId).filter(Boolean)
       });
       return;
     }
@@ -1060,11 +1070,17 @@ class SimulatorCore {
     }
     remaining = Math.max(0, Math.max(0, Number(actor.handCount) || 0) - hp);
     if (remaining > PROBABILITY_EPSILON) {
+      const selected = this.resolveDiscardCandidates(
+        actor,
+        actor.hand,
+        remaining,
+        this.buildDiscardKeepValueContext(state, actor)
+      );
       this.consumeChosenHandCard(state, actor, remaining, {
-        label:"end-hand-limit-discard"
+        label:"end-hand-limit-discard",
+        selectedCardIds:selected.map((card) => card.id ?? card.cardId).filter(Boolean)
       });
     }
-    actor.handCount = Math.min(Math.max(0, Number(actor.handCount) || 0), hp);
   }
 
   /*

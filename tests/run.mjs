@@ -95,9 +95,15 @@ import { ThreatCalculator } from "../js/ai/value/ThreatValue.js";
 import { HP_RISK_OPTION_WEIGHT } from "../js/ai/value/ThreatValue.js";
 import {
   Evaluator,
+  buildResourceCandidates,
+  chooseBestResourceHandCandidate,
+  chooseContextualResourceCandidate,
+  chooseDiscardCandidates,
+  chooseResourceZone,
   counterOpportunityCost,
   planningCounterDecision,
-  privatePeekInformationValue
+  privatePeekInformationValue,
+  rankDiscardCandidates
 } from "../js/ai/value/Evaluator.js";
 import { CounterfactualTerms } from "../js/ai/search/CounterfactualTerms.js";
 import { StateValue } from "../js/ai/value/StateValue.js";
@@ -193,6 +199,7 @@ import {
 } from "../js/ai/policy/TransferPolicy.js";
 import {
   CARD_AI_VALUES, ROLE_CARD_VALUE_DELTAS, cardAvailability, getBaseCardAiValue, getRoleCardAiValue,
+  getDiscardKeepValue, getObservedCardValue, getResourceDefinitionUtility, getResourceUnknownUtility,
   validateRoleCardValueDeltas
 } from "../js/ai/value/CardValue.js";
 import {
@@ -200,20 +207,6 @@ import {
   getBaseCardAiValue as ownedBaseCardAiValue,
   getRoleCardAiValue as ownedRoleCardAiValue
 } from "../js/ai/value/CardValue.js";
-import {
-  buildResourceCandidates,
-  chooseBestResourceHandCandidate,
-  chooseContextualResourceCandidate,
-  chooseResourceZone,
-  getResourceDefinitionUtility,
-  getResourceUnknownUtility
-} from "../js/ai/policy/ResourceSelectionPolicy.js";
-import { CardSelectionBoundary } from "../js/ai/policy/CardSelectionBoundary.js";
-import {
-  chooseDiscardCandidates,
-  getDiscardKeepValue,
-  rankDiscardCandidates
-} from "../js/ai/policy/ResourceSelectionPolicy.js";
 import {
   assaultThreat,
   equipmentThreatSynergy,
@@ -231,7 +224,6 @@ import {
   mutualBenefitDraftValues
 } from "../js/ai/value/GlobalBenefitValue.js";
 import { dynamicRootFlipGain } from "../js/ai/simulation/RootResolutionQuery.js";
-import { CardSelectionPolicy } from "../js/ai/policy/CardSelectionPolicy.js";
 import {
   assessGlobalBenefitOutcome,
   buildMutualBenefitDraftOutcome
@@ -314,8 +306,8 @@ class Simulator extends ProductionSimulator {
       decideBlock:(...args) => testResponseEvaluator.decidePlanningBlock(...args),
       decideGuardianAid:(...args) => testResponseEvaluator.decidePlanningGuardianAid(...args),
       decideDyingRescue:(...args) => testResponseEvaluator.decidePlanningDyingRescue(...args),
-      selectGuardianAidDiscard:(player, cards, context) => (
-        chooseDiscardCandidates(player, cards, 1, context)[0] ?? null
+      resolveDiscardCandidates:(player, cards, count, context) => (
+        chooseDiscardCandidates(player, cards, count, context)
       ),
       ...options
     });
@@ -13582,6 +13574,361 @@ test(
   responseCombatSemanticClosure
 );
 
+test("AI·资源闭合：旧 Resource owner 删除且 Simulation 无价值选择依赖", async () => {
+  for (const path of [
+    "js/ai/policy/ResourceSelectionPolicy.js",
+    "js/ai/simulation/ResourceValueQuery.js",
+    "js/ai/policy/CardSelectionPolicy.js"
+  ]) await assert.rejects(access(projectFile(path)));
+  const paths = {
+    controller:"js/ai/AiController.js",
+    card:"js/ai/simulation/CardEffectSimulation.js",
+    simulator:"js/ai/simulation/Simulator.js",
+    response:"js/ai/simulation/ResponseSimulation.js",
+    worker:"js/adapters/ai/worker/SearchEngineFactory.js",
+    boundary:"js/ai/policy/CardSelectionBoundary.js",
+    evaluator:"js/ai/value/Evaluator.js",
+    cardValue:"js/ai/value/CardValue.js"
+  };
+  const source = Object.fromEntries(await Promise.all(
+    Object.entries(paths).map(async ([name, path]) => [
+      name,
+      await readFile(projectFile(path), "utf8")
+    ])
+  ));
+  for (const name of ["controller", "card", "simulator", "response", "worker"]) {
+    assert.doesNotMatch(source[name], /ResourceSelectionPolicy|ResourceValueQuery/, name);
+  }
+  for (const name of ["card", "simulator", "response"]) {
+    assert.doesNotMatch(source[name], /from\s+["'][^"']*\/(?:policy|value)\//, name);
+  }
+  assert.doesNotMatch(source.card, /\.(?:sort|toSorted)\(/);
+  assert.match(source.worker, /stateEvaluator\.resolveDiscardCandidates/);
+  assert.match(source.controller, /stateEvaluator\.evaluateResourceTransitionCandidate/);
+  assert.match(source.evaluator, /chooseContextualResourceCandidate/);
+  assert.match(source.cardValue, /getDiscardKeepValue[\s\S]*getResourceUnknownUtility/);
+  const remainingMethods = [...source.boundary.matchAll(/^  ([A-Za-z][A-Za-z0-9]*)\([^)]*/gm)]
+    .map((match) => match[1]);
+  assert.deepEqual(
+    remainingMethods,
+    ["constructor", "chooseTransferCards", "chooseTransferCombination"]
+  );
+});
+
+test("AI·资源闭合：Guardian 接受选择消费各一次且拒绝均为零", () => {
+  const createState = () => ({
+    remainingCardCounts:{ block:0, counter:0, recover:0, assault:0 },
+    players:[
+      {
+        id:"guardian-target",
+        seatIndex:0,
+        battleTeam:"dawn",
+        characterId:"blade-walker",
+        alive:true,
+        hp:2,
+        maxHp:4,
+        shield:0,
+        handCount:0,
+        hand:[],
+        knownCards:[],
+        statuses:[]
+      },
+      {
+        id:"guardian-owner",
+        seatIndex:1,
+        battleTeam:"dawn",
+        characterId:"oath-warden",
+        alive:true,
+        hp:4,
+        maxHp:4,
+        shield:0,
+        handCount:2,
+        hand:[
+          { id:"guardian-charge", definitionId:"charge", availability:1 },
+          { id:"guardian-block", definitionId:"block", availability:1 }
+        ],
+        knownCards:[],
+        statuses:[],
+        guardianAidUsed:false,
+        guardianAidUsedProbability:0
+      }
+    ]
+  });
+  const acceptedState = createState();
+  let acceptedSelections = 0;
+  let acceptedConsumptions = 0;
+  const accepted = new Simulator(acceptedState, {
+    decideGuardianAid:() => true,
+    resolveDiscardCandidates:(player, cards, count, context) => {
+      acceptedSelections += 1;
+      return chooseDiscardCandidates(player, cards, count, context);
+    }
+  });
+  const acceptedConsume = accepted.consumeChosenHandCard.bind(accepted);
+  accepted.consumeChosenHandCard = (...args) => {
+    acceptedConsumptions += 1;
+    return acceptedConsume(...args);
+  };
+  assert.equal(
+    accepted.simulateGuardianAid(acceptedState, acceptedState.players[0], 1, 1),
+    0
+  );
+  assert.equal(acceptedSelections, 1);
+  assert.equal(acceptedConsumptions, 1);
+  assert.equal(acceptedState.players[1].handCount, 1);
+  assert.equal(acceptedState.players[1].hand[0].id, "guardian-block");
+
+  const rejectedState = createState();
+  let rejectedSelections = 0;
+  let rejectedConsumptions = 0;
+  const rejected = new Simulator(rejectedState, {
+    decideGuardianAid:() => false,
+    resolveDiscardCandidates:() => {
+      rejectedSelections += 1;
+      return [];
+    }
+  });
+  const rejectedConsume = rejected.consumeChosenHandCard.bind(rejected);
+  rejected.consumeChosenHandCard = (...args) => {
+    rejectedConsumptions += 1;
+    return rejectedConsume(...args);
+  };
+  assert.equal(
+    rejected.simulateGuardianAid(rejectedState, rejectedState.players[0], 1, 1),
+    1
+  );
+  assert.equal(rejectedSelections, 0);
+  assert.equal(rejectedConsumptions, 0);
+  assert.equal(rejectedState.players[1].handCount, 2);
+});
+
+test("AI·资源闭合：Simulator 缺失或陈旧 selected ID 时零消费且不改选", () => {
+  const state = {
+    remainingCardCounts:{},
+    players:[{
+      id:"resolved-consumer",
+      seatIndex:0,
+      battleTeam:"dawn",
+      characterId:"blade-walker",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      handCount:2,
+      hand:[
+        { id:"resolved-a", definitionId:"charge", availability:1 },
+        { id:"resolved-b", definitionId:"block", availability:1 }
+      ],
+      knownCards:[],
+      statuses:[]
+    }]
+  };
+  const simulator = new Simulator(state);
+  assert.equal(simulator.consumeChosenHandCard(state, state.players[0], 1), 0);
+  assert.equal(
+    simulator.consumeChosenHandCard(
+      state,
+      state.players[0],
+      1,
+      { selectedCardId:"missing-card" }
+    ),
+    0
+  );
+  assert.equal(state.players[0].handCount, 2);
+  assert.deepEqual(state.players[0].hand.map((card) => card.id), ["resolved-a", "resolved-b"]);
+  assert.equal(
+    simulator.consumeChosenHandCard(
+      state,
+      state.players[0],
+      1,
+      { selectedCardId:"resolved-a" }
+    ),
+    1
+  );
+  assert.deepEqual(state.players[0].hand.map((card) => card.id), ["resolved-b"]);
+});
+
+test("AI·资源闭合：Controller 每个 resource candidate 恰好一次 clone、transition 与 value call", () => {
+  const actor = makePlayer("resource-count-actor", 0, "dawn");
+  const owner = makePlayer("resource-count-owner", 1, "dusk", "ai", 2);
+  const { game } = makeGame([actor, owner], { random:() => 0 });
+  const known = instance("recover"), unknown = instance("counter");
+  owner.hand = [known, unknown];
+  owner.equipment = instance("telescope");
+  game.rememberPrivateCard(actor, owner, known);
+  const originalFactory = game.aiController.simulatorFactory;
+  const originalTransitionDelta = game.aiController.stateValue.transitionDelta.bind(
+    game.aiController.stateValue
+  );
+  const originalEvaluate = game.aiController.stateEvaluator.evaluateResourceTransitionCandidate.bind(
+    game.aiController.stateEvaluator
+  );
+  const counts = { clone:0, transition:0, stateValue:0, comparison:0 };
+  game.aiController.simulatorFactory = (...args) => {
+    const simulator = originalFactory(...args);
+    const clone = simulator.clone.bind(simulator);
+    const transition = simulator.applyForcedResourceSelection.bind(simulator);
+    simulator.clone = (...cloneArgs) => {
+      counts.clone += 1;
+      return clone(...cloneArgs);
+    };
+    simulator.applyForcedResourceSelection = (...transitionArgs) => {
+      counts.transition += 1;
+      return transition(...transitionArgs);
+    };
+    return simulator;
+  };
+  game.aiController.stateValue.transitionDelta = (...args) => (
+    counts.stateValue += 1,
+    originalTransitionDelta(...args)
+  );
+  game.aiController.stateEvaluator.evaluateResourceTransitionCandidate = (...args) => (
+    counts.comparison += 1,
+    originalEvaluate(...args)
+  );
+  const selection = game.aiController.chooseZoneCard(
+    actor,
+    owner,
+    { purpose:"destroy" }
+  );
+  assert.ok(selection);
+  assert.deepEqual(counts, { clone:3, transition:3, stateValue:3, comparison:3 });
+});
+
+/*
+功能
+创建含 known、anonymous 与 equipment 三类资源的 canonical World 测试夹具。
+
+调用方
+AI·资源闭合的 destroy/plunder resolved transition tests。
+
+输入
+资源拥有者是否与行动者同阵营。
+
+输出
+World、模拟行动者/拥有者、Simulator 与三类 selection descriptors。
+
+读取状态
+makeGame、合法 private-card memory 与 createInitialWorld。
+
+写入状态
+只写独立测试 Game fixture。
+
+调用函数
+deriveCurrentCardCounts、createInitialWorld、Simulator constructor。
+
+边界与不变量
+known 保留 exact ID，unknown 只保留 aggregate slot，equipment 只使用公开 definition。
+*/
+function createResolvedResourceFixture(sameTeam = false) {
+  const actor = makePlayer("resolved-resource-actor", 0, "dawn");
+  const owner = makePlayer(
+    "resolved-resource-owner",
+    1,
+    sameTeam ? "dawn" : "dusk",
+    "ai",
+    2
+  );
+  const known = instance("recover"), unknown = instance("counter");
+  owner.hand = [known, unknown];
+  owner.equipment = instance("telescope");
+  const { game } = makeGame([actor, owner], { random:() => 0 });
+  game.rememberPrivateCard(actor, owner, known);
+  const world = createInitialWorld(
+    actor.id,
+    game.state,
+    deriveCurrentCardCounts(actor, game.state)
+  );
+  const simulator = new Simulator(world);
+  const mutableWorld = simulator.clone(world);
+  const searchActor = mutableWorld.players.find((player) => player.id === actor.id);
+  const searchOwner = mutableWorld.players.find((player) => player.id === owner.id);
+  const unknownCount = searchOwner.handCount - searchOwner.knownCards.length;
+  return {
+    world:mutableWorld,
+    actor:searchActor,
+    owner:searchOwner,
+    simulator,
+    known:{
+      zone:"hand",
+      selectionKind:"known",
+      cardId:known.id,
+      definitionId:known.definitionId,
+      availableUnknownCount:0
+    },
+    unknown:{
+      zone:"hand",
+      selectionKind:"unknown",
+      cardId:null,
+      definitionId:null,
+      knownCardIds:[known.id],
+      availableUnknownCount:unknownCount
+    },
+    equipment:{
+      zone:"equipment",
+      selectionKind:"equipment",
+      cardId:null,
+      definitionId:"telescope",
+      availableUnknownCount:0
+    }
+  };
+}
+
+test("AI·资源闭合：destroy 只执行 resolved known、anonymous、equipment 且 known 缺失不改选", () => {
+  const known = createResolvedResourceFixture();
+  assert.equal(known.simulator.applyForcedResourceSelection(
+    known.world, known.actor, known.owner, "destroy", known.known
+  ), 1);
+  assert.equal(known.owner.knownCards.some((card) => card.cardId === known.known.cardId), false);
+
+  const anonymous = createResolvedResourceFixture();
+  assert.equal(anonymous.simulator.applyForcedResourceSelection(
+    anonymous.world, anonymous.actor, anonymous.owner, "destroy", anonymous.unknown
+  ), 1);
+  assert.equal(anonymous.owner.knownCards.length, 1);
+
+  const equipment = createResolvedResourceFixture();
+  assert.equal(equipment.simulator.applyForcedResourceSelection(
+    equipment.world, equipment.actor, equipment.owner, "destroy", equipment.equipment
+  ), 1);
+  assert.equal(equipment.owner.equipmentRetentionProbability, 0);
+
+  const missing = createResolvedResourceFixture();
+  const beforeCount = missing.owner.handCount;
+  assert.equal(missing.simulator.applyForcedResourceSelection(
+    missing.world,
+    missing.actor,
+    missing.owner,
+    "destroy",
+    { ...missing.known, cardId:"missing-known-card" }
+  ), 0);
+  assert.equal(missing.owner.handCount, beforeCount);
+  assert.equal(missing.owner.knownCards.length, 1);
+});
+
+test("AI·资源闭合：plunder 敌我来源均只转移 resolved known、anonymous、equipment", () => {
+  for (const sameTeam of [false, true]) {
+    for (const key of ["known", "unknown", "equipment"]) {
+      const fixture = createResolvedResourceFixture(sameTeam);
+      const actorBefore = fixture.actor.handCount;
+      const ownerBefore = fixture.owner.handCount;
+      assert.equal(fixture.simulator.applyForcedResourceSelection(
+        fixture.world,
+        fixture.actor,
+        fixture.owner,
+        "plunder",
+        fixture[key]
+      ), 1, `${sameTeam ? "ally" : "enemy"}:${key}`);
+      assert.equal(fixture.actor.handCount, actorBefore + 1);
+      if (key === "equipment") {
+        assert.equal(fixture.owner.equipmentRetentionProbability, 0);
+        assert.equal(fixture.owner.handCount, ownerBefore);
+      } else {
+        assert.equal(fixture.owner.handCount, ownerBefore - 1);
+      }
+    }
+  }
+});
+
 /*
 功能
 验证 Simulator 只执行已由 Evaluator 确定的 Block、Guardian 与 Rescue 布尔选择。
@@ -13691,9 +14038,9 @@ function responseWillingnessTransitionGate() {
   let guardianSelectionCalls = 0;
   const acceptedGuardianDamage = new Simulator(guardianState, {
     decideGuardianAid:() => (acceptedGuardianCalls += 1, true),
-    selectGuardianAidDiscard:(player, cards, context) => (
+    resolveDiscardCandidates:(player, cards, count, context) => (
       guardianSelectionCalls += 1,
-      chooseDiscardCandidates(player, cards, 1, context)[0] ?? null
+      chooseDiscardCandidates(player, cards, count, context)
     )
   }).simulateGuardianAid(guardianState, guardianState.players[0], 1, 1);
   const rejectedGuardianDamage = new Simulator(rejectedGuardianState, {
@@ -16300,10 +16647,8 @@ test("AI·模拟器：严格有界 raw probability 操作记录 timing 且 TIME 
   assert.equal(budget.diagnostics().rawProbabilityOperationsAfterTime, 0);
 });
 
-test("AI·搜索：ResourceValueQuery 与 ValueSimulationQuery nested Simulator 继承父 SearchBudget", async () => {
-  const { ResourceValueQuery } = await import(
-    "../js/ai/simulation/ResourceValueQuery.js"
-  );
+test("AI·搜索：ResourceValueQuery 删除且 ValueSimulationQuery nested Simulator 继承父 SearchBudget", async () => {
+  await assert.rejects(access(projectFile("js/ai/simulation/ResourceValueQuery.js")));
   const { ValueSimulationQuery } = await import(
     "../js/ai/simulation/ValueSimulationQuery.js"
   );
@@ -16319,33 +16664,15 @@ test("AI·搜索：ResourceValueQuery 与 ValueSimulationQuery nested Simulator 
       statuses:["lightning"]
     }]
   };
-  const resourceBudgets = [];
-  const resourceQuery = new ResourceValueQuery({
-    stateValue:{ stateUtility:() => 0 },
-    evaluator:{ equipmentMaterialDelta:() => 0 },
-    simulatorFactory:(factoryState, runtime = {}) => {
-      resourceBudgets.push(runtime.searchBudget);
-      return {
-        clone:() => structuredClone(factoryState),
-        applyForcedResourceSelection:() => 1
-      };
-    }
-  });
-  resourceQuery.evaluate({
-    state,
-    actorId:"nested-budget-actor",
-    targetId:"nested-budget-actor",
-    purpose:"destroy",
-    candidates:[{ zone:"hand", acquisitionUtility:0, skillThresholdOption:0 }],
-    searchBudget:budget
-  });
-
   const valueBudgets = [];
   const valueQuery = new ValueSimulationQuery(
-    { ownerMaterialValue:() => 0 },
+    { ownerMaterialDelta:() => 0 },
     (factoryState, runtime = {}) => {
       valueBudgets.push(runtime.searchBudget);
-      return { applyLightningHit:() => structuredClone(factoryState) };
+      return {
+        buildLightningPropagationChainIds:() => [factoryState.players[0].id],
+        applyLightningHit:() => structuredClone(factoryState)
+      };
     }
   );
   valueQuery.lightningLifecycleOwnerDeltas(
@@ -16356,7 +16683,6 @@ test("AI·搜索：ResourceValueQuery 与 ValueSimulationQuery nested Simulator 
     budget
   );
 
-  assert.deepEqual(resourceBudgets, [budget]);
   assert.deepEqual(valueBudgets, [budget]);
 });
 
@@ -18474,7 +18800,7 @@ test("AI·搜索：主线程 Response 与 contextual resource query 只记录 fo
   const { game } = makeGame([actor, target]);
   game.aiController.chooseZoneCard(actor, target, { purpose:"destroy" });
   const resourceDiagnostics = game.aiController.getLastMainThreadOperationDiagnostics();
-  assert.equal(resourceDiagnostics.operation, "CardSelectionBoundary.chooseZoneCard");
+  assert.equal(resourceDiagnostics.operation, "AIController.resolveZoneCard");
   assert.equal(resourceDiagnostics.candidateCount, 4);
   assert.equal(resourceDiagnostics.worldCount, "unavailable");
   assert.ok(resourceDiagnostics.durationMs >= 0);
@@ -24281,9 +24607,9 @@ test("AI·窥探：未知牌按位置采样而不因真实 definitionId 改变�
   const { game }
     = makeGame([a, b], { random: () => .6 });
   b.hand = [instance("counter"), instance("charge"), instance("block")];
-  const first = game.aiController.cardSelector.chooseHiddenCards(a, b, 1)[0];
+  const first = game.aiController.chooseHiddenCards(a, b, 1)[0];
   b.hand = [instance("assault"), instance("recover"), instance("energyDevice")];
-  const second = game.aiController.cardSelector.chooseHiddenCards(a, b, 1)[0];
+  const second = game.aiController.chooseHiddenCards(a, b, 1)[0];
   assert.equal(first.definitionId, "charge");
   assert.equal(second.definitionId, "recover");
 });
@@ -24295,7 +24621,7 @@ test("AI·窥探：优先选择未知手牌位置而非已知低价值牌", () =
   const known = instance("counter"), first = instance("charge"), second = instance("assault");
   b.hand = [known, first, second];
   game.rememberPrivateCard(a, b, known);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     a, b, 1, null, { purpose: "scout" }
   )[0];
   assert.equal(chosen, first);
@@ -24316,7 +24642,7 @@ test("AI·窥探：未知位置超量时受控随机选择且不读取未知真�
   }
   b.hand = [known, first, second];
   game.rememberPrivateCard(a, b, known);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     a, b, 1, null, { purpose: "scout" }
   )[0];
   assert.equal(reads, 0);
@@ -24331,7 +24657,7 @@ test("AI·窥探：未知不足时先选未知再用已知低价值补足且不�
   b.hand = [high, low, unknown];
   game.rememberPrivateCard(a, b, high);
   game.rememberPrivateCard(a, b, low);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     a, b, 2, null, { purpose: "scout" }
   );
   assert.equal(chosen.length, 2);
@@ -24347,7 +24673,7 @@ test("AI·窥探：全部已知时按价值升序且同分保持原顺序", () =
   const high = instance("counter"), low = instance("block"), lowest = instance("charge");
   b.hand = [high, low, lowest];
   for (const card of b.hand) game.rememberPrivateCard(a, b, card);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     a, b, 2, null, { purpose: "spy-gap" }
   );
   assert.deepEqual(chosen, [low, lowest]);
@@ -24360,7 +24686,7 @@ test("AI·窥探：遵循 excludedCardIds", () => {
   const known = instance("counter"), excluded = instance("charge"), target = instance("assault");
   b.hand = [known, excluded, target];
   game.rememberPrivateCard(a, b, known);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     a, b, 1, new Set([excluded.id]), { purpose: "scout" }
   )[0];
   assert.equal(chosen, target);
@@ -34334,7 +34660,7 @@ test("AI·反制：真实反制链空手掠夺恢复无收益时不反反制且 
   enemyA.hand.push(plunder, aCounter);
   playerB.hand.push(bCounter);
   // B 手中只有反制：AI 掠夺预选必然指向它。
-  game.aiController.cardSelector.chooseZoneCard = () => ({ card: bCounter, zone: "hand" });
+  game.aiController.chooseZoneCard = () => ({ card: bCounter, zone: "hand" });
   const captured = [];
   const originalShouldRespond = game.aiController.shouldRespond
     .bind(game.aiController);
@@ -34370,7 +34696,7 @@ test("AI·反制：真实反制链目标仍持有高价值牌时可反反制恢�
   playerB.hand.push(bCounter, bAssault);
   enemyA.aiMemory.knownCardsByPlayer["player-b"] = { [bAssault.id]: "assault" };
   // 让 AI 掠夺预选确定指向已知突袭，避免随机选择使结算不稳定。
-  game.aiController.cardSelector.chooseZoneCard = () => ({ card: bAssault, zone: "hand" });
+  game.aiController.chooseZoneCard = () => ({ card: bAssault, zone: "hand" });
   const played = await game.playCard(enemyA, plunder, [playerB]);
   assert.equal(played, true);
   // B 用掉唯一反制后仍持有突袭；A 反反制恢复掠夺并实际拿到该突袭。
@@ -42068,8 +42394,119 @@ test("AI·动态未知：非法正计数定义抛错", () => {
   );
 });
 
+/*
+功能
+在测试中把 Evaluator 的 known/anonymous 资源描述解析回给定实体候选。
+
+调用方
+AI·动态未知的 hidden resource owner 迁移测试。
+
+输入
+Evaluator、双方玩家、数量、remaining counts 查询与测试随机源。
+
+输出
+按 Evaluator 描述解析的实体数组。
+
+读取状态
+合法 aiMemory 与显式 remaining counts。
+
+写入状态
+只推进测试随机源；不修改玩家手牌。
+
+调用函数
+Evaluator.chooseBestResourceHandCandidate。
+
+边界与不变量
+unknown 只按非 known 位置解析，helper 不包含任何价值或比较公式。
+*/
+function resolveEvaluatorResourceHand({
+  evaluator,
+  actor,
+  owner,
+  count = 1,
+  remainingCounts = null,
+  random = () => 0
+}) {
+  const counts = typeof remainingCounts === "function" ? remainingCounts() : remainingCounts;
+  const candidates = [...owner.hand];
+  const selected = [];
+  const known = actor.aiMemory?.knownCardsByPlayer?.[owner.id] ?? {};
+  while (selected.length < count && candidates.length) {
+    const knownCards = candidates
+      .map((card) => ({ cardId:card.id, definitionId:known[card.id] }))
+      .filter((entry) => entry.definitionId);
+    const choice = chooseBestResourceHandCandidate({
+      purpose:"destroy",
+      actor,
+      owner,
+      knownCards,
+      unknownCount:candidates.length - knownCards.length,
+      remainingCardCounts:counts
+    });
+    let index = choice?.selectionKind === "known"
+      ? candidates.findIndex((card) => card.id === choice.cardId)
+      : -1;
+    if (choice?.selectionKind === "unknown") {
+      const unknown = candidates
+        .map((card, current) => ({ card, current }))
+        .filter((entry) => !known[entry.card.id]);
+      index = unknown[Math.floor(random() * unknown.length)]?.current ?? -1;
+    }
+    if (index < 0) break;
+    selected.push(candidates.splice(index, 1)[0]);
+  }
+  return selected;
+}
+
+/*
+功能
+在测试中比较一项 Evaluator 手牌描述与公开装备候选。
+
+调用方
+AI·动态未知的 resource zone owner 迁移测试。
+
+输入
+Evaluator、双方玩家和 remaining counts。
+
+输出
+hand/equipment 选择描述或 null。
+
+读取状态
+合法 aiMemory、公开装备与显式 Belief counts。
+
+写入状态
+无。
+
+调用函数
+Evaluator.chooseBestResourceHandCandidate、chooseResourceZone。
+
+边界与不变量
+只组合正式 owner 结果，不复制 resource valuation 或 tie-break。
+*/
+function chooseEvaluatorResourceZone(evaluator, actor, owner, remainingCardCounts = null) {
+  const known = actor.aiMemory?.knownCardsByPlayer?.[owner.id] ?? {};
+  const knownCards = owner.hand
+    .map((card) => ({ cardId:card.id, definitionId:known[card.id] }))
+    .filter((entry) => entry.definitionId);
+  const handCandidate = chooseBestResourceHandCandidate({
+    purpose:"destroy",
+    actor,
+    owner,
+    knownCards,
+    unknownCount:owner.hand.length - knownCards.length,
+    remainingCardCounts
+  });
+  return chooseResourceZone({
+    purpose:"destroy",
+    actor,
+    owner,
+    handCandidate,
+    equipmentDefinitionId:owner.equipment?.definitionId ?? null
+  });
+}
+
 test("AI·动态未知：剩余池使未知胜出而固定值使已知胜出", () => {
-  const makeSelector = (knowledge) => new CardSelectionBoundary({ random: () => 0 }, knowledge);
+  const evaluator = new Evaluator();
   const actor = {
     id: "a", battleTeam: "dawn", characterId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
   };
@@ -42080,18 +42517,22 @@ test("AI·动态未知：剩余池使未知胜出而固定值使已知胜出", (
     hand: [{ id: "k", definitionId: "assault" }, { id: "u", definitionId: "counter" }]
   };
   actor.aiMemory.knownCardsByPlayer[owner.id] = { k: "assault" };
-  const fixed = makeSelector(null);
   assert.equal(
-    fixed.chooseHiddenCards(actor, owner, 1, null, { purpose: "destroy" })[0], owner.hand[0]
+    resolveEvaluatorResourceHand({ evaluator, actor, owner })[0], owner.hand[0]
   );
-  const dynamic = makeSelector({ remainingCounts: () => ({ counter: 7, defenseDevice: 1 }) });
   assert.equal(
-    dynamic.chooseHiddenCards(actor, owner, 1, null, { purpose: "destroy" })[0], owner.hand[1]
+    resolveEvaluatorResourceHand({
+      evaluator,
+      actor,
+      owner,
+      remainingCounts:{ counter:7, defenseDevice:1 }
+    })[0],
+    owner.hand[1]
   );
 });
 
 test("AI·动态未知：与已知同分时已知优先", () => {
-  const selector = new CardSelectionBoundary({ random: () => 0 }, { remainingCounts: () => ({ scout: 2 }) });
+  const evaluator = new Evaluator();
   const actor = {
     id: "a", battleTeam: "dawn", characterId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
   };
@@ -42102,12 +42543,17 @@ test("AI·动态未知：与已知同分时已知优先", () => {
     hand: [{ id: "k", definitionId: "scout" }, { id: "u", definitionId: "counter" }]
   };
   actor.aiMemory.knownCardsByPlayer[owner.id] = { k: "scout" };
-  const chosen = selector.chooseHiddenCards(actor, owner, 1, null, { purpose: "destroy" })[0];
+  const chosen = resolveEvaluatorResourceHand({
+    evaluator,
+    actor,
+    owner,
+    remainingCounts:{ scout:2 }
+  })[0];
   assert.equal(chosen, owner.hand[0]);
 });
 
 test("AI·动态未知：影响手牌与装备区域选择", () => {
-  const build = (knowledge) => new CardSelectionBoundary({ random: () => 0 }, knowledge);
+  const evaluator = new Evaluator();
   const actor = {
     id: "a",
     battleTeam: "dawn",
@@ -42123,16 +42569,17 @@ test("AI·动态未知：影响手牌与装备区域选择", () => {
     hand: [{ id: "u", definitionId: "counter" }],
     equipment: { id: "e", definitionId: "energyDevice" }
   };
-  const fixed = build(null);
-  assert.equal(fixed.chooseZoneCard(actor, owner, { purpose: "destroy" }).zone, "equipment");
-  const dynamic = build({ remainingCounts: () => ({ counter: 7, defenseDevice: 1 }) });
-  assert.equal(dynamic.chooseZoneCard(actor, owner, { purpose: "destroy" }).zone, "hand");
+  assert.equal(chooseEvaluatorResourceZone(evaluator, actor, owner).zone, "equipment");
+  assert.equal(
+    chooseEvaluatorResourceZone(
+      evaluator, actor, owner, { counter:7, defenseDevice:1 }
+    ).zone,
+    "hand"
+  );
 });
 
 test("AI·动态未知：区域同分仍优先手牌", () => {
-  const selector = new CardSelectionBoundary(
-    { random: () => 0 }, { remainingCounts: () => ({ telescope: 3 }) }
-  );
+  const evaluator = new Evaluator();
   const actor = {
     id: "a",
     battleTeam: "dawn",
@@ -42148,14 +42595,16 @@ test("AI·动态未知：区域同分仍优先手牌", () => {
     hand: [{ id: "u", definitionId: "counter" }],
     equipment: { id: "e", definitionId: "telescope" }
   };
-  const choice = selector.chooseZoneCard(actor, owner, { purpose: "destroy" });
+  const choice = chooseEvaluatorResourceZone(
+    evaluator, actor, owner, { telescope:3 }
+  );
   assert.equal(choice.zone, "hand");
 });
 
 test("AI·动态未知：chooseHiddenCards 每次完整调用只扫描一次剩余计数", () => {
   let calls = 0;
-  const knowledge = { remainingCounts: () => { calls += 1; return { assault: 1 }; } };
-  const selector = new CardSelectionBoundary({ random: () => 0 }, knowledge);
+  const remainingCounts = () => { calls += 1; return { assault:1 }; };
+  const evaluator = new Evaluator();
   const actor = {
     id: "a", battleTeam: "dawn", characterId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
   };
@@ -42166,7 +42615,10 @@ test("AI·动态未知：chooseHiddenCards 每次完整调用只扫描一次剩�
     hand: [{ id: "u1", definitionId: "counter" }]
   };
   assert.equal(
-    selector.chooseHiddenCards(actor, ownerOne, 1, null, { purpose: "destroy" }).length, 1
+    resolveEvaluatorResourceHand({
+      evaluator, actor, owner:ownerOne, remainingCounts
+    }).length,
+    1
   );
   assert.equal(calls, 1);
   const ownerTwo = {
@@ -42176,19 +42628,22 @@ test("AI·动态未知：chooseHiddenCards 每次完整调用只扫描一次剩�
     hand: [{ id: "u1", definitionId: "counter" }, { id: "u2", definitionId: "charge" }]
   };
   assert.equal(
-    selector.chooseHiddenCards(actor, ownerTwo, 2, null, { purpose: "destroy" }).length, 2
+    resolveEvaluatorResourceHand({
+      evaluator, actor, owner:ownerTwo, count:2, remainingCounts
+    }).length,
+    2
   );
   assert.equal(calls, 2);
 });
 
 test("AI·动态未知：chooseZoneCard 只扫描一次剩余计数", () => {
   let calls = 0;
-  const knowledge = {
-    remainingCounts: () => {
-      calls += 1; if (calls > 1) throw new Error("重复扫描"); return { battleDevice: 1 };
-    }
+  const remainingCounts = () => {
+    calls += 1;
+    if (calls > 1) throw new Error("重复扫描");
+    return { battleDevice:1 };
   };
-  const selector = new CardSelectionBoundary({ random: () => 0 }, knowledge);
+  const evaluator = new Evaluator();
   const actor = {
     id: "a",
     battleTeam: "dawn",
@@ -42204,7 +42659,9 @@ test("AI·动态未知：chooseZoneCard 只扫描一次剩余计数", () => {
     hand: [{ id: "u", definitionId: "counter" }],
     equipment: { id: "e", definitionId: "energyDevice" }
   };
-  const choice = selector.chooseZoneCard(actor, owner, { purpose: "destroy" });
+  const choice = chooseEvaluatorResourceZone(
+    evaluator, actor, owner, remainingCounts()
+  );
   assert.equal(choice.zone, "hand");
   assert.equal(calls, 1);
 });
@@ -42222,34 +42679,30 @@ test("AI·动态未知：不修改计数输入", () => {
 });
 
 test("AI·动态未知：未知实体真实定义不泄漏", () => {
-  const build = (hiddenDefinitionId, throwing = false) => {
-    const selector = new CardSelectionBoundary(
-      { random: () => 0 }, { remainingCounts: () => ({ counter: 7, defenseDevice: 1 }) }
-    );
-    const actor = {
-      id: "a", battleTeam: "dawn", characterId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
-    };
-    const unknown = throwing ? { id: "u" } : { id: "u", definitionId: hiddenDefinitionId };
-    if (throwing) {
-      Object.defineProperty(
-        unknown, "definitionId", { enumerable: true, get() { throw new Error("读取未知定义"); } }
-      );
-    }
-    const owner = { id: "o", battleTeam: "dusk", characterId: "blade-walker", hand: [unknown] };
-    const chosen = selector.chooseHiddenCards(actor, owner, 1, null, { purpose: "destroy" })[0];
-    return { chosen, owner };
-  };
-  const normal = build("counter");
-  const throwing = build("charge", true);
-  assert.equal(normal.chosen, normal.owner.hand[0]);
-  assert.equal(throwing.chosen, throwing.owner.hand[0]);
+  const actor = makePlayer("hidden-actor", 0, "dawn");
+  const owner = makePlayer("hidden-owner", 1, "dusk");
+  const unknown = { id:"poisoned-unknown" };
+  Object.defineProperty(unknown, "definitionId", {
+    enumerable:true,
+    get() { throw new Error("读取未知定义"); }
+  });
+  owner.hand = [unknown];
+  const { game } = makeGame([actor, owner], { random:() => 0 });
+  game.aiController.searchRng.next = () => 0;
+  const chosen = game.aiController.chooseHiddenCards(
+    actor,
+    owner,
+    1,
+    null,
+    { purpose:"destroy" },
+    { counter:7, defenseDevice:1 }
+  )[0];
+  assert.equal(chosen, unknown);
 });
 
-test("AI·动态未知：未知候选输给装备仍调用一次随机数", () => {
+test("AI·动态未知：未知候选输给装备时不解析实体或调用随机数", () => {
   let randomCalls = 0;
-  const selector = new CardSelectionBoundary(
-    { random: () => { randomCalls += 1; return 0; } }, { remainingCounts: () => ({ charge: 1 }) }
-  );
+  const evaluator = new Evaluator();
   const actor = {
     id: "a",
     battleTeam: "dawn",
@@ -42265,17 +42718,15 @@ test("AI·动态未知：未知候选输给装备仍调用一次随机数", () =
     hand: [{ id: "u", definitionId: "counter" }],
     equipment: { id: "e", definitionId: "energyDevice" }
   };
-  const choice = selector.chooseZoneCard(actor, owner, { purpose: "destroy" });
+  const choice = chooseEvaluatorResourceZone(evaluator, actor, owner, { charge:1 });
   assert.equal(choice.zone, "equipment");
-  assert.equal(randomCalls, 1);
+  assert.equal(randomCalls, 0);
 });
 
 test("AI·动态未知：count>1 冻结同一计数快照", () => {
   let calls = 0;
-  const selector = new CardSelectionBoundary(
-    { random: () => 0 },
-    { remainingCounts: () => { calls += 1; return { counter: 7, defenseDevice: 1 }; } }
-  );
+  const evaluator = new Evaluator();
+  const remainingCounts = () => { calls += 1; return { counter:7, defenseDevice:1 }; };
   const actor = {
     id: "a", battleTeam: "dawn", characterId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
   };
@@ -42285,13 +42736,19 @@ test("AI·动态未知：count>1 冻结同一计数快照", () => {
     characterId: "blade-walker",
     hand: [{ id: "u1", definitionId: "counter" }, { id: "u2", definitionId: "charge" }]
   };
-  const chosen = selector.chooseHiddenCards(actor, owner, 2, null, { purpose: "destroy" });
+  const chosen = resolveEvaluatorResourceHand({
+    evaluator,
+    actor,
+    owner,
+    count:2,
+    remainingCounts
+  });
   assert.equal(chosen.length, 2);
   assert.equal(calls, 1);
 });
 
 test("AI·动态未知：knowledge 缺失时固定回退", () => {
-  const selector = new CardSelectionBoundary({ random: () => 0 }, null);
+  const evaluator = new Evaluator();
   const actor = {
     id: "a", battleTeam: "dawn", characterId: "blade-walker", aiMemory: { knownCardsByPlayer: {} }
   };
@@ -42302,7 +42759,7 @@ test("AI·动态未知：knowledge 缺失时固定回退", () => {
     hand: [{ id: "k", definitionId: "assault" }, { id: "u", definitionId: "counter" }]
   };
   actor.aiMemory.knownCardsByPlayer[owner.id] = { k: "assault" };
-  const chosen = selector.chooseHiddenCards(actor, owner, 1, null, { purpose: "destroy" })[0];
+  const chosen = resolveEvaluatorResourceHand({ evaluator, actor, owner })[0];
   assert.equal(chosen, owner.hand[0]);
 });
 
@@ -44496,25 +44953,28 @@ test("AI·评分：聚能能量增益只由 stateDelta 计价且旧 ×1.5 不再
 
 // ---- AI 评分·角色选牌 ----
 
-test("AI·角色选牌：正式 CardSelectionPolicy 的未知位置分布不随真实换面改变", () => {
-  const buildPolicy = () => new CardSelectionPolicy({
-    random: () => .75,
-    remainingCounts: () => null
-  });
-  const actor = {
-    id: "a", battleTeam: "dawn", characterId: "blade-walker",
-    aiMemory: { knownCardsByPlayer: { e: {} } }
-  };
-  const owner = {
-    id: "e", battleTeam: "dusk", characterId: "spirit-medic",
-    hand: [{ id: "x", definitionId: "recover" }, { id: "y", definitionId: "counter" }]
-  };
-  const first = buildPolicy().chooseHiddenCardIds({ actor, owner, cards: owner.hand, count: 1 });
-  const swapped = {
-    ...owner,
-    hand: [{ id: "x", definitionId: "counter" }, { id: "y", definitionId: "recover" }]
-  };
-  const second = buildPolicy().chooseHiddenCardIds({ actor, owner: swapped, cards: swapped.hand, count: 1 });
+test("AI·角色选牌：Controller 匿名位置解析不随真实换面改变", () => {
+  const actor = makePlayer("a", 0, "dawn");
+  const owner = makePlayer("e", 1, "dusk", "ai", 2);
+  const firstX = instance("recover"), firstY = instance("counter");
+  firstX.id = "x";
+  firstY.id = "y";
+  owner.hand = [firstX, firstY];
+  const firstGame = makeGame([actor, owner]).game;
+  firstGame.aiController.searchRng.next = () => .75;
+  const first = firstGame.aiController.chooseHiddenCards(actor, owner, 1).map((card) => card.id);
+
+  const swappedActor = makePlayer("a2", 0, "dawn");
+  const swappedOwner = makePlayer("e2", 1, "dusk", "ai", 2);
+  const swappedX = instance("counter"), swappedY = instance("recover");
+  swappedX.id = "x";
+  swappedY.id = "y";
+  swappedOwner.hand = [swappedX, swappedY];
+  const swappedGame = makeGame([swappedActor, swappedOwner]).game;
+  swappedGame.aiController.searchRng.next = () => .75;
+  const second = swappedGame.aiController.chooseHiddenCards(
+    swappedActor, swappedOwner, 1
+  ).map((card) => card.id);
   assert.deepEqual(first, ["y"]);
   assert.deepEqual(second, first);
 });
@@ -44538,7 +44998,7 @@ test("AI·角色选牌：刃行者突袭与窥探同值时保持原始顺序", (
     = makeGame([actor, ally], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout");
   actor.hand = [assault, scout];
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1)[0];
+  const chosen = game.aiController.chooseHiddenCards(actor, actor, 1)[0];
   assert.equal(chosen, assault);
 });
 
@@ -44550,7 +45010,7 @@ test("AI·角色选牌：自己隐藏牌选择随角色不同而不同", () => {
     = makeGame([warden, ally], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout");
   warden.hand = [assault, scout];
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(warden, warden, 1)[0];
+  const chosen = game.aiController.chooseHiddenCards(warden, warden, 1)[0];
   assert.equal(chosen, assault);
 });
 
@@ -44562,7 +45022,7 @@ test("AI·角色选牌：自己隐藏牌相同角色价值时保持原始位置"
     = makeGame([actor, ally], { random: () => 0 });
   const assault = instance("assault"), recover = instance("recover");
   actor.hand = [assault, recover];
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1)[0];
+  const chosen = game.aiController.chooseHiddenCards(actor, actor, 1)[0];
   assert.equal(chosen, assault);
 });
 
@@ -44573,7 +45033,7 @@ test("AI·角色选牌：自己隐藏牌选择仍遵循 excludedCardIds", () => 
     = makeGame([actor, ally], { random: () => 0 });
   const assault = instance("assault"), scout = instance("scout");
   actor.hand = [assault, scout];
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, actor, 1, new Set([scout.id])
   )[0];
   assert.equal(chosen, assault);
@@ -44587,7 +45047,7 @@ test("AI·角色选牌：自己隐藏牌选择不调用随机数", () => {
     = makeGame([actor, ally], { random: () => { randomCalls += 1; return 0; } });
   const assault = instance("assault"), scout = instance("scout");
   actor.hand = [assault, scout];
-  game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1);
+  game.aiController.chooseHiddenCards(actor, actor, 1);
   assert.equal(randomCalls, 0);
 });
 
@@ -44599,7 +45059,7 @@ test("AI·角色选牌：transfer purpose 不进入自己手牌角色价值分�
   const assault = instance("assault"), recover = instance("recover");
   actor.hand = [assault, recover];
   const candidate = chooseTransferHandCandidate(actor, actor, receiver);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, actor, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen.id, candidate.cardId);
@@ -44614,8 +45074,8 @@ test("AI·角色选牌：expectedCardValue 自己已知手牌返回角色有效�
   const assault = instance("assault");
   blade.hand = [assault];
   warden.hand = [assault];
-  assert.equal(game.aiController.cardSelector.expectedCardValue(blade, blade, assault), 6);
-  assert.equal(game.aiController.cardSelector.expectedCardValue(warden, warden, assault), 3);
+  assert.equal(getObservedCardValue(blade, blade, assault), 6);
+  assert.equal(getObservedCardValue(warden, warden, assault), 3);
 });
 
 test("AI·角色选牌：expectedCardValue 他人牌仍使用未知固定值与全局基础值", () => {
@@ -44626,9 +45086,9 @@ test("AI·角色选牌：expectedCardValue 他人牌仍使用未知固定值与�
     = makeGame([actor, medic], { random: () => 0 });
   const recover = instance("recover");
   medic.hand = [recover];
-  assert.equal(game.aiController.cardSelector.expectedCardValue(actor, medic, recover), 4);
+  assert.equal(getObservedCardValue(actor, medic, recover), 4);
   game.rememberPrivateCard(actor, medic, recover);
-  assert.equal(game.aiController.cardSelector.expectedCardValue(actor, medic, recover), 6);
+  assert.equal(getObservedCardValue(actor, medic, recover), 6);
 });
 
 test("AI·角色选牌：公开池影客优先选借势而灵医优先选调息", () => {
@@ -44639,7 +45099,7 @@ test("AI·角色选牌：公开池影客优先选借势而灵医优先选调息"
   const leverage = instance("leverage"), recover = instance("recover");
   const pool = [leverage, recover];
   const before = pool.map((card) => card.id);
-  const selector = game.aiController.cardSelector;
+  const selector = game.aiController;
   assert.equal(selector.choosePublicCard(shade, pool), leverage);
   assert.equal(selector.choosePublicCard(medic, pool), recover);
   assert.deepEqual(pool.map((card) => card.id), before);
@@ -44652,7 +45112,7 @@ test("AI·角色选牌：公开池相同价值保持原始顺序且空池返回 
     = makeGame([shade, ally], { random: () => 0 });
   const recover = instance("recover"), transfer = instance("transfer");
   // 影客两者均为 6
-  const selector = game.aiController.cardSelector;
+  const selector = game.aiController;
   assert.equal(selector.choosePublicCard(shade, [recover, transfer]), recover);
   assert.equal(selector.choosePublicCard(shade, []), null);
 });
@@ -44793,7 +45253,7 @@ test("AI·角色选牌：其他玩家已知牌排序仍使用全局基础值而�
   shade.hand = [scout, recover];
   game.rememberPrivateCard(actor, shade, scout);
   game.rememberPrivateCard(actor, shade, recover);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, shade, 1, null, { purpose: "spy-gap" }
   )[0];
   assert.equal(chosen, scout);
@@ -44811,7 +45271,7 @@ test("AI·资源选择：破坏已知手牌使用目标角色价值", () => {
   shade.hand = [scout, recover];
   game.rememberPrivateCard(actor, shade, scout);
   game.rememberPrivateCard(actor, shade, recover);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, shade, 1, null, { purpose: "destroy" }
   )[0];
   assert.equal(chosen, recover);
@@ -44827,7 +45287,7 @@ test("AI·资源选择：破坏相同牌组随目标角色变化", () => {
   medic.hand = [scout, recover];
   game.rememberPrivateCard(actor, medic, scout);
   game.rememberPrivateCard(actor, medic, recover);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, medic, 1, null, { purpose: "destroy" }
   )[0];
   assert.equal(chosen, recover);
@@ -44843,13 +45303,13 @@ test("AI·资源选择：破坏未知牌仍按固定期望值 4 选择位置且�
   const knownAssault = instance("assault"), unknown = instance("counter");
   warden.hand = [knownAssault, unknown];
   game.rememberPrivateCard(actor, warden, knownAssault);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, warden, 1, null, { purpose: "destroy" }
   )[0];
   assert.equal(chosen, unknown);
   assert.equal(randomCalls, 1);
   warden.hand = [knownAssault, instance("assault")];
-  const chosenAgain = game.aiController.cardSelector.chooseHiddenCards(
+  const chosenAgain = game.aiController.chooseHiddenCards(
     actor, warden, 1, null, { purpose: "destroy" }
   )[0];
   assert.equal(chosenAgain, warden.hand[1]);
@@ -44869,10 +45329,10 @@ test("AI·资源选择：破坏不因未知实体真实牌面改变选择位置"
   };
   const high = build(instance("counter"));
   const low = build(instance("charge"));
-  const highChosen = high.game.aiController.cardSelector.chooseHiddenCards(
+  const highChosen = high.game.aiController.chooseHiddenCards(
     high.actor, high.target, 1, null, { purpose: "destroy" }
   )[0];
-  const lowChosen = low.game.aiController.cardSelector.chooseHiddenCards(
+  const lowChosen = low.game.aiController.chooseHiddenCards(
     low.actor, low.target, 1, null, { purpose: "destroy" }
   )[0];
   assert.equal(highChosen, high.target.hand[1]);
@@ -44889,7 +45349,7 @@ test("AI·资源选择：破坏手牌与装备比较使用上下文状态收益"
   medic.hand = [recover];
   medic.equipment = instance("energyDevice");
   game.rememberPrivateCard(actor, medic, recover);
-  const chosen = game.aiController.cardSelector.chooseZoneCard(actor, medic, { purpose: "destroy" });
+  const chosen = game.aiController.chooseZoneCard(actor, medic, { purpose: "destroy" });
   assert.equal(chosen.zone, "equipment");
   assert.equal(chosen.card, medic.equipment);
 });
@@ -44903,12 +45363,12 @@ test("AI·资源选择：掠夺使用双角色效用而非破坏的单角色损�
   medic.hand = [recover];
   medic.equipment = instance("battleDevice");
   game.rememberPrivateCard(actor, medic, recover);
-  const destroyChoice = game.aiController.cardSelector.chooseZoneCard(
+  const destroyChoice = game.aiController.chooseZoneCard(
     actor, medic, { purpose: "destroy" }
   );
   assert.equal(destroyChoice.zone, "hand");
   // 破坏：recover 8 与 battleDevice 8 同分，优先手牌
-  const plunderChoice = game.aiController.cardSelector.chooseZoneCard(
+  const plunderChoice = game.aiController.chooseZoneCard(
     actor, medic, { purpose: "plunder" }
   );
   assert.equal(plunderChoice.zone, "equipment");
@@ -44925,13 +45385,13 @@ test("AI·资源选择：破坏已知同分保持较早位置且区域使用上�
   warden.hand = [recover, leverage];
   game.rememberPrivateCard(actor, warden, recover);
   game.rememberPrivateCard(actor, warden, leverage);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, warden, 1, null, { purpose: "destroy" }
   )[0];
   assert.equal(chosen, recover);
   warden.equipment = instance("energyDevice");
   // 静态值同为 7，但充能桩的真实能量上下文收益高于只减少一张手牌。
-  const zoneChosen = game.aiController.cardSelector.chooseZoneCard(
+  const zoneChosen = game.aiController.chooseZoneCard(
     actor, warden, { purpose: "destroy" }
   );
   assert.equal(zoneChosen.zone, "equipment");
@@ -44945,7 +45405,7 @@ test("AI·资源选择：非破坏非掠夺的装备阈值分支保持不变", (
     = makeGame([actor, enemy], { random: () => 0 });
   enemy.equipment = instance("energyDevice");
   enemy.hand = [];
-  const chosen = game.aiController.cardSelector.chooseZoneCard(actor, enemy, null);
+  const chosen = game.aiController.chooseZoneCard(actor, enemy, null);
   assert.equal(chosen.zone, "equipment");
   assert.equal(chosen.card, enemy.equipment);
 });
@@ -44959,7 +45419,7 @@ test("AI·资源选择：掠夺使用者角色影响已知手牌选择", () => {
   blade.hand = [recover, expose];
   game.rememberPrivateCard(shade, blade, recover);
   game.rememberPrivateCard(shade, blade, expose);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     shade, blade, 1, null, { purpose: "plunder" }
   )[0];
   assert.equal(chosen, expose);
@@ -44972,7 +45432,7 @@ test("AI·资源选择：掠夺使用者角色影响已知手牌选择", () => {
   bladeTwo.hand = [recoverTwo, exposeTwo];
   medicGame.rememberPrivateCard(medic, bladeTwo, recoverTwo);
   medicGame.rememberPrivateCard(medic, bladeTwo, exposeTwo);
-  const chosenMedic = medicGame.aiController.cardSelector.chooseHiddenCards(
+  const chosenMedic = medicGame.aiController.chooseHiddenCards(
     medic, bladeTwo, 1, null, { purpose: "plunder" }
   )[0];
   assert.equal(chosenMedic, recoverTwo);
@@ -44988,7 +45448,7 @@ test("AI·资源选择：掠夺目标角色影响已知手牌选择", () => {
   ember.hand = [assault, block];
   game.rememberPrivateCard(blade, ember, assault);
   game.rememberPrivateCard(blade, ember, block);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     blade, ember, 1, null, { purpose: "plunder" }
   )[0];
   assert.equal(chosen, assault);
@@ -45001,7 +45461,7 @@ test("AI·资源选择：掠夺目标角色影响已知手牌选择", () => {
   warden.hand = [assaultTwo, blockTwo];
   wardenGame.rememberPrivateCard(bladeTwo, warden, assaultTwo);
   wardenGame.rememberPrivateCard(bladeTwo, warden, blockTwo);
-  const chosenWarden = wardenGame.aiController.cardSelector.chooseHiddenCards(
+  const chosenWarden = wardenGame.aiController.chooseHiddenCards(
     bladeTwo, warden, 1, null, { purpose: "plunder" }
   )[0];
   assert.equal(chosenWarden, blockTwo);
@@ -45017,7 +45477,7 @@ test("AI·资源选择：掠夺未知敌方牌组合效用为 8", () => {
   const knownAssault = instance("assault"), unknown = instance("counter");
   warden.hand = [knownAssault, unknown];
   game.rememberPrivateCard(medic, warden, knownAssault);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     medic, warden, 1, null, { purpose: "plunder" }
   )[0];
   assert.equal(chosen, unknown);
@@ -45039,10 +45499,10 @@ test("AI·资源选择：掠夺不因未知实体真实牌面改变选择位置"
   };
   const high = build(instance("counter"));
   const low = build(instance("charge"));
-  const highChosen = high.game.aiController.cardSelector.chooseHiddenCards(
+  const highChosen = high.game.aiController.chooseHiddenCards(
     high.medic, high.warden, 1, null, { purpose: "plunder" }
   )[0];
-  const lowChosen = low.game.aiController.cardSelector.chooseHiddenCards(
+  const lowChosen = low.game.aiController.chooseHiddenCards(
     low.medic, low.warden, 1, null, { purpose: "plunder" }
   )[0];
   assert.equal(highChosen, high.warden.hand[1]);
@@ -45058,7 +45518,7 @@ test("AI·资源选择：掠夺手牌与装备比较使用转移后的上下文�
   blade.hand = [recover];
   blade.equipment = instance("energyDevice");
   game.rememberPrivateCard(medic, blade, recover);
-  const chosen = game.aiController.cardSelector.chooseZoneCard(medic, blade, { purpose: "plunder" });
+  const chosen = game.aiController.chooseZoneCard(medic, blade, { purpose: "plunder" });
   assert.equal(chosen.zone, "equipment");
   assert.equal(chosen.card, blade.equipment);
 });
@@ -45072,7 +45532,7 @@ test("AI·资源选择：掠夺静态近似不覆盖装备的上下文收益", (
   blade.hand = [shield];
   blade.equipment = instance("energyDevice");
   game.rememberPrivateCard(medic, blade, shield);
-  const chosen = game.aiController.cardSelector.chooseZoneCard(medic, blade, { purpose: "plunder" });
+  const chosen = game.aiController.chooseZoneCard(medic, blade, { purpose: "plunder" });
   assert.equal(chosen.zone, "equipment");
   assert.equal(chosen.card, blade.equipment);
 });
@@ -45085,7 +45545,7 @@ test("AI·资源选择：同阵营掠夺辅助语义使用差值而非相加", (
   const knownBlock = instance("block"), unknown = instance("counter");
   warden.hand = [knownBlock, unknown];
   game.rememberPrivateCard(blade, warden, knownBlock);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     blade, warden, 1, null, { purpose: "plunder" }
   )[0];
   assert.equal(chosen, unknown);
@@ -45275,7 +45735,7 @@ test("AI·资源选择：随机调用：已知手牌胜出不调用随机数", (
   owner.hand = [recover, block];
   game.rememberPrivateCard(actor, owner, recover);
   game.rememberPrivateCard(actor, owner, block);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, owner, 1, null, { purpose: "plunder" }
   )[0];
   assert.equal(chosen, recover);
@@ -45291,7 +45751,7 @@ test("AI·资源选择：随机调用：未知手牌胜出调用一次随机数"
   const knownAssault = instance("assault"), unknown = instance("counter");
   owner.hand = [knownAssault, unknown];
   game.rememberPrivateCard(actor, owner, knownAssault);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, owner, 1, null, { purpose: "plunder" }
   )[0];
   assert.equal(chosen, unknown);
@@ -45309,7 +45769,7 @@ test("AI·资源选择：随机调用：未知候选落败时不解析实体也�
   // 未知，破坏值 4
   owner.equipment = instance("energyDevice");
   // oath-warden 值 7 > 4
-  const chosen = game.aiController.cardSelector.chooseZoneCard(actor, owner, { purpose: "destroy" });
+  const chosen = game.aiController.chooseZoneCard(actor, owner, { purpose: "destroy" });
   assert.equal(chosen.zone, "equipment");
   assert.equal(randomCalls, 0);
 });
@@ -45322,7 +45782,7 @@ test("AI·资源选择：随机调用：只有装备且没有手牌不调用随�
     = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
   owner.equipment = instance("energyDevice");
   owner.hand = [];
-  const chosen = game.aiController.cardSelector.chooseZoneCard(actor, owner, { purpose: "destroy" });
+  const chosen = game.aiController.chooseZoneCard(actor, owner, { purpose: "destroy" });
   assert.equal(chosen.zone, "equipment");
   assert.equal(randomCalls, 0);
 });
@@ -45334,20 +45794,21 @@ test("AI·资源选择：随机调用：多选两张未知牌各调用一次随�
   const { game }
     = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
   owner.hand = [instance("counter"), instance("charge")];
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, owner, 2, null, { purpose: "destroy" }
   );
   assert.equal(chosen.length, 2);
   assert.equal(randomCalls, 2);
 });
 
-test("AI·资源选择：无效望远镜不压过未知手牌且真实与深层选择一致", () => {
+test("AI·资源选择：无效望远镜不压过未知手牌且 Generator 保留完整深层候选", () => {
   const actor = makePlayer("context-root", 0, "dawn", "ai", 3),
     target = makePlayer("context-owner", 1, "dusk", "ai", 0),
     ally = makePlayer("context-ally", 2, "dawn", "ai", 1),
     unknown = instance("charge");
   target.equipment = instance("telescope");
   target.hand = [unknown];
+  actor.hand = [instance("destroy")];
   const { game }
     = makeGame([actor, target, ally], { random: () => 0 });
   for (const enemy of [actor, ally]) {
@@ -45356,7 +45817,7 @@ test("AI·资源选择：无效望远镜不压过未知手牌且真实与深层�
       getDistance(game.state.players, target, enemy, null, enemy.equipment?.definitionId ?? null)
     );
   }
-  const rootChoice = game.aiController.cardSelector.chooseZoneCard(
+  const rootChoice = game.aiController.chooseZoneCard(
     actor, target, { purpose: "destroy" }
   );
   assert.equal(rootChoice.zone, "hand");
@@ -45364,14 +45825,11 @@ test("AI·资源选择：无效望远镜不压过未知手牌且真实与深层�
 
   const remaining = deriveCurrentCardCounts(actor, game.state);
   const state = createInitialWorld(actor.id, game.state, remaining);
-  const simulator = new Simulator(state, {
-    resourceValueQuery: game.aiController.resourceValueQuery
-  });
-  const deepChoice = simulator.chooseSimulatedResourceSelection(
-    state, state.players[0], state.players[1], "destroy"
-  );
-  assert.equal(deepChoice.zone, "hand");
-  assert.equal(deepChoice.selectionKind, "unknown");
+  const deepSelections = game.aiController.actionGenerator.generate(state, actor.id)
+    .filter((action) => action.cardId === "destroy" && action.targetIds[0] === target.id)
+    .map((action) => action.selection);
+  assert.ok(deepSelections.some((selection) => selection.selectionKind === "unknown"));
+  assert.ok(deepSelections.some((selection) => selection.selectionKind === "equipment"));
 });
 
 test("AI·资源选择：望远镜真实改变屏障距离时上下文收益可胜出", () => {
@@ -45387,34 +45845,9 @@ test("AI·资源选择：望远镜真实改变屏障距离时上下文收益可�
   assert.equal(getDistance(game.state.players, target, actor, "telescope", "barrierDevice"), 1);
   assert.equal(getDistance(game.state.players, target, actor, null, "barrierDevice"), 2);
 
-  const remaining = { assault: 4 };
-  const state = createInitialWorld(actor.id, game.state, remaining);
-  const searchActor = state.players[0], searchTarget = state.players[1];
-  const unknownCount = searchTarget.handCount - (searchTarget.knownCards?.length ?? 0);
-  const candidates = buildResourceCandidates({
-    purpose: "destroy",
-    actor: searchActor,
-    owner: searchTarget,
-    knownCards: searchTarget.knownCards,
-    unknownCount,
-    equipmentDefinitionId: searchTarget.equipmentDefinitionId,
-    remainingCardCounts: remaining
-  }).map((candidate) => ({ ...candidate, availableUnknownCount: unknownCount }));
-  const evaluated = game.aiController.resourceValueQuery.evaluate({
-    state,
-    actorId: searchActor.id,
-    targetId: searchTarget.id,
-    purpose: "destroy",
-    candidates
-  });
-  const equipment = evaluated.find((candidate) => candidate.zone === "equipment");
-  const unknown = evaluated.find((candidate) => candidate.selectionKind === "unknown");
-  assert.ok(equipment.contextualStateDelta > 0);
-  assert.ok(equipment.contextualUtility > unknown.contextualUtility);
-  assert.equal(
-    chooseContextualResourceCandidate(evaluated).zone,
-    "equipment"
-  );
+  const choice = game.aiController.chooseZoneCard(actor, target, { purpose:"destroy" });
+  assert.equal(choice.zone, "equipment");
+  assert.equal(choice.card, target.equipment);
 });
 
 test("AI·资源选择：掠夺无效望远镜仍计入接收方获得价值", () => {
@@ -45425,58 +45858,30 @@ test("AI·资源选择：掠夺无效望远镜仍计入接收方获得价值", (
   target.hand = [instance("charge")];
   const { game }
     = makeGame([actor, target, ally]);
-  const remaining = { charge: 4 };
-  const state = createInitialWorld(actor.id, game.state, remaining);
-  const searchActor = state.players[0], searchTarget = state.players[1];
-  const unknownCount = 1;
-  const destroyCandidates = buildResourceCandidates({
-    purpose: "destroy",
-    actor: searchActor,
-    owner: searchTarget,
-    knownCards: [],
-    unknownCount,
-    equipmentDefinitionId: "telescope",
-    remainingCardCounts: remaining
-  }).map((candidate) => ({ ...candidate, availableUnknownCount: unknownCount }));
-  const plunderCandidates = buildResourceCandidates({
-    purpose: "plunder",
-    actor: searchActor,
-    owner: searchTarget,
-    knownCards: [],
-    unknownCount,
-    equipmentDefinitionId: "telescope",
-    remainingCardCounts: remaining
-  }).map((candidate) => ({ ...candidate, availableUnknownCount: unknownCount }));
-  const destroy = game.aiController.resourceValueQuery.evaluate({
-    state,
-    actorId: searchActor.id,
-    targetId: searchTarget.id,
-    purpose: "destroy",
-    candidates: destroyCandidates
-  });
-  const plunder = game.aiController.resourceValueQuery.evaluate({
-    state,
-    actorId: searchActor.id,
-    targetId: searchTarget.id,
-    purpose: "plunder",
-    candidates: plunderCandidates
-  });
-  const destroyedEquipment = destroy.find((candidate) => candidate.zone === "equipment");
-  const plunderedEquipment = plunder.find((candidate) => candidate.zone === "equipment");
-  assert.ok(Math.abs(destroyedEquipment.contextualStateDelta) < 1e-9);
-  assert.ok(plunderedEquipment.acquisitionMaterial > 0);
-  assert.ok(plunderedEquipment.contextualUtility > destroyedEquipment.contextualUtility);
-  assert.equal(chooseContextualResourceCandidate(destroy).selectionKind, "unknown");
-  assert.equal(chooseContextualResourceCandidate(plunder).zone, "equipment");
-
-  const after = structuredClone(state);
-  const simulator = new Simulator(after);
+  const destroyChoice = game.aiController.chooseContextualZoneCard(
+    actor, target, "destroy", null, { charge:4 }
+  );
+  const plunderChoice = game.aiController.chooseContextualZoneCard(
+    actor, target, "plunder", null, { charge:4 }
+  );
+  assert.equal(destroyChoice.zone, "hand");
+  assert.equal(plunderChoice.zone, "equipment");
+  const state = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
+  );
+  const simulator = new Simulator(state);
+  const after = simulator.clone(state);
   simulator.applyForcedResourceSelection(
     after,
     after.players[0],
     after.players[1],
     "plunder",
-    { ...plunderedEquipment, availableUnknownCount: unknownCount }
+    {
+      zone:"equipment",
+      selectionKind:"equipment",
+      definitionId:plunderChoice.card.definitionId,
+      availableUnknownCount:0
+    }
   );
   assert.equal(after.players[1].equipmentRetentionProbability, 0);
   assert.ok(after.players[0].hand.some((card) => card.definitionId === "telescope"));
@@ -45491,7 +45896,7 @@ test("AI·资源选择：已知牌不进入未知池且强制破坏精确身份�
     = makeGame([actor, target]);
   game.rememberPrivateCard(actor, target, counter);
   game.rememberPrivateCard(actor, target, charge);
-  const rootChoice = game.aiController.cardSelector.chooseZoneCard(
+  const rootChoice = game.aiController.chooseZoneCard(
     actor, target, { purpose: "destroy" }
   );
   assert.equal(rootChoice.card, counter);
@@ -46076,11 +46481,11 @@ test("AI·资源选择：破坏模拟同步后掠夺模拟保留具体身份", (
   assert.equal(actor.hand[0].definitionId, "recover");
 });
 
-test("AI·资源选择：破坏模拟共享模块单一公式来源", async () => {
+test("AI·资源选择：破坏模拟只执行 resolved selection 且无价值选择公式", async () => {
   const source = await readFile(projectFile("js/ai/simulation/CardEffectSimulation.js"), "utf8");
-  assert.match(source, /chooseBestResourceHandCandidate/);
-  assert.match(source, /chooseResourceZone/);
-  assert.doesNotMatch(source, /const destroyEquipment =/);
+  assert.match(source, /applyForcedResourceSelection/);
+  assert.match(source, /if \(!selection\) return 0/);
+  assert.doesNotMatch(source, /chooseBestResourceHandCandidate|chooseResourceZone/);
 });
 
 test("AI·资源选择：掠夺模拟使用共享双角色区域选择：灵医掠刃行者选手牌", () => {
@@ -46488,10 +46893,11 @@ test("AI·资源选择：掠夺模拟 scale 三档：装备", () => {
   );
 });
 
-test("AI·资源选择：掠夺模拟共享模块单一公式来源", async () => {
+test("AI·资源选择：掠夺模拟只执行 resolved selection 且无内部 selector", async () => {
   const source = await readFile(projectFile("js/ai/simulation/CardEffectSimulation.js"), "utf8");
-  assert.match(source, /chooseSimulatedResourceSelection/);
-  assert.doesNotMatch(source, /const takeEquipment =/);
+  assert.match(source, /transferKnownCardIdentity/);
+  assert.match(source, /transferUnknownCardIdentity/);
+  assert.doesNotMatch(source, /chooseSimulatedResourceSelection/);
 });
 
 // ---- AI 评分·转移评分 ----
@@ -46531,7 +46937,7 @@ test("AI·转移评分：掠夺最终选择由上下文收益覆盖静态牌值�
   b.hand = [low, high];
   b.equipment = instance("energyDevice");
   game.rememberPrivateCard(a, b, high);
-  const chosen = game.aiController.cardSelector.chooseZoneCard(a, b, { purpose: "plunder" });
+  const chosen = game.aiController.chooseZoneCard(a, b, { purpose: "plunder" });
   assert.equal(chosen.zone, "equipment");
   assert.equal(chosen.card, b.equipment);
 });
@@ -46542,7 +46948,7 @@ test("AI·转移评分：掠夺装备价值高于手牌与未知期望值时选�
     = makeGame([a, b], { random: () => 0 });
   b.hand.push(instance("charge"));
   b.equipment = instance("energyDevice");
-  const chosen = game.aiController.cardSelector.chooseZoneCard(a, b, { purpose: "plunder" });
+  const chosen = game.aiController.chooseZoneCard(a, b, { purpose: "plunder" });
   assert.equal(chosen.zone, "equipment");
   assert.equal(chosen.card, b.equipment);
 });
@@ -46562,7 +46968,7 @@ test("AI·转移评分：破坏按匿名响应期望选择且不读取真实牌�
   );
   b.hand = [known, unknown];
   game.rememberPrivateCard(a, b, known);
-  const chosen = game.aiController.cardSelector.chooseZoneCard(a, b, { purpose: "destroy" });
+  const chosen = game.aiController.chooseZoneCard(a, b, { purpose: "destroy" });
   assert.equal(reads, 0);
   assert.equal(chosen.zone, "hand");
   assert.equal(chosen.card, unknown);
@@ -46664,7 +47070,7 @@ test("AI·转移评分：转移己方到己方选择受伤接收者更需要的�
   game.rememberPrivateCard(actor, from, assault);
   game.rememberPrivateCard(actor, from, recover);
   receiver.hp = 2;
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen, recover);
@@ -46681,7 +47087,7 @@ test("AI·转移评分：转移己方到己方选择低血接收者更需要的�
   game.rememberPrivateCard(actor, from, charge);
   game.rememberPrivateCard(actor, from, block);
   receiver.hp = 1;
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen, block);
@@ -46698,7 +47104,7 @@ test("AI·转移评分：转移己方到己方不转走来源更需要的已知�
   game.rememberPrivateCard(actor, from, recover);
   game.rememberPrivateCard(actor, from, charge);
   from.hp = 1;
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen, charge);
@@ -46739,7 +47145,7 @@ test("AI·转移评分：转移己方到己方未知牌只在溢出空间收益�
     actor
   ).find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen, unknown);
@@ -46755,7 +47161,7 @@ test("AI·转移评分：转移敌方到己方选择团队净收益最高的已�
   from.hand = [low, high];
   game.rememberPrivateCard(actor, from, low);
   game.rememberPrivateCard(actor, from, high);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen, high);
@@ -46778,7 +47184,7 @@ test("AI·转移评分：转移敌方到己方已知与未知期望值4混合时
   );
   from.hand = [known, unknown];
   game.rememberPrivateCard(actor, from, known);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }, {}
   )[0];
   assert.equal(reads, 0);
@@ -46803,7 +47209,7 @@ test("AI·转移评分：转移敌方到己方未知候选胜出时只随机未�
   const candidate = chooseTransferHandCandidate(actor, from, receiver);
   assert.equal(candidate.selectionKind, "unknown");
   assert.equal(candidate.cardId, null);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(reads, 0);
@@ -46923,7 +47329,7 @@ test("AI·转移评分：与执行对同一已知牌选择一致", () => {
   game.rememberPrivateCard(actor, from, high);
   const candidate = chooseTransferHandCandidate(actor, from, receiver);
   assert.equal(candidate.selectionKind, "known");
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen.id, candidate.cardId);
@@ -46940,7 +47346,7 @@ test("AI·转移评分：选择未知候选时执行只从未知位置随机选�
   from.hand = [first, second];
   const candidate = chooseTransferHandCandidate(actor, from, receiver);
   assert.equal(candidate.selectionKind, "unknown");
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen, second);
@@ -47003,7 +47409,7 @@ test("AI·转移评分：自己作为转移来源时执行与评分选择同一�
   const candidate = chooseTransferHandCandidate(actor, actor, receiver);
   assert.equal(candidate.selectionKind, "known");
   assert.equal(candidate.cardId, recover.id);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, actor, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen, recover);
@@ -47016,7 +47422,7 @@ test("AI·转移评分：对自己手牌无 transfer purpose 时仍按最低基�
     = makeGame([actor, receiver], { random: () => 0 });
   const recover = instance("recover"), charge = instance("charge");
   actor.hand.push(recover, charge);
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(actor, actor, 1)[0];
+  const chosen = game.aiController.chooseHiddenCards(actor, actor, 1)[0];
   assert.equal(chosen, charge);
 });
 
@@ -47209,7 +47615,7 @@ test("AI·转移评分：转移角色权重：根节点规划与实际选牌使�
     plan.score,
     scoreTransferCombination({ actor, from, receiver, zone: "hand", remainingCardCounts: counts })
   );
-  const chosen = game.aiController.cardSelector.chooseHiddenCards(
+  const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
   assert.equal(chosen, unknown);

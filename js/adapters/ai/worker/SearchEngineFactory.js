@@ -33,7 +33,6 @@ import { Pattern } from "../../../ai/Searcher/Pattern/Pattern.js";
 import { Searcher } from "../../../ai/search/Searcher.js";
 import { SearchBudget } from "../../../ai/search/SearchBudget.js";
 import { SearchPrior } from "../../../ai/search/SearchPrior.js";
-import { chooseDiscardCandidates } from "../../../ai/policy/ResourceSelectionPolicy.js";
 import { tacticResolutionScale } from "../../../ai/search/TacticResolutionQuery.js";
 import { SearchRng } from "../../../ai/search/SearchRng.js";
 
@@ -160,9 +159,7 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     decideBlock:(...args) => stateEvaluator.decidePlanningBlock(...args),
     decideGuardianAid:(...args) => stateEvaluator.decidePlanningGuardianAid(...args),
     decideDyingRescue:(...args) => stateEvaluator.decidePlanningDyingRescue(...args),
-    selectGuardianAidDiscard:(player, cards, context) => (
-      chooseDiscardCandidates(player, cards, 1, context)[0] ?? null
-    )
+    resolveDiscardCandidates:(...args) => stateEvaluator.resolveDiscardCandidates(...args)
   });
   const valueSimulationQuery = new ValueSimulationQuery(
     stateEvaluator,
