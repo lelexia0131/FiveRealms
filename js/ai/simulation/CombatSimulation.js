@@ -6,7 +6,7 @@
 Simulator 正式模拟门面及 Card/Skill/Status 模拟组件。
 
 下游
-ResponseSimulation、Radar domain、state/Probability 与共享 simulation runtime。
+ResponseSimulation、Domain CardDefinitions、state/Probability 与共享 simulation runtime。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本，不持有真实 GameState。
@@ -30,7 +30,6 @@ import {
 import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js";
 import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js";
 import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
-import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js";
 import {
   PROBABILITY_CLASSIFICATION,
   PROBABILITY_EPSILON,
@@ -43,6 +42,12 @@ import {
   queryPlayerHandProbability,
   totalBranchProbability
 } from "../state/Probability.js";
+
+const RADAR_BASIC_DEFINITION_IDS = Object.freeze(
+  Object.values(DOMAIN_CARD_DEFINITIONS)
+    .filter((definition) => definition.category === "basic")
+    .map((definition) => definition.definitionId)
+);
 
 /*
 功能
@@ -500,7 +505,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       const judgmentBlockCards = [];
       // 每个基础判定牌分别加入身份；判得格挡可在全部雷达槽位完成后用于当前响应。
       for (let slot = 0; slot < maximumRequirement; slot += 1) {
-        for (const definitionId of RADAR_BASIC_DEFINITIONS) {
+        for (const definitionId of RADAR_BASIC_DEFINITION_IDS) {
           this.checkpointSearchWork();
           const acquisitionWorlds = this.projectProbabilityWork(
             baseWorlds,

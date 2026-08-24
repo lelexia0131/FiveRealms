@@ -6,7 +6,7 @@
 StateValue runtime adapter、Searcher、ValueLedger 与测试。
 
 下游
-Economics、CardValue、ThreatValue、GlobalBenefitValue 以及封印、雷达的现有纯领域函数。
+Economics、CardValue、ThreatValue、GlobalBenefitValue、封印 value 与 canonical Probability。
 
 状态边界
 只读 Fact/World、canonical Action 和显式传入的领域值；不持有 Game，不写状态。
@@ -18,9 +18,9 @@ Economics、CardValue、ThreatValue、GlobalBenefitValue 以及封印、雷达�
 不得导入或构造 Simulator、Searcher、Controller；不得搜索、生成动作或消费 Search Prior。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js";
 import {
   PROBABILITY_EPSILON,
+  buildRadarJudgmentProbabilities,
   clampProbability,
   probabilityFromCurrentCounts,
   queryCurrentCardCounts,
@@ -585,7 +585,7 @@ export class Evaluator {
   无。
 
   调用函数
-  playerValueTerms、sealTeamBurden、buildRadarJudgmentProbabilities。
+  playerValueTerms、sealTeamBurden、Probability.buildRadarJudgmentProbabilities。
 
   边界与不变量
 闪电与搜索期封印值由调用层以 State points 传入；无封印数组的独立调用保持 raw Domain 默认；

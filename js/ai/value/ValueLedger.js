@@ -6,7 +6,7 @@
 Planner 诊断、正式边界 与价值归属测试。
 
 下游
-纯 Evaluator、运行时 State Value、闪电/响应模拟查询与封印纯函数。
+纯 Evaluator、运行时 State Value、canonical Probability、闪电/响应模拟查询与封印纯函数。
 
 状态边界
 只读 before/after World；不修改输入状态。
@@ -17,8 +17,8 @@ Planner 诊断、正式边界 与价值归属测试。
 架构约束
 账本解释已有价值，不是第二个 Evaluator；所有响应/候选字段仅供诊断，开关不得改变最终价值或选择。
 */
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js";
 import {
+  buildRadarJudgmentProbabilities,
   queryCurrentCardCounts,
   queryPlayerHandProbability
 } from "../state/Probability.js";

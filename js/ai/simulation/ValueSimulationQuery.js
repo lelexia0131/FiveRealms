@@ -6,7 +6,7 @@
 AIController、状态价值适配器、ValueLedger 与正式边界。
 
 下游
-Simulator、闪电概率 辅助函数 与纯 value/Evaluator。
+Simulator、canonical Probability、闪电概率辅助函数与纯 value/Evaluator。
 
 状态边界
 只克隆并写入 World；不持有或修改真实 GameState。
@@ -17,7 +17,6 @@ Simulator、闪电概率 辅助函数 与纯 value/Evaluator。
 架构约束
 本模块只做有界 simulation query，不搜索、不生成动作，也不拥有最终价值组合公式。
 */
-import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js";
 import { Simulator } from "./Simulator.js";
 import {
   buildLightningHitDistribution,
@@ -27,6 +26,7 @@ import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolu
 import { HP_VALUE } from "../value/Economics.js";
 import { exposureComponents } from "../value/ThreatValue.js";
 import {
+  buildRadarJudgmentProbabilities,
   conditionProbability,
   queryCurrentCardCounts
 } from "../state/Probability.js";

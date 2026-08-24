@@ -60,6 +60,8 @@ import { createFact, deriveCurrentCardCounts } from "../js/ai/state/Fact.js";
 import { cloneWorld } from "../js/ai/state/World.js";
 import {
   PROBABILITY_CLASSIFICATION,
+  buildRadarJudgmentProbabilities,
+  buildRadarJudgmentSequenceProbabilities,
   conditionProbability,
   createProbabilityState,
   expectedBranchValue,
@@ -199,7 +201,6 @@ import {
 } from "../js/ai/policy/ResourceSelectionPolicy.js";
 import { CardSelectionBoundary } from "../js/ai/policy/CardSelectionBoundary.js";
 import { getDiscardKeepValue, rankDiscardCandidates } from "../js/ai/policy/ResourceSelectionPolicy.js";
-import { buildRadarJudgmentProbabilities } from "../js/ai/domain/RadarModel.js";
 import {
   buildLightningHitDistribution,
   buildLightningPropagationChainIds as buildLightningPropagationChain,
@@ -237,7 +238,6 @@ import {
 import { dynamicRootFlipGain } from "../js/ai/simulation/RootResolutionQuery.js";
 import { CardSelectionPolicy } from "../js/ai/policy/CardSelectionPolicy.js";
 import { ResponsePolicy } from "../js/ai/policy/ResponsePolicy.js";
-import { buildRadarJudgmentProbabilities as buildDomainRadarJudgmentProbabilities } from "../js/ai/domain/RadarModel.js";
 import {
   buildLightningHitDistribution as buildDomainLightningHitDistribution,
   buildLightningPropagationChainIds,
@@ -28133,19 +28133,67 @@ test("AI·雷达：战术判定概率来自剩余牌堆且战术牌耗尽时归�
   assertClose(fixed.tactic, tacticTotal / total);
 });
 
-test("AI·雷达：正式 RadarModel 概率守恒、输入只读且别名入口一致", () => {
+test("AI·雷达：canonical Probability 单次判定保持质量、空池、override 与输入只读", () => {
   const counts = { assault: 3, block: 2, counter: 4, defenseDevice: 1 };
   const snapshot = structuredClone(counts);
-  const outcome = buildDomainRadarJudgmentProbabilities(counts);
-  assert.deepEqual(outcome, buildRadarJudgmentProbabilities(counts));
+  const outcome = buildRadarJudgmentProbabilities(counts);
   assertClose(
     outcome.tactic + outcome.equipment
     + Object.values(outcome.basic).reduce((sum, probability) => sum + probability, 0),
     1
   );
+  assert.deepEqual(buildRadarJudgmentProbabilities({}), {
+    tactic:0,
+    equipment:0,
+    basic:{ assault:0, recover:0, block:0, charge:0, shield:0 },
+    hasJudgmentPool:false
+  });
+  assert.deepEqual(
+    buildRadarJudgmentProbabilities(
+      { block:1, charge:3, defenseDevice:2 },
+      { block:.2, otherBasic:.3, equipment:.1 }
+    ),
+    {
+      tactic:.4,
+      equipment:.1,
+      basic:{ assault:0, recover:0, block:.2, charge:.3, shield:0 },
+      hasJudgmentPool:true
+    }
+  );
   outcome.basic.assault = -1;
   assert.deepEqual(counts, snapshot);
   assert.equal(JSON.stringify(outcome).includes("game"), false);
+});
+
+test("AI·雷达：canonical Probability 多次判定逐槽无放回且不保留 genealogy", () => {
+  const counts = { block:1, charge:1 };
+  const snapshot = structuredClone(counts);
+  const sequence = buildRadarJudgmentSequenceProbabilities(counts, 2);
+  assert.deepEqual(sequence, [
+    { probability:.5, outcomes:["basic:block", "basic:charge"] },
+    { probability:.5, outcomes:["basic:charge", "basic:block"] }
+  ]);
+  assertClose(
+    sequence.reduce((sum, branch) => sum + branch.probability, 0),
+    1
+  );
+  assert.deepEqual(
+    buildRadarJudgmentSequenceProbabilities({}, 2),
+    [{ probability:1, outcomes:["noJudgment", "noJudgment"] }]
+  );
+  assert.deepEqual(
+    buildRadarJudgmentSequenceProbabilities(
+      counts,
+      2,
+      [
+        { block:1, otherBasic:0, equipment:0 },
+        { block:0, otherBasic:1, equipment:0 }
+      ]
+    ),
+    [{ probability:1, outcomes:["basic:block", "basic:charge"] }]
+  );
+  assert.deepEqual(counts, snapshot);
+  assert.equal(sequence.some((branch) => "conditions" in branch || "state" in branch), false);
 });
 
 test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确定性拆雷达", async () => {

@@ -6,7 +6,7 @@
 Simulator 正式模拟门面、CardEffectSimulation 与 CombatSimulation。
 
 下游
-Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
+Lightning/Seal domain models、角色/卡牌配置与 canonical Probability。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本。
@@ -22,13 +22,11 @@ import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/Skill
 import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js";
 import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js";
 import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js";
-import {
-  buildRadarJudgmentSequenceProbabilities
-} from "../domain/RadarModel.js";
 import { hasPassiveSkill } from "../state/RuleProjection.js";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
+  buildRadarJudgmentSequenceProbabilities,
   clampProbability,
   expectedBranchValue,
   independentUnionProbability,
@@ -615,7 +613,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   仅为联合判定分配一个条件键。
 
   调用函数
-  buildRadarJudgmentSequenceProbabilities、interpretDefenseJudgment、currentProbabilityEventKey。
+  Probability.buildRadarJudgmentSequenceProbabilities、interpretDefenseJudgment、currentProbabilityEventKey。
 
   边界与不变量
   outcomes 顺序与真实判定调用顺序一致；每个战术结果只免除一个格挡需求。

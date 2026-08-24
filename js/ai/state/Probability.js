@@ -3,10 +3,10 @@
 唯一拥有当前未知信息的有限池状态、匿名物理槽、惰性查询、条件后验与动态事件概率代数。
 
 上游
-StateContracts、ActionGenerator、Simulator、领域概率模型、Policy 与 Worker 搜索入口。
+StateContracts、ActionGenerator、Simulator、Value、Policy 与 Worker 搜索入口。
 
 下游
-Domain Card/Ruleset facts 只由调用方以当前确定计数传入；本模块不复制规则。
+Domain Card/Ruleset Definitions 提供固定牌池事实；其它 Domain facts 由调用方以当前确定计数传入。
 
 状态边界
 ProbabilityState 只保存当前匿名槽组与当前有限池充分统计；动态事件函数只读分支并返回局部结果。
@@ -17,6 +17,8 @@ ProbabilityState 只保存当前匿名槽组与当前有限池充分统计；动
 架构约束
 历史事件、identity genealogy 与 World identity 不得进入 ProbabilityState；相同当前物理统计必须立即合并。
 */
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 
 export const PROBABILITY_EPSILON = 1e-12;
 
@@ -32,6 +34,15 @@ const PROBABILITY_DEFINITION_IDS = Object.freeze([
   "recover", "block", "counter", "assault"
 ]);
 export const PROBABILITY_DRAW_BUCKET = "outside/drawPool";
+
+const RADAR_BASIC_DEFINITION_IDS = Object.freeze(
+  Object.values(CARD_DEFINITIONS)
+    .filter((definition) => definition.category === "basic")
+    .map((definition) => definition.definitionId)
+);
+const RADAR_OTHER_BASIC_DEFINITION_IDS = Object.freeze(
+  RADAR_BASIC_DEFINITION_IDS.filter((definitionId) => definitionId !== "block")
+);
 
 const probabilityMemo = new WeakMap();
 
@@ -62,6 +73,271 @@ const probabilityMemo = new WeakMap();
 */
 export function clampProbability(value) {
   return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+/*
+功能
+从当前公开判定池或正式初始牌堆一次构造 Radar query 所需的计数。
+
+调用方
+buildRadarJudgmentProbabilities、buildRadarJudgmentSequenceProbabilities。
+
+输入
+可选的当前剩余牌定义计数，以及是否直接按判定 outcome 聚合。
+
+输出
+只含合法正计数的独立 counts 对象及其 totalWeight。
+
+读取状态
+Domain CardDefinitions 与 RulesetDefinition.deckComposition。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+不读取真实判定牌身份或修改输入；null 使用正式初始牌堆，显式空对象保持空池语义；
+definition 与 outcome 两种粒度都只扫描并物化当前牌池一次。
+*/
+function radarJudgmentPoolCounts(remainingCardCounts = null, groupByOutcome = false) {
+  const sourceCounts = remainingCardCounts
+    && typeof remainingCardCounts === "object"
+    && !Array.isArray(remainingCardCounts)
+    ? remainingCardCounts
+    : RULESET_DEFINITION.deckComposition;
+  const counts = {};
+  let totalWeight = 0;
+  for (const [definitionId, count] of Object.entries(sourceCounts)) {
+    const value = Number(count);
+    const definition = CARD_DEFINITIONS[definitionId];
+    if (!definition || !Number.isFinite(value) || value <= 0) continue;
+    const key = groupByOutcome
+      ? definition.category === "basic" ? `basic:${definitionId}` : definition.category
+      : definitionId;
+    counts[key] = (counts[key] ?? 0) + value;
+    totalWeight += value;
+  }
+  return { counts, totalWeight };
+}
+
+/*
+功能
+计算一次雷达判定落入战术、装备或各基础牌定义的条件概率。
+
+调用方
+Status/Combat simulation 上游、ValueSimulationQuery、Evaluator、ValueLedger 与直接概率测试。
+
+输入
+可选当前剩余牌计数，以及 block、otherBasic、equipment 的显式概率覆盖。
+
+输出
+归一化的新雷达类别概率、基础牌概率与判定池可用标记。
+
+读取状态
+Domain CardDefinitions、RulesetDefinition 与调用方提供的当前牌池计数。
+
+写入状态
+无。
+
+调用函数
+radarJudgmentPoolCounts、clampProbability。
+
+边界与不变量
+不修改输入；概率质量非空时总和为一，显式空池时全部为零；override 保持当前残差和归一化语义。
+*/
+export function buildRadarJudgmentProbabilities(
+  remainingCardCounts = null,
+  overrideProbabilities = null
+) {
+  const {
+    counts:weights,
+    totalWeight
+  } = radarJudgmentPoolCounts(remainingCardCounts);
+  const basicProbabilities = Object.fromEntries(
+    RADAR_BASIC_DEFINITION_IDS.map((definitionId) => [
+      definitionId,
+      totalWeight > PROBABILITY_EPSILON ? (weights[definitionId] ?? 0) / totalWeight : 0
+    ])
+  );
+  let tacticProbability = 0;
+  let equipmentProbability = 0;
+  for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
+    const weight = weights[definitionId] ?? 0;
+    if (weight <= 0) continue;
+    if (definition.category === "tactic") tacticProbability += weight / totalWeight;
+    else if (definition.category === "equipment") equipmentProbability += weight / totalWeight;
+  }
+
+  const override = overrideProbabilities && typeof overrideProbabilities === "object"
+    ? overrideProbabilities
+    : null;
+  if (override) {
+    const overrideBlock = clampProbability(override.block ?? basicProbabilities.block);
+    const overrideEquipment = clampProbability(override.equipment ?? equipmentProbability);
+    const overrideOtherBasic = clampProbability(override.otherBasic
+      ?? RADAR_OTHER_BASIC_DEFINITION_IDS.reduce(
+        (sum, definitionId) => sum + basicProbabilities[definitionId],
+        0
+      ));
+    const otherBasicWeight = RADAR_OTHER_BASIC_DEFINITION_IDS.reduce(
+      (sum, definitionId) => sum + (weights[definitionId] ?? 0),
+      0
+    );
+    let otherBasicRatios;
+    if (otherBasicWeight > PROBABILITY_EPSILON) {
+      otherBasicRatios = Object.fromEntries(
+        RADAR_OTHER_BASIC_DEFINITION_IDS.map((definitionId) => [
+          definitionId,
+          (weights[definitionId] ?? 0) / otherBasicWeight
+        ])
+      );
+    } else {
+      const fixedTotal = RADAR_OTHER_BASIC_DEFINITION_IDS.reduce(
+        (sum, definitionId) => sum + (RULESET_DEFINITION.deckComposition[definitionId] ?? 0),
+        0
+      );
+      otherBasicRatios = Object.fromEntries(
+        RADAR_OTHER_BASIC_DEFINITION_IDS.map((definitionId) => [
+          definitionId,
+          fixedTotal > 0
+            ? (RULESET_DEFINITION.deckComposition[definitionId] ?? 0) / fixedTotal
+            : 0.25
+        ])
+      );
+    }
+    basicProbabilities.block = overrideBlock;
+    for (const definitionId of RADAR_OTHER_BASIC_DEFINITION_IDS) {
+      basicProbabilities[definitionId] = overrideOtherBasic * otherBasicRatios[definitionId];
+    }
+    equipmentProbability = overrideEquipment;
+    tacticProbability = Math.max(
+      0,
+      1 - overrideBlock - overrideOtherBasic - overrideEquipment
+    );
+  }
+
+  let judgmentTotal = tacticProbability + equipmentProbability;
+  for (const definitionId of RADAR_BASIC_DEFINITION_IDS) {
+    judgmentTotal += basicProbabilities[definitionId];
+  }
+  if (judgmentTotal > PROBABILITY_EPSILON) {
+    tacticProbability /= judgmentTotal;
+    equipmentProbability /= judgmentTotal;
+    for (const definitionId of RADAR_BASIC_DEFINITION_IDS) {
+      basicProbabilities[definitionId] /= judgmentTotal;
+    }
+  } else {
+    tacticProbability = 0;
+    equipmentProbability = 0;
+    for (const definitionId of RADAR_BASIC_DEFINITION_IDS) {
+      basicProbabilities[definitionId] = 0;
+    }
+  }
+
+  return {
+    tactic:tacticProbability,
+    equipment:equipmentProbability,
+    basic:basicProbabilities,
+    hasJudgmentPool:totalWeight > PROBABILITY_EPSILON || Boolean(override)
+  };
+}
+
+/*
+功能
+按当前无放回牌池或显式逐槽覆盖计算多个雷达判定的联合结果分区。
+
+调用方
+StatusSimulation.buildRadarOutcomeSequencePartition 与直接概率测试。
+
+输入
+当前剩余牌计数、非负判定次数、可选逐槽概率覆盖与可选统一概率覆盖。
+
+输出
+`{ probability, outcomes }` 数组；outcomes 严格按判定顺序排列。
+
+读取状态
+Domain CardDefinitions、RulesetDefinition 与传入当前牌池计数。
+
+写入状态
+无。
+
+调用函数
+radarJudgmentPoolCounts、buildRadarJudgmentProbabilities。
+
+边界与不变量
+默认查询每槽从前一槽剩余容量抽取；显式覆盖只作用于指定局部查询；结果不写回 World 或保留历史 genealogy。
+*/
+export function buildRadarJudgmentSequenceProbabilities(
+  remainingCardCounts,
+  requirementCount,
+  overrideProbabilitiesByRequirement = null,
+  overrideProbabilities = null
+) {
+  const count = Math.max(0, Math.floor(Number(requirementCount) || 0));
+  if (count <= 0) return [{ probability:1, outcomes:[] }];
+  const overrides = Array.isArray(overrideProbabilitiesByRequirement)
+    ? overrideProbabilitiesByRequirement
+    : null;
+  if (overrides?.length || overrideProbabilities) {
+    let worlds = [{ probability:1, outcomes:[] }];
+    for (let slot = 0; slot < count; slot += 1) {
+      const probabilities = buildRadarJudgmentProbabilities(
+        remainingCardCounts,
+        overrides?.[slot] ?? overrideProbabilities
+      );
+      const outcomes = [];
+      if (!probabilities.hasJudgmentPool) outcomes.push(["noJudgment", 1]);
+      else {
+        if (probabilities.tactic > PROBABILITY_EPSILON) {
+          outcomes.push(["tactic", probabilities.tactic]);
+        }
+        if (probabilities.equipment > PROBABILITY_EPSILON) {
+          outcomes.push(["equipment", probabilities.equipment]);
+        }
+        for (const definitionId of RADAR_BASIC_DEFINITION_IDS) {
+          const probability = probabilities.basic[definitionId];
+          if (probability > PROBABILITY_EPSILON) {
+            outcomes.push([`basic:${definitionId}`, probability]);
+          }
+        }
+      }
+      worlds = worlds.flatMap((world) => outcomes.map(([outcome, probability]) => ({
+        probability:world.probability * probability,
+        outcomes:[...world.outcomes, outcome]
+      })));
+    }
+    return worlds;
+  }
+
+  const {
+    counts:outcomeCounts,
+    totalWeight
+  } = radarJudgmentPoolCounts(remainingCardCounts, true);
+  let worlds = [{
+    probability:1,
+    outcomes:[],
+    counts:outcomeCounts,
+    total:totalWeight
+  }];
+  for (let slot = 0; slot < count; slot += 1) {
+    worlds = worlds.flatMap((world) => {
+      if (world.total <= PROBABILITY_EPSILON) {
+        return [{ ...world, outcomes:[...world.outcomes, "noJudgment"] }];
+      }
+      return Object.entries(world.counts).flatMap(([outcome, available]) => {
+        if (available <= PROBABILITY_EPSILON) return [];
+        return [{
+          probability:world.probability * available / world.total,
+          outcomes:[...world.outcomes, outcome],
+          counts:{ ...world.counts, [outcome]:available - 1 },
+          total:world.total - 1
+        }];
+      });
+    });
+  }
+  return worlds.map(({ probability, outcomes }) => ({ probability, outcomes }));
 }
 
 /*
