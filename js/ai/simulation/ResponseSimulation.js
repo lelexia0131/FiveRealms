@@ -30,7 +30,7 @@ import {
   queryOrderedFirstResponder,
   queryPlayerHandProbability,
   totalBranchProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 
 /*
 功能

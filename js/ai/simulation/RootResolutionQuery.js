@@ -19,7 +19,7 @@ ValueSimulationQuery 与固定响应回归测试。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { isGlobalBenefitCard } from "../domain/GlobalBenefitModel.js";
-import { conditionProbability } from "../state/Probability.js";
+import { conditionProbability } from "../state/Probability/Probability.js";
 
 export const TARGET_SCOPE_CARDS = new Set(["shockwave", "provoke"]);
 

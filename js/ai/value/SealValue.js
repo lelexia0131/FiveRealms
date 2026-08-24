@@ -6,7 +6,7 @@
 Evaluator 与 ValueLedger。
 
 下游
-domain/SealModel 与 value/ThreatValue。
+Probability facade 与 value/ThreatValue。
 
 状态边界
 只读过滤后的 World 与封印持有者，不写状态。
@@ -17,8 +17,10 @@ domain/SealModel 与 value/ThreatValue。
 架构约束
 只拥有 STATE_VALUE 投影；不拥有封印概率、搜索先验或 sibling timing。
 */
-import { sealOutcomeProbabilities } from "../domain/SealModel.js";
-import { PROBABILITY_EPSILON } from "../state/Probability.js";
+import {
+  PROBABILITY_EPSILON,
+  sealOutcomeProbabilities
+} from "../state/Probability/Probability.js";
 import { turnOpportunityValue } from "./ThreatValue.js";
 
 /*

@@ -18,17 +18,17 @@ policy/ResponsePolicy、ValueSimulationQuery、状态组合与既有 Domain/Valu
 本文件是唯一响应执行边界；不得保留第二份响应阈值、分数或选择公式。
 */
 import { AI_RUNTIME_POLICY } from "./AiRuntimePolicy.js";
+import {
+  nextLightningReceiverId as nextDomainLightningReceiverId
+} from "../../domain/rules/status/StatusRules.js";
 import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
+import { hasFactStatus } from "../state/Fact.js";
 import { createInitialWorld } from "../state/StateContracts.js";
-import { probabilityFromCurrentCounts } from "../state/Probability.js";
 import {
-  hasLightning,
-  nextLightningReceiverId
-} from "../domain/LightningModel.js";
-import {
-  hasSeal,
+  probabilityFromCurrentCounts,
   tacticJudgmentProbability
-} from "../domain/SealModel.js";
+} from "../state/Probability/Probability.js";
+import { projectCanonicalSeatRoster } from "../state/RuleProjection.js";
 import { turnOpportunityValue } from "../value/ThreatValue.js";
 import { ResponsePolicy } from "./ResponsePolicy.js";
 import { getCharacterRoleTags } from "./CharacterRoleMetadata.js";
@@ -289,7 +289,9 @@ export class ResponseBoundary {
           player.id === rawContext.statusCounterContext?.holderId && player.alive
         ));
         // 反制会让 holder 跳过本次判定并立即转移闪电，敌方 holder 不能进入 AI 的价值比较。
-        if (!holder || !hasLightning(holder) || holder.battleTeam !== responder.battleTeam) {
+        if (!holder
+          || !hasFactStatus(holder, "lightning")
+          || holder.battleTeam !== responder.battleTeam) {
           return { valid: false, noCounterBurden: 0, withCounterBurden: 0 };
         }
         const state = createInitialWorld(
@@ -298,7 +300,10 @@ export class ResponseBoundary {
           getRemainingCardCounts()
         );
         const visibleHolder = state.players.find((player) => player.id === holder.id);
-        const receiverId = nextLightningReceiverId(rawPlayers, holder);
+        const receiverId = nextDomainLightningReceiverId(
+          projectCanonicalSeatRoster(rawPlayers),
+          holder.id
+        );
         const visibleReceiver = state.players.find((player) => player.id === receiverId);
         return {
           valid: true,
@@ -321,7 +326,9 @@ export class ResponseBoundary {
         const holder = rawPlayers.find((player) => (
           player.id === rawContext.statusCounterContext?.holderId && player.alive
         ));
-        if (!holder || !hasSeal(holder) || holder.battleTeam !== responder.battleTeam) {
+        if (!holder
+          || !hasFactStatus(holder, "sealed")
+          || holder.battleTeam !== responder.battleTeam) {
           return { valid: false, preventedBurden: 0 };
         }
         const skipProbability = 1 - tacticJudgmentProbability(getRemainingCardCounts());

@@ -6,7 +6,7 @@
 Planner、ValueSimulationQuery 与模拟器专项测试。
 
 下游
-Response、Combat、CardEffect、SkillEffect 与 Status 模拟组件。
+Response、Combat、CardEffect、SkillEffect、Status 模拟组件与 Domain StatusRules。
 
 状态边界
 只克隆并写入 World；不持有或修改真实 GameState。
@@ -20,6 +20,9 @@ Response、Combat、CardEffect、SkillEffect 与 Status 模拟组件。
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import {
+  nextLightningReceiverId as nextDomainLightningReceiverId
+} from "../../domain/rules/status/StatusRules.js";
+import {
   PROBABILITY_EPSILON,
   clampProbability,
   currentProbabilitySignature,
@@ -29,9 +32,9 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranchesCooperatively,
   totalBranchProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 import { cloneWorld } from "../state/World.js";
-import { hasPassiveSkill } from "../state/RuleProjection.js";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
 
 import { withResponseSimulation } from "./ResponseSimulation.js";
 import { withCombatSimulation } from "./CombatSimulation.js";
@@ -1087,6 +1090,78 @@ class SimulatorCore {
         const rightDistance = ((Number(right.seatIndex) || 0) - sourceSeat + seatCount) % seatCount;
         return leftDistance - rightDistance;
       });
+  }
+
+  /*
+  功能
+  返回 Domain rule 确定的下一名闪电接收者 ID。
+
+  调用方
+  buildLightningPropagationChainIds 与 simulation lifecycle tests。
+
+  输入
+  canonical 玩家座次数组与当前持有者。
+
+  输出
+  下一接收者 ID；不存在时为 null。
+
+  读取状态
+  玩家 alive、seatIndex、status 与当前 holder ID。
+
+  写入状态
+  无。
+
+  调用函数
+  RuleProjection.projectCanonicalSeatRoster、Domain StatusRules.nextLightningReceiverId。
+
+  边界与不变量
+  接收者规则只由 Domain authority 解释；本方法不计算概率或修改状态。
+  */
+  nextLightningReceiverId(players, holder) {
+    if (!holder?.alive || !Array.isArray(players) || !players.length) return null;
+    return nextDomainLightningReceiverId(
+      projectCanonicalSeatRoster(players),
+      holder.id
+    ) ?? null;
+  }
+
+  /*
+  功能
+  构造闪电在当前存活座位环的一圈合法持有者 ID 顺序。
+
+  调用方
+  ValueSimulationQuery 与 simulation lifecycle tests。
+
+  输入
+  canonical 玩家座次数组与初始持有者。
+
+  输出
+  以初始持有者开头、每名玩家最多一次的新 ID 数组。
+
+  读取状态
+  玩家 alive、seatIndex、status 与初始 holder。
+
+  写入状态
+  无。
+
+  调用函数
+  nextLightningReceiverId、RuleProjection.projectCanonicalSeatRoster。
+
+  边界与不变量
+  Domain rule 负责跳过死亡者和已有闪电者；回到初始 holder、原地或无接收者时立即终止。
+  */
+  buildLightningPropagationChainIds(players, initialHolder) {
+    if (!initialHolder?.alive || !Array.isArray(players) || !players.length) return [];
+    const roster = projectCanonicalSeatRoster(players);
+    const chainIds = [initialHolder.id];
+    let currentId = initialHolder.id;
+    while (chainIds.length < roster.length) {
+      const nextId = nextDomainLightningReceiverId(roster, currentId);
+      if (!nextId || nextId === currentId || nextId === initialHolder.id) break;
+      chainIds.push(nextId);
+      currentId = nextId;
+    }
+    return chainIds;
   }
 
 }

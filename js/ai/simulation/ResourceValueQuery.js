@@ -17,7 +17,7 @@ value/Economics、注入的 StateValue、纯 Evaluator equipment material primit
 架构约束
 不生成 Planner action、不决定候选胜负；强制 mutation 不得重新进入 ResourceSelectionPolicy。
 */
-import { PROBABILITY_EPSILON } from "../state/Probability.js";
+import { PROBABILITY_EPSILON } from "../state/Probability/Probability.js";
 import { RESOURCE_MATERIAL_SCALE } from "../value/Economics.js";
 
 export class ResourceValueQuery {

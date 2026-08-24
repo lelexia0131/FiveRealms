@@ -21,7 +21,7 @@ import {
   buildRadarJudgmentProbabilities,
   queryCurrentCardCounts,
   queryPlayerHandProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 import { statePointsToUtility } from "./Economics.js";
 import { sealTeamBurden } from "./SealValue.js";
 

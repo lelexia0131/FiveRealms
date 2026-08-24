@@ -6,7 +6,7 @@
 SearchPrior 与直接搜索先验测试。
 
 下游
-domain/SealModel、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置。
+Fact、Probability facade、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置。
 
 状态边界
 只读过滤后的 World 与候选目标，不写状态。
@@ -19,8 +19,9 @@ domain/SealModel、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置�
 */
 import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js";
 import { projectRulePlayers } from "../state/RuleProjection.js";
+import { hasFactStatus } from "../state/Fact.js";
+import { sealOutcomeProbabilities } from "../state/Probability/Probability.js";
 import { getBaseCardAiValue } from "../value/CardValue.js";
-import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js";
 import { turnOpportunityValue } from "../value/ThreatValue.js";
 
 const FUTURE_DISCOUNT = 0.65;
@@ -114,14 +115,14 @@ SearchPrior.actionUtility 与直接先验测试。
 无。
 
 调用函数
-hasSeal、sealOutcomeProbabilities、turnOpportunityValue、turnTimingFactor。
+Fact.hasFactStatus、Probability.sealOutcomeProbabilities、turnOpportunityValue、turnTimingFactor。
 
 边界与不变量
 只为候选展开排序；既有基础值、0.65 折扣与座次因子不得进入 final transition；概率在消费点惰性查询。
 */
 export function sealUseValue(actor, target, state) {
   if (!actor?.alive || !target?.alive
-    || target.battleTeam === actor.battleTeam || hasSeal(target)) {
+    || target.battleTeam === actor.battleTeam || hasFactStatus(target, "sealed")) {
     return -50;
   }
   const futureTarget = {

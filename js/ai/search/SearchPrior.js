@@ -33,7 +33,7 @@ import {
   statePointsToUtility
 } from "../value/Economics.js";
 import { incomingExposure } from "../value/ThreatValue.js";
-import { queryPlayerHandProbability } from "../state/Probability.js";
+import { queryPlayerHandProbability } from "../state/Probability/Probability.js";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
 // 这些权重只维持有限 beam 的相对探索顺序，不是单位换算，也不得进入 Final Utility。

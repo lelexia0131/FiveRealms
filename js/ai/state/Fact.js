@@ -6,7 +6,7 @@
 StateContracts、CardSelectionBoundary 与 ResponseBoundary。
 
 下游
-Domain Definitions 与角色公开策略元数据。
+Domain Definitions/StatusRules、RuleProjection 与角色公开策略元数据。
 
 状态边界
 只读当前 GameState 并创建不可变 Fact；不保留 service、class 或第二份缓存。
@@ -19,9 +19,40 @@ Domain Definitions 与角色公开策略元数据。
 */
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
+import { hasStatus } from "../../domain/rules/status/StatusRules.js";
 import { getCharacterRoleTags } from "../policy/CharacterRoleMetadata.js";
+import { projectRulePlayer } from "./RuleProjection.js";
 
 const CARD_COUNTS = RULESET_DEFINITION.deckComposition;
+
+/*
+功能
+读取过滤玩家当前确定持有的 canonical Domain status fact。
+
+调用方
+Probability status-presence query、ResponseBoundary 与 SealPrior。
+
+输入
+真实或过滤玩家，以及 Domain status ID。
+
+输出
+确定存在返回 true，否则 false。
+
+读取状态
+玩家公开 statuses。
+
+写入状态
+无。
+
+调用函数
+RuleProjection.projectRulePlayer、Domain StatusRules.hasStatus。
+
+边界与不变量
+只解释确定事实；概率存在必须由 Probability facade 组合，不能在本函数降级为布尔猜测。
+*/
+export function hasFactStatus(player, statusId) {
+  return hasStatus(projectRulePlayer(player), statusId);
+}
 
 /*
 功能

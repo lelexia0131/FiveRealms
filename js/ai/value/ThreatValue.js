@@ -23,7 +23,7 @@ import {
   PROBABILITY_EPSILON,
   clampProbability,
   queryPlayerHandProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 import { HP_VALUE } from "./Economics.js";
 
 export const DANGER_VALUE = 7;

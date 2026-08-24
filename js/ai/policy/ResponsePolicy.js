@@ -24,7 +24,7 @@ import {
   hypergeometricProbabilityAtLeast,
   queryCurrentCardCounts,
   queryPlayerHandProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 import { getRecoverHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 
 /*

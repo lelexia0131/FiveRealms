@@ -24,7 +24,7 @@ import {
   clampProbability,
   mutateProbability,
   totalBranchProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 
 export class CounterfactualTerms {
   /*

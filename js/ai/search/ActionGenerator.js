@@ -34,8 +34,6 @@ import {
 } from "../../domain/rules/skill/SkillRules.js";
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
-import { lightningPresenceProbability } from "../domain/LightningModel.js";
-import { sealPresenceProbability } from "../domain/SealModel.js";
 import {
   projectAttackUsage,
   projectRulePlayer,
@@ -50,8 +48,9 @@ import { actionSearchKey, createAction } from "./Action.js";
 import {
   PROBABILITY_EPSILON,
   expectedAnonymousSlots,
-  queryAnonymousSlotDistribution
-} from "../state/Probability.js";
+  queryAnonymousSlotDistribution,
+  statusPresence
+} from "../state/Probability/Probability.js";
 
 /*
 功能
@@ -1007,7 +1006,7 @@ export class ActionGenerator {
   无。
 
   调用函数
-  DistanceProbabilityBranches、LightningModel、SealModel 的 bounded query。
+  DistanceProbabilityBranches 与 Probability status-presence bounded query。
 
   边界与不变量
   这里只判断候选存在性，不组合条件世界、不重新判断 Policy 价值或模拟执行。
@@ -1034,11 +1033,11 @@ export class ActionGenerator {
 
     const card = definition;
     if (card.definitionId === "lightning") {
-      return lightningPresenceProbability(actor) < 1 - PROBABILITY_EPSILON;
+      return statusPresence(actor, "lightning").probability < 1 - PROBABILITY_EPSILON;
     }
     if (card.definitionId === "seal") {
       const target = state.players.find((player) => player.id === targets?.[0]?.id);
-      return sealPresenceProbability(target) < 1 - PROBABILITY_EPSILON;
+      return statusPresence(target, "sealed").probability < 1 - PROBABILITY_EPSILON;
     }
     if (card.definitionId === "transfer") {
       const source = state.players.find((player) => player.id === selection?.sourceId);

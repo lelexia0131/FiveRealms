@@ -20,8 +20,6 @@ Lightning/Seal domain models、角色/卡牌配置与 canonical Probability。
 import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { interpretDefenseJudgment } from "../../domain/rules/judgment/JudgmentRules.js";
-import { getLightningStatusStateBranches, lightningPresenceProbability } from "../domain/LightningModel.js";
-import { getSealStatusStateBranches, sealPresenceProbability } from "../domain/SealModel.js";
 import { hasPassiveSkill } from "../state/RuleProjection.js";
 import {
   PROBABILITY_EPSILON,
@@ -32,8 +30,9 @@ import {
   independentUnionProbability,
   probabilityEventPartition,
   queryCurrentCardCounts,
+  statusPresence,
   totalBranchProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 
 /*
 功能
@@ -748,8 +747,8 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     const holder = statusId === "lightning" ? actor : target;
     if (!holder?.alive || (statusId === "sealed" && holder.battleTeam === actor.battleTeam)) return;
     const oldBranches = statusId === "lightning"
-      ? getLightningStatusStateBranches(holder)
-      : getSealStatusStateBranches(holder);
+      ? statusPresence(holder, "lightning").branches
+      : statusPresence(holder, "sealed").branches;
     const joined = this.intersectProbabilityWork(
       [oldBranches, effectEventWorlds],
       `StatusSimulation.applyDelayedStatusCard:${statusId}:join`

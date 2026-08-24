@@ -18,7 +18,7 @@ AI value/policy/simulation/search modules 与 Domain Definitions/Rules。
 不得 import composition、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
 */
 import { getMaxEnergy, getTurnEnergyBreakdown } from "../../../domain/rules/team/TeamRules.js";
-import { sampleProbabilityWorlds } from "../../../ai/state/Probability.js";
+import { sampleProbabilityWorlds } from "../../../ai/state/Probability/Probability.js";
 import { Evaluator } from "../../../ai/value/Evaluator.js";
 import { assessGlobalBenefit } from "../../../ai/value/GlobalBenefitValue.js";
 import { ResponsePolicy } from "../../../ai/policy/ResponsePolicy.js";

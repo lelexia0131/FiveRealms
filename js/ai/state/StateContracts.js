@@ -25,7 +25,7 @@ import {
   getTurnEnergyBreakdownFromRules
 } from "../../domain/rules/team/TeamRules.js";
 import { createFact } from "./Fact.js";
-import { createProbabilityState } from "./Probability.js";
+import { createProbabilityState } from "./Probability/Probability.js";
 import { createWorld } from "./World.js";
 
 /*

@@ -32,14 +32,13 @@ import {
   probabilityEventPartition,
   queryAnonymousSlotDistribution,
   queryPlayerHandProbability,
+  statusPresence,
   totalBranchProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 import {
   getRangeConditionBranches,
   inAttackRange
 } from "../state/DistanceProbabilityBranches.js";
-import { getLightningStatusStateBranches } from "../domain/LightningModel.js";
-import { getSealStatusStateBranches } from "../domain/SealModel.js";
 import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js";
 
 /*
@@ -100,12 +99,12 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
       .filter(Boolean);
     let conditionBranches = [{ probability:1, conditions:{}, matches:true }];
     if (card.definitionId === "lightning") {
-      conditionBranches = getLightningStatusStateBranches(actor).map((branch) => ({
+      conditionBranches = statusPresence(actor, "lightning").branches.map((branch) => ({
         ...branch,
         matches:!branch.present
       }));
     } else if (card.definitionId === "seal") {
-      conditionBranches = getSealStatusStateBranches(targets[0]).map((branch) => ({
+      conditionBranches = statusPresence(targets[0], "sealed").branches.map((branch) => ({
         ...branch,
         matches:!branch.present
       }));

@@ -26,7 +26,7 @@ import {
 import {
   PROBABILITY_EPSILON,
   clampProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js";
 
 /*

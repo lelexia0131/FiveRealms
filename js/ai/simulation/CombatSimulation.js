@@ -41,7 +41,7 @@ import {
   queryHandProbability,
   queryPlayerHandProbability,
   totalBranchProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 
 const RADAR_BASIC_DEFINITION_IDS = Object.freeze(
   Object.values(DOMAIN_CARD_DEFINITIONS)

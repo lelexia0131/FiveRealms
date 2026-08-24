@@ -27,7 +27,7 @@ import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillD
 import {
   PROBABILITY_EPSILON,
   totalBranchProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 
 export const MIN_TRANSFER_UTILITY = 0.5;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;

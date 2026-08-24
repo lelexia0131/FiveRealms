@@ -25,7 +25,7 @@ import {
   probabilityFromCurrentCounts,
   queryCurrentCardCounts,
   queryPlayerHandProbability
-} from "../state/Probability.js";
+} from "../state/Probability/Probability.js";
 import { sealTeamBurden } from "./SealValue.js";
 import { cardAvailability, getBaseCardAiValue, roleCardDelta } from "./CardValue.js";
 import {

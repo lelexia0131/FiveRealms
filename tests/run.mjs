@@ -56,10 +56,11 @@ import { TeamAssignment as TeamManager } from "../js/application/match/TeamAssig
 import { ActionLegality } from "../js/application/action/ActionLegality.js";
 import { getRangeConditionBranches, getRangeLegalityProbability, inAttackRange } from "../js/ai/state/DistanceProbabilityBranches.js";
 import { createInitialWorld, createStateContracts } from "../js/ai/state/StateContracts.js";
-import { createFact, deriveCurrentCardCounts } from "../js/ai/state/Fact.js";
+import { createFact, deriveCurrentCardCounts, hasFactStatus } from "../js/ai/state/Fact.js";
 import { cloneWorld } from "../js/ai/state/World.js";
 import {
   PROBABILITY_CLASSIFICATION,
+  buildLightningHitDistribution as buildProbabilityLightningHitDistribution,
   buildRadarJudgmentProbabilities,
   buildRadarJudgmentSequenceProbabilities,
   conditionProbability,
@@ -75,8 +76,11 @@ import {
   projectProbabilityStateBranches as projectStateProbabilityBranches,
   queryCurrentCardCounts,
   queryProbability,
+  sealOutcomeProbabilities,
+  statusPresence,
+  tacticJudgmentProbability,
   totalBranchProbability
-} from "../js/ai/state/Probability.js";
+} from "../js/ai/state/Probability/Probability.js";
 import { Simulator as ProductionSimulator } from "../js/ai/simulation/Simulator.js";
 import { Searcher } from "../js/ai/search/Searcher.js";
 import { createSearchEngine } from "../js/adapters/ai/worker/SearchEngineFactory.js";
@@ -202,13 +206,6 @@ import {
 import { CardSelectionBoundary } from "../js/ai/policy/CardSelectionBoundary.js";
 import { getDiscardKeepValue, rankDiscardCandidates } from "../js/ai/policy/ResourceSelectionPolicy.js";
 import {
-  buildLightningHitDistribution,
-  buildLightningPropagationChainIds as buildLightningPropagationChain,
-  equipmentJudgmentProbability,
-  lightningPresenceProbability,
-  nextLightningReceiverId as nextLightningReceiver
-} from "../js/ai/domain/LightningModel.js";
-import {
   assaultThreat,
   equipmentThreatSynergy,
   expectedUsableAssaultsNextTurn,
@@ -217,13 +214,6 @@ import {
   skillReadinessThreat,
   turnOpportunityValue
 } from "../js/ai/value/ThreatValue.js";
-import {
-  getSealStatusStateBranches,
-  sealCounterProbability,
-  sealOutcomeProbabilities,
-  sealPresenceProbability,
-  tacticJudgmentProbability
-} from "../js/ai/domain/SealModel.js";
 import { sealTeamBurden } from "../js/ai/value/SealValue.js";
 import { sealUseValue, turnOrderGap, turnTimingFactor } from "../js/ai/search/SealPrior.js";
 import { MUSIC_PROFILES, SOUND_THROTTLE_MS, SoundManager } from "../js/audio/SoundManager.js";
@@ -238,15 +228,6 @@ import {
 import { dynamicRootFlipGain } from "../js/ai/simulation/RootResolutionQuery.js";
 import { CardSelectionPolicy } from "../js/ai/policy/CardSelectionPolicy.js";
 import { ResponsePolicy } from "../js/ai/policy/ResponsePolicy.js";
-import {
-  buildLightningHitDistribution as buildDomainLightningHitDistribution,
-  buildLightningPropagationChainIds,
-  nextLightningReceiverId
-} from "../js/ai/domain/LightningModel.js";
-import {
-  getSealStatusStateBranches as getDomainSealStatusStateBranches,
-  sealOutcomeProbabilities as domainSealOutcomeProbabilities
-} from "../js/ai/domain/SealModel.js";
 import {
   assessGlobalBenefitOutcome,
   buildMutualBenefitDraftOutcome
@@ -333,6 +314,127 @@ class Simulator extends ProductionSimulator {
       }
     });
   }
+}
+
+/*
+功能
+用正式 Simulator 生命周期顺序调用 canonical Lightning probability query。
+
+调用方
+Lightning deterministic tests。
+
+输入
+World 与初始 holder。
+
+输出
+最终 holder probability distribution。
+
+读取状态
+World 当前玩家环与 ProbabilityState。
+
+写入状态
+无。
+
+调用函数
+Simulator.buildLightningPropagationChainIds、Probability.buildLightningHitDistribution。
+
+边界与不变量
+传播顺序由 Simulator/Domain rule 提供；Probability 只计算无放回命中概率。
+*/
+function buildLightningHitDistribution(state, holder) {
+  const simulator = new Simulator(state);
+  return buildProbabilityLightningHitDistribution(
+    state,
+    simulator.buildLightningPropagationChainIds(state?.players, holder)
+  );
+}
+
+/*
+功能
+通过正式 Simulator 返回 Lightning 传播环。
+
+调用方
+Lightning propagation tests。
+
+输入
+玩家数组与初始 holder。
+
+输出
+合法 holder ID 顺序。
+
+读取状态
+玩家公开状态与座次。
+
+写入状态
+无。
+
+调用函数
+Simulator.buildLightningPropagationChainIds。
+
+边界与不变量
+不在测试中复制 Domain next-receiver 公式。
+*/
+function buildLightningPropagationChain(players, holder) {
+  return new Simulator({ players }).buildLightningPropagationChainIds(players, holder);
+}
+
+/*
+功能
+通过正式 Simulator 返回下一名 Lightning receiver。
+
+调用方
+Lightning next-receiver tests。
+
+输入
+玩家数组与当前 holder。
+
+输出
+下一接收者 ID 或 null。
+
+读取状态
+玩家公开状态与座次。
+
+写入状态
+无。
+
+调用函数
+Simulator.nextLightningReceiverId。
+
+边界与不变量
+测试不保留旧 Model wrapper。
+*/
+function nextLightningReceiver(players, holder) {
+  return new Simulator({ players }).nextLightningReceiverId(players, holder);
+}
+
+/*
+功能
+从 canonical Seal outcome 提取 holder 在存在条件下的团队 Counter 概率。
+
+调用方
+Seal finite-pool 与 response-consumption tests。
+
+输入
+World 与 Seal holder。
+
+输出
+零到一的 conditional Counter probability。
+
+读取状态
+Probability.sealOutcomeProbabilities。
+
+写入状态
+无。
+
+调用函数
+Probability.sealOutcomeProbabilities。
+
+边界与不变量
+只投影 canonical outcome，不在测试中复制 Counter finite-pool 公式。
+*/
+function sealCounterProbability(state, holder) {
+  const outcome = sealOutcomeProbabilities(state, holder);
+  return outcome.present > 0 ? outcome.countered / outcome.present : 0;
 }
 
 // Test Runner 与通用 Helpers
@@ -13462,6 +13564,71 @@ test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 ser
   for (const file of files) visit(file);
 });
 
+/*
+功能
+验证 Probability facade、Branch 与 Pool 的物理边界、正交依赖和旧 Model closure。
+
+调用方
+AI 架构测试。
+
+输入
+无。
+
+输出
+无返回值；结构回流或直连时抛断言。
+
+读取状态
+Probability 目录与全部 production JavaScript import。
+
+写入状态
+无。
+
+调用函数
+readFile、readdir、listJavaScriptFiles、access。
+
+边界与不变量
+只有 facade 可 import Branch/Pool；底层彼此无 import，旧 Radar/Lightning/Seal Model 必须不存在。
+*/
+async function probabilityArchitectureClosure() {
+  const directory = projectFile("js/ai/state/Probability");
+  const entries = (await readdir(directory)).sort();
+  assert.deepEqual(entries, ["Branch.js", "Pool.js", "Probability.js"]);
+  const branchPath = projectFile("js/ai/state/Probability/Branch.js");
+  const poolPath = projectFile("js/ai/state/Probability/Pool.js");
+  const facadePath = projectFile("js/ai/state/Probability/Probability.js");
+  const branch = await readFile(branchPath, "utf8");
+  const pool = await readFile(poolPath, "utf8");
+  const facade = await readFile(facadePath, "utf8");
+  assert.doesNotMatch(branch, /^import\s/m);
+  assert.doesNotMatch(pool, /^import\s/m);
+  assert.match(facade, /from "\.\/Branch\.js"/);
+  assert.match(facade, /from "\.\/Pool\.js"/);
+  assert.doesNotMatch(facade, /export\s+\*/);
+
+  const internalPaths = new Set([branchPath, poolPath, facadePath].map(nodePath.normalize));
+  for (const file of await listJavaScriptFiles(projectFile("js"))) {
+    if (internalPaths.has(nodePath.normalize(file))) continue;
+    const source = await readFile(file, "utf8");
+    assert.doesNotMatch(
+      source,
+      /Probability\/(?:Branch|Pool)\.js/,
+      `${file} 不得绕过 Probability facade`
+    );
+  }
+  const branchCode = branch.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  const poolCode = pool.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  assert.doesNotMatch(
+    branchCode,
+    /\b(?:recover|block|counter|assault|Radar|Lightning|Seal|equipment|huntMark)\b/
+  );
+  assert.doesNotMatch(poolCode, /\b(?:Radar|Lightning|Seal|Simulator|Evaluator|Generator)\b/);
+  for (const file of ["RadarModel.js", "LightningModel.js", "SealModel.js"]) {
+    await assert.rejects(access(projectFile(`js/ai/domain/${file}`)));
+  }
+}
+
+test("AI·Probability 架构：Facade/Branch/Pool 正交且旧 Model 引用闭合", probabilityArchitectureClosure);
+
 test("AI·架构：唯一 Searcher 只通过注入能力消费 Simulator/SearchBudget/Evaluator", async () => {
   const source = await readFile(projectFile("js/ai/search/Searcher.js"), "utf8");
   assert.doesNotMatch(source, /new\s+(?:Ai)?Simulator\s*\(/);
@@ -15171,13 +15338,13 @@ test("AI·规则依赖：AI search/simulation/domain → ActionLegality/Distance
 无返回值，断言失败时抛错。
 
 读取状态
-Domain rules、AI projection/distance branches、LightningModel 与 Simulator。
+Domain rules、AI projection/distance branches 与 Simulator。
 
 写入状态
 测试局部 SearchState 副本。
 
 调用函数
-projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/heal、LightningModel.nextLightningReceiverId。
+projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/heal/nextLightningReceiverId。
 
 边界与不变量
 概率分支总质量为一时 matches 与 Domain deterministic 结论一致。
@@ -15185,7 +15352,6 @@ projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/h
 async function frArch12DeterministicParityMatrix() {
   const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js");
   const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js");
-  const { nextLightningReceiverId: aiNextLightningReceiverId } = await import("../js/ai/domain/LightningModel.js");
 
   const players = [
     { id: "p0", seatIndex: 0, alive: true, battleTeam: "dawn", hp: 5, maxHp: 5, shield: 1, energy: 3, maxEnergy: 3, attackRange: 1, handCount: 1, equipmentDefinitionId: null, statuses: [] },
@@ -15208,7 +15374,7 @@ async function frArch12DeterministicParityMatrix() {
   assert.deepEqual(getSkillTargetIds(roster, "p0", ACTIVE_SKILL_DEFINITIONS.barrier), ["p0"]);
 
   assert.equal(nextDomainLightningReceiverId(roster, "p1"), "p2");
-  assert.equal(aiNextLightningReceiverId(players, players[1]), "p2");
+  assert.equal(new Simulator({ players:[] }).nextLightningReceiverId(players, players[1]), "p2");
 
   const simulator = new Simulator({ players: [] });
   const combatState = {
@@ -15229,7 +15395,7 @@ test("AI·Domain 一致性：Distance/Turn/Card/Skill/Combat/Status 确定性世
 
 /*
 功能
-验证 AI 概率模型模块已声明为 AI MODEL，不是 Repository Domain Rule authority。
+验证已折叠概率 Model 不再存在，剩余 Domain model 与 Simulator 继续服从 authority 边界。
 
 调用方
 当前测试。
@@ -15241,7 +15407,7 @@ test("AI·Domain 一致性：Distance/Turn/Card/Skill/Combat/Status 确定性世
 无返回值，断言失败时抛错。
 
 读取状态
-js/ai/domain 模块源码。
+AI domain 与 Simulator 源码。
 
 写入状态
 无。
@@ -15250,20 +15416,24 @@ js/ai/domain 模块源码。
 readFile。
 
 边界与不变量
-确定性 receiver/status 公式不在 AI domain models 中重写。
+Radar/Lightning/Seal compatibility Model 不得恢复；确定性 receiver 仍调用 Domain rule。
 */
 async function frArch12AiDomainModelOwnership() {
-  for (const file of ["LightningModel.js", "SealModel.js", "RadarModel.js", "GlobalBenefitModel.js"]) {
-    const source = await readFile(projectFile(`js/ai/domain/${file}`), "utf8");
-    assert.match(source, /AI probabilistic\/search model|AI model|不是 Repository Domain Rule authority/);
-    assert.doesNotMatch(source, /core\/ActionLegality\.js|core\/DistanceSystem\.js/);
+  for (const file of ["LightningModel.js", "SealModel.js", "RadarModel.js"]) {
+    await assert.rejects(access(projectFile(`js/ai/domain/${file}`)));
   }
-  const lightning = await readFile(projectFile("js/ai/domain/LightningModel.js"), "utf8");
-  assert.match(lightning, /nextDomainLightningReceiverId/);
-  assert.doesNotMatch(lightning, /players\[\(initialHolder\.seatIndex \+ offset\) % count\]/);
+  const remainingModel = await readFile(
+    projectFile("js/ai/domain/GlobalBenefitModel.js"),
+    "utf8"
+  );
+  const simulator = await readFile(projectFile("js/ai/simulation/Simulator.js"), "utf8");
+  assert.match(remainingModel, /AI probabilistic\/search model|AI model|不是 Repository Domain Rule authority/);
+  assert.doesNotMatch(remainingModel, /core\/ActionLegality\.js|core\/DistanceSystem\.js/);
+  assert.match(simulator, /nextDomainLightningReceiverId/);
+  assert.doesNotMatch(simulator, /players\[\(initialHolder\.seatIndex \+ offset\) % count\]/);
 }
 
-test("AI·Domain model 边界：AI MODEL NOT DOMAIN RULE AUTHORITY", frArch12AiDomainModelOwnership);
+test("AI·Domain model 边界：折叠 Model 不回流且 Domain Rule 仍为 authority", frArch12AiDomainModelOwnership);
 
 // ---- AI 搜索与规划·固定轨迹与预算 ----
 
@@ -25761,7 +25931,7 @@ test("AI·封印：Simulator 首次放置不应用普通战术反制概率", () 
   const target = next.players[1];
   assert.equal(target.statuses.includes("sealed"), true);
   assertClose(target.sealedStatusProbability, 1);
-  assertClose(sealPresenceProbability(target), 1);
+  assertClose(statusPresence(target, "sealed").probability, 1);
   assert.equal(target.handCount, 1);
   assertClose(target.counterProbability, 1);
   assert.equal(target.hp, 4);
@@ -25769,70 +25939,69 @@ test("AI·封印：Simulator 首次放置不应用普通战术反制概率", () 
 });
 
 test("AI·封印：未来反制先于剩余牌类别判定且全部概率互斥", () => {
-  const counts = { harvest: 2, assault: 3, seal: 1 }, snapshot = JSON.stringify(counts);
+  const counts = { counter:1, assault:1 }, snapshot = JSON.stringify(counts);
   const holder = {
-    id: "seal-prob-holder", battleTeam: "dusk", alive: true, handCount: 3, energy: 1,
-    statuses: ["sealed"], counterProbability: .25
+    id:"seal-prob-holder",
+    battleTeam:"dusk",
+    alive:true,
+    handCount:1,
+    energy:1,
+    statuses:["sealed"],
+    knownCards:[]
   };
-  const ally = {
-    id: "seal-prob-ally", battleTeam: "dusk", alive: true, statuses: [], counterProbability: .2
-  };
-  const state = { players: [holder, ally], remainingCardCounts: counts };
+  const state = upgradeProbabilityFixture({ players:[holder], remainingCardCounts:counts });
   assertClose(tacticJudgmentProbability(counts), .5);
-  assertClose(sealCounterProbability(state, holder), .4);
+  assertClose(sealCounterProbability(state, holder), .5);
   const outcome = sealOutcomeProbabilities(state, holder);
   assertClose(outcome.present, 1);
-  assertClose(outcome.countered, .4);
-  assertClose(outcome.judgment, .6);
-  assertClose(outcome.success, .3);
-  assertClose(outcome.skipAction, .3);
+  assertClose(outcome.countered, .5);
+  assertClose(outcome.judgment, .5);
+  assertClose(outcome.success, .25);
+  assertClose(outcome.skipAction, .25);
   assertClose(outcome.cleared, 1);
   assertClose(outcome.countered + outcome.success + outcome.skipAction, 1);
-  assert.deepEqual(getSealStatusStateBranches(holder), [
+  assert.deepEqual(statusPresence(holder, "sealed").branches, [
     { probability: 1, conditions: {}, present: true }
   ]);
   assert.equal(JSON.stringify(counts), snapshot);
 });
 
 test("AI·封印：团队反制使用有限池相关性而非独立边际", () => {
-  const belief = createBeliefState(
-    "seal-pool-viewer",
-    {
-      players:[
-        { id:"seal-pool-viewer", handCount:0, hand:[] },
-        { id:"seal-pool-holder", handCount:1 },
-        { id:"seal-pool-ally", handCount:1 }
-      ]
-    },
-    {
-      knownCardsByPlayer:{ "seal-pool-holder":[], "seal-pool-ally":[] }
-    },
-    { counter:1, charge:1 }
-  );
   const holder = {
     id:"seal-pool-holder",
     battleTeam:"dusk",
     alive:true,
     statuses:["sealed"],
-    ...belief.playersById["seal-pool-holder"]
+    handCount:1,
+    knownCards:[]
   };
   const ally = {
     id:"seal-pool-ally",
     battleTeam:"dusk",
     alive:true,
     statuses:[],
-    ...belief.playersById["seal-pool-ally"]
+    handCount:1,
+    knownCards:[]
   };
-  const state = {
+  const state = upgradeProbabilityFixture({
     players:[holder, ally],
-    finitePoolStateBranchesByDefinition:belief.finitePoolStateBranchesByDefinition
-  };
-  assertClose(holder.counterProbability, 0.5);
-  assertClose(ally.counterProbability, 0.5);
+    remainingCardCounts:{ counter:1, charge:1 }
+  });
   assertClose(sealCounterProbability(state, holder), 1, 1e-12);
+
+  const knownHolder = {
+    ...holder,
+    hand:[{ id:"known-counter", definitionId:"counter" }],
+    handCount:1
+  };
+  const knownState = upgradeProbabilityFixture({
+    players:[knownHolder, ally],
+    remainingCardCounts:{ counter:1, charge:1 }
+  });
+  assertClose(sealCounterProbability(knownState, knownHolder), 1, 1e-12);
 });
 
-test("AI·封印：正式 SealModel 输出概率守恒、输入只读且别名入口一致", () => {
+test("AI·封印：canonical Probability 输出概率守恒、输入只读且冻结", () => {
   const holder = {
     id: "domain-seal-holder", battleTeam: "dawn", alive: true, statuses: [], counterProbability: .25,
     sealedStatusStateBranches: [
@@ -25845,9 +26014,8 @@ test("AI·封印：正式 SealModel 输出概率守恒、输入只读且别名�
   };
   const state = { players: [holder, ally], remainingCardCounts: { harvest: 3, assault: 1 } };
   const snapshot = structuredClone(state);
-  const branches = getDomainSealStatusStateBranches(holder);
-  const outcome = domainSealOutcomeProbabilities(state, holder);
-  assert.deepEqual(outcome, sealOutcomeProbabilities(state, holder));
+  const branches = statusPresence(holder, "sealed").branches;
+  const outcome = sealOutcomeProbabilities(state, holder);
   assertClose(outcome.countered + outcome.success + outcome.skipAction, outcome.present);
   branches[0].conditions.mutated = true;
   assert.deepEqual(state, snapshot);
@@ -25883,15 +26051,15 @@ test("AI·封印：fallback 从权威牌堆组成动态推导且无固定概率�
   assertClose(adjustedTacticTotal / adjustedTotal, (tacticTotal + 4) / (total + 4));
   assert.notEqual(adjustedTacticTotal / adjustedTotal, tacticTotal / total);
 
-  const source = await readFile(projectFile("js/ai/domain/SealModel.js"), "utf8"),
+  const source = await readFile(
+    projectFile("js/ai/state/Probability/Probability.js"),
+    "utf8"
+  ),
     rulesetSource = await readFile(projectFile("js/domain/definitions/ruleset/RulesetDefinition.js"), "utf8");
   assert.doesNotMatch(source, /\b(?:56|163)\b/);
   assert.match(source, /RULESET_DEFINITION\.deckComposition/);
   assert.match(source, /CARD_DEFINITIONS\.seal\.judgmentTriggerCategory/);
-  assert.match(
-    source,
-    /definition\.category === triggerCategory[\s\S]*tacticTotal \/ total/
-  );
+  assert.match(source, /judgmentCategoryCounts/);
   assert.match(rulesetSource, /deckComposition:\s*Object\.freeze/);
   assert.doesNotMatch(rulesetSource, /aiValue|categoryName|frameStyle/);
 });
@@ -26147,7 +26315,7 @@ test("AI·封印：紧急调息的真实生命收益仍优先于封印", async (
   assert.equal(sealAction.targets?.[0]?.id, target.id);
   assert.equal(visibleTarget.battleTeam, "dusk");
   assert.ok(visibleTarget.alive);
-  assert.equal(sealPresenceProbability(visibleTarget), 0);
+  assert.equal(statusPresence(visibleTarget, "sealed").probability, 0);
   // recover 只恢复 1 HP：hp 1 -> 2，且不超过 maxHp
   assert.ok(recoverAction, "recover 必须是合法根动作");
   const afterRecover = new Simulator(visible).apply(visible, recoverAction, actor.id),
@@ -26343,15 +26511,14 @@ test("AI·闪电：Simulator 首次放置不应用普通战术反制概率且不
   assert.equal(next.remainingCardCounts, null);
 });
 
-test("AI·闪电：AI 装备判定概率按类别聚合且不修改计数", () => {
+test("AI·闪电：canonical Pool 装备判定概率按类别聚合且不修改计数", () => {
   const counts = { assault: 3, defenseDevice: 1, telescope: 2 };
   const snapshot = JSON.stringify(counts);
-  assertClose(equipmentJudgmentProbability(counts), 3 / 6);
+  const state = upgradeProbabilityFixture({ remainingCardCounts:counts, players:[] });
+  const holderIds = Array.from({ length:6 }, (_, index) => `judgment-${index}`);
+  const distribution = buildProbabilityLightningHitDistribution(state, holderIds);
+  assertClose(distribution[0].probability, 3 / 6);
   assert.equal(JSON.stringify(counts), snapshot);
-  const equipmentTotal = Object.values(
-    CARD_DEFINITIONS
-  ).filter((card) => card.category === "equipment").reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0);
-  assertClose(equipmentJudgmentProbability(null), equipmentTotal / TOTAL_CARD_COUNT);
   const players = [
     { id: "a", seatIndex: 0, alive: true, battleTeam: "dawn", statuses: [] },
     { id: "b", seatIndex: 1, alive: false, battleTeam: "dusk", statuses: [] },
@@ -28133,7 +28300,7 @@ test("AI·雷达：战术判定概率来自剩余牌堆且战术牌耗尽时归�
   assertClose(fixed.tactic, tacticTotal / total);
 });
 
-test("AI·雷达：canonical Probability 单次判定保持质量、空池、override 与输入只读", () => {
+test("AI·雷达：canonical Probability 单次判定保持质量、空池、override 与输入只读", async () => {
   const counts = { assault: 3, block: 2, counter: 4, defenseDevice: 1 };
   const snapshot = structuredClone(counts);
   const outcome = buildRadarJudgmentProbabilities(counts);
@@ -28163,6 +28330,12 @@ test("AI·雷达：canonical Probability 单次判定保持质量、空池、ove
   outcome.basic.assault = -1;
   assert.deepEqual(counts, snapshot);
   assert.equal(JSON.stringify(outcome).includes("game"), false);
+  const source = await readFile(
+    projectFile("js/ai/state/Probability/Probability.js"),
+    "utf8"
+  );
+  assert.doesNotMatch(source, /:\s*0\.25\b/);
+  assert.match(source, /1\s*\/\s*RADAR_OTHER_BASIC_DEFINITION_IDS\.length/);
 });
 
 test("AI·雷达：canonical Probability 多次判定逐槽无放回且不保留 genealogy", () => {
@@ -28191,6 +28364,44 @@ test("AI·雷达：canonical Probability 多次判定逐槽无放回且不保留
       ]
     ),
     [{ probability:1, outcomes:["basic:block", "basic:charge"] }]
+  );
+  const forceBlock = { block:1, otherBasic:0, equipment:0 };
+  assert.deepEqual(
+    buildRadarJudgmentSequenceProbabilities(
+      { block:1, counter:1 },
+      2,
+      [forceBlock, null]
+    ),
+    [{ probability:1, outcomes:["basic:block", "tactic"] }]
+  );
+  assert.deepEqual(
+    buildRadarJudgmentSequenceProbabilities(
+      { block:1, counter:1 },
+      2,
+      null,
+      forceBlock
+    ),
+    [{ probability:1, outcomes:["basic:block", "tactic"] }]
+  );
+  assert.deepEqual(
+    buildRadarJudgmentSequenceProbabilities(
+      { block:1, counter:1, energyDevice:1 },
+      3,
+      [forceBlock, null, null]
+    ),
+    [
+      { probability:.5, outcomes:["basic:block", "tactic", "equipment"] },
+      { probability:.5, outcomes:["basic:block", "equipment", "tactic"] }
+    ]
+  );
+  assert.deepEqual(
+    buildRadarJudgmentSequenceProbabilities(
+      { assault:1 },
+      2,
+      null,
+      { block:0, otherBasic:0, equipment:0 }
+    ),
+    [{ probability:1, outcomes:["tactic", "tactic"] }]
   );
   assert.deepEqual(counts, snapshot);
   assert.equal(sequence.some((branch) => "conditions" in branch || "state" in branch), false);
@@ -47158,34 +47369,48 @@ const assertLightningCandidatePresence = (fixture, expected) => {
 };
 
 test("AI·闪电评分：闪电：无放回判定按真实存活座次传播至首张装备牌", () => {
-  const fixture = makeLightningFixture(["dawn", "dusk", "dawn", "dusk"], {
-    counts: { defenseDevice: 2, assault: 3 }, withCard: false
+  const players = Array.from({ length:4 }, (_, index) => ({
+    id:`lightning-pool-${index}`,
+    seatIndex:index,
+    battleTeam:index % 2 ? "dusk" : "dawn",
+    alive:true,
+    statuses:index === 0 ? ["lightning"] : []
+  }));
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ defenseDevice:2, assault:3 },
+    players
   });
-  const distribution = buildLightningHitDistribution(fixture.visible, fixture.visible.players[0]);
-  assert.deepEqual(distribution.map((outcome) => outcome.holderId), fixture.visible.players.map((p) => p.id));
+  const distribution = buildLightningHitDistribution(state, players[0]);
+  assert.deepEqual(distribution.map((outcome) => outcome.holderId), players.map((player) => player.id));
   assertClose(distribution.reduce((sum, outcome) => sum + outcome.probability, 0), 1);
   [0.4, 0.3, 0.2, 0.1].forEach((expected, index) => (
     assertClose(distribution[index].probability, expected)
   ));
 });
 
-test("AI·闪电评分：正式 LightningModel 仅输出 ID、概率守恒且输入只读", () => {
-  const fixture = makeLightningFixture(["dawn", "dusk", "dawn", "dusk"], {
-    counts: { defenseDevice: 2, assault: 3 }, withCard: false
+test("AI·闪电评分：Simulator 顺序与 canonical Probability 分布只输出 ID 且输入只读", () => {
+  const players = [
+    { id:"lightning-a", seatIndex:0, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"lightning-b", seatIndex:1, battleTeam:"dusk", alive:false, statuses:[] },
+    { id:"lightning-c", seatIndex:2, battleTeam:"dawn", alive:true, statuses:["lightning"] },
+    { id:"lightning-d", seatIndex:3, battleTeam:"dusk", alive:true, statuses:[] }
+  ];
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ defenseDevice:1, assault:1 },
+    players
   });
-  const snapshot = structuredClone(fixture.visible);
-  const holder = fixture.visible.players[0];
-  const distribution = buildDomainLightningHitDistribution(fixture.visible, holder);
-  assert.deepEqual(distribution, buildLightningHitDistribution(fixture.visible, holder));
+  const snapshot = structuredClone(state);
+  const holder = players[0];
+  const distribution = buildLightningHitDistribution(state, holder);
   assert.deepEqual(
-    buildLightningPropagationChainIds(fixture.visible.players, holder),
+    buildLightningPropagationChain(players, holder),
     distribution.map((outcome) => outcome.holderId)
   );
-  assert.equal(nextLightningReceiverId(fixture.visible.players, holder), fixture.visible.players[1].id);
+  assert.equal(nextLightningReceiver(players, holder), players[3].id);
   assertClose(distribution.reduce((sum, outcome) => sum + outcome.probability, 0), 1);
   assert.ok(distribution.every((outcome) => Object.keys(outcome).sort().join(",") === "holderId,hop,probability"));
   distribution[0].holderId = "mutated-output";
-  assert.deepEqual(fixture.visible, snapshot);
+  assert.deepEqual(state, snapshot);
   assert.equal(JSON.stringify(distribution).includes("game"), false);
 });
 
@@ -47548,13 +47773,13 @@ test("AI·闪电评分：闪电：部分执行保留状态概率且第二张只�
   const first = new Simulator(state).apply(state, {
     type: "card", card: actor.hand[0], targets: [], executionProbability: 0.6
   }, actor.id);
-  assertClose(lightningPresenceProbability(first.players[0]), 0.6);
+  assertClose(statusPresence(first.players[0], "lightning").probability, 0.6);
   const second = fixture.game.aiController.actionGenerator.generate(first, actor.id)
     .find((action) => action.cardId === "lightning");
   assert.ok(second);
   assertClose(second.executionProbability, 0.4);
   const afterSecond = new Simulator(first).apply(first, second, actor.id);
-  assertClose(lightningPresenceProbability(afterSecond.players[0]), 1);
+  assertClose(statusPresence(afterSecond.players[0], "lightning").probability, 1);
 });
 
 test("AI·闪电评分：动作不执行时不产生概率闪电状态", () => {
@@ -47564,7 +47789,7 @@ test("AI·闪电评分：动作不执行时不产生概率闪电状态", () => {
   const skipped = new Simulator(state).apply(state, {
     type: "card", card: actor.hand[0], targets: [], executionProbability: 0
   }, actor.id);
-  assertClose(lightningPresenceProbability(skipped.players[0]), 0);
+  assertClose(statusPresence(skipped.players[0], "lightning").probability, 0);
   assert.ok(!skipped.players[0].statuses.includes("lightning"));
 });
 

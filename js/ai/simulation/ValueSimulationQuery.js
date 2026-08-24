@@ -18,18 +18,16 @@ Simulator、canonical Probability、闪电概率辅助函数与纯 value/Evaluat
 本模块只做有界 simulation query，不搜索、不生成动作，也不拥有最终价值组合公式。
 */
 import { Simulator } from "./Simulator.js";
-import {
-  buildLightningHitDistribution,
-  lightningPresenceProbability
-} from "../domain/LightningModel.js";
 import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolutionQuery.js";
 import { HP_VALUE } from "../value/Economics.js";
 import { exposureComponents } from "../value/ThreatValue.js";
 import {
+  buildLightningHitDistribution,
   buildRadarJudgmentProbabilities,
   conditionProbability,
-  queryCurrentCardCounts
-} from "../state/Probability.js";
+  queryCurrentCardCounts,
+  statusPresence
+} from "../state/Probability/Probability.js";
 
 export class ValueSimulationQuery {
   /*
@@ -137,7 +135,7 @@ export class ValueSimulationQuery {
       this.lightningLifecycleCache.set(state, stateCache);
     }
     const presence = presenceOverride == null
-      ? lightningPresenceProbability(initialHolder)
+      ? statusPresence(initialHolder, "lightning").probability
       : Math.max(0, Math.min(1, Number(presenceOverride) || 0));
     const cacheKey = `${initialHolder.id}:${viewerId}:${presence}`;
     if (stateCache.has(cacheKey)) return stateCache.get(cacheKey);
@@ -147,11 +145,14 @@ export class ValueSimulationQuery {
       return deltas;
     }
     this.checkpointSearchWork(searchBudget);
-    const distribution = buildLightningHitDistribution(state, initialHolder);
+    const simulator = this.simulatorFactory(state, { searchBudget });
+    const distribution = buildLightningHitDistribution(
+      state,
+      simulator.buildLightningPropagationChainIds(state.players, initialHolder)
+    );
     const beforeRadar = buildRadarJudgmentProbabilities(
       queryCurrentCardCounts(state.probabilityState)
     ).tactic;
-    const simulator = this.simulatorFactory(state, { searchBudget });
     for (const outcome of distribution) {
       this.checkpointSearchWork(searchBudget);
       const after = simulator.applyLightningHit(state, outcome.holderId);
@@ -320,7 +321,7 @@ export class ValueSimulationQuery {
   无；底层查询只写缓存。
 
   调用函数
-  lightningLifecycleOwnerDeltas、lightningPresenceProbability。
+  lightningLifecycleOwnerDeltas、Probability.statusPresence。
 
   边界与不变量
   每枚独立闪电恰好计一次，按状态玩家顺序累加。
@@ -328,7 +329,7 @@ export class ValueSimulationQuery {
   lightningOwnerDelta(state, ownerId, viewerId, searchBudget = null) {
     let total = 0;
     for (const holder of state.players) {
-      if (!holder?.alive || lightningPresenceProbability(holder) <= 0) continue;
+      if (!holder?.alive || statusPresence(holder, "lightning").probability <= 0) continue;
       this.checkpointSearchWork(searchBudget);
       total += this.lightningLifecycleOwnerDeltas(
         state,
@@ -361,7 +362,7 @@ export class ValueSimulationQuery {
   无；底层查询只写缓存。
 
   调用函数
-  lightningLifecycleValue、lightningPresenceProbability。
+  lightningLifecycleValue、Probability.statusPresence。
 
   边界与不变量
   顺序必须与旧 stateUtility 的 holder 循环一致，以保持浮点运算顺序。
@@ -369,7 +370,7 @@ export class ValueSimulationQuery {
   lightningValues(state, viewerId, searchBudget = null) {
     const values = [];
     for (const holder of state.players) {
-      if (holder?.alive && lightningPresenceProbability(holder) > 0) {
+      if (holder?.alive && statusPresence(holder, "lightning").probability > 0) {
         this.checkpointSearchWork(searchBudget);
         values.push(this.lightningLifecycleValue(state, holder, viewerId, null, searchBudget));
       }
