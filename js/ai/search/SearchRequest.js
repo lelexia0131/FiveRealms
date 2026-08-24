@@ -3,16 +3,16 @@
 拥有一次 AI 搜索的 data-only、structured-clone-safe 请求契约；不含 Game/Player/Card/函数/UI 或 mutable runtime reference。
 
 上游
-AIController 与未来 Worker boundary。
+AIController 与 Worker transport boundary。
 
 下游
-Planner/SearchPolicy/SearchBudget 通过显式拆包消费。
+Worker SearchEngineFactory/Searcher/SearchBudget 通过显式拆包消费。
 
 状态边界
 只保存冻结普通值；不写 GameState 或 World。
 
 信息边界
-searchState 必须已经是合法 Fact/Probability 投影；不得携带敌方真实 hand definition。
+World 必须已经是合法 Fact/Probability 投影；不得携带敌方真实 hand definition。
 
 架构约束
 不得 import Game/Application/Domain transitions；不得把 runtime capability 塞进本契约。
@@ -48,7 +48,6 @@ function freezeValue(value) {
   if (value && typeof value === "object") return Object.freeze({ ...value });
   return value;
 }
-
 /*
 功能
 创建一次 AI search request。
@@ -57,7 +56,7 @@ function freezeValue(value) {
 AIController.selectAction 与 SearchRequest 契约测试。
 
 输入
-requestId、gameId、stateVersion、actorId、phase、currentRound、searchState、searchConfig、rng 与 rootActions。
+requestId、gameId、stateVersion、actorId、phase、currentRound、canonical World、searchConfig、rng 与 rootActions。
 
 输出
 冻结 data-only SearchRequest。
@@ -72,7 +71,7 @@ requestId、gameId、stateVersion、actorId、phase、currentRound、searchState
 freezeValue、Object.freeze。
 
 边界与不变量
-不接受函数；rootActions 只能是 Action data-only 投影；不保存运行时实体。
+不接受函数；world 与 rootActions 必须直接使用 canonical frozen World/Action，不做 DTO materialization。
 */
 export function createSearchRequest({
   requestId,
@@ -91,12 +90,16 @@ export function createSearchRequest({
   if (!Number.isInteger(stateVersion) || stateVersion < 0) throw new TypeError("SearchRequest 需要非负整数 stateVersion");
   if (typeof actorId !== "string" || !actorId) throw new TypeError("SearchRequest 需要 actorId");
   if (!world || typeof world !== "object") throw new TypeError("SearchRequest 需要 world");
+  if (!Object.isFrozen(world)) throw new TypeError("SearchRequest 需要 canonical frozen World");
   if (!searchConfig || typeof searchConfig !== "object") throw new TypeError("SearchRequest 需要 searchConfig");
   if (!rng || typeof rng !== "object" || typeof rng.seed !== "number"
     || typeof rng.state !== "number" || rng.algorithm !== "lcg") {
     throw new TypeError("SearchRequest 需要 lcg rng continuation（seed/state/draws）");
   }
   if (!Array.isArray(rootActions)) throw new TypeError("SearchRequest 需要 rootActions");
+  if (rootActions.some((action) => !action || !Object.isFrozen(action))) {
+    throw new TypeError("SearchRequest 需要 canonical frozen Actions");
+  }
   return Object.freeze({
     requestId,
     gameId,
@@ -104,60 +107,9 @@ export function createSearchRequest({
     actorId,
     phase,
     currentRound,
-    world:freezeValue(world),
+    world,
     searchConfig:freezeValue(searchConfig),
     rng:freezeValue(rng),
-    rootActions:Object.freeze(rootActions.map(freezeValue))
+    rootActions:Object.freeze([...rootActions])
   });
-}
-
-/*
-功能
-检查请求 clone 后不存在函数、Game/Player/Card entity、UI 或 mutable runtime reference。
-
-调用方
-SearchRequest 序列化测试与 boundary assertion。
-
-输入
-待检查请求。
-
-输出
-违反项数组；合法请求为空。
-
-读取状态
-只读普通对象图。
-
-写入状态
-无。
-
-调用函数
-Object.keys。
-
-边界与不变量
-只检查直接字段和显式 runtime 标记；Game/Player/Card 以原型或标记名识别。
-*/
-export function searchRequestViolations(request) {
-  const violations = [];
-  const queue = [request];
-  while (queue.length) {
-    const value = queue.shift();
-    if (!value || typeof value !== "object") {
-      if (typeof value === "function") violations.push("function");
-      continue;
-    }
-    if (typeof value.next === "function" || typeof value.plan === "function") {
-      violations.push("runtime capability object");
-    }
-    if (value.constructor?.name === "Game" || value.constructor?.name === "Player" || value.constructor?.name === "Card") {
-      violations.push(`${value.constructor.name} entity`);
-    }
-    if (value.document || value.window || value instanceof Map || value instanceof Set) {
-      violations.push("DOM/Map/Set runtime object");
-    }
-    for (const [key, child] of Object.entries(value)) {
-      if (typeof child === "function") violations.push(`function field:${key}`);
-      else if (child && typeof child === "object") queue.push(child);
-    }
-  }
-  return [...new Set(violations)];
 }

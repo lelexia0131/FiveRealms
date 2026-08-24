@@ -6,7 +6,7 @@
 MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与测试。
 
 下游
-状态组合、Fact、选择、响应、动作生成、评估与 Planner。
+状态组合、Fact、选择、响应、动作生成、评估与 Worker 搜索边界。
 
 状态边界
 只在门面入口读取当前 GameState；价值与搜索组件仅接收 World 与显式能力。
@@ -19,7 +19,6 @@ MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与�
 */
 import { createInitialWorld } from "./state/StateContracts.js";
 import { deriveCurrentCardCounts } from "./state/Fact.js";
-import { sampleProbabilityWorlds } from "./state/Probability.js";
 import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js";
 import { ResponseBoundary } from "./policy/ResponseBoundary.js";
 import {
@@ -33,24 +32,70 @@ import { Simulator } from "./simulation/Simulator.js";
 import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILE } from "./policy/AiRuntimePolicy.js";
 import { actionIntentKey, sameAction } from "./search/Action.js";
 import { createSearchRequest } from "./search/SearchRequest.js";
-import { createSearchResult, SEARCH_RESULT_STATUS } from "./search/SearchResult.js";
 import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js";
-import { CandidateMaterializer } from "./search/CandidateMaterializer.js";
-import { CounterfactualTerms } from "./search/CounterfactualTerms.js";
-import { PatternMatcher } from "./search/pattern/PatternMatcher.js";
-import { Planner } from "./search/Planner.js";
-import { SearchBudget } from "./search/SearchBudget.js";
-import { SearchPolicy } from "./search/SearchPolicy.js";
-import { SiblingTransitionTerms } from "./search/SiblingTransitionTerms.js";
-import { tacticResolutionScale } from "./search/TacticResolutionQuery.js";
-import { FrontierValue } from "./search/FrontierValue.js";
-import { SearchPrior } from "./search/SearchPrior.js";
-import { TransitionValue } from "./search/TransitionValue.js";
 import { Evaluator } from "./value/Evaluator.js";
-import { ValueLedger } from "./value/ValueLedger.js";
 import { CardSelectionPolicy } from "./policy/CardSelectionPolicy.js";
 import { ResponsePolicy } from "./policy/ResponsePolicy.js";
 import { assessGlobalBenefit } from "./value/GlobalBenefitValue.js";
+
+export const SEARCH_RESULT_STATUS = Object.freeze({
+  ACCEPTED:"ACCEPTED",
+  STALE_VERSION:"STALE_VERSION",
+  INVALID_SESSION:"INVALID_SESSION",
+  INVALID_ACTOR:"INVALID_ACTOR",
+  INVALID_PHASE:"INVALID_PHASE",
+  INVALID_ACTION:"INVALID_ACTION",
+  FALLBACK:"FALLBACK",
+  CANCELLED:"CANCELLED"
+});
+
+/*
+功能
+在 Controller acceptance boundary 内记录一次 canonical Action 搜索结果。
+
+调用方
+AIController.acceptSearchResult 与 acceptWorkerSearchOutcome。
+
+输入
+请求身份、canonical Action/sequence、stats、acceptance status 与可选 RNG continuation。
+
+输出
+冻结的 main-thread 结果记录。
+
+读取状态
+只读输入普通值。
+
+写入状态
+无。
+
+调用函数
+Object.freeze。
+
+边界与不变量
+这是 Controller 内联诊断记录，不是第二种 Action/World DTO；action 与 sequence 保持 canonical identity。
+*/
+function createSearchResult({
+  request,
+  action = null,
+  plannedActions = [],
+  stats = null,
+  status,
+  rejectionReason = null,
+  rngAfter = null
+}) {
+  return Object.freeze({
+    requestId:request.requestId,
+    gameId:request.gameId,
+    stateVersion:request.stateVersion,
+    actorId:request.actorId,
+    status,
+    rejectionReason,
+    action,
+    plannedActions:Object.freeze([...(plannedActions ?? [])]),
+    stats:stats ? Object.freeze({ ...stats }) : null,
+    rngAfter:rngAfter ? Object.freeze({ ...rngAfter }) : null
+  });
+}
 
 /*
 功能
@@ -102,7 +147,7 @@ export class AIController {
   仅写控制器组件字段。
 
   调用函数
-  Value owners、Fact、正式 Policy、执行边界、ActionGenerator 与 Planner 构造函数。
+  Value owners、Fact、正式 Policy、执行边界与 ActionGenerator 构造函数。
 
   边界与不变量
   装配无事后补丁；闭包只持有窄能力，不保存 Game，也不把 Controller 传给任何子组件。
@@ -148,7 +193,7 @@ export class AIController {
     this.lastDecisionDiagnostics = null;
     this.lastMainThreadOperationDiagnostics = null;
     this.acceptedPlannedSequence = [];
-    this.planSource = "planner";
+    this.lastSearchStats = null;
     this.committedRngRequestIds = new Set();
     this.searchDiagnostics = {
       SEARCH:0,
@@ -163,14 +208,16 @@ export class AIController {
 
     this.stateEvaluator = new Evaluator({
       getMaxEnergy: (player) => this.getMaxEnergy(player),
-      getTurnEnergyBreakdown: (player) => this.getTurnEnergyBreakdown(player)
+      getTurnEnergyBreakdown: (player) => this.getTurnEnergyBreakdown(player),
+      getDifficultyMultiplier:() => this.getDifficultyMultiplier()
     });
+    this.responseDecisionPolicy = new ResponsePolicy({ assessGlobalBenefit });
     /*
     功能
     为 main-thread 组合根创建共享资源决策语义的独立 Simulator。
 
     调用方
-    ValueSimulationQuery、ResourceValueQuery 与 Planner。
+    ValueSimulationQuery 与 ResourceValueQuery。
 
     输入
     当前查询或搜索节点的 World，以及可选搜索工作诊断上下文。
@@ -191,7 +238,9 @@ export class AIController {
     不得回读 Game；资源价值查询只服务真实选择边界，不注入物理 Simulator。
     */
     const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
-      searchBudget:runtime.searchBudget ?? null
+      searchBudget:runtime.searchBudget ?? null,
+      decideCounter:(...args) => this.responseDecisionPolicy.decidePlanningCounter(...args),
+      decideLeverageAssault:(...args) => this.responseDecisionPolicy.decideLeverageAssault(...args)
     });
     this.valueSimulationQuery = new ValueSimulationQuery(
       this.stateEvaluator,
@@ -203,22 +252,10 @@ export class AIController {
       evaluator: this.stateEvaluator,
       simulatorFactory
     });
-    this.valueLedger = new ValueLedger({
-      evaluator: this.stateEvaluator,
-      stateValue: this.stateValue,
-      simulationQuery: this.valueSimulationQuery
-    });
-    this.frontierValue = new FrontierValue();
-    this.searchPrior = new SearchPrior({
-      getDifficultyMultiplier: () => this.getDifficultyMultiplier(),
-      simulationQuery: this.valueSimulationQuery
-    });
-    this.transitionValue = new TransitionValue(this.stateValue);
     this.cardSelectionPolicy = new CardSelectionPolicy({
       random: () => this.searchRng.next(),
       remainingCounts: (actor) => deriveCurrentCardCounts(actor, this.getState())
     });
-    this.responseDecisionPolicy = new ResponsePolicy({ assessGlobalBenefit });
     this.cardSelector = new CardSelectionBoundary({
       random: () => this.searchRng.next(),
       getState: () => this.getState(),
@@ -241,60 +278,10 @@ export class AIController {
       responsePolicy: this.responseDecisionPolicy,
       simulationQuery: this.valueSimulationQuery,
       stateValue: this.stateValue,
-      searchPrior:this.searchPrior,
+      evaluator:this.stateEvaluator,
       actionGenerator:this.actionGenerator
     });
 
-    const actionGenerator = this.actionGenerator;
-    this.searchPolicy = new SearchPolicy({
-      random: () => this.searchRng.next(),
-      getRandomnessRange: () => this.getRandomnessRange(),
-      compareCandidates:(left, right) => this.transitionValue.compareCandidates(left, right),
-      config: {
-        depth: AI_RUNTIME_POLICY.searchDepth,
-        beamWidth: AI_RUNTIME_POLICY.beamWidth,
-        hiddenSamples: AI_RUNTIME_POLICY.hiddenStateSamples,
-        yieldEvery: AI_RUNTIME_POLICY.searchYieldEvery,
-        timeBudgetMs: AI_RUNTIME_POLICY.searchTimeBudgetMs,
-        nearTieRange: AI_RUNTIME_POLICY.nearTieRange,
-        enableRandomness: AI_RUNTIME_POLICY.enableRandomness,
-        randomnessRange: AI_RUNTIME_POLICY.randomnessRange,
-        difficultyMultiplier: AI_RUNTIME_POLICY.difficultyMultiplier
-      }
-    });
-    this.counterfactualTerms = new CounterfactualTerms({
-      evaluator: this.stateValue,
-      generateActions: (...args) => actionGenerator.generate(...args),
-      sampleUnknownHands: (query) => sampleProbabilityWorlds({
-        ...query,
-        random:() => this.searchRng.next()
-      }),
-      hiddenSampleCount: this.searchPolicy.structure().hiddenSamples
-    });
-    this.siblingTransitionTerms = new SiblingTransitionTerms();
-    this.candidateMaterializer = new CandidateMaterializer({
-      transitionValue: this.transitionValue,
-      valueLedger: this.valueLedger,
-      frontierValue: this.frontierValue,
-      searchPrior: this.searchPrior,
-      counterfactualTerms: this.counterfactualTerms,
-      siblingTerms: this.siblingTransitionTerms,
-      getResolutionScale: tacticResolutionScale
-    });
-    this.patternMatcher = new PatternMatcher();
-    this.planner = new Planner({
-      candidateMaterializer: this.candidateMaterializer,
-      patternMatcher:this.patternMatcher,
-      searchPolicy: this.searchPolicy,
-      simulatorFactory,
-      searchBudgetFactory: () => new SearchBudget({
-        timeBudget: this.getSearchTimeBudget(),
-        nodeBudget: this.getSearchNodeBudget()
-      }),
-      deduplicateActions:deduplicateSearchEquivalentActions,
-      generateActions: (...args) => actionGenerator.generate(...args),
-      yieldControl: (gameId) => this.yieldControl(gameId)
-    });
   }
 
   /*
@@ -308,7 +295,7 @@ export class AIController {
   当前行动 Player。
 
   输出
-  供 Planner 搜索的候选动作数组；它是游戏规则合法动作的策略子集。
+  供 Searcher 搜索的候选动作数组；它是游戏规则合法动作的策略子集。
 
   读取状态
   当前 GameState 与 Domain Rules 权威。
@@ -381,7 +368,7 @@ export class AIController {
 
   /*
   功能
-  从当前真实状态构造搜索快照并请求 Planner 选择动作。
+  从当前真实状态构造搜索快照并请求 Searcher 选择动作。
 
   调用方
   TurnWorkflow.takeAiPlayPhase 与测试。
@@ -390,19 +377,19 @@ export class AIController {
   当前行动 Player 与可选搜索上下文。
 
   输出
-  Planner 从 AI 候选集合中选择的当前可执行动作。
+  Searcher 从 AI 候选集合中选择的当前可执行动作。
 
   读取状态
   当前 GameState、合法 Fact 与搜索配置。
 
   写入状态
-  Planner 最近搜索诊断与计划序列。
+  最近搜索诊断与计划序列。
 
   调用函数
-  deriveCurrentCardCounts、createInitialWorld、getActionCandidates、Planner.plan。
+  deriveCurrentCardCounts、createInitialWorld、getActionCandidates、Searcher.search。
 
   边界与不变量
-  剩余牌计数每次真实决策只计算一次，Planner 不获得 Game 或 Controller。
+  剩余牌计数每次真实决策只计算一次，Searcher 不获得 Game 或 Controller。
   */
   /*
   功能
@@ -418,19 +405,30 @@ export class AIController {
   冻结 search config 普通对象。
 
   读取状态
-  SearchPolicy 默认、AI_SEARCH_PROFILE hard watchdog 与 main-thread runtime override getters。
+  AI_RUNTIME_POLICY、AI_SEARCH_PROFILE hard watchdog 与 main-thread runtime override getters。
 
   写入状态
   无。
 
   调用函数
-  SearchPolicy.snapshot。
+  无。
 
   边界与不变量
   runtime override 只服务显式测试/诊断覆盖；Controller 不理解速度档位或 timing RNG；正常 wall-clock 截止只由 Worker 内 SearchBudget.TIME 收束。
   */
   buildSearchConfig(options = {}) {
-    const base = this.searchPolicy.snapshot();
+    const base = Object.freeze({
+      depth:AI_RUNTIME_POLICY.searchDepth,
+      beamWidth:AI_RUNTIME_POLICY.beamWidth,
+      hiddenSamples:AI_RUNTIME_POLICY.hiddenStateSamples,
+      yieldEvery:AI_RUNTIME_POLICY.searchYieldEvery,
+      timeBudgetMs:AI_RUNTIME_POLICY.searchTimeBudgetMs,
+      nodeBudget:null,
+      nearTieRange:AI_RUNTIME_POLICY.nearTieRange,
+      enableRandomness:AI_RUNTIME_POLICY.enableRandomness,
+      randomnessRange:AI_RUNTIME_POLICY.randomnessRange,
+      difficultyMultiplier:AI_RUNTIME_POLICY.difficultyMultiplier
+    });
     const timeBudgetOverride = this.getSearchTimeBudget();
     const nodeBudget = this.getSearchNodeBudget();
     const numericOverride = Number(timeBudgetOverride);
@@ -509,7 +507,7 @@ export class AIController {
 
   /*
   功能
-  判断 Planner 返回 action 的 descriptor 是否属于本次 SearchRequest 的 root descriptor set。
+  判断 Searcher 返回 action 是否属于本次请求的 canonical root Action 集合。
 
   调用方
   acceptSearchResult。
@@ -536,107 +534,6 @@ export class AIController {
     return rootActions.some((entry) => sameAction(entry, action));
   }
 
-  /*
-  功能
-  接受并验证一次异步 AI search 结果，只返回已 rebind 的当前 Domain-legal action。
-
-  调用方
-  selectAction。
-
-  输入
-  SearchRequest、Planner raw action、计划序列与 stats。
-
-  输出
-  { action, result }；非法结果返回安全 end，绝不返回旧实体动作。
-
-  读取状态
-  SearchRequest、当前 GameState、Domain legality 经 getActionCandidates。
-
-  写入状态
-  lastSearchResult。
-
-  调用函数
-  validateRequestAcceptance、isDescriptorInRootSet、Action.describe、resolvePlannedAction、createSearchResult。
-
-  边界与不变量
-  result descriptor 必须先属于 request root set，再在当前 root candidate 集合 rebind；cancelled 只允许返回 end。
-  */
-  acceptSearchResult({ request, action = null, plannedSequence = [], stats = null }) {
-    const player = this.getState().players.find((entry) => entry.id === request.actorId) ?? null;
-    const validation = this.validateRequestAcceptance(player, request);
-    if (validation.status) {
-      if (validation.status === SEARCH_RESULT_STATUS.STALE_VERSION) this.searchDiagnostics.STALE += 1;
-      const result = createSearchResult({
-        request,
-        action:null,
-        plannedActions:[],
-        stats,
-        status:validation.status,
-        rejectionReason:validation.reason
-      });
-      this.lastSearchResult = result;
-      return { action:this.actionGenerator.createEndAction(request.actorId), result };
-    }
-    if (stats?.stopReason === "CANCELLED") {
-      const result = createSearchResult({
-        request,
-        action:null,
-        plannedActions:[],
-        stats,
-        status:SEARCH_RESULT_STATUS.CANCELLED,
-        rejectionReason:"cancelled"
-      });
-      this.lastSearchResult = result;
-      return { action:this.actionGenerator.createEndAction(request.actorId), result };
-    }
-    if (!action || !this.isActionInRootSet(action, request.rootActions)) {
-      const result = createSearchResult({
-        request,
-        action:null,
-        plannedActions:[],
-        stats,
-        status:SEARCH_RESULT_STATUS.INVALID_ACTION,
-        rejectionReason:"action not in request root set"
-      });
-      this.lastSearchResult = result;
-      return { action:this.actionGenerator.createEndAction(request.actorId), result };
-    }
-    const result = createSearchResult({
-      request,
-      action,
-      plannedActions:plannedSequence,
-      stats,
-      status:SEARCH_RESULT_STATUS.ACCEPTED
-    });
-    this.lastSearchResult = result;
-    return { action, result };
-  }
-
-  /*
-  功能
-  从当前权威 state 构造 SearchRequest、执行 Planner，并只返回通过 stale/rebind/Domain-legality 验证的 action。
-
-  调用方
-  MatchApplication/TurnWorkflow 与测试。
-
-  输入
-  当前行动 Player 与可选上下文。
-
-  输出
-  当前可执行的 Planner 动作；非法结果安全返回 end。
-
-  读取状态
-  当前 GameState、Fact、SearchPolicy 与 Planner。
-
-  写入状态
-  lastSearchRequest/lastSearchResult 与 Planner 诊断。
-
-  调用函数
-  deriveCurrentCardCounts、createInitialWorld、getActionCandidates、createSearchRequest、Planner.plan、acceptSearchResult。
-
-  边界与不变量
-  stateVersion 只用于本次异步结果 acceptance；queued plan reuse 继续由 resolvePlannedAction current-state rebind。
-  */
   /*
   功能
   提交 Worker outcome 返回的 RNG continuation。
@@ -672,50 +569,37 @@ export class AIController {
 
   /*
   功能
-  在 Worker 基础设施失败时，用现有 Search Prior 对当前合法根候选做确定性降级选择。
+  在 Worker 基础设施失败时返回 Generator 定义的确定性安全结束动作。
 
   调用方
   acceptWorkerSearchOutcome 的 malformed/workerError 分支。
 
   输入
-  当前真实 Player、已通过 session/version/actor/phase 验证的 SearchRequest 与可选 decision-local 合法根集合。
+  当前真实 Player 与可选 decision-local canonical 根动作集合。
 
   输出
-  { action, actionDescriptor, score }；候选按 prior 总分稳定择优。
+  { action }；优先复用根集合中的 canonical end，否则由 Generator 创建同语义 end。
 
   读取状态
-  当前 Domain/Policy 合法根候选、request.searchState 与 SearchPrior。
+  当前 decision-local canonical 根动作。
 
   写入状态
   无。
 
   调用函数
-  getActionCandidates、SearchPrior.actionUtility/actionSearchPrior、Action.describe。
+  ActionGenerator.createEndAction。
 
   边界与不变量
-  该路径不执行 Planner、Simulator、随机数或 Final Utility；通过 stateVersion 验证的 decision-local 根集合
-  与当前权威状态严格对应，可直接复用而不建立跨决策缓存；同分保持 ActionGenerator 稳定顺序。
+  该路径不评分、不排序、不执行 Searcher/Simulator，也不尝试替代 AI 决策；
+  基础设施故障只允许安全结束，避免 Controller 成为第二 final-selection authority。
   */
-  selectWorkerFailureFallback(player, request, decisionRootActions = null) {
+  selectWorkerFailureFallback(player, decisionRootActions = null) {
     const candidates = Array.isArray(decisionRootActions)
       ? decisionRootActions
       : this.getActionCandidates(player);
-    const ranked = candidates.map((action) => {
-      const score = this.searchPrior.actionUtility(
-        action, player, request.world
-      ) + this.searchPrior.actionSearchPrior(action, player, request.world);
-      return {
-        action,
-        score:Number.isFinite(score) ? score : Number.NEGATIVE_INFINITY
-      };
-    });
-    const best = ranked.reduce((current, candidate) => (
-      !current || candidate.score > current.score ? candidate : current
-    ), null);
-    if (!best) return null;
     return {
-      action:best.action,
-      score:best.score
+      action:candidates.find((action) => action?.type === "end")
+        ?? this.actionGenerator.createEndAction(player.id)
     };
   }
 
@@ -749,12 +633,8 @@ export class AIController {
   */
   acceptWorkerSearchOutcome(request, outcome, decisionRootActions = null) {
     this.lastWorkerOutcome = outcome;
-    this.planSource = "worker";
     this.lastSearchFallback = null;
-    if (outcome?.stats) this.planner.lastSearchStats = { ...outcome.stats };
-    if (Array.isArray(outcome?.plannedActions)) {
-      this.planner.lastPlannedSequence = [...outcome.plannedActions];
-    }
+    this.lastSearchStats = outcome?.stats ? { ...outcome.stats } : null;
     const malformed = workerOutcomeViolations(outcome, request);
     if (malformed.length || outcome?.workerError) {
       this.searchDiagnostics.WORKER_ERROR += 1;
@@ -776,21 +656,7 @@ export class AIController {
         this.acceptedPlannedSequence = [];
         return { action:this.actionGenerator.createEndAction(request.actorId), result };
       }
-      const fallback = this.selectWorkerFailureFallback(player, request, decisionRootActions);
-      if (!fallback) {
-        const result = createSearchResult({
-          request,
-          action:null,
-          plannedActions:[],
-          stats:outcome?.stats ?? null,
-          status:SEARCH_RESULT_STATUS.INVALID_ACTION,
-          rejectionReason:fallbackReason,
-          rngAfter:null
-        });
-        this.lastSearchResult = result;
-        this.acceptedPlannedSequence = [];
-        return { action:this.actionGenerator.createEndAction(request.actorId), result };
-      }
+      const fallback = this.selectWorkerFailureFallback(player, decisionRootActions);
       const result = createSearchResult({
         request,
         action:fallback.action,
@@ -800,17 +666,14 @@ export class AIController {
         rejectionReason:fallbackReason,
         rngAfter:null
       });
-      this.planSource = "worker-fallback";
       this.lastSearchFallback = Object.freeze({
-        source:"root-search-prior",
+        source:"generator-safe-end",
         reason:fallbackReason,
-        score:fallback.score,
         action:fallback.action
       });
       this.searchDiagnostics.FALLBACK += 1;
       this.lastSearchResult = result;
       this.acceptedPlannedSequence = [];
-      this.planner.lastPlannedSequence = [];
       return { action:fallback.action, result };
     }
     if (outcome.cancelled || outcome.searchStopReason === "CANCELLED") {
@@ -891,7 +754,7 @@ export class AIController {
   当前可执行 action；executor fault 进入确定性 root fallback，stale/cancel 安全返回 end。
 
   读取状态
-  current GameState、Fact、SearchPolicy、searchRng。
+  current GameState、Fact、search configuration 与 searchRng。
 
   写入状态
   lastSearchRequest、lastDecisionDiagnostics、worker/fallback diagnostics、RNG continuation 与 accepted plan。
@@ -900,8 +763,8 @@ export class AIController {
   createInitialWorld、getActionCandidates、createSearchRequest、searchExecutor.search、acceptWorkerSearchOutcome、decisionNow。
 
   边界与不变量
-  生产 Planner execution 由 executor 负责；正常 TIME 仍由 Worker 返回 incumbent；Main Thread 只在
-  infrastructure fault 时使用既有合法根候选与 Search Prior，且不执行 Planner/Simulator。
+  生产 Searcher execution 由 executor 负责；正常 TIME 仍由 Worker 返回 incumbent；Main Thread 只在
+  infrastructure fault 时使用 Generator 定义的安全 end，且不执行 Searcher/Simulator。
   */
   async selectAction(player, options = {}) {
     const state = this.getState();
@@ -1126,7 +989,7 @@ export class AIController {
 
   /*
   功能
-  返回 Planner 最近生成计划序列的隔离副本。
+  返回最近一次已接受 Worker 搜索序列的隔离副本。
 
   调用方
   TurnWorkflow 可选连续计划执行路径。
@@ -1138,7 +1001,7 @@ export class AIController {
   动作序列浅副本。
 
   读取状态
-  Planner.lastPlannedSequence。
+  acceptedPlannedSequence。
 
   写入状态
   无。
@@ -1147,11 +1010,10 @@ export class AIController {
   无。
 
   边界与不变量
-  调用方不得通过返回数组修改 Planner 内部序列。
+  调用方不得通过返回数组修改 Controller 已接受的 canonical Action 序列。
   */
   getPlannedSequence() {
-    if (this.planSource !== "planner") return [...this.acceptedPlannedSequence];
-    return [...this.planner.lastPlannedSequence];
+    return [...this.acceptedPlannedSequence];
   }
 
   /*

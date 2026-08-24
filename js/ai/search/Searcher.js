@@ -1,37 +1,40 @@
 /*
 模块职责
-在 World 上编排 beam search（束搜索：每层只保留固定数量候选）并返回最佳根动作与稳定计划序列。
+唯一拥有 World 上的 beam search、Pattern 调度、frontier、root coverage、预算检查与 incumbent 维护。
 
 上游
-AIController 组合根与搜索回归测试。
+Worker SearchEngineFactory 与搜索回归测试。
 
 下游
-注入的 PatternMatcher、Simulator/SearchBudget 工厂、CandidateMaterializer、SearchPolicy 与动作生成/让步能力。
+注入的 PatternMatcher、Simulator/SearchBudget 工厂、Evaluator/StateValue、搜索先验与动作生成/让步能力。
 
 状态边界
 只读输入 World，所有分支写入由 simulatorFactory 创建的独立 Simulator 承担。
 
 信息边界
-Planner 不读取 GameState 或领域隐藏事实；合法候选与全部数值项来自显式注入的能力和唯一归属者。
+Searcher 不读取 GameState 或领域隐藏事实；合法候选与全部数值项来自显式注入的能力和唯一归属者。
 
 架构约束
-只理解根动作、搜索节点、深度、束、搜索前沿、预算、停止原因、分数、终止状态与 best-seen candidate（搜索过程中已经完整计算出的最佳候选）。
+不得定义合法性、transition、Final Utility 或最终偏好；只能调用 Evaluator comparator 机械维护 incumbent。
 */
+import { statePointsToUtility } from "../value/Economics.js";
+import { actionIntentKey, actionSearchKey } from "./Action.js";
+import { STATE_UTILITY_PRIOR_WEIGHT } from "./SearchPrior.js";
 
-export class Planner {
+export class Searcher {
   /*
   功能
-  创建只依赖正式搜索归属模块与窄运行能力的 Planner。
+  创建只依赖正式搜索归属模块与窄运行能力的 Searcher。
 
   调用方
-  AIController 的组合根（统一组装依赖的位置）与正式边界。
+  Worker SearchEngineFactory 与正式边界。
 
   输入
-  CandidateMaterializer、PatternMatcher、SearchPolicy、Simulator/SearchBudget factory、候选去重、
-  深层生成、单候选惰性执行概率查询与可取消让步能力。
+  Evaluator/StateValue/ValueLedger、SearchPrior、CounterfactualTerms、PatternMatcher、搜索配置、
+  Simulator/SearchBudget factory、候选去重、深层生成与可取消让步能力。
 
   输出
-  可执行 plan 的 Planner。
+  可执行 search 的 Searcher。
 
   读取状态
   无。
@@ -43,20 +46,33 @@ export class Planner {
   无。
 
   边界与不变量
-  不接收 Game、Controller、领域归属模块或具体 Simulator 类。
+  不接收 Game、Controller、领域归属模块或具体 Simulator 类；随机只能通过其它探索能力使用，不能改变最终 winner。
   */
   constructor({
-    candidateMaterializer,
+    evaluator,
+    stateValue,
+    valueLedger,
+    searchPrior,
+    counterfactualTerms,
     patternMatcher,
-    searchPolicy,
+    getResolutionScale,
+    config,
     simulatorFactory,
     searchBudgetFactory,
     deduplicateActions,
     generateActions,
     yieldControl
   } = {}) {
-    const services = { candidateMaterializer, patternMatcher, searchPolicy };
+    const services = {
+      evaluator,
+      stateValue,
+      valueLedger,
+      searchPrior,
+      counterfactualTerms,
+      patternMatcher
+    };
     const capabilities = {
+      getResolutionScale,
       simulatorFactory,
       searchBudgetFactory,
       deduplicateActions,
@@ -64,17 +80,491 @@ export class Planner {
       yieldControl
     };
     for (const [name, service] of Object.entries(services)) {
-      if (!service) throw new TypeError(`Planner 缺少依赖：${name}`);
+      if (!service) throw new TypeError(`Searcher 缺少依赖：${name}`);
     }
     for (const [name, capability] of Object.entries(capabilities)) {
       if (typeof capability !== "function") {
-        throw new TypeError(`Planner 缺少依赖：${name}`);
+        throw new TypeError(`Searcher 缺少依赖：${name}`);
       }
+    }
+    if (!config || typeof config !== "object") {
+      throw new TypeError("Searcher 缺少依赖：config");
     }
     Object.assign(this, services);
     Object.assign(this, capabilities);
+    this.config = Object.freeze({ ...config });
     this.lastSearchStats = null;
-    this.lastPlannedSequence = [];
+    this.lastSequence = [];
+  }
+
+  /*
+  功能
+  返回本次搜索的稳定结构配置。
+
+  调用方
+  search。
+
+  输入
+  无。
+
+  输出
+  depth、beamWidth、hiddenSamples 与 yieldEvery。
+
+  读取状态
+  构造时冻结的 config。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只解释搜索结构，不读取或扩大预算。
+  */
+  structure() {
+    return {
+      depth:this.config.depth,
+      beamWidth:this.config.beamWidth,
+      hiddenSamples:this.config.hiddenSamples,
+      yieldEvery:this.config.yieldEvery
+    };
+  }
+
+  /*
+  功能
+  组合 Final Utility 与只用于探索裁剪的 prior。
+
+  调用方
+  buildChildNode 与 search 的根节点构造。
+
+  输入
+  valueScore、prior 与真实深度。
+
+  输出
+  仅用于 beam membership 的 pruneScore。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  prior 只能改变搜索顺序和有限 beam，不得写回 Final Utility。
+  */
+  pruneScore(valueScore, prior, depth) {
+    return valueScore + prior / depth;
+  }
+
+  /*
+  功能
+  机械保留候选集合中由 Evaluator comparator 判定的 incumbent。
+
+  调用方
+  considerIncumbent、selectProgressiveSpine、search root safety 与最终收束。
+
+  输入
+  只含完整物化节点的候选数组。
+
+  输出
+  最优完整节点；空数组返回 null。
+
+  读取状态
+  注入的 Evaluator comparator。
+
+  写入状态
+  无。
+
+  调用函数
+  compareCandidates。
+
+  边界与不变量
+  Searcher 不解释为什么候选更优；完全等价时保留原顺序。
+  */
+  bestCandidate(candidates) {
+    return (candidates ?? []).reduce((best, node) => {
+      if (!best) return node;
+      return this.evaluator.compareCandidates(node, best) > 0 ? node : best;
+    }, null);
+  }
+
+  /*
+  功能
+  按探索分数截取有限 beam，同时保留当前 Evaluator incumbent。
+
+  调用方
+  search 的根层与逐深度扩展。
+
+  输入
+  完整候选数组与 beamWidth。
+
+  输出
+  不超过 beamWidth 的新数组。
+
+  读取状态
+  pruneScore、searchCredit 与 Evaluator comparator。
+
+  写入状态
+  无。
+
+  调用函数
+  bestCandidate。
+
+  边界与不变量
+  不修改输入数组；prior 不能把当前已证明的 Final Utility incumbent 完全挤出 beam。
+  */
+  prune(candidates, beamWidth) {
+    const ordered = [...(candidates ?? [])].sort((left, right) => (
+      right.pruneScore - left.pruneScore
+    ));
+    const beam = ordered.slice(0, beamWidth);
+    const incumbent = this.bestCandidate(ordered);
+    if (beam.length && incumbent && !beam.includes(incumbent)) {
+      let replacementIndex = beam.length - 1;
+      while (replacementIndex >= 0 && beam[replacementIndex].searchCredit > 0) {
+        replacementIndex -= 1;
+      }
+      beam[replacementIndex < 0 ? beam.length - 1 : replacementIndex] = incumbent;
+    }
+    return beam;
+  }
+
+  /*
+  功能
+  按停止原因返回最终完整候选。
+
+  调用方
+  search 收束阶段。
+
+  输入
+  stopReason、完整 final beam 与全局 best-seen candidate。
+
+  输出
+  COMPLETE 时返回 Evaluator incumbent；TIME/NODE 返回中断前的全局完整 incumbent；取消返回 null。
+
+  读取状态
+  注入的 Evaluator comparator。
+
+  写入状态
+  无。
+
+  调用函数
+  bestCandidate。
+
+  边界与不变量
+  随机数和 near-tie 只能影响探索顺序，不能改变 final winner；partial candidate 永不参与。
+  */
+  selectFinal({ stopReason, completedCandidates, bestSeenCandidate }) {
+    if (stopReason === "COMPLETE") return this.bestCandidate(completedCandidates);
+    if (stopReason === "TIME" || stopReason === "NODE") return bestSeenCandidate;
+    return null;
+  }
+
+  /*
+  功能
+  计算动作在昂贵 materialization 前的廉价探索顺序分数。
+
+  调用方
+  scheduleRootActions 与 scheduleChildActions。
+
+  输入
+  canonical Action、行动者与当前 World。
+
+  输出
+  有限调度分数。
+
+  读取状态
+  SearchPrior。
+
+  写入状态
+  无。
+
+  调用函数
+  SearchPrior.rootSchedulingScore。
+
+  边界与不变量
+  只改变探索顺序，不进入 Final Utility 或候选 prior。
+  */
+  schedulingScore(action, player, state) {
+    const score = this.searchPrior.rootSchedulingScore?.(action, player, state) ?? 0;
+    return Number.isFinite(score) || score === Number.NEGATIVE_INFINITY ? score : 0;
+  }
+
+  /*
+  功能
+  创建一次搜索共用的有界反事实上下文。
+
+  调用方
+  search。
+
+  输入
+  行动者、根 World 与 canonical root Actions。
+
+  输出
+  CounterfactualTerms 创建的上下文。
+
+  读取状态
+  CounterfactualTerms。
+
+  写入状态
+  只消费既有 Search RNG 采样序列。
+
+  调用函数
+  CounterfactualTerms.createContext。
+
+  边界与不变量
+  每次 search 只创建一次，不作为线性 World middle layer。
+  */
+  createContext(player, state, rootActions) {
+    return this.counterfactualTerms.createContext(player, state, rootActions);
+  }
+
+  /*
+  功能
+  返回反事实上下文的 data-only 搜索诊断。
+
+  调用方
+  recordResult。
+
+  输入
+  当前搜索上下文。
+
+  输出
+  hiddenSamples 与 discoveredDynamicTarget。
+
+  读取状态
+  上下文诊断字段。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不暴露样本内容，诊断不得参与候选比较。
+  */
+  contextDiagnostics(context) {
+    return {
+      hiddenSamples:context.unknownHandEstimate?.sampleCount ?? 0,
+      discoveredDynamicTarget:Boolean(context.discoveredDynamicTarget)
+    };
+  }
+
+  /*
+  功能
+  把一次已经模拟完成的 canonical Action 组装为完整可比较搜索候选。
+
+  调用方
+  根、root safety 与深层 candidate preparation。
+
+  输入
+  动作前后 World、行动者、深度、provenance、Simulator、上下文、诊断开关与 SearchBudget。
+
+  输出
+  完整候选；反事实中断时返回 null。
+
+  读取状态
+  CounterfactualTerms、Evaluator、StateValue、ValueLedger 与 SearchPrior。
+
+  写入状态
+  只写独立候选记录和显式诊断。
+
+  调用函数
+  CounterfactualTerms.candidateTerms/hiddenPrior、Evaluator.evaluateTransition/frontierResidual、SearchPrior。
+
+  边界与不变量
+  Searcher 只机械组装各 owner 的结果；不定义 value formula，partial candidate 不得返回。
+  */
+  evaluateCandidate({
+    action,
+    beforeState,
+    afterState,
+    player,
+    depth,
+    remainingProvenance,
+    simulator,
+    context,
+    collectDiagnostics = false,
+    searchBudget = null
+  }) {
+    const terms = this.counterfactualTerms.candidateTerms({
+      beforeState,
+      afterState,
+      action,
+      actorId:player.id,
+      depth,
+      remainingProvenance,
+      simulator,
+      context,
+      searchBudget
+    });
+    if (terms === null) return null;
+    const baseTerms = this.evaluator.evaluateTransition({
+      stateValue:this.stateValue,
+      action,
+      player,
+      beforeState,
+      afterState,
+      depth,
+      endOpportunityCost:0,
+      getResolutionScale:() => this.getResolutionScale(
+        action,
+        beforeState,
+        player.id,
+        simulator
+      ),
+      searchBudget
+    });
+    const candidateLedger = collectDiagnostics
+      ? this.valueLedger.computeCandidateLedger(
+          beforeState,
+          action,
+          afterState,
+          player.id,
+          true,
+          searchBudget
+        )
+      : null;
+    const responseNet = (candidateLedger?.responses ?? [])
+      .reduce((sum, response) => sum + (response.netValue ?? 0), 0);
+    const terminal = Boolean(afterState.playPhaseEnded);
+    const frontierResidual = terminal
+      ? this.evaluator.frontierResidual(afterState, player.id)
+      : null;
+    const frontierValue = this.evaluator.terminalFrontierValue(frontierResidual, terminal);
+    const domainPrior = statePointsToUtility(
+      terms.exposeMarginal + terms.assaultStacksCredit
+    ) * STATE_UTILITY_PRIOR_WEIGHT;
+    const searchCredit = this.searchPrior.actionSearchPrior(action, player, beforeState);
+    const prior = this.counterfactualTerms.hiddenPrior(action, context)
+      + this.searchPrior.actionUtility(action, player, beforeState, { searchBudget })
+      + searchCredit
+      + domainPrior;
+    return {
+      action,
+      state:afterState,
+      terminal,
+      baseTerms,
+      baseTransition:baseTerms.baseTransition,
+      exposeMarginal:terms.exposeMarginal,
+      assaultStacksCredit:terms.assaultStacksCredit,
+      spyGapInformationValue:terms.spyGapInformationValue ?? 0,
+      remainingProvenance:terms.nextProvenance,
+      candidateLedger,
+      responseNet,
+      frontierResidual,
+      frontierValue,
+      domainPrior,
+      searchCredit,
+      prior,
+      transitionValue:null
+    };
+  }
+
+  /*
+  功能
+  让 Evaluator 为同层完整候选组合唯一 Final Utility。
+
+  调用方
+  根、root safety 与深层 sibling materialization 完成点。
+
+  输入
+  完整候选数组。
+
+  输出
+  同一数组。
+
+  读取状态
+  候选命名 value terms。
+
+  写入状态
+  只写候选 transitionValue。
+
+  调用函数
+  Evaluator.composeTransitionValue。
+
+  边界与不变量
+  sibling 不再拥有第二套机会成本；responseNet 只作诊断。
+  */
+  finalizeCandidates(candidates) {
+    for (const candidate of candidates) {
+      candidate.transitionValue = this.evaluator.composeTransitionValue({
+        baseTransition:candidate.baseTransition,
+        frontierValue:candidate.frontierValue,
+        spyGapInformationValue:candidate.spyGapInformationValue ?? 0
+      });
+    }
+    return candidates;
+  }
+
+  /*
+  功能
+  构造根候选的稳定诊断条目。
+
+  调用方
+  search diagnostics path。
+
+  输入
+  含 ValueLedger 的完整候选。
+
+  输出
+  canonical Action、投影、响应与 frontier 数值。
+
+  读取状态
+  candidateLedger。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只在 diagnostics 开启时调用，不参与评分。
+  */
+  diagnosticEntry(candidate) {
+    return {
+      action:candidate.action,
+      projected:candidate.candidateLedger.projected,
+      responses:candidate.candidateLedger.responses,
+      responseNet:candidate.responseNet,
+      frontierValue:candidate.frontierValue
+    };
+  }
+
+  /*
+  功能
+  截断 canonical Action 序列中 end 之后不会执行的尾部。
+
+  调用方
+  recordResult。
+
+  输入
+  canonical Action 序列。
+
+  输出
+  新的截断数组。
+
+  读取状态
+  Action.type。
+
+  写入状态
+  无。
+
+  调用函数
+  Array.findIndex/slice。
+
+  边界与不变量
+  首个 end 保留；不投影、不复制 Action，也不重建 selection。
+  */
+  describeSequence(sequence) {
+    const terminalIndex = sequence.findIndex((action) => action?.type === "end");
+    return terminalIndex >= 0 ? sequence.slice(0, terminalIndex + 1) : [...sequence];
   }
 
   /*
@@ -82,7 +572,7 @@ export class Planner {
   在单一原子边界内执行候选 apply/materialize，并统一丢弃 cooperative interruption 的 partial work。
 
   调用方
-  plan 的根、根安全与深层候选循环。
+  search 的根、根安全与深层候选循环。
 
   输入
   当前 SearchBudget、搜索深度与返回 { state, candidate } 的同步 preparation。
@@ -120,7 +610,7 @@ export class Planner {
   把完整物化的子候选连接到父搜索节点。
 
   调用方
-  plan 的 progressive depth-2 缓存、spine 与常规深层展开。
+  search 的 progressive depth-2 缓存、spine 与常规深层展开。
 
   输入
   父节点、完整子候选与当前深度。
@@ -129,13 +619,13 @@ export class Planner {
   继承根动作、累计价值、序列、provenance 与纯调度 Pattern metadata 的完整搜索节点。
 
   读取状态
-  SearchPolicy 的 pruneScore 公式、父/子候选字段与父节点 Pattern prefix。
+  Searcher 的 pruneScore mechanics、父/子候选字段与父节点 Pattern prefix。
 
   写入状态
   无。
 
   调用函数
-  SearchPolicy.pruneScore、advancePatternState。
+  pruneScore、advancePatternState。
 
   边界与不变量
   只连接已经完整物化并完成 sibling terms 的候选；Pattern metadata 不得登记 partial state 或改变 final value。
@@ -154,7 +644,7 @@ export class Planner {
       state:candidate.state,
       terminal:candidate.terminal,
       valueScore,
-      pruneScore:this.searchPolicy.pruneScore(valueScore, candidate.prior, depth),
+      pruneScore:this.pruneScore(valueScore, candidate.prior, depth),
       searchCredit:candidate.searchCredit,
       sequence:[...node.sequence, candidate.action],
       remainingProvenance:candidate.remainingProvenance,
@@ -223,7 +713,7 @@ export class Planner {
   把 Pattern-guided roots 与既有 SearchPrior root 顺序进行公平交错。
 
   调用方
-  plan 的 root scheduling 阶段。
+  search 的 root scheduling 阶段。
 
   输入
   已去重合法 roots、行动者、根 World 与有界 proposals。
@@ -232,13 +722,13 @@ export class Planner {
   最多提升一个最高优先级 guided root，其余 roots 保持现有 SearchPrior 顺序。
 
   读取状态
-  CandidateMaterializer root scheduling score/key。
+  SearchPrior score 与 canonical Action keys。
 
   写入状态
   无。
 
   调用函数
-  CandidateMaterializer.rootSchedulingScore/rootSchedulingKey/schedulingSecondaryKey。
+  schedulingScore、actionIntentKey、actionSearchKey。
 
   边界与不变量
   空 proposal 必须严格保留既有顺序；Pattern 只有一个正向提升位，其他 proposals 不得挤占 ordinary coverage。
@@ -246,10 +736,9 @@ export class Planner {
   scheduleRootActions(actions, player, state, proposals = []) {
     const scheduled = (actions ?? []).map((action) => ({
       action,
-      score:this.candidateMaterializer.rootSchedulingScore(action, player, state),
-      key:this.candidateMaterializer.rootSchedulingKey(action),
-      secondaryKey:this.candidateMaterializer.schedulingSecondaryKey?.(action)
-        ?? this.candidateMaterializer.rootSchedulingKey(action)
+      score:this.schedulingScore(action, player, state),
+      key:actionIntentKey(action),
+      secondaryKey:actionSearchKey(action)
     })).sort((left, right) => {
       if (left.score !== right.score) return left.score > right.score ? -1 : 1;
       const intentOrder = left.key.localeCompare(right.key);
@@ -286,13 +775,13 @@ export class Planner {
   guided intent 优先、其余动作按现有 SearchPrior/coarse intent/search-semantic secondary key 排列的新数组。
 
   读取状态
-  CandidateMaterializer 提供的 child scheduling score/key。
+  SearchPrior score 与 canonical Action keys。
 
   写入状态
   无。
 
   调用函数
-  CandidateMaterializer.childSchedulingScore/childSchedulingKey/schedulingSecondaryKey。
+  schedulingScore、actionIntentKey、actionSearchKey。
 
   边界与不变量
   只改变探索顺序，不改变合法集合、Final Utility 或 incumbent 规则；
@@ -307,12 +796,11 @@ export class Planner {
     }
     return (actions ?? []).map((action) => ({
       action,
-      score:this.candidateMaterializer.childSchedulingScore(action, player, state),
-      key:this.candidateMaterializer.childSchedulingKey(action),
+      score:this.schedulingScore(action, player, state),
+      key:actionIntentKey(action),
       guidedRank:guidance.findIndex((proposal) => typeof proposal !== "string"
         && this.patternMatcher.matchesStep(proposal, stepIndex, action, state)),
-      secondaryKey:this.candidateMaterializer.schedulingSecondaryKey?.(action)
-        ?? this.candidateMaterializer.childSchedulingKey(action)
+      secondaryKey:actionSearchKey(action)
     })).sort((left, right) => {
       const leftRank = left.guidedRank >= 0
         ? left.guidedRank
@@ -333,7 +821,7 @@ export class Planner {
   只为首次完整形成的 Pattern proposal 登记完成诊断。
 
   调用方
-  plan 在完整 root/child node 建立后。
+  search 在完整 root/child node 建立后。
 
   输入
   完整搜索节点与本次搜索工作诊断。
@@ -363,16 +851,16 @@ export class Planner {
 
   /*
   功能
-  用唯一 SearchPolicy incumbent 规则比较一个完整节点并同步工作诊断。
+  用注入的 Evaluator comparator 比较一个完整节点并同步工作诊断。
 
   调用方
-  plan 的 root、progressive 与 beam 完整节点登记点。
+  search 的 root、progressive 与 beam 完整节点登记点。
 
   输入
   当前 incumbent、完整节点和本次搜索工作诊断。
 
   输出
-  SearchPolicy 选择后的唯一 incumbent。
+  Evaluator comparator 选择后的唯一 incumbent。
 
   读取状态
   节点 valueScore、完成工作计数与 Pattern 完成 metadata。
@@ -381,13 +869,13 @@ export class Planner {
   incumbent 及 Pattern incumbent 更新计数。
 
   调用函数
-  SearchPolicy.bestByValue。
+  bestCandidate。
 
   边界与不变量
   Pattern metadata 不参与比较；只有完整 Pattern node 按既有 valueScore 真正推翻 incumbent 时才记录更新。
   */
   considerIncumbent(bestSeenCandidate, node, workDiagnostics) {
-    const nextBest = this.searchPolicy.bestByValue(
+    const nextBest = this.bestCandidate(
       [bestSeenCandidate, node].filter(Boolean)
     );
     if (nextBest !== bestSeenCandidate) {
@@ -406,7 +894,7 @@ export class Planner {
   在现有 beam 内优先选择仍有 Pattern continuation 的 progressive spine。
 
   调用方
-  plan 的逐深度 progressive traversal。
+  search 的逐深度 progressive traversal。
 
   输入
   当前完整 beam nodes。
@@ -415,13 +903,13 @@ export class Planner {
   最高 proposal explorationPriority 的可继续节点；没有 guidance 时返回既有 value best。
 
   读取状态
-  节点 activePatternProposals 与 SearchPolicy value 比较。
+  节点 activePatternProposals 与 Evaluator comparator。
 
   写入状态
   无。
 
   调用函数
-  SearchPolicy.bestByValue。
+  bestCandidate。
 
   边界与不变量
   只改变下一份预算花在哪里，不改变 beam membership、valueScore 或 final selection。
@@ -442,7 +930,7 @@ export class Planner {
       }
       return left.proposal.semanticKey.localeCompare(right.proposal.semanticKey);
     });
-    return guided[0]?.node ?? this.searchPolicy.bestByValue(available);
+    return guided[0]?.node ?? this.bestCandidate(available);
   }
 
   /*
@@ -450,7 +938,7 @@ export class Planner {
   从一个完整父状态生成并原子物化当前深度的全部直接子候选。
 
   调用方
-  plan 的最高调度 root 预展开、progressive spine 与常规 beam 展开。
+  search 的最高调度 root 预展开、progressive spine 与常规 beam 展开。
 
   输入
   父状态/provenance、深度、行动者、Simulator、SearchBudget、搜索上下文、结构、
@@ -461,14 +949,14 @@ export class Planner {
   可恢复 expansion cache，以及会话是否在 yield 时取消。
 
   读取状态
-  注入的深层动作生成、CandidateMaterializer、SearchBudget 与 yieldControl。
+  注入的深层动作生成、Evaluator、CounterfactualTerms、SearchBudget 与 yieldControl。
 
   写入状态
   SearchBudget 工作计数、搜索上下文诊断与 workDiagnostics 深度/分支/Pattern 中断计数。
 
   调用函数
   generateActions、scheduleChildActions、prepareCandidate、Simulator.apply、
-  CandidateMaterializer.materialize/finalizeSiblings、yieldControl。
+  evaluateCandidate、finalizeCandidates、yieldControl。
 
   边界与不变量
   cooperative interruption 只丢弃当前 partial child；cache 只含完整候选和未消费的 semantic action 顺序；
@@ -537,11 +1025,11 @@ export class Planner {
     while (nextActionIndex < followActions.length && newCandidateCount < candidateLimit) {
       if (budget.shouldStop()) break;
       const action = followActions[nextActionIndex];
-      this.candidateMaterializer.observeCandidate(action, context);
+      this.counterfactualTerms.observeCandidate(action, context);
       const prepared = this.prepareCandidate(budget, depth, () => {
         budget.observeSimulation();
         const state = simulator.apply(parentState, action);
-        const candidate = this.candidateMaterializer.materialize({
+        const candidate = this.evaluateCandidate({
           action,
           beforeState:parentState,
           afterState:state,
@@ -596,7 +1084,7 @@ export class Planner {
         }
       }
     }
-    this.candidateMaterializer.finalizeSiblings(candidates);
+    this.finalizeCandidates(candidates);
     return {
       actions:followActions,
       candidates,
@@ -611,7 +1099,7 @@ export class Planner {
   统一记录完成、预算中断或取消后的计划序列与搜索诊断。
 
   调用方
-  plan 的正常收束和 yield 取消路径。
+  search 的正常收束和 yield 取消路径。
 
   输入
   SearchBudget、结构配置、完整候选、provisional root、context、根诊断条目与本次搜索工作诊断。
@@ -620,13 +1108,13 @@ export class Planner {
   返回完整候选动作；TIME/NODE 零完整 root 时返回明确标记的 provisional root；取消仍返回终止动作。
 
   读取状态
-  budget 计数、候选序列、root/work diagnostics 与 CandidateMaterializer 的 context diagnostics。
+  budget 计数、候选序列、root/work diagnostics 与 bounded counterfactual context diagnostics。
 
   写入状态
-  lastPlannedSequence 与 lastSearchStats。
+  lastSequence 与 lastSearchStats。
 
   调用函数
-  CandidateMaterializer.describeSequence/contextDiagnostics、SearchBudget.diagnostics。
+  describeSequence、contextDiagnostics、SearchBudget.diagnostics。
 
   边界与不变量
   统计只描述实际执行；provisional root 不得写入计划序列、best value 或完整候选计数。
@@ -649,12 +1137,12 @@ export class Planner {
       ? `NO_COMPLETED_ROOT_${budgetStats.stopReason}`
       : null;
     const provisionalFallbackAction = provisionalFallbackUsed
-      ? this.candidateMaterializer.describeAction(provisionalRootFallback)
+      ? provisionalRootFallback
       : null;
-    this.lastPlannedSequence = this.candidateMaterializer.describeSequence(
+    this.lastSequence = this.describeSequence(
       [...(choice?.sequence ?? [])]
     );
-    const contextStats = this.candidateMaterializer.contextDiagnostics(context);
+    const contextStats = this.contextDiagnostics(context);
     const slowestPreparation = budgetStats.preparations.reduce((slowest, entry) => (
       !slowest || entry.durationMs > slowest.durationMs ? entry : slowest
     ), null);
@@ -711,7 +1199,7 @@ export class Planner {
       rootCandidatesStartedAfterTime:budgetStats.rootCandidatesStartedAfterTime,
       discoveredDynamicTarget:contextStats.discoveredDynamicTarget,
       hiddenSamples:contextStats.hiddenSamples,
-      bestSequence:this.lastPlannedSequence,
+      bestSequence:this.lastSequence,
       bestRemainingProvenance:choice?.remainingHistory ?? [],
       bestValueScore:choice?.valueScore ?? null,
       physicalRootCount:workDiagnostics.rootCandidateCount,
@@ -765,11 +1253,11 @@ export class Planner {
   World、PatternMatcher proposal、显式搜索归属模块、动作生成、预算与会话能力。
 
   写入状态
-  lastSearchStats、lastPlannedSequence 与注入能力的既有随机/让步序列。
+  lastSearchStats、lastSequence 与注入能力的既有随机/让步序列。
 
   调用函数
-  PatternMatcher.match、simulatorFactory、searchBudgetFactory、CandidateMaterializer root scheduling/materialization、
-  SearchPolicy、generate、yieldControl。
+  PatternMatcher.match、simulatorFactory、searchBudgetFactory、Searcher candidate scheduling/evaluation、
+  Searcher mechanics、generate、yieldControl。
 
   边界与不变量
   root 在昂贵物化前按 SearchPrior 廉价分数和稳定语义键排序，不得依赖 card instance ID 或 hand index；
@@ -785,11 +1273,11 @@ export class Planner {
   TIME 下任何进入隐藏世界、后续候选或 paired simulation 的 root 必须 cooperative abort，
   安全阶段不得继续束搜索、深层扩展或随机选择。
   */
-  async plan(player, visibleState, rootActions, options = {}) {
-    this.lastPlannedSequence = [];
+  async search(player, visibleState, rootActions, options = {}) {
+    this.lastSequence = [];
     const collectDiagnostics = Boolean(options.collectAiDecisionDiagnostics);
     const budget = this.searchBudgetFactory();
-    const structure = this.searchPolicy.structure();
+    const structure = this.structure();
     const uniqueRootActions = this.deduplicateActions(rootActions);
     const patternMatch = this.patternMatcher.match({
       player,
@@ -809,22 +1297,20 @@ export class Planner {
       visibleState,
       patternProposals
     );
-    const rootTerminalAction = this.candidateMaterializer.findTerminalAction(
-      ordinaryRootActions
-    );
+    const rootTerminalAction = ordinaryRootActions.find((action) => action?.type === "end");
     const visiblePlayer = visibleState.players?.find((entry) => entry.id === player.id) ?? player;
     const visibleHandCount = Number(
       visiblePlayer.handCount ?? visiblePlayer.hand?.length ?? player.hand?.length ?? 0
     );
     const terminalForcesDiscard = visibleHandCount > Math.max(0, Number(visiblePlayer.hp) || 0);
     const ordinaryNonTerminalFallback = ordinaryRootActions.find(
-      (action) => !this.candidateMaterializer.findTerminalAction([action])
+      (action) => action?.type !== "end"
     );
     const provisionalRootFallback = terminalForcesDiscard
       ? ordinaryNonTerminalFallback ?? rootTerminalAction
       : rootTerminalAction ?? ordinaryNonTerminalFallback
       ?? null;
-    const context = this.candidateMaterializer.createContext(
+    const context = this.createContext(
       player,
       visibleState,
       scheduledRootActions
@@ -855,7 +1341,7 @@ export class Planner {
       depthReached:0,
       firstDepth2AtWorkCount:null,
       scheduledRootOrder:scheduledRootActions.map(
-        (action) => this.candidateMaterializer.describeAction(action)
+        (action) => action
       ),
       activeRoot:null,
       rootWork:[]
@@ -902,14 +1388,14 @@ export class Planner {
     for (const action of scheduledRootActions) {
       // 与既有根语义一致：空结果时至少尝试第一个动作；之后只在新的原子物化前检查预算。
       if (rootCandidates.length && budget.shouldStop()) break;
-      const rootDescriptor = this.candidateMaterializer.describeAction(action);
+      const rootDescriptor = action;
       const rootWorkStarted = budget.simulationCalls;
       workDiagnostics.activeRoot = rootDescriptor;
       budget.observeRootCandidateStarted?.();
       const prepared = this.prepareCandidate(budget, 1, () => {
         budget.observeSimulation();
         const state = simulator.apply(visibleState, action);
-        const candidate = this.candidateMaterializer.materialize({
+        const candidate = this.evaluateCandidate({
           action,
           beforeState:visibleState,
           afterState:state,
@@ -948,7 +1434,7 @@ export class Planner {
         simulatorTransitions:budget.simulationCalls - rootWorkStarted
       });
       if (collectDiagnostics) {
-        rootLedgers.push(this.candidateMaterializer.diagnosticEntry(candidate));
+        rootLedgers.push(this.diagnosticEntry(candidate));
       }
       if (!progressiveDepth2Expansions.size
         && structure.depth >= 2
@@ -1009,19 +1495,19 @@ export class Planner {
     }
 
     // 同层转移项是 SearchNode 最终价值的一部分；完成它之后候选才具备 best-seen 资格。
-    this.candidateMaterializer.finalizeSiblings(rootCandidates);
+    this.finalizeCandidates(rootCandidates);
     const initiallyMaterializedRootActions = new Set(
       rootCandidates.map((candidate) => candidate.action)
     );
     const unmaterializedNonTerminalRoots = scheduledRootActions.filter((action) => (
-      !this.candidateMaterializer.findTerminalAction([action])
+      action?.type !== "end"
       && !initiallyMaterializedRootActions.has(action)
     ));
     const unmaterializedRootTerminal = rootTerminalAction
       && !initiallyMaterializedRootActions.has(rootTerminalAction);
     const materializedNonTerminalRoots = rootCandidates
-      .filter((candidate) => !this.candidateMaterializer.findTerminalAction([candidate.action]));
-    const bestMaterializedNonTerminal = this.searchPolicy.bestByValue(
+      .filter((candidate) => candidate.action?.type !== "end");
+    const bestMaterializedNonTerminal = this.bestCandidate(
       materializedNonTerminalRoots
     );
     const remainingRootSafetyCount = unmaterializedNonTerminalRoots.length
@@ -1041,18 +1527,18 @@ export class Planner {
         candidateCount:remainingRootSafetyCount
       });
     if (rootSafetyCompletionGranted) {
-      // SearchBudget 冻结当前剩余根数并逐个授权；Planner 只编排已授权的
+      // SearchBudget 冻结当前剩余根数并逐个授权；Searcher 只编排已授权的
       // depth-1 物化，不建立新 beam、深层循环或采样上下文。
       for (const action of unmaterializedNonTerminalRoots) {
         if (!budget.beginRootSafetyCandidate?.(1)) break;
-        const rootDescriptor = this.candidateMaterializer.describeAction(action);
+        const rootDescriptor = action;
         const rootWorkStarted = budget.simulationCalls;
         workDiagnostics.activeRoot = rootDescriptor;
         budget.observeRootCandidateStarted?.();
         const prepared = this.prepareCandidate(budget, 1, () => {
           budget.observeSimulation();
           const state = simulator.apply(visibleState, action);
-          const candidate = this.candidateMaterializer.materialize({
+          const candidate = this.evaluateCandidate({
             action,
             beforeState:visibleState,
             afterState:state,
@@ -1091,10 +1577,10 @@ export class Planner {
           simulatorTransitions:budget.simulationCalls - rootWorkStarted
         });
         if (collectDiagnostics) {
-          rootLedgers.push(this.candidateMaterializer.diagnosticEntry(candidate));
+          rootLedgers.push(this.diagnosticEntry(candidate));
         }
       }
-      this.candidateMaterializer.finalizeSiblings(rootCandidates);
+      this.finalizeCandidates(rootCandidates);
     }
     const beam = rootCandidates.map((candidate) => {
       const valueScore = candidate.transitionValue;
@@ -1103,7 +1589,7 @@ export class Planner {
         state:candidate.state,
         terminal:candidate.terminal,
         valueScore,
-        pruneScore:this.searchPolicy.pruneScore(valueScore, candidate.prior, 1),
+        pruneScore:this.pruneScore(valueScore, candidate.prior, 1),
         searchCredit:candidate.searchCredit,
         sequence:[candidate.action],
         remainingProvenance:candidate.remainingProvenance,
@@ -1115,7 +1601,7 @@ export class Planner {
       };
     });
     for (const node of beam) this.observeCompletedPatterns(node, workDiagnostics);
-    let activeBeam = this.searchPolicy.prune(beam, structure.beamWidth);
+    let activeBeam = this.prune(beam, structure.beamWidth);
     let bestSeenCandidate = null;
     for (const node of beam) {
       bestSeenCandidate = this.considerIncumbent(
@@ -1151,9 +1637,7 @@ export class Planner {
     for (let depth = 2;
       progressiveSpine && depth <= structure.depth && !budget.shouldStop();
       depth += 1) {
-      workDiagnostics.activeRoot = this.candidateMaterializer.describeAction(
-        progressiveSpine.action
-      );
+      workDiagnostics.activeRoot = progressiveSpine.action;
       let depthCache = progressiveNodesByDepth.get(depth);
       if (!depthCache) {
         depthCache = new Map();
@@ -1208,7 +1692,7 @@ export class Planner {
           candidates.push({ ...node, pruneScore:node.valueScore, searchCredit:0 });
           continue;
         }
-        workDiagnostics.activeRoot = this.candidateMaterializer.describeAction(node.action);
+        workDiagnostics.activeRoot = node.action;
         const depthCache = progressiveNodesByDepth.get(depth) ?? new Map();
         if (!progressiveNodesByDepth.has(depth)) {
           progressiveNodesByDepth.set(depth, depthCache);
@@ -1266,12 +1750,12 @@ export class Planner {
         workDiagnostics.activeRoot = null;
       }
       if (!candidates.length) break;
-      activeBeam = this.searchPolicy.prune(candidates, structure.beamWidth);
+      activeBeam = this.prune(candidates, structure.beamWidth);
     }
 
     budget.complete();
     const materializedRootActions = new Set(rootCandidates.map((candidate) => candidate.action));
-    let choice = this.searchPolicy.selectFinal({
+    let choice = this.selectFinal({
       stopReason:budget.stopReason,
       completedCandidates:activeBeam,
       bestSeenCandidate
@@ -1281,26 +1765,26 @@ export class Planner {
     // 根动作都已物化后才能恢复，不得越过同样未比较的 card/skill sibling。
     if (rootTerminalAction) {
       const allNonTerminalRootsMaterialized = scheduledRootActions.every((action) => (
-        this.candidateMaterializer.findTerminalAction([action])
+        action?.type === "end"
         || materializedRootActions.has(action)
       ));
       const allMaterializedNonTerminalRootsNegative = rootCandidates
-        .filter((candidate) => !this.candidateMaterializer.findTerminalAction([candidate.action]))
+        .filter((candidate) => candidate.action?.type !== "end")
         .every((candidate) => candidate.transitionValue < 0);
       const terminalInFinalBeam = activeBeam.find(
-        (node) => this.candidateMaterializer.findTerminalAction([node.action])
+        (node) => node.action?.type === "end"
       );
       const materializedRootTerminal = budget.stopReason === "COMPLETE"
         ? null
         : beam.find(
-            (node) => this.candidateMaterializer.findTerminalAction([node.action])
+            (node) => node.action?.type === "end"
           );
       let terminalChoice = terminalInFinalBeam ?? materializedRootTerminal;
       if (!terminalChoice && allNonTerminalRootsMaterialized
         && allMaterializedNonTerminalRootsNegative
         && rootSafetyCompletionGranted
         && budget.beginRootSafetyCandidate?.(1)) {
-        const rootDescriptor = this.candidateMaterializer.describeAction(rootTerminalAction);
+        const rootDescriptor = rootTerminalAction;
         const rootWorkStarted = budget.simulationCalls;
         workDiagnostics.activeRoot = rootDescriptor;
         budget.observeRootCandidateStarted?.();
@@ -1310,17 +1794,19 @@ export class Planner {
             visibleState,
             rootTerminalAction
           );
-          const candidate = this.candidateMaterializer.terminalFallback({
+          const candidate = this.evaluateCandidate({
             action:rootTerminalAction,
             beforeState:visibleState,
             afterState:state,
             player,
-            siblingCandidates:rootCandidates,
+            depth:1,
             remainingProvenance:context.rootProvenance,
             simulator,
             context,
+            collectDiagnostics:false,
             searchBudget:budget
           });
+          if (candidate) this.finalizeCandidates([candidate]);
           return { state, candidate };
         });
         const terminalState = prepared?.state ?? null;
@@ -1358,7 +1844,7 @@ export class Planner {
         };
       }
       const bestFinalChoice = terminalChoice
-        ? this.searchPolicy.bestByValue([choice, terminalChoice].filter(Boolean))
+        ? this.bestCandidate([choice, terminalChoice].filter(Boolean))
         : choice;
       if (terminalChoice && bestFinalChoice === terminalChoice && choice !== terminalChoice) {
         workDiagnostics.incumbentUpdateCount += 1;

@@ -3,7 +3,7 @@
 唯一拥有 Search Prior（只决定候选展开/裁剪先后的搜索先验），包括 actionUtility 与临时 actionSearchPrior。
 
 上游
-Planner 计算 pruneScore 时请求本模块提供展开优先级；正式边界与测试只做同一用途查询。
+Searcher 请求本模块提供有界探索优先级；正式边界与测试只做同一用途查询。
 
 下游
 CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
@@ -12,12 +12,11 @@ CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
 只读 Fact/World；不写状态、不执行动作。
 
 信息边界
-只使用过滤后的状态、viewer 合法记忆与显式难度参数。
+只使用过滤后的状态、viewer 合法记忆与 Evaluator 提供的 preference primitive。
 
 架构约束
-本模块所有返回值只用于剪枝和排序；不得进入最终价值，TransitionValue 也不得调用或累计这些值。
+本模块所有返回值只用于剪枝和排序；不得进入 Evaluator Final Utility 或 comparator。
 */
-import { AI_RUNTIME_POLICY } from "../policy/AiRuntimePolicy.js";
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
@@ -33,7 +32,7 @@ import {
   HP_VALUE,
   statePointsToUtility
 } from "../value/Economics.js";
-import { ThreatCalculator, incomingExposure } from "../value/ThreatValue.js";
+import { incomingExposure } from "../value/ThreatValue.js";
 import { queryPlayerHandProbability } from "../state/Probability.js";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
@@ -79,10 +78,10 @@ export class SearchPrior {
   绑定动态难度与闪电生命周期查询能力。
 
   调用方
-  AIController 组合根（统一组装依赖的位置）。
+  Worker SearchEngineFactory。
 
   输入
-  getDifficultyMultiplier 与 simulationQuery。
+  Evaluator 与 simulationQuery。
 
   输出
   搜索先验服务实例。
@@ -97,13 +96,16 @@ export class SearchPrior {
   无。
 
   边界与不变量
-  不持有 Game、Planner、Controller 或隐式 GameState callback。
+  不持有 Game、Searcher、Controller 或隐式 GameState callback；不定义 target preference 公式。
   */
   constructor({
-    getDifficultyMultiplier = () => AI_RUNTIME_POLICY.difficultyMultiplier,
+    evaluator,
     simulationQuery
   } = {}) {
-    this.getDifficultyMultiplier = getDifficultyMultiplier;
+    if (typeof evaluator?.threatPriority !== "function") {
+      throw new TypeError("SearchPrior 缺少依赖：evaluator");
+    }
+    this.evaluator = evaluator;
     this.simulationQuery = simulationQuery;
   }
 
@@ -152,40 +154,6 @@ export class SearchPrior {
       ? getRoleCardAiValue(actor.characterId, "assault")
       : getBaseCardAiValue("assault");
     return redeemableExtraCapacity * assaultSearchValue;
-  }
-
-  /*
-  功能
-  把公开目标威胁按当前 AI 难度缩放为目标选择 prior。
-
-  调用方
-  actionUtility、响应策略与正式边界。
-
-  输入
-  viewer、target、合法记忆与预计伤害。
-
-  输出
-  非负难度缩放 prior；非敌方或零倍率返回零。
-
-  读取状态
-  只读显式难度能力、可见目标和合法记忆。
-
-  写入状态
-  无。
-
-  调用函数
-  ThreatCalculator.calculate。
-
-  边界与不变量
-  属于 POLICY_VALUE/SEARCH_PRIOR，不得进入 state delta 或 final transition。
-  */
-  threatPriority(viewer, target, memory, expectedDamage = 1) {
-    const multiplier = Math.max(
-      0,
-      Number(this.getDifficultyMultiplier?.() ?? AI_RUNTIME_POLICY.difficultyMultiplier) || 0
-    );
-    if (!multiplier || !target || target.battleTeam === viewer.battleTeam) return 0;
-    return ThreatCalculator.calculate(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
   }
 
   /*
@@ -292,7 +260,7 @@ export class SearchPrior {
   计算昂贵 root materialization 前的廉价、确定性探索顺序分数。
 
   调用方
-  Planner 经 CandidateMaterializer 的 root scheduling 适配入口。
+  Searcher root scheduling。
 
   输入
   根候选动作、行动者与过滤后的根 World。
@@ -312,7 +280,7 @@ export class SearchPrior {
   边界与不变量
   不调用 Simulator、hidden-world query、Seal/Lightning/GlobalBenefit 动态模型或大型概率操作；
   所有动作类别共用同一密度尺度，不设置类别 tier；
-  本分数不进入 Final Utility、TransitionValue、beam prior 或 COMPLETE 最终比较。
+  本分数不进入 Evaluator Final Utility、beam prior 或 COMPLETE 最终比较。
   */
   rootSchedulingScore(action, player, visible) {
     const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
@@ -435,7 +403,7 @@ export class SearchPrior {
   计算动作在 beam pruning/ranking 中的既有静态与上下文 prior。
 
   调用方
-  Planner pruneScore、正式边界 与测试。
+  Searcher pruneScore、正式边界与测试。
 
   输入
   候选动作、真实 player 执行视图、过滤状态与显式 options。
@@ -481,7 +449,7 @@ export class SearchPrior {
       };
       let value = values[action.skillId] ?? 4;
       if (["stealSkill", "hunt"].includes(action.skillId)) {
-        value += this.threatPriority(actor, target, player.aiMemory, 1);
+        value += this.evaluator.threatPriority(actor, target, player.aiMemory, 1);
       }
       return value;
     }
@@ -547,7 +515,7 @@ export class SearchPrior {
       }
       if (!enemy && ["plunder", "destroy"].includes(card.definitionId)) value -= 30;
       if (enemy && ["assault", "duel", "plunder", "destroy"].includes(card.definitionId)) {
-        value += this.threatPriority(
+        value += this.evaluator.threatPriority(
           actor,
           target,
           player.aiMemory,
@@ -637,7 +605,7 @@ export class SearchPrior {
   返回只服务当前层 beam pruning 的临时搜索信用。
 
   调用方
-  Planner pruneScore 与正式边界。
+  Searcher pruneScore 与正式边界。
 
   输入
   动作、player 与 visible state。

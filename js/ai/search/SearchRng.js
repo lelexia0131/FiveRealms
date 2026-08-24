@@ -6,7 +6,7 @@
 MatchApplication composition root 与 AIController。
 
 下游
-SearchPolicy、Knowledge hidden-world sampling 与 CardSelectionPolicy 的 AI 随机消费。
+Probability hidden-world sampling、CardSelectionPolicy 与其它明确 exploration consumer 的 AI 随机消费。
 
 状态边界
 只写本实例 seed 与调用计数；不写 GameState 或 World。

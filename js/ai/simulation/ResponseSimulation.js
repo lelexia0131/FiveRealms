@@ -6,7 +6,7 @@
 Simulator 正式模拟门面与 Combat/Card/Status 模拟组件。
 
 下游
-state/Probability、正式 ResponsePolicy、GlobalBenefit assessment 与共享 simulation runtime。
+state/Probability、composition 注入的 ResponsePolicy boolean capability 与共享 simulation runtime。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本及其概率分支。
@@ -20,8 +20,6 @@ state/Probability、正式 ResponsePolicy、GlobalBenefit assessment 与共享 s
 import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js";
 import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
-import { planningCounterDecision, planningDynamicCounterGain } from "../policy/ResponsePolicy.js";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
@@ -551,16 +549,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   无。
 
   调用函数
-  planningCounterDecision、dynamicCounterGain。
+  注入的 decideCounter capability。
 
   边界与不变量
   Simulation 不复制策略公式；root 递归守卫只阻止重复反事实，不改变普通响应。
   */
   counterDecision(state, responder, actor, card, targets, selection = null) {
-    return planningCounterDecision(state, responder, actor, card, targets, selection, {
-      assessGlobalBenefit,
+    return this.decideCounter(state, responder, actor, card, targets, selection, {
       simulatingRootResolution:this._simulatingRootResolution,
-      dynamicCounterGain:planningDynamicCounterGain
     });
   }
 

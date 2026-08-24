@@ -49,7 +49,7 @@ const LEGACY_UTILS_PATTERN = /^js\/utils(?:\/|$)/i;
 const FORBIDDEN_ROOT_BUCKET_PATTERN = /^js\/(?:common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
 const LAYER_BUCKET_PATTERN = /^js\/(?:domain|application|adapters)\/(?:.*\/)?(?:utils|common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
 const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
-const SEARCH_PLANNER_PATTERN = /^js\/ai\/search\/Planner\.js$/i;
+const SEARCHER_PATTERN = /^js\/ai\/search\/Searcher\.js$/i;
 const SEARCH_PRIOR_PATTERN = /^js\/ai\/search\/SearchPrior\.js$/i;
 const SEARCH_AI_PATTERN = /^js\/ai\/search\//i;
 const SIMULATION_AI_PATTERN = /^js\/ai\/simulation\//i;
@@ -117,7 +117,14 @@ const REMOVED_LEGACY_FILES = Object.freeze([
   "js/generals/skillRegistry.js",
   "js/config/gameConfig.js",
   "js/config/cardConfig.js",
-  "js/config/generalConfig.js"
+  "js/config/generalConfig.js",
+  "js/ai/search/Planner.js",
+  "js/ai/search/SearchPolicy.js",
+  "js/ai/search/TransitionValue.js",
+  "js/ai/search/FrontierValue.js",
+  "js/ai/search/CandidateMaterializer.js",
+  "js/ai/search/SiblingTransitionTerms.js",
+  "js/ai/search/SearchResult.js"
 ]);
 const REMOVED_LEGACY_SYMBOL_PATTERN = /\b(?:RuleEngine|ResponseSystem|DyingSystem|HpLossSystem|JudgmentSystem|TeamRuleService|DistanceSystem|EventBus|CardSelectionSystem|GameChoiceRouter|GameLogger|GeneralSelection|TeamManager|cardRegistry|skillRegistry|gameConfig|cardConfig|generalConfig)\b/i;
 
@@ -1669,7 +1676,7 @@ function inspectSource(file, source, changed) {
     }
   }
 
-  if (SEARCH_PLANNER_PATTERN.test(file)) {
+  if (SEARCHER_PATTERN.test(file)) {
     const forbiddenImport = importSource.match(
       /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/core\/(?:Game|RuleEngine)\.js|\/config\/(?:cardConfig|gameConfig|generalConfig)\.js|\/generals\/skillRegistry\.js|\/policy\/|\/domain\/|\/simulation\/(?:Simulator|CombatSimulation|ResponseSimulation|CardEffectSimulation|SkillEffectSimulation|StatusSimulation)\.js|\/(?:AiController|AIController)\.js)(?:\?[^"']*)?["']/i,
     );
@@ -1678,7 +1685,7 @@ function inspectSource(file, source, changed) {
         file,
         functionName: "<module>",
         line: source.slice(0, forbiddenImport.index).split(/\r?\n/).length,
-        missing: ["架构约束：Planner 禁止依赖 Game/Rule/Config/Policy/Domain/concrete Simulation"],
+        missing: ["架构约束：Searcher 禁止依赖 Game/Rule/Config/Policy/Domain/concrete Simulation"],
       });
     }
     const concreteConstruction = maskNonCode(source).match(/\bnew\s+(?:Ai)?Simulator\s*\(/);
@@ -1687,7 +1694,7 @@ function inspectSource(file, source, changed) {
         file,
         functionName: "<architecture>",
         line: source.slice(0, concreteConstruction.index).split(/\r?\n/).length,
-        missing: ["架构约束：Planner 禁止构造 concrete Simulator"],
+        missing: ["架构约束：Searcher 禁止构造 concrete Simulator"],
       });
     }
   }
@@ -1720,7 +1727,7 @@ function inspectSource(file, source, changed) {
 
   if (SIMULATION_AI_PATTERN.test(file)) {
     const orchestrationImport = importSource.match(
-      /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/core\/Game\.js|\/(?:AiController|AIController)\.js|\/search\/(?:Planner|SearchPolicy)\.js)(?:\?[^"']*)?["']/i,
+      /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/core\/Game\.js|\/(?:AiController|AIController)\.js|\/search\/Searcher\.js)(?:\?[^"']*)?["']/i,
     );
     if (orchestrationImport) {
       errors.push({
@@ -2145,37 +2152,37 @@ function identity(value) { return value; }`;
   if (!transitionControllerErrors.some((error) => error.missing.some((item) => item.includes("Game/AIController")))) {
     throw new Error("TransitionValue fixture did not detect AIController import");
   }
-  const validPlannerErrors = inspectSource(
-    "js/ai/search/Planner.js",
+  const validSearcherErrors = inspectSource(
+    "js/ai/search/Searcher.js",
     `${moduleHeader}\nimport { SearchBudget } from "./SearchBudget.js";\n${pass}`,
     null,
   );
-  if (validPlannerErrors.length) {
-    throw new Error(`valid Planner fixture failed: ${JSON.stringify(validPlannerErrors)}`);
+  if (validSearcherErrors.length) {
+    throw new Error(`valid Searcher fixture failed: ${JSON.stringify(validSearcherErrors)}`);
   }
-  const plannerSimulatorErrors = inspectSource(
-    "js/ai/search/Planner.js",
+  const searcherSimulatorErrors = inspectSource(
+    "js/ai/search/Searcher.js",
     `${moduleHeader}\nimport { Simulator } from "../simulation/Simulator.js";\n${pass}`,
     null,
   );
-  if (!plannerSimulatorErrors.some((error) => error.missing.some((item) => item.includes("Planner 禁止依赖")))) {
-    throw new Error("Planner fixture did not detect concrete Simulator import");
+  if (!searcherSimulatorErrors.some((error) => error.missing.some((item) => item.includes("Searcher 禁止依赖")))) {
+    throw new Error("Searcher fixture did not detect concrete Simulator import");
   }
-  const plannerConstructionErrors = inspectSource(
-    "js/ai/search/Planner.js",
+  const searcherConstructionErrors = inspectSource(
+    "js/ai/search/Searcher.js",
     `${moduleHeader}\n${pass.replace("return value;", "return new Simulator(value);")}`,
     null,
   );
-  if (!plannerConstructionErrors.some((error) => error.missing.some((item) => item.includes("Planner 禁止构造")))) {
-    throw new Error("Planner fixture did not detect concrete Simulator construction");
+  if (!searcherConstructionErrors.some((error) => error.missing.some((item) => item.includes("Searcher 禁止构造")))) {
+    throw new Error("Searcher fixture did not detect concrete Simulator construction");
   }
-  const plannerCommentErrors = inspectSource(
-    "js/ai/search/Planner.js",
+  const searcherCommentErrors = inspectSource(
+    "js/ai/search/Searcher.js",
     `${moduleHeader}\n/* import { Simulator } from "../simulation/Simulator.js"; new Simulator(); */\n${pass}`,
     null,
   );
-  if (plannerCommentErrors.some((error) => error.missing.some((item) => item.includes("Planner 禁止")))) {
-    throw new Error("Planner guard incorrectly scanned comment text");
+  if (searcherCommentErrors.some((error) => error.missing.some((item) => item.includes("Searcher 禁止")))) {
+    throw new Error("Searcher guard incorrectly scanned comment text");
   }
   const searchPriorCallbackErrors = inspectSource(
     "js/ai/search/SearchPrior.js",
@@ -2187,7 +2194,7 @@ function identity(value) { return value; }`;
   }
   const simulationPlannerErrors = inspectSource(
     "js/ai/simulation/BadSimulation.js",
-    `${moduleHeader}\nimport { SearchPolicy } from "../search/SearchPolicy.js";\n${pass}`,
+    `${moduleHeader}\nimport { Searcher } from "../search/Searcher.js";\n${pass}`,
     null,
   );
   if (!simulationPlannerErrors.some((error) => error.missing.some((item) => item.includes("simulation 禁止依赖")))) {

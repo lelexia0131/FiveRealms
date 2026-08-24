@@ -3,7 +3,7 @@
 统一拥有一次搜索的时间、节点、停止原因与结构计数。
 
 上游
-Planner 与搜索预算回归测试。
+Searcher、Simulation query 与搜索预算回归测试。
 
 下游
 RUNTIME_POLICY 默认时间配置与注入时钟。
@@ -34,7 +34,7 @@ export class SearchBudget {
   创建一次搜索独占的预算状态与结构计数器。
 
   调用方
-  AIController 注入 Planner 的 searchBudgetFactory 与直接预算测试。
+  Worker SearchEngineFactory 与直接预算测试。
 
   输入
   可选时间预算、节点预算和单调时钟能力。
@@ -183,7 +183,7 @@ export class SearchBudget {
   记录一个候选 preparation 开始时的预算时间与工作基线。
 
   调用方
-  Planner 在 Simulator.apply 前。
+  Searcher 在 Simulator.apply 前。
 
   输入
   当前搜索深度。
@@ -201,7 +201,7 @@ export class SearchBudget {
   workSnapshot。
 
   边界与不变量
-  同时只允许一个 Planner candidate preparation；不读取动作或 World。
+  同时只允许一个 Searcher candidate preparation；不读取动作或 World。
   */
   beginPreparation(depth) {
     if (this.activePreparation) {
@@ -222,7 +222,7 @@ export class SearchBudget {
   完成当前候选 preparation 诊断，并在候选边界观察 TIME。
 
   调用方
-  Planner 在完整候选登记或 partial work 丢弃前。
+  Searcher 在完整候选登记或 partial work 丢弃前。
 
   输入
   preparation 是否完整完成。
@@ -310,7 +310,7 @@ export class SearchBudget {
   shouldAbortCurrentWork。
 
   边界与不变量
-  signal 只允许由拥有该 SearchBudget 的 Planner 捕获；不得把 partial action、world 或 state 登记为候选。
+  signal 只允许由拥有该 SearchBudget 的 Searcher 捕获；不得把 partial action 或 World 登记为候选。
   */
   checkpointCurrentWork() {
     if (!this.shouldAbortCurrentWork()) return true;
@@ -322,7 +322,7 @@ export class SearchBudget {
   判断异常是否为本次搜索的 cooperative unwind signal。
 
   调用方
-  Planner candidate preparation boundary。
+  Searcher candidate preparation boundary。
 
   输入
   捕获的任意异常。
@@ -351,7 +351,7 @@ export class SearchBudget {
   在继续展开前判断是否触发当前搜索预算。
 
   调用方
-  Planner 根动作、节点、深度循环的继续边界。
+  Searcher 根动作、节点、深度循环的继续边界。
 
   输入
   无。
@@ -423,7 +423,7 @@ export class SearchBudget {
   在主搜索已因 NODE 停止后，申请一次有界的根安全补评估。
 
   调用方
-  Planner 根候选首轮收束。
+  Searcher 根候选首轮收束。
 
   输入
   评估深度与当前尚未完成的根候选数。
@@ -463,7 +463,7 @@ export class SearchBudget {
   从已授权的根安全阶段领取一个 depth-1 候选物化名额。
 
   调用方
-  Planner 在每个剩余根动作的 apply 之前。
+  Searcher 在每个剩余根动作的 apply 之前。
 
   输入
   当前候选深度。
@@ -497,7 +497,7 @@ export class SearchBudget {
   释放未完成的根安全候选名额，避免异常或中断后残留活动状态。
 
   调用方
-  Planner 的候选物化中断路径。
+  Searcher 的候选 evaluation 中断路径。
 
   输入
   无。
@@ -528,7 +528,7 @@ export class SearchBudget {
   记录一个候选已完成全部物化并可登记为 SearchNode。
 
   调用方
-  Planner 在 CandidateMaterializer 返回后。
+  Searcher 在完整候选 evaluation 返回后。
 
   输入
   无。
@@ -567,7 +567,7 @@ export class SearchBudget {
   记录一次 Simulator apply 调用。
 
   调用方
-  Planner 主物化与 CounterfactualTerms 配对模拟。
+  Searcher 主 evaluation 与 CounterfactualTerms 配对模拟。
 
   输入
   可选调用次数。
@@ -796,10 +796,10 @@ export class SearchBudget {
 
   /*
   功能
-  记录 Planner 实际开始物化一个新的根候选。
+  记录 Searcher 实际开始 evaluation 一个新的根候选。
 
   调用方
-  Planner 在每个 root candidate preparation 之前。
+  Searcher 在每个 root candidate preparation 之前。
 
   输入
   无。
@@ -817,7 +817,7 @@ export class SearchBudget {
   无。
 
   边界与不变量
-  本方法只观察 Planner 已决定开始的 root；不得自行授权 root 或改变 stopReason。
+  本方法只观察 Searcher 已决定开始的 root；不得自行授权 root 或改变 stopReason。
   */
   observeRootCandidateStarted() {
     this.rootCandidatesStarted += 1;
@@ -927,10 +927,10 @@ export class SearchBudget {
 
   /*
   功能
-  记录 Planner 为保持界面响应而执行的一次让步。
+  记录 Searcher 为保持界面响应而执行的一次让步。
 
   调用方
-  Planner yield 边界。
+  Searcher yield 边界。
 
   输入
   无。
@@ -960,7 +960,7 @@ export class SearchBudget {
   在搜索自然穷尽当前深度/前沿后标记正常完成。
 
   调用方
-  Planner 收束阶段。
+  Searcher 收束阶段。
 
   输入
   无。
@@ -990,7 +990,7 @@ export class SearchBudget {
   标记会话让步检测到的搜索取消。
 
   调用方
-  Planner yieldControl 返回 false 的路径。
+  Searcher yieldControl 返回 false 的路径。
 
   输入
   无。
@@ -1020,7 +1020,7 @@ export class SearchBudget {
   返回一次搜索预算与结构计数的只读诊断快照。
 
   调用方
-  Planner.lastSearchStats 组装与预算测试。
+  Searcher.lastSearchStats 组装与预算测试。
 
   输入
   无。

@@ -1,9 +1,9 @@
 /*
 模块职责
-把战术动作的反制结算世界投影为 TransitionValue 所需的单一 resolution scale。
+把战术动作的反制结算世界投影为 Evaluator 所需的单一 resolution scale。
 
 上游
-CandidateMaterializer。
+Searcher candidate evaluation。
 
 下游
 Simulator 的 card-scope 与 target-scope 响应查询。
@@ -24,7 +24,7 @@ import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions
 查询战术动作在当前过滤状态中的既有结算比例。
 
 调用方
-CandidateMaterializer 交给 TransitionValue.evaluateBase 的延迟查询。
+Searcher 交给 Evaluator.evaluateTransition 的延迟查询。
 
 输入
 动作、before World、行动者 ID 与复用 Simulator。

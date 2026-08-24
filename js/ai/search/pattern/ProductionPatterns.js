@@ -15,7 +15,7 @@ Domain CardDefinitions 的公开静态语义。
 只消费动作已携带的公开语义、World 中合法可见/记忆字段和卡牌静态定义。
 
 架构约束
-不得调用 Simulator、Evaluator、Value、SearchPrior、SearchPolicy 或 ActionGenerator；
+不得调用 Simulator、Evaluator、Value、SearchPrior、Searcher 或 ActionGenerator；
 definition 只能产生语义 sequence、explorationPriority、reason 与匹配约束。
 */
 import { CARD_DEFINITIONS } from "../../../domain/definitions/cards/CardDefinitions.js";
@@ -292,7 +292,7 @@ Pattern context 与当前 definition。
 cardActions、sameTargetSetupSequences、setupTargetId。
 
 边界与不变量
-selector 只会在 Planner 重新生成 post-state legalActions 后解析；信息断言只比较合法记忆数量，
+selector 只会在 Searcher 重新生成 post-state legalActions 后解析；信息断言只比较合法记忆数量，
 雷达断言只接受 Simulator 已真实移除雷达的 post-state。
 */
 function buildProductionSequences(context, definition) {

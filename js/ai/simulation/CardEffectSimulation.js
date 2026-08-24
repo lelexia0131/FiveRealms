@@ -40,7 +40,6 @@ import {
 } from "../state/DistanceProbabilityBranches.js";
 import { getLightningStatusStateBranches } from "../domain/LightningModel.js";
 import { getSealStatusStateBranches } from "../domain/SealModel.js";
-import { getBaseCardAiValue } from "../value/CardValue.js";
 import { getDiscardKeepValue } from "../policy/ResourceSelectionPolicy.js";
 
 /*
@@ -315,25 +314,14 @@ export const withCardEffectSimulation = (Base) => class CardEffectSimulation ext
         const firstAssault = queryPlayerHandProbability(
           next.probabilityState, first, "assault"
         );
-        const secondBlock = queryPlayerHandProbability(
-          next.probabilityState, second, "block"
-        );
         const assaultAvailable = canActuallyTargetWithAssault
           ? firstAssault.probability
           : 0;
-        const equipmentValue = getBaseCardAiValue(first.equipmentDefinitionId);
-        const friendlyFirePenalty = second.battleTeam === first.battleTeam ? .55 : 0;
-        const defenseRisk = Math.min(.9, secondBlock.probability);
-        const targetValue = second.battleTeam === first.battleTeam
-          ? -0.35 - (second.hp <= 2 ? .15 : 0)
-          : .3 + (second.hp <= 2 ? .15 : 0);
-        const conserveAssaultPenalty = firstAssault.expected <= .75 ? .18 : 0;
-        const willingness = Math.max(.08, Math.min(.97,
-          .42 + equipmentValue * .04 + targetValue - friendlyFirePenalty - defenseRisk * .2
-          - conserveAssaultPenalty));
+        const willingToAssault = this.decideLeverageAssault(next, first, second);
         const existenceProbability = this.getSimulatedEquipmentProbability(first);
         const desiredUseWorlds = this.gateEventWorlds(next, effectEventWorlds,
-          assaultAvailable * willingness, `leverage-assault:${card.id}:${first.id}`);
+          assaultAvailable * (willingToAssault ? 1 : 0),
+          `leverage-assault:${card.id}:${first.id}`);
         const actualUseWorlds = desiredUseWorlds;
         const effectiveUseProbability = this.eventProbability(actualUseWorlds);
         first.attackUsed = (first.attackUsed ?? 0) + effectiveUseProbability;

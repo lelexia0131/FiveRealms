@@ -131,8 +131,8 @@ export class ResponseBoundary {
     if (typeof dependencies.actionGenerator?.createRootResolutionAction !== "function") {
       throw new TypeError("ResponseBoundary 缺少依赖：actionGenerator");
     }
-    if (typeof dependencies.searchPrior?.threatPriority !== "function") {
-      throw new TypeError("ResponseBoundary 缺少依赖：searchPrior");
+    if (typeof dependencies.evaluator?.threatPriority !== "function") {
+      throw new TypeError("ResponseBoundary 缺少依赖：evaluator");
     }
     if (typeof dependencies.simulationQuery?.lightningTeamBurden !== "function"
       || typeof dependencies.simulationQuery?.lightningTransferredBurden !== "function") {
@@ -143,7 +143,7 @@ export class ResponseBoundary {
       throw new TypeError("ResponseBoundary 缺少依赖：stateValue");
     }
     this.actionGenerator = dependencies.actionGenerator;
-    this.searchPrior = dependencies.searchPrior;
+    this.evaluator = dependencies.evaluator;
     this.responsePolicy = dependencies.responsePolicy ?? new ResponsePolicy({
       assessGlobalBenefit
     });
@@ -252,7 +252,7 @@ export class ResponseBoundary {
         const visibleResponder = visible.players.find((player) => player.id === responder.id);
         const visibleTarget = visible.players.find((player) => player.id === target.id);
         const threat = enemyTarget && visibleResponder && visibleTarget
-          ? this.searchPrior.threatPriority(
+          ? this.evaluator.threatPriority(
               visibleResponder,
               visibleTarget,
               responder.aiMemory,

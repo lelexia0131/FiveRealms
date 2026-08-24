@@ -348,6 +348,95 @@ export class ResponsePolicy {
 
   /*
   功能
+  为搜索模拟提供一次确定的战术反制选择。
+
+  调用方
+  Worker/Main composition 注入给 Simulator 的 decideCounter capability。
+
+  输入
+  World、响应者、行动者、卡牌、目标、selection 与 root recursion guard。
+
+  输出
+  确定的 respond / do-not-respond 布尔值。
+
+  读取状态
+  公开 World、合法 Probability 与本实例 GlobalBenefit value query。
+
+  写入状态
+  无。
+
+  调用函数
+  planningCounterDecision、planningDynamicCounterGain。
+
+  边界与不变量
+  Policy 分数必须先在这里完成比较；Simulator 只能消费 boolean，不得把 heuristic 当概率。
+  */
+  decidePlanningCounter(
+    state,
+    responder,
+    actor,
+    card,
+    targets,
+    selection = null,
+    { simulatingRootResolution = false } = {}
+  ) {
+    return planningCounterDecision(state, responder, actor, card, targets, selection, {
+      assessGlobalBenefit:this.assessGlobalBenefit,
+      simulatingRootResolution,
+      dynamicCounterGain:planningDynamicCounterGain
+    });
+  }
+
+  /*
+  功能
+  决定借势第一目标是否愿意把现有装备换成一次突袭。
+
+  调用方
+  Worker/Main composition 注入给 Simulator 的 decideLeverageAssault capability。
+
+  输入
+  World、第一目标与第二目标。
+
+  输出
+  确定的愿意/拒绝布尔值。
+
+  读取状态
+  第一目标装备价值、突袭容量、第二目标格挡概率与敌友关系。
+
+  写入状态
+  无。
+
+  调用函数
+  getBaseCardAiValue、queryPlayerHandProbability。
+
+  边界与不变量
+  保留原 heuristic 的全部输入和 0.5 决策阈值；返回值不是自然概率，Simulator 另行处理突袭可用 Belief。
+  */
+  decideLeverageAssault(state, first, second) {
+    const firstAssault = queryPlayerHandProbability(
+      state.probabilityState,
+      first,
+      "assault"
+    );
+    const secondBlock = queryPlayerHandProbability(
+      state.probabilityState,
+      second,
+      "block"
+    );
+    const equipmentValue = getBaseCardAiValue(first.equipmentDefinitionId);
+    const friendlyFirePenalty = second.battleTeam === first.battleTeam ? 0.55 : 0;
+    const defenseRisk = Math.min(0.9, secondBlock.probability);
+    const targetValue = second.battleTeam === first.battleTeam
+      ? -0.35 - (second.hp <= 2 ? 0.15 : 0)
+      : 0.3 + (second.hp <= 2 ? 0.15 : 0);
+    const conserveAssaultPenalty = firstAssault.expected <= 0.75 ? 0.18 : 0;
+    const willingness = 0.42 + equipmentValue * 0.04 + targetValue
+      - friendlyFirePenalty - defenseRisk * 0.2 - conserveAssaultPenalty;
+    return willingness >= 0.5;
+  }
+
+  /*
+  功能
   评估一次己方濒死救援的资源与后续救援价值。
 
   调用方

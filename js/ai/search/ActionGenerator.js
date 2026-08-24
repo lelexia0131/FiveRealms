@@ -3,7 +3,7 @@
 从 canonical World 枚举合法目标与选择，并创建 canonical Action。
 
 上游
-AIController 与 Planner。
+AIController 与 Searcher。
 
 下游
 Domain Card/Skill/Status Rules、Domain Definitions、AI RuleProjection、领域概率与策略评分模块。
@@ -682,7 +682,7 @@ export class ActionGenerator {
   从 canonical World 枚举完整合法 Action。
 
   调用方
-  AIController 根候选与 Planner 深层展开。
+  AIController 根候选与 Searcher 深层展开。
 
   输入
   World、当前行动者 ID 与可选 SearchBudget 诊断能力。
@@ -701,7 +701,7 @@ export class ActionGenerator {
 
   边界与不变量
   动态距离只使用实时 alive ring；
-  Generator 是唯一合法性与动作补全 owner；返回后 Planner/Simulator 不得补 target 或 selection，
+  Generator 是唯一合法性与动作补全 owner；返回后 Searcher/Simulator 不得补 target 或 selection，
   transition 的概率资源消费仍由 Simulator owner 处理。
   */
   generate(state, playerId, searchBudget = null) {
@@ -1101,7 +1101,7 @@ export class ActionGenerator {
 
   边界与不变量
   Generator 只判断 possible/impossible，不计算联合概率、次数槽或执行世界；
-  返回后 Planner/Simulator 不得补 target、selection 或重新创建另一种 Action。
+  返回后 Searcher/Simulator 不得补 target、selection 或重新创建另一种 Action。
   */
   createCompleteAction(
     state,

@@ -15,7 +15,7 @@ domain/SealModel、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置�
 只消费公开座次、封印状态和合法判定概率摘要。
 
 架构约束
-返回值只用于 SEARCH_PRIOR；不得进入 State Value、TransitionValue 或 sibling timing。
+返回值只用于 SEARCH_PRIOR；不得进入 Evaluator Final Utility/comparison 或 sibling timing。
 */
 import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js";
 import { projectRulePlayers } from "../state/RuleProjection.js";

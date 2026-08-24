@@ -27,11 +27,11 @@
 
 | 层 | 当前正式 owner |
 |---|---|
-| Composition / Execution | `AiController` 是 main-thread AI 组合根；只保存显式 state/session/rule capability/search RNG/search executor/lifecycle/rebind 依赖，不保存 Game；生产 Planner execution 由 injected search executor 承担。 |
-| State | `VisibleState`、`Knowledge`、`BeliefState`、`StateContracts`、`SearchState`、`Probability` 分别拥有公开投影、合法记忆、未知分布、组合、可克隆搜索世界与概率代数；`RuleProjection` 与 `DistanceProbabilityBranches` 是 AI→Domain 的 canonical projection 与距离概率分区。 |
-| Search | `ActionGenerator` 根/深层分开消费 root context/SearchState；`SearchRequest`/`RootSearchAction`/`SearchResult`/`WorkerSearchOutcome` 是 data-only boundary contracts；`SearchRng` 是 AI search RNG；`SearchBudget`/`SearchPolicy` 管搜索边界；`CandidateMaterializer` 组合候选；`Planner` 只编排。 |
+| Composition / Execution | `AiController` 是 main-thread boundary/composition root；只保存显式 state/session/rule capability/search RNG/search executor/lifecycle/rebind 依赖，不保存 Game，也不构造第二套 search graph；生产搜索只由 Worker `SearchEngineFactory` 构造。 |
+| State | `Fact` 是确定事实入口，`Probability` 是唯一不确定性表示，`World` 是唯一搜索世界，`StateContracts` 只组装 canonical World；`RuleProjection` 与 `DistanceProbabilityBranches` 是 AI→Domain 的 canonical projection 与距离概率分区。 |
+| Search | `Action` 是唯一动作表示；`ActionGenerator` 是唯一合法候选 owner；`Searcher` 唯一拥有 traversal/beam/frontier/root coverage/incumbent/budget/Pattern scheduling；`SearchBudget` 管预算；`SearchPrior` 只提供 exploration hints；`SearchRequest` 与 `WorkerSearchOutcome` 只保留必要 serialization/identity validation。 |
 | Simulation | `Simulator` 管 clone、共享 runtime 与分派；Response、Combat、Card、Skill、Status 五个组件各自推进对应状态。 |
-| Value | State Value、Transition Value、Search Prior、Policy Value 与 Diagnostic Ledger 分属正式 owner；只有 Transition Value 的最终组合进入候选 final value。 |
+| Value | `Evaluator` 唯一拥有 State/Transition/terminal frontier/final comparison semantics；`StateValue` 只补齐 bounded lifecycle query；`ValueLedger` 只诊断；Search Prior 与 Policy heuristic 不进入 Final Utility。 |
 | Policy / Domain | Policy 只做 AI 过滤、选择与 valuation；`js/ai/domain/**` 是 AI probabilistic/search model，不拥有 Repository Domain 规则。 |
 | Repository Domain Rules | `js/domain/rules/**` 是 Game Rule Authority；`js/domain/definitions/**` 是固定事实 Authority；AI 通过 canonical projection 直接消费这些 final owners。 |
 
@@ -47,19 +47,19 @@ FR-ARCH-12 current facts：
 
 FR-ARCH-13 current facts：
 - `AIController`、`Knowledge`、`ActionGenerator`、`CardSelectionBoundary`、`ResponseBoundary` 均不保存 raw Game；`js/ai/**` 的 `this.game` 与 `core/Game` import 为零；
-- `AIController.selectAction` 构造 `SearchRequest`（requestId/gameId/stateVersion/actor/phase/round/SearchState/config/rng seed/rootActionDescriptors），并在返回前执行 session、game identity、stateVersion、actor、phase、descriptor rebind 与 Domain legality acceptance；
+- `AIController.selectAction` 构造必要 Worker request shape（requestId/gameId/stateVersion/actor/phase/round/canonical World/config/rng/canonical root Actions），并在返回前执行 session、game identity、stateVersion、actor、phase 与 root Action acceptance；
 - queued planned sequence 的第二项不继承首项 requestVersion；`resolvePlannedAction` 继续 current-state rebind + Domain candidate revalidation；
-- `SearchResult` 只保存 `ActionDescriptor`、计划描述与 stats；搜索边界不返回 real Card/Player/SearchState/Simulator；
+- `SearchResult` wrapper 已删除；Controller 内联记录 canonical Action、计划与 stats；搜索边界不返回 real Card/Player/Simulator；
 - `SearchRng` 是 AI Search/Decision 专用 LCG；real Game RNG 不被纯 AI search 推进，固定 AI seed 可复现；
 - `createChoiceBoundary` 显式组合 Human/AI peer adapters、ChoicePort 与 coordinator；AI 不回读应用对象；
-- Main Thread 与 Dedicated Worker 只交换 data-only `SearchRequest` / `WorkerSearchOutcome`。
+- Main Thread 与 Dedicated Worker 只交换含 canonical World/Action 的必要 request/outcome serialization shape。
 
 FR-ARCH-14 current facts：
 - `js/adapters/ai/worker/` 拥有 Dedicated Worker entry、Worker client、headless local transport 与 `WorkerSearchRuntime`/`SearchEngineFactory` 唯一 search execution composition；
 - 生产 `AIController.selectAction` 不直接调用 `planner.plan`；SearchRequest → search executor → WorkerSearchOutcome → main-thread acceptance → current entity rebind → Domain legality；
-- `SearchRequest.rootSearchActions` 是 Worker 专用 root action 投影，`RootSearchAction.rehydrate` 从 SearchState/Definitions 恢复 search action；执行期 `ActionDescriptor` 保持窄 rebind 职责；
+- Worker 直接消费 `SearchRequest.rootActions` 的 canonical Actions；不存在 RootSearchAction/ActionDescriptor rehydrate 或 candidate DTO conversion；
 - `SearchRng.snapshot` 携带 seed/state/draws；Worker outcome 返回 `rngAfter`；main thread exactly-once commit，新 session 不继承旧 RNG；
-- 搜索固定使用同一 `NORMAL` 结构与价值模型；node-budget override 仍优先。Application 每次真实 decision 只用独立 timing RNG 采样一次 `{Tmin,Tmax}`，经 `selectAction(options.searchTimeBudgetMs)` 与 data-only `SearchRequest.searchConfig.timeBudgetMs` 把 `Tmax` 交给 Worker `SearchBudget`；Planner/Worker 不读取 1×/2×/3×、DOM 或 Presentation 状态；
+- 搜索固定使用同一结构与价值模型；node-budget override 仍优先。Application 每次真实 decision 只用独立 timing RNG 采样一次 `{Tmin,Tmax}`，经 `selectAction(options.searchTimeBudgetMs)` 与 request `searchConfig.timeBudgetMs` 把 `Tmax` 交给 Worker `SearchBudget`；Searcher/Worker 不读取 1×/2×/3×、DOM 或 Presentation 状态；
 - `Tmin` 只用于 `max(0, Tmin - searchElapsed)` 的剩余可见等待，搜索在窗口内完成且已超过 `Tmin` 时立即行动。三档不改变 searchDepth、beamWidth、hiddenStateSamples、价值、合法性、prior、tie-break 或随机选择规则；更长 `Tmax` 只允许物化更多完整候选；
 - 首次动作与后续重规划都不叠加额外 initial pacing；`SearchBudget.TIME` 是正常 wall-clock 截止的唯一权威，完整候选可轻微越过 Tmax 后在下一检查点正常收束并保留 best-seen。node-budget 模式不受正常 wall-clock deadline 影响，只由 NODE、session cancel 或 `hardWatchdogMs=10000` 停止；hard watchdog 负责卡死 Worker 的 reject、terminate 与 rebuild。simulation/headless decision window 为零；Real Game RNG、Search RNG 与 timing RNG 继续隔离；
 - production browser path 使用 `new Worker(url, { type:"module" })`；浏览器缺少 Worker 时 fail fast，不允许静默回退主线程；Node/headless 使用同一 `runSearchRequest` 的 local transport；
@@ -1190,7 +1190,7 @@ RadarModel、LightningModel、SealModel、GlobalBenefitModel 仍只返回概率/
 js/ai/
 ├─ AiController.js
 ├─ state/       # Visible / Knowledge / Belief / Search contracts 与概率代数
-├─ search/      # 候选生成、预算、策略、反事实、物化与 Planner
+├─ search/      # canonical Action/Generator、Searcher、Pattern、预算、exploration prior 与有界反事实
 ├─ simulation/  # 唯一 Simulator、五类效果组件与窄状态查询
 ├─ value/       # 状态、卡牌、威胁、经济、账本与领域价值
 ├─ policy/      # 动作、选牌、资源、响应与转移策略/执行边界
@@ -1214,16 +1214,18 @@ js/ai/
 
 下列旧兼容文件已从生产目录删除，生产 import 为零：`AiSimulator`、`AiEvaluator`、`AiStateValue`、`AiVisibleState`、`AiKnowledge`、`AiProbabilityBranches`、`AiEconomics`、`ThreatCalculator`、`roleCardValue`、`discardScoring`、`resourceSelectionValue`、`transferScoring`、`sealScoring`、`lightningScoring`、`AiGlobalBenefit`、`AiPlanner`、`AiActionGenerator`、`AiCardSelector`、`AiResponsePolicy`、`AiValueSimulationQuery`。
 
+Searcher closure 后，`Planner`、`SearchPolicy`、`CandidateMaterializer`、`SiblingTransitionTerms`、`TransitionValue`、`FrontierValue` 与 `SearchResult` 也已删除。Search mechanics 进入 `Searcher`；State/Transition/frontier/comparison semantics 进入 `Evaluator`；Controller 只内联 acceptance 记录。`SearchRequest` 与 `WorkerSearchOutcome` 保留为必要 serialization/identity validation shape，直接携带 canonical World/Action，不建立业务 DTO hierarchy。
+
 保留的边界均为正式职责而非 compatibility 算法副本：`AiController` 是唯一 composition/execution root；`Simulator` 是效果组件 facade；`ValueService` 与 `StateValue` 只转发到唯一公式 owner；`CardSelectionBoundary` 与 `ResponseBoundary` 把真实实体和 Game 执行上下文隔离在 Policy 外侧。它们不得拥有第二份搜索、价值、概率或选择公式。
 
 ### 最终所有权
 
 | Layer | 最终 owner 与职责 |
 |---|---|
-| State | `VisibleState` 过滤公开信息；`Knowledge` 持有观察者合法记忆；`BeliefState` 推导未知分布；`StateContracts` 一次组合；`SearchState` 提供可克隆搜索世界；`Probability` 提供条件分支代数。 |
-| Search | `ActionGenerator` 枚举候选；`SearchBudget` 管预算；`SearchPolicy` 管束搜索结构；`CounterfactualTerms` 与 `SiblingTransitionTerms` 生成命名项；`CandidateMaterializer` 组合候选；`Planner` 只编排。 |
+| State | `Fact` 提供确定事实；`Probability` 提供唯一条件概率代数；`World` 提供唯一可克隆搜索世界；`StateContracts` 一次组合。 |
+| Search | `Action` 是唯一动作；`ActionGenerator` 枚举完整 canonical 候选；`SearchBudget` 管预算；`Searcher` 唯一拥有 traversal/beam/frontier/root coverage/incumbent/Pattern scheduling；`SearchPrior` 只是其 exploration helper；`CounterfactualTerms` 是有界反事实估计 helper。 |
 | Simulation | `Simulator` 管 clone、共享概率 runtime 与 action dispatch；Response、Combat、Card、Skill、Status 五个组件各自拥有状态变换；`ValueSimulationQuery`、`RootResolutionQuery` 只做窄反事实查询。 |
-| Value | `Evaluator` 拥有纯状态公式；`StateValue` 提供显式状态查询；`ValueLedger` 管 owner ledger；`Economics`、`CardValue`、`ThreatValue`、`SealValue`、`GlobalBenefitValue` 各拥有对应价值 primitive；`ValueService` 只聚合查询。 |
+| Value | `Evaluator` 拥有 State/Transition/terminal frontier/final comparison；`StateValue` 只提供有界 lifecycle 查询适配；`ValueLedger` 管诊断 owner ledger；`Economics`、`CardValue`、`ThreatValue`、`SealValue`、`GlobalBenefitValue` 提供被 Evaluator/Policy 消费的 primitives。 |
 | Policy | `ActionCandidatePolicy` 管 AI 专属候选约束；`CardSelectionPolicy`、`ResourceSelectionPolicy`、`ResponsePolicy`、`TransferPolicy` 各拥有唯一选择公式；两个 Boundary 只解析真实实体与执行上下文。 |
 | AI Models | `RadarModel`、`LightningModel`、`SealModel`、`GlobalBenefitModel` 只返回只读概率、ID 与 outcome 事实；它们不是 Repository Domain Rule authority。 |
 | Execution | `AiController` 读取显式注入的状态/会话 capability，组合全部 owner，经 search executor 调用 Worker，并把 descriptor 重新绑定到当前合法实体。 |
@@ -1232,7 +1234,7 @@ js/ai/
 
 ### 最终依赖图与门禁
 
-生产静态 import 图已执行 DFS 审计，无循环依赖。Search 不 import concrete Simulation；Planner 没有任何 import，并只消费 `simulatorFactory`、`searchBudgetFactory` 与显式 capability。Simulation component 只在 `simulation/` 内被 import，禁止 Game、Controller、Planner、SearchPolicy 与 final value composition。AI 内部禁止 `game.aiController` 回指；SearchPrior 不保存 GameState callback。
+生产静态 import 图已执行 DFS 审计，无循环依赖。Search 不 import concrete Simulation；`Searcher` 只消费 `simulatorFactory`、`searchBudgetFactory`、Evaluator 与显式 capability。Simulation component 只在 `simulation/` 内被 import，禁止 Game、Controller、Searcher 与 final value composition。AI 内部禁止 `game.aiController` 回指；SearchPrior 不保存 GameState callback。
 
 `tools/check-code-quality.mjs` 的 `--ai-all` 会扫描全部 AI 生产文件，而非只看 changed lines。门禁覆盖六段式 Module Header、八段式 Function Header、JSDoc 拒绝、注释/字符串遮蔽、Simulation/Search/State/Value/Policy/Domain 分层、旧兼容路径、根目录布局、AI search/simulation/domain legacy RuleEngine/DistanceSystem import guard、Card/Skill 静态事实 guard、Transfer adapter delegate guard 与已迁移 simulation mirror guard；self-test 同时包含正负夹具。
 
@@ -1369,3 +1371,23 @@ B. historical magic number
 - `STATE_UTILITY_PRIOR_WEIGHT`、`END_PRIOR_PENALTY`、`SKILL_THRESHOLD_PRIOR_BONUS` 与静态 CardValue 只属于 Search/Policy，不是 Final Utility 换算。
 
 这些类别不得再次混入同一个 final 加法公式。
+
+## 34. Searcher / Pattern / Controller / Worker Closure 当前事实
+
+生产主链现在是：
+
+```text
+REAL GAME -> AiController -> ActionGenerator -> Worker Searcher
+                                    Searcher -> PatternMatcher
+                                    Searcher -> Simulator
+                                    Searcher -> Evaluator
+Worker canonical Action -> AiController acceptance -> REAL GAME
+```
+
+- `Searcher` 是唯一 search authority；Pattern 只改变 canonical Action 的探索顺序，不定义合法性、transition、Final Utility 或 final winner。
+- `Evaluator.compareCandidates` 是唯一 final comparison；Searcher 只机械维护 incumbent。near-tie/randomness 不再改变 final winner。
+- Worker `SearchEngineFactory` 是唯一 production search composition；AiController 不构造第二套 Searcher graph。
+- Worker infrastructure fault 只返回 ActionGenerator 定义的 canonical `end`；Controller 不 score/rank/max actions。
+- Simulation 的 counter/leverage choice 由既有 `ResponsePolicy` 在 composition 中先产生 boolean，Simulator 只执行 transition；CardEffectSimulation/ResponseSimulation 不再反向 import 对应 Value/Policy owner。
+- SearchRequest 不复制 World 或 Action；Worker outcome 与 Controller acceptance 始终传递 canonical Action。搜索侧不存在 SearchState、SearchAction、ActionDescriptor、RootSearchAction 或 candidate DTO chain。
+- SearchBudget、SearchPrior、CounterfactualTerms、PatternMatcher/ProductionPatterns 都保留独立算法或不变量：Budget 只管 accounting/checkpoint/root coverage；SearchPrior 只给 exploration hints；CounterfactualTerms 只做有界估计；Pattern 只给 scheduling hints。

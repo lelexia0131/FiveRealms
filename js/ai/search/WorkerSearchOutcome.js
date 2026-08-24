@@ -1,6 +1,6 @@
 /*
 模块职责
-拥有 Dedicated AI Worker 返回的 data-only outcome contract；Main Thread acceptance 才产生最终 SearchResult status。
+拥有 Dedicated AI Worker 返回的必要 serialization/identity contract；Main Thread Controller acceptance 才产生最终 status。
 
 上游
 WorkerSearchRuntime 与 Worker transport。
@@ -59,9 +59,7 @@ export function createWorkerSearchOutcome({
     stateVersion:request.stateVersion,
     actorId:request.actorId,
     action,
-    plannedActions:Object.freeze((plannedActions ?? []).map(
-      (plannedAction) => plannedAction
-    )),
+    plannedActions:Object.freeze([...(plannedActions ?? [])]),
     stats:stats ? Object.freeze({ ...stats }) : null,
     searchStopReason,
     rngAfter:rngAfter ? Object.freeze({ ...rngAfter }) : null,

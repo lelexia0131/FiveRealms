@@ -1,6 +1,6 @@
 /*
 模块职责
-提供 Node/headless test 专用的 local search transport；它只调用与 Dedicated Worker 完全相同的 runSearchRequest，不复制 Planner/Simulator。
+提供 Node/headless test 专用的 local search transport；它只调用与 Dedicated Worker 完全相同的 runSearchRequest，不复制 Searcher/Simulator。
 
 上游
 MatchApplication composition 在无 browser Worker 的 headless environment 注入。
@@ -42,7 +42,7 @@ executor 局部 controller。
 runSearchRequest、setTimeout。
 
 边界与不变量
-cancelled search 仍返回 runSearchRequest 的 cancelled outcome；不会从主线程直接执行 Planner。
+cancelled search 仍返回 runSearchRequest 的 cancelled outcome；不会从主线程直接执行 Searcher。
 */
 export function createLocalSearchExecutor() {
   let controller = null;
@@ -72,7 +72,7 @@ export function createLocalSearchExecutor() {
 
     边界与不变量
     与 browser Worker 共享同一 runSearchRequest；正常时间模式由 SearchBudget.TIME 收束，节点模式由 NODE 自然收束；
-    local transport 无法终止同步 work，显式 NODE 诊断不得用 Promise race 伪造提前 fallback；不直接运行 Planner。
+    local transport 无法终止同步 work，显式 NODE 诊断不得用 Promise race 伪造提前 fallback；不直接运行 Searcher。
     */
     async search(request, options = {}) {
       controller = options.signal instanceof AbortController

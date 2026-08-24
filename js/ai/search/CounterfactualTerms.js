@@ -3,7 +3,7 @@
 唯一拥有破势准备侧、既有层消费侧及 provenance（价值来源记录）的 counterfactual（反事实对照世界）配对项。
 
 上游
-CandidateMaterializer 与破势边际回归测试。
+Searcher 与反事实价值回归测试。
 
 下游
 Simulator、State Value、深层动作生成与合法匿名手牌采样。
@@ -32,7 +32,7 @@ export class CounterfactualTerms {
   绑定破势反事实、深层生成与隐藏世界能力。
 
   调用方
-  AIController 组合根与 Planner 正式边界。
+  Worker SearchEngineFactory 与 Searcher。
 
   输入
   evaluator、generate、sampleUnknownHands 与隐藏样本数。
@@ -50,7 +50,7 @@ export class CounterfactualTerms {
   无。
 
   边界与不变量
-  不接收 Game、Controller、TransitionValue 或 SearchPolicy。
+  不接收 Game、Controller 或 final comparator；不定义 Searcher mechanics。
   */
   constructor({
     evaluator,
@@ -112,7 +112,7 @@ export class CounterfactualTerms {
   为一次根搜索记录当前 Probability 查询输入、已有破势层来源与动态目标诊断基线。
 
   调用方
-  CandidateMaterializer.createContext。
+  Searcher.createContext。
 
   输入
   行动者、根 World 与根动作集合。
@@ -198,7 +198,7 @@ export class CounterfactualTerms {
   记录深层生成是否发现根集合以外的突袭目标。
 
   调用方
-  CandidateMaterializer.observeCandidate。
+  Searcher candidate diagnostics。
 
   输入
   候选动作与当前搜索领域 context。
@@ -230,7 +230,7 @@ export class CounterfactualTerms {
   惰性估算匿名手牌格挡对突袭候选的既有搜索先验调整。
 
   调用方
-  CandidateMaterializer.materialize。
+  Searcher.evaluateCandidate。
 
   输入
   候选动作与当前搜索领域 context。
@@ -489,7 +489,7 @@ export class CounterfactualTerms {
     const candidates = this.generateActions(afterState, actorId, searchBudget);
     let best = 0;
     for (const candidate of candidates) {
-      if (candidate.card?.definitionId !== "assault") continue;
+      if (candidate.cardId !== "assault") continue;
       if (this.isInterrupted(searchBudget)) return null;
       searchBudget?.observeSimulation();
       const base = simulator.apply(baselineState, candidate);
@@ -613,7 +613,7 @@ export class CounterfactualTerms {
   为单个候选产生领域边际与下一节点 provenance。
 
   调用方
-  CandidateMaterializer.materialize。
+  Searcher.evaluateCandidate。
 
   输入
   before/after、动作、行动者、搜索深度、回合开始时已有层的来源记录与 Simulator。

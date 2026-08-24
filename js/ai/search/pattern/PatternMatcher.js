@@ -3,7 +3,7 @@
 把静态 Tactical Pattern definitions 转换为有界、确定性的语义动作序列 proposal。
 
 上游
-AI 组合根与 Planner。
+Worker SearchEngineFactory 与 Searcher。
 
 下游
 canonical Action intent 与 ProductionPatterns registry。
@@ -16,7 +16,7 @@ canonical Action intent 与 ProductionPatterns registry。
 
 架构约束
 Pattern provides tactical search-order knowledge, not tactical value；不得调用 Simulator、Probability、Evaluator、
-TransitionValue 或 SearchBudget internals，也不得判断合法性、修改候选 value 或建立独立搜索树。
+Evaluator 或 SearchBudget internals，也不得判断合法性、修改候选 value 或建立独立搜索树。
 */
 import { PRODUCTION_TACTICAL_PATTERNS } from "./ProductionPatterns.js";
 import { actionIntentKey } from "../Action.js";
@@ -262,7 +262,7 @@ export class PatternMatcher {
   判断 proposal 的指定 step 是否匹配当前状态中一个真实 legal action。
 
   调用方
-  Planner root/child scheduling、Pattern prefix 推进与 focused tests。
+  Searcher root/child scheduling、Pattern prefix 推进与 focused tests。
 
   输入
   proposal、零基 step index、真实 action 与该 action 生成时的 World。
@@ -294,7 +294,7 @@ export class PatternMatcher {
   匹配当前根上下文并生成有界、确定性的 semantic sequence proposals。
 
   调用方
-  Planner.plan，在任何 Pattern-guided materialization 前。
+  Searcher.search，在任何 Pattern-guided evaluation 前。
 
   输入
   玩家、当前 World、已去重合法根动作与现有 search structure。

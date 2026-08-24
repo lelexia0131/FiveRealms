@@ -48,7 +48,7 @@ class SimulatorCore {
   Planner 与有界 Value/Root simulation query：为一次搜索或配对查询创建模拟生命周期。
 
   输入
-  已经过滤且不含 Game 引用的 World 根快照，以及可选的搜索预算上下文。
+  已过滤的 World 根快照，以及可选 SearchBudget 与 ResponsePolicy decision capabilities。
 
   输出
   持有独立 initial 世界的 Simulator 实例。
@@ -57,16 +57,22 @@ class SimulatorCore {
   只读输入 World。
 
   写入状态
-  实例 initial、搜索预算、概率摘要初始化结果与 root 递归守卫。
+  实例 initial、搜索预算、只读 decision capabilities、概率摘要初始化结果与 root 递归守卫。
 
   调用函数
   cloneWorld、各 Simulation 组件初始化器。
 
   边界与不变量
-  构造不得回读 GameState；initial 与输入及其他模拟器实例不共享可变对象。
+  构造不得回读 GameState；Policy capability 只返回 boolean；initial 与输入及其他实例不共享可变对象。
   */
   constructor(visibleState, options = {}) {
     this.searchBudget = options.searchBudget ?? null;
+    this.decideCounter = typeof options.decideCounter === "function"
+      ? options.decideCounter
+      : () => false;
+    this.decideLeverageAssault = typeof options.decideLeverageAssault === "function"
+      ? options.decideLeverageAssault
+      : () => false;
     this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
     this.initial = cloneWorld(visibleState);

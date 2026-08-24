@@ -3,7 +3,7 @@
 定义搜索、Worker、计划复用与真实执行共同消费的唯一 Action 数据契约及其稳定身份。
 
 上游
-ActionGenerator、Planner、PatternMatcher、AIController、Worker search runtime 与 TurnWorkflow。
+ActionGenerator、Searcher、PatternMatcher、AIController、Worker search runtime 与 TurnWorkflow。
 
 下游
 无。
@@ -194,7 +194,7 @@ export function actionIntentKey(action) {
 为搜索去重生成忽略 card instance、保留完整执行语义的稳定键。
 
 调用方
-ActionGenerator 与 Planner 的 secondary scheduling。
+ActionGenerator 与 Searcher 的 secondary scheduling。
 
 输入
 canonical Action。

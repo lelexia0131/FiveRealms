@@ -166,7 +166,7 @@ export async function runAiDecision(game, playerId = null) {
   const legalActions = getActionCandidates(game, player.id);
   const remainingCardCounts = deriveCurrentCardCounts(player, game.state);
   const action = await game.aiController.selectAction(player, { gameId: game.state.gameId });
-  const stats = { ...(game.aiController.planner.lastSearchStats ?? {}) };
+  const stats = { ...(game.aiController.lastSearchStats ?? {}) };
   return { action, legalActions, stats, remainingCardCounts, player };
 }
 
