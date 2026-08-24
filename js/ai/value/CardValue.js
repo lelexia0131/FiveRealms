@@ -3,7 +3,7 @@
 唯一拥有 card/resource Policy Value primitives，包括静态值、角色差量、保留折损、弃置、获得与匿名期望。
 
 上游
-Evaluator、TransferPolicy、State Value 与 Search Prior。
+Evaluator、State Value 与 Search Prior。
 
 下游
 稳定卡牌和角色配置。
@@ -19,6 +19,7 @@ Evaluator、TransferPolicy、State Value 与 Search Prior。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { CHARACTER_BY_ID, CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { HP_VALUE } from "./Economics.js";
 
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
@@ -306,6 +307,119 @@ export function getRoleCardAiValue(characterId, definitionId, options = {}) {
     );
   }
   return base + delta;
+}
+
+/*
+功能
+计算一张已知牌对指定持有者的转移资源价值。
+
+调用方
+Evaluator 的转移候选评估。
+
+输入
+卡牌定义 ID 与过滤后的玩家公开状态。
+
+输出
+基础/角色价值叠加当前生命、能量、护盾与攻击额度后的资源值。
+
+读取状态
+稳定 Card/Skill Definitions 与玩家公开资源字段。
+
+写入状态
+无。
+
+调用函数
+getRoleCardAiValue、getBaseCardAiValue。
+
+边界与不变量
+本值只描述单张资源对一个持有者的局部用途，不解释双方关系、转移门槛或最终候选胜者。
+*/
+export function getTransferCardValue(definitionId, player) {
+  const base = player?.characterId
+    ? getRoleCardAiValue(player.characterId, definitionId)
+    : getBaseCardAiValue(definitionId);
+  const hp = Number(player?.hp ?? player?.maxHp ?? 0);
+  const maxHp = Number(player?.maxHp ?? hp);
+  const shield = Number(player?.shield ?? 0);
+  const missingHp = Math.max(0, maxHp - hp);
+  let value = base;
+  if (definitionId === "recover") {
+    if (hp >= maxHp) value -= 2;
+    if (hp <= 2) value += 7;
+    value += Math.min(2, missingHp);
+  } else if (definitionId === "block") {
+    if (hp <= 2) value += 6;
+  } else if (definitionId === "charge") {
+    const missingEnergy = Math.max(
+      0,
+      Number(player?.maxEnergy ?? player?.energy ?? 0) - Number(player?.energy ?? 0)
+    );
+    value += Math.min(2, missingEnergy);
+    const activeSkillId = player?.activeSkillId
+      ?? player?.character?.activeSkillIds?.[0]
+      ?? null;
+    const activeSkill = ACTIVE_SKILL_DEFINITIONS[activeSkillId] ?? null;
+    const activeSkillCost = Number(player?.activeSkillCost ?? activeSkill?.cost ?? 0);
+    const activeSkillUses = Number(
+      player?.activeSkillUses
+      ?? player?.turnFlags?.activeSkillUseCounts?.[activeSkillId]
+      ?? 0
+    );
+    const activeSkillLimit = Number(player?.activeSkillLimit ?? activeSkill?.limitPerTurn ?? 0);
+    if (activeSkillId && activeSkillLimit > 0 && activeSkillUses < activeSkillLimit
+      && activeSkillCost > 0 && Number(player?.energy ?? 0) + 1 >= activeSkillCost) {
+      value += 2;
+    }
+  } else if (definitionId === "shield") {
+    if (hp <= 2) value += 3;
+    if (shield >= 2) value -= 2;
+  } else if (definitionId === "assault") {
+    const attackLimit = Number(player?.attackLimit ?? player?.turnFlags?.attackLimit ?? 0);
+    const attackUsed = Number(player?.attackUsed ?? player?.turnFlags?.attackUsed ?? 0);
+    if (attackLimit > 0 && attackUsed < attackLimit) value += 1;
+  }
+  return value;
+}
+
+/*
+功能
+计算一个匿名手牌槽对指定持有者的剩余池加权转移价值。
+
+调用方
+Evaluator 的匿名转移候选评估。
+
+输入
+过滤后的玩家公开状态与可选 remaining-card counts。
+
+输出
+有效剩余池的加权单卡值；缺少有效计数时返回 canonical 固定期望四。
+
+读取状态
+只读聚合 Belief counts 与单卡转移资源值。
+
+写入状态
+无。
+
+调用函数
+getTransferCardValue。
+
+边界与不变量
+匿名值不绑定 card ID 或 definition identity，不得读取真实隐藏牌面。
+*/
+export function getUnknownTransferCardValue(player, remainingCardCounts = null) {
+  if (remainingCardCounts !== null
+    && typeof remainingCardCounts === "object"
+    && !Array.isArray(remainingCardCounts)) {
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (const [definitionId, count] of Object.entries(remainingCardCounts)) {
+      if (!Number.isFinite(count) || count <= 0) continue;
+      weightedSum += count * getTransferCardValue(definitionId, player);
+      totalWeight += count;
+    }
+    if (totalWeight > 0) return weightedSum / totalWeight;
+  }
+  return UNKNOWN_HAND_EXPECTED_VALUE;
 }
 
 /*

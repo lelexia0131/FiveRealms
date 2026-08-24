@@ -114,7 +114,7 @@ export function equipmentConditionKey(player, definitionId) {
 枚举一组距离要求共享的装备存在概率分支。
 
 调用方
-ActionGenerator、ThreatValue、CardSelectionBoundary 与其它距离概率查询。
+ActionGenerator、ThreatValue 与其它距离概率查询。
 
 输入
 只读 game、距离要求数组与可选装备约束。

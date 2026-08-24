@@ -56,7 +56,6 @@ const SIMULATION_AI_PATTERN = /^js\/ai\/simulation\//i;
 const AI_LEGACY_RULE_GUARD_PATTERN = /^(?:js\/ai\/(?:search|simulation|domain)\/)/i;
 const CARD_EFFECT_RULES_FILE = "js/domain/rules/card/CardEffectRules.js";
 const SKILL_RULES_FILE = "js/domain/rules/skill/SkillRules.js";
-const TRANSFER_EXECUTION_ADAPTER_FILE = "js/adapters/ai/TransferExecutionPolicyAdapter.js";
 const WORKER_PATTERN = /^js\/adapters\/ai\/worker\//i;
 const CARD_EFFECT_SIMULATION_FILE = "js/ai/simulation/CardEffectSimulation.js";
 const COMBAT_SIMULATION_FILE = "js/ai/simulation/CombatSimulation.js";
@@ -86,6 +85,9 @@ const REMOVED_COMPATIBILITY_NAMES = Object.freeze([
   "AiCardSelector",
   "AiResponsePolicy",
   "AiValueSimulationQuery",
+  "CardSelectionBoundary",
+  "TransferPolicy",
+  "TransferExecutionPolicyAdapter",
 ]);
 const SEMANTIC_EMPTY_HEADER_BODIES = Object.freeze([
   "函数签名声明的参数。",
@@ -124,9 +126,12 @@ const REMOVED_LEGACY_FILES = Object.freeze([
   "js/ai/search/FrontierValue.js",
   "js/ai/search/CandidateMaterializer.js",
   "js/ai/search/SiblingTransitionTerms.js",
-  "js/ai/search/SearchResult.js"
+  "js/ai/search/SearchResult.js",
+  "js/ai/policy/CardSelectionBoundary.js",
+  "js/ai/policy/TransferPolicy.js",
+  "js/adapters/ai/TransferExecutionPolicyAdapter.js"
 ]);
-const REMOVED_LEGACY_SYMBOL_PATTERN = /\b(?:RuleEngine|ResponseSystem|DyingSystem|HpLossSystem|JudgmentSystem|TeamRuleService|DistanceSystem|EventBus|CardSelectionSystem|GameChoiceRouter|GameLogger|GeneralSelection|TeamManager|cardRegistry|skillRegistry|gameConfig|cardConfig|generalConfig)\b/i;
+const REMOVED_LEGACY_SYMBOL_PATTERN = /\b(?:RuleEngine|ResponseSystem|DyingSystem|HpLossSystem|JudgmentSystem|TeamRuleService|DistanceSystem|EventBus|CardSelectionSystem|GameChoiceRouter|GameLogger|GeneralSelection|TeamManager|cardRegistry|skillRegistry|gameConfig|cardConfig|generalConfig|CardSelectionBoundary|TransferPolicy|TransferExecutionPolicyAdapter)\b/i;
 
 /*
 功能
@@ -1486,20 +1491,6 @@ function inspectSource(file, source, changed) {
     }
   }
 
-  if (file === TRANSFER_EXECUTION_ADAPTER_FILE) {
-    const duplicatedTransferFormula = maskedSource.match(
-      /\b(?:from|receiver)\.battleTeam\s*(?:===|!==)\s*(?:source\.battleTeam|from\.battleTeam)/,
-    );
-    if (duplicatedTransferFormula) {
-      errors.push({
-        file,
-        functionName: "<architecture>",
-        line: source.slice(0, duplicatedTransferFormula.index).split(/\r?\n/).length,
-        missing: ["架构约束：TransferExecutionPolicyAdapter 只 delegate TransferPolicy，不得重新解释 ally/enemy 方向"]
-      });
-    }
-  }
-
   if (file === CARD_EFFECT_SIMULATION_FILE) {
     const migratedCardFactMirror = maskedSource.match(
       /\b(?:healFrom\(next,\s*actor,\s*actor,\s*1\b|changeEnergy\(next,\s*actor,\s*1\b|changeShield\(next,\s*target,\s*1\b|gainUnknownCardsWithCounterState\(next,\s*actor,\s*2\b|Math\.min\(\s*2\s*,|applyDamage\(next,\s*actor,\s*player,\s*1\b)/,
@@ -2734,21 +2725,13 @@ function identity(value) { return value; }`;
     throw new Error("SkillRules guard did not reject hardcoded fixed effect fact");
   }
 
-  const goodTransferAdapterGuard = inspectSource(
-    "js/adapters/ai/TransferExecutionPolicyAdapter.js",
-    `${moduleHeader}\n${pass}`,
+  const removedTransferPolicyErrors = inspectSource(
+    "js/ai/search/BadTransferPolicyImport.js",
+    `${moduleHeader}\nimport { chooseBestPositiveTransfer } from "../policy/TransferPolicy.js";\n${pass}`,
     null,
   );
-  if (goodTransferAdapterGuard.some((error) => error.missing.some((item) => item.includes("TransferExecutionPolicyAdapter")))) {
-    throw new Error(`valid TransferExecutionPolicyAdapter fixture failed: ${JSON.stringify(goodTransferAdapterGuard)}`);
-  }
-  const badTransferAdapterGuard = inspectSource(
-    "js/adapters/ai/TransferExecutionPolicyAdapter.js",
-    `${moduleHeader}\n${pass.replace("return value;", "return !(source.controllerType === \"ai\" && from.battleTeam === source.battleTeam && receiver.battleTeam !== source.battleTeam);")}`,
-    null,
-  );
-  if (!badTransferAdapterGuard.some((error) => error.missing.some((item) => item.includes("TransferExecutionPolicyAdapter")))) {
-    throw new Error("TransferExecutionPolicyAdapter guard did not reject duplicated direction formula");
+  if (!removedTransferPolicyErrors.some((error) => error.missing.some((item) => item.includes("已删除")))) {
+    throw new Error("removed Transfer Policy guard did not reject old owner import");
   }
 
   const goodCardSimulationMirror = inspectSource(

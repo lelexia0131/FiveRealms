@@ -3,7 +3,7 @@
 唯一保存 AI 当前确定知道的公开事实、自身私有事实、合法实体记忆与由这些事实推出的当前牌池计数。
 
 上游
-StateContracts、CardSelectionBoundary 与 ResponseBoundary。
+StateContracts 与 ResponseBoundary。
 
 下游
 Domain Definitions/StatusRules、RuleProjection 与角色公开策略元数据。

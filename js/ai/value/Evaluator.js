@@ -37,6 +37,8 @@ import {
   getResourceDefinitionUtility,
   getResourceUnknownUtility,
   getRoleCardAiValue,
+  getTransferCardValue,
+  getUnknownTransferCardValue,
   getUnknownAcquisitionUtility,
   roleCardDelta,
   skillThresholdOptionPolicyValue
@@ -1005,6 +1007,401 @@ export function chooseDefaultZoneSelection({ actor, owner, handCard, equipment }
   return equipment ? { zone:"equipment", cardId:equipment.id ?? null } : null;
 }
 
+export const MIN_TRANSFER_UTILITY = 0.5;
+const HUMAN_ALLY_HAND_PROTECTION = 7;
+const MIN_ENEMY_REDISTRIBUTION_THREAT_GAP = 4;
+const MIN_ENEMY_REDISTRIBUTION_UTILITY = 5;
+
+/*
+功能
+计算排除指定实体后的一名玩家手牌期望数量。
+
+调用方
+Evaluator 的转移资源与组合评估。
+
+输入
+过滤后的 World 玩家与可选排除 ID 集合。
+
+输出
+非负手牌期望数量。
+
+读取状态
+玩家 hand/handCount 与卡牌 availability。
+
+写入状态
+无。
+
+调用函数
+cardAvailability。
+
+边界与不变量
+没有实体 hand 的玩家只使用公开 handCount；不得从未知手牌读取 definitionId。
+*/
+function transferHandCount(player, excludedCardIds = null) {
+  if (Array.isArray(player?.hand)) {
+    return player.hand
+      .filter((card) => !excludedCardIds?.has(card.id))
+      .reduce((sum, card) => sum + cardAvailability(card), 0);
+  }
+  return Math.max(0, Number(player?.handCount ?? 0));
+}
+
+/*
+功能
+列出观察者确定知道且当前确定可用的转移手牌身份。
+
+调用方
+chooseTransferHandCandidateValue。
+
+输入
+观察者、资源拥有者与可选排除 ID。
+
+输出
+只含 cardId/definitionId 的候选数组。
+
+读取状态
+观察者自己的 hand 或 Fact 已过滤的 knownCards。
+
+写入状态
+无。
+
+调用函数
+cardAvailability。
+
+边界与不变量
+部分概率身份与匿名槽都不进入输出，其他玩家真实 hand 从不作为身份来源。
+*/
+function knownTransferCardEntries(actor, owner, excludedCardIds = null) {
+  let cards;
+  if (actor?.id === owner?.id) {
+    cards = owner?.hand ?? [];
+  } else if (Array.isArray(owner?.knownCards)) {
+    cards = owner.knownCards;
+  } else {
+    cards = Object.entries(actor?.aiMemory?.knownCardsByPlayer?.[owner?.id] ?? {})
+      .map(([cardId, definitionId]) => ({ cardId, definitionId }));
+  }
+  return cards
+    .filter((card) => !excludedCardIds?.has(card.id ?? card.cardId))
+    .filter((card) => cardAvailability(card) >= 1 - PROBABILITY_EPSILON)
+    .map((card) => ({
+      cardId:card.id ?? card.cardId,
+      definitionId:card.definitionId
+    }))
+    .filter((entry) => entry.cardId && entry.definitionId);
+}
+
+/*
+功能
+把一张资源从来源移到接收者的双方阵营价值组合为局部转移效用。
+
+调用方
+chooseTransferHandCandidateValue、evaluateTransferSelection。
+
+输入
+行动者、来源、接收者及该资源对双方的 CardValue primitive。
+
+输出
+三种 AI 战略方向的既有效用；己方来源到敌方接收者返回负无穷。
+
+读取状态
+battleTeam 与 id。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+该方向限制是 AI preference，不是 Domain legality，也不得在执行边界再次检查。
+*/
+function transferResourceUtility(actor, from, receiver, sourceValue, receiverValue) {
+  if (!actor || !from || !receiver || from.id === receiver.id) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const sourceIsAlly = from.battleTeam === actor.battleTeam;
+  const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
+  if (sourceIsAlly && !receiverIsAlly) return Number.NEGATIVE_INFINITY;
+  if (sourceIsAlly && receiverIsAlly) return receiverValue - sourceValue;
+  if (!sourceIsAlly && receiverIsAlly) return sourceValue + receiverValue;
+  return sourceValue - receiverValue;
+}
+
+/*
+功能
+在已知实体和一个匿名聚合槽之间选择局部转移效用最高的资源。
+
+调用方
+Evaluator.chooseTransferHandCandidate、Controller runtime fallback。
+
+输入
+行动者、来源、接收者、排除 ID 与 remaining-card counts。
+
+输出
+known/unknown 资源描述或 null。
+
+读取状态
+过滤后的可见身份、公开手牌数量与 CardValue primitive。
+
+写入状态
+无。
+
+调用函数
+knownTransferCardEntries、transferHandCount、getTransferCardValue、getUnknownTransferCardValue、transferResourceUtility。
+
+边界与不变量
+匿名输出不含 definitionId；同分保持 known 优先，再按 cardId 升序。
+*/
+function chooseTransferHandCandidateValue(
+  actor,
+  from,
+  receiver,
+  excludedCardIds = null,
+  remainingCardCounts = null
+) {
+  const knownEntries = knownTransferCardEntries(actor, from, excludedCardIds);
+  const unknownCount = Math.max(
+    0,
+    transferHandCount(from, excludedCardIds) - knownEntries.length
+  );
+  const knownCardIds = knownEntries.map((entry) => entry.cardId);
+  const candidates = knownEntries.map((entry) => {
+    const sourceValue = getTransferCardValue(entry.definitionId, from);
+    const receiverValue = getTransferCardValue(entry.definitionId, receiver);
+    return {
+      selectionKind:"known",
+      cardId:entry.cardId,
+      definitionId:entry.definitionId,
+      expectedValue:receiverValue,
+      utility:transferResourceUtility(actor, from, receiver, sourceValue, receiverValue),
+      knownCardIds,
+      availableUnknownCount:0
+    };
+  });
+  if (unknownCount > 0) {
+    const sourceValue = getUnknownTransferCardValue(from, remainingCardCounts);
+    const receiverValue = getUnknownTransferCardValue(receiver, remainingCardCounts);
+    candidates.push({
+      selectionKind:"unknown",
+      cardId:null,
+      definitionId:null,
+      expectedValue:receiverValue,
+      utility:transferResourceUtility(actor, from, receiver, sourceValue, receiverValue),
+      knownCardIds,
+      availableUnknownCount:unknownCount
+    });
+  }
+  candidates.sort((left, right) => right.utility - left.utility
+    || (left.selectionKind === "known" ? 0 : 1)
+      - (right.selectionKind === "known" ? 0 : 1)
+    || String(left.cardId ?? "").localeCompare(String(right.cardId ?? "")));
+  return candidates[0] ?? null;
+}
+
+/*
+功能
+把过滤后的玩家状态归一化为 ThreatValue 可消费的转移视图。
+
+调用方
+transferEnemyThreatGap。
+
+输入
+World 玩家。
+
+输出
+不含未知牌定义的公开 threat view。
+
+读取状态
+公开生命、资源、状态、角色标签与手牌数量。
+
+写入状态
+无。
+
+调用函数
+transferHandCount。
+
+边界与不变量
+保留 player ID 以维持近期攻击者记忆语义。
+*/
+function transferThreatView(player) {
+  return {
+    id:player?.id,
+    alive:Boolean(player?.alive),
+    battleTeam:player?.battleTeam,
+    hp:Number(player?.hp ?? 0),
+    maxHp:Number(player?.maxHp ?? player?.hp ?? 0),
+    shield:Number(player?.shield ?? 0),
+    energy:Number(player?.energy ?? 0),
+    handCount:transferHandCount(player),
+    statuses:Array.isArray(player?.statuses)
+      ? player.statuses
+      : Object.keys(player?.statuses ?? {}),
+    roleTags:player?.roleTags ?? [],
+    tags:player?.tags ?? []
+  };
+}
+
+/*
+功能
+计算敌方来源相对敌方接收者的公开威胁差。
+
+调用方
+evaluateTransferSelection。
+
+输入
+行动者、来源与接收者 World 玩家。
+
+输出
+ThreatValue 差值。
+
+读取状态
+公开玩家字段与行动者合法近期攻击者记忆。
+
+写入状态
+无。
+
+调用函数
+ThreatCalculator.calculate、transferThreatView。
+
+边界与不变量
+不读取任一未知手牌定义。
+*/
+function transferEnemyThreatGap(actor, from, receiver) {
+  const memory = actor?.aiMemory ?? {};
+  return ThreatCalculator.calculate(transferThreatView(actor), transferThreatView(from), memory)
+    - ThreatCalculator.calculate(transferThreatView(actor), transferThreatView(receiver), memory);
+}
+
+/*
+功能
+对一个已由 Generator 枚举的 source/receiver/resource 选择计算完整转移 preference。
+
+调用方
+Evaluator.evaluateTransferAction、Evaluator.chooseTransferAction。
+
+输入
+行动者、来源、接收者、canonical Action selection、排除 ID 与 remaining-card counts。
+
+输出
+包含冻结分数、资源身份和稳定比较字段的局部候选记录。
+
+读取状态
+CardValue primitive、公开关系/容量、ThreatValue 与控制器类型。
+
+写入状态
+无。
+
+调用函数
+transferResourceUtility、getTransferCardValue、getUnknownTransferCardValue、transferEnemyThreatGap。
+
+边界与不变量
+不生成合法组合；策略门槛保持冻结，且 preference 不重复加进 State delta。
+*/
+function evaluateTransferSelection({
+  actor,
+  from,
+  receiver,
+  selection,
+  excludedCardIds = null,
+  remainingCardCounts = null
+}) {
+  const invalid = {
+    sourceId:from?.id ?? selection?.sourceId ?? null,
+    sourceSeatIndex:from?.seatIndex ?? 0,
+    receiverId:receiver?.id ?? selection?.receiverId ?? null,
+    selectionKind:selection?.selectionKind ?? null,
+    cardId:selection?.cardId ?? null,
+    definitionId:selection?.definitionId ?? null,
+    knownCardIds:selection?.knownCardIds ?? [],
+    availableUnknownCount:selection?.availableUnknownCount ?? 0,
+    expectedValue:null,
+    score:Number.NEGATIVE_INFINITY
+  };
+  if (!actor || !from || !receiver || from.id === receiver.id
+    || selection?.zone !== "hand" || transferHandCount(from, excludedCardIds) <= 0) {
+    return Object.freeze(invalid);
+  }
+  let sourceValue;
+  let receiverValue;
+  if (selection.selectionKind === "known" && selection.definitionId) {
+    sourceValue = getTransferCardValue(selection.definitionId, from);
+    receiverValue = getTransferCardValue(selection.definitionId, receiver);
+  } else if (selection.selectionKind === "unknown") {
+    sourceValue = getUnknownTransferCardValue(from, remainingCardCounts);
+    receiverValue = getUnknownTransferCardValue(receiver, remainingCardCounts);
+  } else {
+    return Object.freeze(invalid);
+  }
+  const sourceIsAlly = from.battleTeam === actor.battleTeam;
+  const receiverIsAlly = receiver.battleTeam === actor.battleTeam;
+  let score = transferResourceUtility(actor, from, receiver, sourceValue, receiverValue);
+  const fromLimit = Math.max(0, Number(from.hp ?? 0));
+  const receiverLimit = Math.max(0, Number(receiver.hp ?? 0));
+  const sourceOverflow = Math.max(0, transferHandCount(from, excludedCardIds) - fromLimit);
+  const receiverSpace = Math.max(
+    0,
+    receiverLimit - transferHandCount(receiver, excludedCardIds)
+  );
+  if (sourceIsAlly && receiverIsAlly) score += Math.min(sourceOverflow, receiverSpace) * 4;
+  if (!sourceIsAlly && sourceOverflow > 0) score -= Math.min(sourceOverflow, 2) * 2;
+  if (receiverIsAlly && receiverSpace === 0) score -= receiverValue * 0.75;
+  if (!receiverIsAlly && receiverSpace === 0) score += 1;
+  if (sourceIsAlly && from.controllerType === "human") score -= HUMAN_ALLY_HAND_PROTECTION;
+  if (!sourceIsAlly && !receiverIsAlly) {
+    if (transferEnemyThreatGap(actor, from, receiver)
+      < MIN_ENEMY_REDISTRIBUTION_THREAT_GAP
+      || score < MIN_ENEMY_REDISTRIBUTION_UTILITY) {
+      score = Number.NEGATIVE_INFINITY;
+    }
+  }
+  return Object.freeze({
+    ...invalid,
+    expectedValue:receiverValue,
+    score
+  });
+}
+
+/*
+功能
+按旧分数与稳定键比较两个 Transfer preference。
+
+调用方
+Evaluator.chooseTransferAction、Evaluator.compareCandidates。
+
+输入
+两个 evaluateTransferSelection 结果。
+
+输出
+left 更优返回正数，right 更优返回负数，完全等价返回零。
+
+读取状态
+候选 score、source seat、receiver ID 与资源身份。
+
+写入状态
+无。
+
+调用函数
+String.localeCompare。
+
+边界与不变量
+顺序保持 score 降序、source seat 升序、receiver ID 升序、known 优先、card ID 升序。
+*/
+function compareTransferPreferences(left, right) {
+  if (left.score !== right.score) return left.score > right.score ? 1 : -1;
+  if (left.sourceSeatIndex !== right.sourceSeatIndex) {
+    return left.sourceSeatIndex < right.sourceSeatIndex ? 1 : -1;
+  }
+  const receiverOrder = String(right.receiverId ?? "").localeCompare(
+    String(left.receiverId ?? "")
+  );
+  if (receiverOrder) return receiverOrder;
+  if (left.selectionKind !== right.selectionKind) {
+    return left.selectionKind === "known" ? 1 : -1;
+  }
+  return String(right.cardId ?? "").localeCompare(String(left.cardId ?? ""));
+}
+
 export class Evaluator {
   /*
   功能
@@ -1038,6 +1435,147 @@ export class Evaluator {
   } = {}) {
     this.energyRules = Object.freeze({ getMaxEnergy, getTurnEnergyBreakdown });
     this.getDifficultyMultiplier = getDifficultyMultiplier;
+  }
+
+  /*
+  功能
+  在一个 Domain 合法 source/receiver 对的已知实体与匿名聚合槽中选择最高价值资源。
+
+  调用方
+  AIController 的 transfer-only runtime entity resolution 与直接价值测试。
+
+  输入
+  行动者、来源、接收者、排除实体 ID 与可选 remaining-card counts。
+
+  输出
+  known/unknown 资源描述或 null。
+
+  读取状态
+  调用方提供的过滤玩家、合法记忆、公开手牌数量与 Belief counts。
+
+  写入状态
+  无。
+
+  调用函数
+  chooseTransferHandCandidateValue。
+
+  边界与不变量
+  不枚举 source/receiver，不解析物理匿名实体，也不读取真实隐藏牌面。
+  */
+  chooseTransferHandCandidate(
+    actor,
+    from,
+    receiver,
+    excludedCardIds = null,
+    remainingCardCounts = null
+  ) {
+    if (!actor || !from || !receiver) return null;
+    return chooseTransferHandCandidateValue(
+      actor,
+      from,
+      receiver,
+      excludedCardIds,
+      remainingCardCounts
+    );
+  }
+
+  /*
+  功能
+  计算一个 Generator 已完整枚举的 canonical Transfer Action 的冻结 contextual preference。
+
+  调用方
+  evaluateTransition、chooseTransferAction、main-thread/Worker 一致性测试。
+
+  输入
+  canonical Action、行动者与动作前 World。
+
+  输出
+  含 score、稳定比较字段和资源身份的只读 preference。
+
+  读取状态
+  World 玩家、Probability current counts 与 Action.selection。
+
+  写入状态
+  无。
+
+  调用函数
+  evaluateTransferSelection、queryCurrentCardCounts。
+
+  边界与不变量
+  只评价 Generator 已给出的合法 Action；unknown selection 不得携带或读取 definitionId。
+  */
+  evaluateTransferAction(action, actor, state) {
+    const stateActor = state?.players?.find((player) => player.id === actor?.id) ?? actor;
+    const selection = action?.selection ?? null;
+    const from = state?.players?.find((player) => player.id === selection?.sourceId) ?? null;
+    const receiver = state?.players?.find(
+      (player) => player.id === selection?.receiverId
+    ) ?? null;
+    const excludedCardIds = action?.cardInstanceId
+      ? new Set([action.cardInstanceId])
+      : null;
+    const remainingCardCounts = state?.probabilityState
+      ? queryCurrentCardCounts(state.probabilityState)
+      : state?.remainingCardCounts ?? null;
+    if (action?.type !== "card" || action?.cardId !== "transfer") {
+      return evaluateTransferSelection({
+        actor:null,
+        from:null,
+        receiver:null,
+        selection:null
+      });
+    }
+    return evaluateTransferSelection({
+      actor:stateActor,
+      from,
+      receiver,
+      selection,
+      excludedCardIds,
+      remainingCardCounts
+    });
+  }
+
+  /*
+  功能
+  从调用方提供的 canonical Transfer Actions 中按冻结 preference 与门槛选择执行描述。
+
+  调用方
+  AIController.chooseTransferCombination。
+
+  输入
+  合法 Transfer Actions、行动者、当前 World 与最低效用。
+
+  输出
+  兼容 Application 的 frozen Action.selection 描述；无达标候选时返回 null。
+
+  读取状态
+  evaluateTransferAction 的 contextual preference。
+
+  写入状态
+  无。
+
+  调用函数
+  evaluateTransferAction、compareTransferPreferences。
+
+  边界与不变量
+  不生成候选、不模拟、不解析物理牌；完全等价时保留 Generator 原顺序。
+  */
+  chooseTransferAction(actions, actor, state, minimumUtility = MIN_TRANSFER_UTILITY) {
+    let best = null;
+    for (const action of actions ?? []) {
+      const preference = this.evaluateTransferAction(action, actor, state);
+      if (!best || compareTransferPreferences(preference, best.preference) > 0) {
+        best = { action, preference };
+      }
+    }
+    if (!best || best.preference.score < minimumUtility) return null;
+    return Object.freeze({
+      ...best.action.selection,
+      score:best.preference.score,
+      expectedValue:best.preference.expectedValue,
+      knownCardIds:best.preference.knownCardIds,
+      availableUnknownCount:best.preference.availableUnknownCount
+    });
   }
 
   /*
@@ -2136,7 +2674,8 @@ export class Evaluator {
   deriveTransitionOptionPoints、StateValue.transitionDelta、statePointsToUtility。
 
   边界与不变量
-  Final Utility 公式与迁移前完全相同；depth 只作诊断，不缩放价值；Search Prior 不得进入。
+  Final Utility 公式保持不变；低于冻结门槛的 Transfer 只失去竞争资格，preference 不叠加到 state delta；
+  depth 只作诊断，不缩放价值，Search Prior 不得进入。
   */
   evaluateTransition({
     stateValue,
@@ -2169,6 +2708,11 @@ export class Evaluator {
       resolutionScale
     );
     const transitionOptionValue = statePointsToUtility(transitionOptionPoints);
+    const transferPreference = action?.type === "card" && action?.cardId === "transfer"
+      ? this.evaluateTransferAction(action, player, beforeState)
+      : null;
+    const transferCompetitive = transferPreference === null
+      || transferPreference.score >= MIN_TRANSFER_UTILITY;
     return {
       economic,
       resolutionScale,
@@ -2177,14 +2721,17 @@ export class Evaluator {
       stateDeltaValue,
       transitionOptionPoints,
       transitionOptionValue,
+      transferPreference,
       depth,
-      baseTransition:immediate + stateDeltaValue + transitionOptionValue
+      baseTransition:transferCompetitive
+        ? immediate + stateDeltaValue + transitionOptionValue
+        : Number.NEGATIVE_INFINITY
     };
   }
 
   /*
   功能
-  按 Final Utility 与唯一机器精度同分语义比较两个完整候选。
+  按根 Transfer 冻结偏好或 Final Utility 的唯一语义比较两个完整候选。
 
   调用方
   Searcher incumbent、beam protection 与 final selection。
@@ -2196,7 +2743,7 @@ export class Evaluator {
   left 更优返回正数，right 更优返回负数，完全等价返回零。
 
   读取状态
-  候选 Final Utility 与 canonical root Action type。
+  候选根 Transfer preference、Final Utility 与 canonical root Action type。
 
   写入状态
   无。
@@ -2205,12 +2752,22 @@ export class Evaluator {
   无。
 
   边界与不变量
-  Final Utility 始终先比较；只在机器精度同分时稳定优先 skill-root；
-  Searcher、Pattern、Search Prior 与随机数不得定义另一套偏好。
+  两个根 Transfer 先保持旧 contextual winner；Transfer 与其它动作仍比较 Final Utility；
+  Final Utility 机器精度同分时稳定优先 skill-root，Searcher、Pattern、Search Prior 与随机数不得定义另一套偏好。
   */
   compareCandidates(left, right) {
+    if (left?.transferPreference && right?.transferPreference) {
+      const transferOrder = compareTransferPreferences(
+        left.transferPreference,
+        right.transferPreference
+      );
+      if (transferOrder) return transferOrder;
+    }
     const leftValue = Number(left?.valueScore ?? left?.transitionValue);
     const rightValue = Number(right?.valueScore ?? right?.transitionValue);
+    if (leftValue !== rightValue && (!Number.isFinite(leftValue) || !Number.isFinite(rightValue))) {
+      return leftValue > rightValue ? 1 : -1;
+    }
     const difference = leftValue - rightValue;
     const tolerance = Number.EPSILON * Math.max(
       1,

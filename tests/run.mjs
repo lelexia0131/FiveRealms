@@ -95,6 +95,7 @@ import { ThreatCalculator } from "../js/ai/value/ThreatValue.js";
 import { HP_RISK_OPTION_WEIGHT } from "../js/ai/value/ThreatValue.js";
 import {
   Evaluator,
+  MIN_TRANSFER_UTILITY,
   buildResourceCandidates,
   chooseBestResourceHandCandidate,
   chooseContextualResourceCandidate,
@@ -188,19 +189,10 @@ import {
 } from "./ai_test_helpers.mjs";
 import { configureAllAiRoster } from "./headless_match_setup.mjs";
 import {
-  UNKNOWN_HAND_EXPECTED_VALUE,
-  buildTransferCandidates,
-  cardSituationValue,
-  chooseBestPositiveTransfer,
-  chooseTransferHandCandidate,
-  expectedHandValue,
-  scoreTransferCombination,
-  threatView
-} from "../js/ai/policy/TransferPolicy.js";
-import {
   CARD_AI_VALUES, ROLE_CARD_VALUE_DELTAS, cardAvailability, getBaseCardAiValue, getRoleCardAiValue,
   getDiscardKeepValue, getObservedCardValue, getResourceDefinitionUtility, getResourceUnknownUtility,
-  validateRoleCardValueDeltas
+  getTransferCardValue as cardSituationValue, getUnknownTransferCardValue,
+  UNKNOWN_HAND_EXPECTED_VALUE, validateRoleCardValueDeltas
 } from "../js/ai/value/CardValue.js";
 import {
   ROLE_CARD_VALUE_DELTAS as OWNED_ROLE_CARD_VALUE_DELTAS,
@@ -3668,7 +3660,7 @@ Application 无 controllerType AI 转移公式；predicate 由 Domain 拥有。
 async function frArch11CarryInOwnership() {
   const cardIntent = await readFile(projectFile("js/application/action/CardIntentRuntime.js"), "utf8");
   assert.doesNotMatch(cardIntent, /source\.controllerType === "ai"/);
-  assert.match(cardIntent, /isTransferExecutionAllowed/);
+  assert.doesNotMatch(cardIntent, /isTransferExecutionAllowed|evaluateTransferAction/);
   const trigger = await readFile(projectFile("js/application/trigger/PassiveSkillTriggerRegistry.js"), "utf8");
   assert.match(trigger, /canTriggerMomentumCategory/);
   const owner = { id: "a", alive: true, turnFlags: { categoriesUsed: new Set() } };
@@ -13578,7 +13570,10 @@ test("AI·资源闭合：旧 Resource owner 删除且 Simulation 无价值选择
   for (const path of [
     "js/ai/policy/ResourceSelectionPolicy.js",
     "js/ai/simulation/ResourceValueQuery.js",
-    "js/ai/policy/CardSelectionPolicy.js"
+    "js/ai/policy/CardSelectionPolicy.js",
+    "js/ai/policy/CardSelectionBoundary.js",
+    "js/ai/policy/TransferPolicy.js",
+    "js/adapters/ai/TransferExecutionPolicyAdapter.js"
   ]) await assert.rejects(access(projectFile(path)));
   const paths = {
     controller:"js/ai/AiController.js",
@@ -13586,7 +13581,6 @@ test("AI·资源闭合：旧 Resource owner 删除且 Simulation 无价值选择
     simulator:"js/ai/simulation/Simulator.js",
     response:"js/ai/simulation/ResponseSimulation.js",
     worker:"js/adapters/ai/worker/SearchEngineFactory.js",
-    boundary:"js/ai/policy/CardSelectionBoundary.js",
     evaluator:"js/ai/value/Evaluator.js",
     cardValue:"js/ai/value/CardValue.js"
   };
@@ -13607,12 +13601,8 @@ test("AI·资源闭合：旧 Resource owner 删除且 Simulation 无价值选择
   assert.match(source.controller, /stateEvaluator\.evaluateResourceTransitionCandidate/);
   assert.match(source.evaluator, /chooseContextualResourceCandidate/);
   assert.match(source.cardValue, /getDiscardKeepValue[\s\S]*getResourceUnknownUtility/);
-  const remainingMethods = [...source.boundary.matchAll(/^  ([A-Za-z][A-Za-z0-9]*)\([^)]*/gm)]
-    .map((match) => match[1]);
-  assert.deepEqual(
-    remainingMethods,
-    ["constructor", "chooseTransferCards", "chooseTransferCombination"]
-  );
+  assert.match(source.controller, /stateEvaluator\.chooseTransferAction/);
+  assert.match(source.evaluator, /chooseTransferHandCandidate[\s\S]*chooseTransferAction/);
 });
 
 test("AI·资源闭合：Guardian 接受选择消费各一次且拒绝均为零", () => {
@@ -14392,10 +14382,10 @@ test("AI·依赖注入：Planner 脱离 Game 与 Controller 后保持固定种�
 AI 依赖注入回归测试。
 
 输入
-没有可用 aiController 的 Game、转移牌行动者与固定选择描述。
+没有可用 aiController 的 Game、转移牌行动者与 canonical World。
 
 输出
-生成的转移动作携带注入选择，且能力只调用一次。
+生成的转移动作包含 Domain 合法 source/receiver/resource 选择。
 
 读取状态
 测试 GameState 与 ActionLegality 合法性。
@@ -14407,9 +14397,9 @@ AI 依赖注入回归测试。
 ActionGenerator.generate。
 
 边界与不变量
-生成器不得通过 Game 回取 CardSelector，转移选择不触发实体移动或额外随机调用。
+生成器不得通过 Game 回取 CardSelector；合法枚举不依赖 Controller 或 Evaluator preference。
 */
-function testActionGeneratorUsesInjectedTransferSelection() {
+function testActionGeneratorDoesNotNeedCardSelector() {
   const actor = makePlayer("di-generator-actor", 0, "dawn", "ai", 0);
   const ally = makePlayer("di-generator-ally", 1, "dawn", "ai", 1);
   const enemy = makePlayer("di-generator-enemy", 2, "dusk", "ai", 2);
@@ -14418,31 +14408,27 @@ function testActionGeneratorUsesInjectedTransferSelection() {
   ally.hand.push(instance("block"));
   enemy.hand.push(instance("assault"));
   const { game } = makeGame([actor, ally, enemy]);
-  const selection = { sourceId: ally.id, receiverId: actor.id, zone: "hand" };
-  let calls = 0;
-  const generator = new ActionGenerator({
-    getRootContext: () => ({
-      state: game.state,
-      currentPlayer: game.state.players[game.state.currentPlayerIndex] ?? null,
-      phase: game.state.phase
-    }),
-    chooseTransferCombination: () => {
-      calls += 1;
-      return selection;
-    },
-  });
+  const world = createInitialWorld(actor.id, game.state);
+  const generator = new ActionGenerator();
   const controller = game.aiController;
   game.aiController = null;
   try {
-    const action = generator.generate(actor).find((entry) => entry.cardInstanceId === transfer.id);
-    assert.equal(calls, 1);
-    assert.deepEqual(action?.selection, selection);
+    const action = generator.generate(world, actor.id).find((entry) => (
+      entry.cardInstanceId === transfer.id
+      && entry.selection?.sourceId === ally.id
+      && entry.selection?.receiverId === actor.id
+    ));
+    assert.ok(action);
+    assert.equal(action.selection.zone, "hand");
   } finally {
     game.aiController = controller;
   }
 }
 
-test("AI·依赖注入：ActionGenerator 无 Controller CardSelector 仍生成转移动作", testActionGeneratorUsesInjectedTransferSelection);
+test(
+  "AI·依赖注入：ActionGenerator 无 Controller CardSelector 仍枚举转移动作",
+  testActionGeneratorDoesNotNeedCardSelector
+);
 
 /*
 功能
@@ -14492,28 +14478,28 @@ test("AI·依赖注入：缺少必要能力时构造立即给出依赖名", test
 
 /*
 功能
-验证 Controller 边界与正式子组件使用同一转移选择和 descriptor 重绑语义。
+验证 Controller 只组合 Generator/Evaluator，并保持 canonical descriptor 重绑语义。
 
 调用方
 AI 依赖注入回归测试。
 
 输入
-固定转移选择、合法转移牌与当前 GameState。
+合法转移牌、敌方资源与当前 GameState。
 
 输出
 门面、生成器和描述重绑返回同一选择及当前动作。
 
 读取状态
-AIController、CardSelector、ActionGenerator 与当前合法动作集合。
+AIController、Evaluator、ActionGenerator 与当前合法动作集合。
 
 写入状态
-测试期间临时替换并恢复 CardSelector 转移方法。
+无。
 
 调用函数
-AIController.chooseTransferCombination、getActionCandidates、resolvePlannedAction、Planner.describeAction。
+AIController.chooseTransferCombination、getActionCandidates、resolvePlannedAction、describeBenchmarkAction。
 
 边界与不变量
-公开 owner 字段不得形成第二套策略，Controller 边界只透明转发且 descriptor 必须按当前实体重绑。
+Controller 不排序候选；selection 必须来自 Evaluator，descriptor 必须按当前实体重绑。
 */
 function testControllerFacadePreservesTransferAndDescriptor() {
   const actor = makePlayer("di-facade-actor", 0, "dawn", "ai", 0);
@@ -14525,19 +14511,25 @@ function testControllerFacadePreservesTransferAndDescriptor() {
   enemy.hand.push(instance("assault"));
   const { game } = makeGame([actor, ally, enemy]);
   const controller = game.aiController;
-  const selection = { sourceId: ally.id, receiverId: actor.id, zone: "hand" };
-  const originalChoose = controller.cardSelector.chooseTransferCombination;
-  controller.cardSelector.chooseTransferCombination = () => selection;
-  try {
-    assert.equal(controller.chooseTransferCombination(actor, transfer, [ally]), selection);
-    const action = controller.getActionCandidates(actor).find((entry) => entry.cardInstanceId === transfer.id);
-    assert.deepEqual(action?.selection, selection);
-    const descriptor = describeBenchmarkAction(action);
-    const rebound = controller.resolvePlannedAction(actor, descriptor);
-    assert.deepEqual(describeBenchmarkAction(rebound), descriptor);
-  } finally {
-    controller.cardSelector.chooseTransferCombination = originalChoose;
-  }
+  const selection = controller.chooseTransferCombination(
+    actor,
+    transfer,
+    [enemy],
+    new Set([actor.id])
+  );
+  assert.ok(selection);
+  assert.equal(selection.sourceId, enemy.id);
+  assert.equal(selection.receiverId, actor.id);
+  const action = controller.getActionCandidates(actor).find((entry) => (
+    entry.cardInstanceId === transfer.id
+    && entry.selection?.sourceId === selection.sourceId
+    && entry.selection?.receiverId === selection.receiverId
+    && entry.selection?.cardId === selection.cardId
+  ));
+  assert.ok(action);
+  const descriptor = describeBenchmarkAction(action);
+  const rebound = controller.resolvePlannedAction(actor, descriptor);
+  assert.deepEqual(describeBenchmarkAction(rebound), descriptor);
 }
 
 test("AI·依赖注入：Controller 门面保持转移选择与 descriptor 重绑", testControllerFacadePreservesTransferAndDescriptor);
@@ -15865,7 +15857,7 @@ test("AI·真实与模拟一致性：确定性突袭差分冻结", frArchRealSim
 
 /*
 功能
-验证转移方向策略只有 TransferPolicy 一个公式，执行 adapter 只桥接 Human/AI 条件。
+验证转移策略只在 Evaluator 比较阶段生效，Application 不再拥有第二次执行 veto。
 
 调用方
 当前测试。
@@ -15877,37 +15869,38 @@ test("AI·真实与模拟一致性：确定性突袭差分冻结", frArchRealSim
 无返回值，断言失败时抛错。
 
 读取状态
-TransferPolicy、TransferExecutionPolicyAdapter 导出与源码。
+Evaluator、CardIntentRuntime、createGameApplication 与三个已删除路径。
 
 写入状态
 无。
 
 调用函数
-readFile。
+readFile、access。
 
 边界与不变量
-Human ally→enemy 仍合法；AI ally→enemy 仍被 AI policy 禁止。
+ally→enemy 仍由 Domain 生成；AI preference 为负无穷，但 Application 不再复核该 preference。
 */
-async function frArch12TransferPolicySingleAuthority() {
-  const { isTransferDirectionAllowed } = await import("../js/ai/policy/TransferPolicy.js");
-  const { isTransferExecutionAllowed } = await import("../js/adapters/ai/TransferExecutionPolicyAdapter.js");
-  const actor = { id: "a", battleTeam: "dawn" };
-  const ally = { id: "f", battleTeam: "dawn" };
-  const ally2 = { id: "f2", battleTeam: "dawn" };
-  const enemy = { id: "r", battleTeam: "dusk" };
-  const enemy2 = { id: "r2", battleTeam: "dusk" };
-  assert.equal(isTransferDirectionAllowed(actor, ally, enemy), false);
-  assert.equal(isTransferDirectionAllowed(actor, ally, ally2), true);
-  assert.equal(isTransferDirectionAllowed(actor, enemy, ally), true);
-  assert.equal(isTransferDirectionAllowed(actor, enemy, enemy2), true);
-  assert.equal(isTransferExecutionAllowed({ controllerType: "ai", battleTeam: "dawn" }, ally, enemy), false);
-  assert.equal(isTransferExecutionAllowed({ controllerType: "human", battleTeam: "dawn" }, ally, enemy), true);
-  const adapterSource = await readFile(projectFile("js/adapters/ai/TransferExecutionPolicyAdapter.js"), "utf8");
-  assert.match(adapterSource, /isTransferDirectionAllowed\(source, from, receiver\)/);
-  assert.doesNotMatch(adapterSource, /receiver\?\.battleTeam\s*!==\s*source\.battleTeam/);
+async function transferFinalPolicyClosure() {
+  for (const path of [
+    "js/ai/policy/CardSelectionBoundary.js",
+    "js/ai/policy/TransferPolicy.js",
+    "js/adapters/ai/TransferExecutionPolicyAdapter.js"
+  ]) await assert.rejects(access(projectFile(path)));
+  const evaluatorSource = await readFile(projectFile("js/ai/value/Evaluator.js"), "utf8");
+  const intentSource = await readFile(
+    projectFile("js/application/action/CardIntentRuntime.js"),
+    "utf8"
+  );
+  const compositionSource = await readFile(
+    projectFile("js/composition/createGameApplication.js"),
+    "utf8"
+  );
+  assert.match(evaluatorSource, /transferResourceUtility[\s\S]*MIN_TRANSFER_UTILITY/);
+  assert.doesNotMatch(intentSource, /isTransferExecutionAllowed|evaluateTransferAction/);
+  assert.doesNotMatch(compositionSource, /TransferExecutionPolicyAdapter|isTransferExecutionAllowed/);
 }
 
-test("AI·转移策略：ONE AI POLICY AUTHORITY 且 adapter 只 delegate", frArch12TransferPolicySingleAuthority);
+test("AI·转移策略：Evaluator 是唯一偏好 owner 且执行边界无第二 veto", transferFinalPolicyClosure);
 
 /*
 功能
@@ -20991,12 +20984,10 @@ test("AI·搜索：关闭逐动作重规划时转移描述只保存稳定ID并�
     = makeGame([actor, from, receiver]),
     action = game.aiController.getActionCandidates(actor).find((entry) => entry.cardInstanceId === use.id),
     descriptor = describeBenchmarkAction(action);
-  assert.deepEqual(
-    descriptor.selection,
-    { sourceId: action.selection.sourceId, receiverId: action.selection.receiverId, zone: "hand" }
-  );
+  assert.deepEqual(descriptor.selection, action.selection);
   assert.equal(Object.hasOwn(descriptor.selection, "source"), false);
   assert.equal(Object.hasOwn(descriptor.selection, "score"), false);
+  assert.equal(Object.hasOwn(descriptor.selection, "expectedValue"), false);
   assert.ok(game.aiController.resolvePlannedAction(actor, structuredClone(descriptor)));
 });
 
@@ -24702,9 +24693,8 @@ test("AI·转移：忽略真人队友装备区的雷达", () => {
   const { game }
     = makeGame([actor, humanAlly]);
   assert.equal(
-    game.aiController.actionGenerator.generate(
-      actor
-    ).some((action) => action.cardId === "transfer"),
+    game.aiController.getActionCandidates(actor)
+      .some((action) => action.cardId === "transfer"),
     false
   );
 });
@@ -24716,24 +24706,50 @@ test("AI·转移：不会把仅有装备的角色作为来源", () => {
   const { game }
     = makeGame([actor, ally]);
   assert.equal(
-    game.aiController.actionGenerator.generate(
-      actor
-    ).some((action) => action.cardId === "transfer"),
+    game.aiController.getActionCandidates(actor)
+      .some((action) => action.cardId === "transfer"),
     false
   );
 });
 
-test("AI·转移：最佳方案为负数时不进入实际动作列表", () => {
+test("AI·转移：负收益合法动作由 Worker Searcher 选择 end 淘汰", async () => {
   const actor = makePlayer("actor", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk");
-  actor.hand.push(instance("transfer"));
+  const use = instance("transfer"), held = instance("block");
+  actor.hand.push(use, held);
   const { game }
     = makeGame([actor, enemy]);
+  const world = createInitialWorld(actor.id, game.state);
+  const roots = game.aiController.getActionCandidates(actor, world);
+  const transferAction = roots.find((action) => (
+    action.cardInstanceId === use.id
+    && action.selection?.sourceId === actor.id
+    && action.selection?.receiverId === enemy.id
+  ));
+  assert.ok(transferAction);
   assert.equal(
-    game.aiController.actionGenerator.generate(
-      actor
-    ).some((action) => action.cardId === "transfer"),
-    false
+    game.aiController.stateEvaluator.evaluateTransferAction(
+      transferAction,
+      world.players.find((player) => player.id === actor.id),
+      world
+    ).score,
+    Number.NEGATIVE_INFINITY
   );
+  const engine = createSearchEngine({
+    world,
+    searchConfig:{
+      ...game.aiController.buildSearchConfig(),
+      depth:1,
+      nodeBudget:100,
+      timeBudgetMs:null,
+      enableRandomness:false,
+      randomnessRange:0
+    }
+  }, { next:() => 0 });
+  const selected = await engine.searcher.search(actor, world, roots, {
+    gameId:game.state.gameId,
+    rootCandidateCount:roots.length
+  });
+  assert.equal(selected.type, "end");
 });
 
 test("AI·转移：不会从敌人装备区移走高价值装备", () => {
@@ -24746,9 +24762,8 @@ test("AI·转移：不会从敌人装备区移走高价值装备", () => {
   enemy.equipment = instance("defenseDevice");
   const { game }
     = makeGame([actor, enemy, ally]);
-  const action = game.aiController.actionGenerator.generate(
-    actor
-  ).find((entry) => entry.cardInstanceId === use.id);
+  const action = game.aiController.getActionCandidates(actor)
+    .find((entry) => entry.cardInstanceId === use.id);
   assert.equal(action, undefined);
   assert.equal(enemy.equipment.definitionId, "defenseDevice");
   assert.equal(ally.equipment, null);
@@ -24766,9 +24781,8 @@ test("AI·转移：在角色同时拥有手牌和装备时只生成手牌选择"
   high.equipment = instance("defenseDevice");
   const { game }
     = makeGame([actor, low, high, ally]);
-  const action = game.aiController.actionGenerator.generate(
-    actor
-  ).find((entry) => entry.cardInstanceId === use.id);
+  const action = game.aiController.getActionCandidates(actor)
+    .find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
   assert.equal(action.selection.sourceId, low.id);
   assert.equal(action.selection.zone, "hand");
@@ -24785,9 +24799,8 @@ test("AI·转移：可将即将溢出的队友手牌移给有空间的队友", (
   overflow.hand.push(instance("harvest"), instance("charge"));
   const { game }
     = makeGame([actor, overflow, receiver]);
-  const action = game.aiController.actionGenerator.generate(
-    actor
-  ).find((entry) => entry.cardInstanceId === use.id);
+  const action = game.aiController.getActionCandidates(actor)
+    .find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
   assert.equal(action.selection.sourceId, overflow.id);
   assert.equal(action.selection.zone, "hand");
@@ -24804,9 +24817,8 @@ test("AI·转移：真实动作与深层模拟对同一公开局面选择一致"
   enemy.equipment = instance("defenseDevice");
   const { game }
     = makeGame([actor, enemy, ally]);
-  const real = game.aiController.actionGenerator.generate(
-    actor
-  ).find((entry) => entry.cardInstanceId === use.id);
+  const real = game.aiController.getActionCandidates(actor)
+    .find((entry) => entry.cardInstanceId === use.id);
   const visible = createInitialWorld(actor.id, game.state);
   const simulated = game.aiController.actionGenerator.generate(
     visible, actor.id
@@ -24851,9 +24863,8 @@ test("AI·转移：交换敌人未知手牌的真实 definitionId 不改变 AI �
   const { game }
     = makeGame([actor, enemy, ally]);
   const choose = () => {
-    const action = game.aiController.actionGenerator.generate(
-      actor
-    ).find((entry) => entry.cardInstanceId === use.id);
+    const action = game.aiController.getActionCandidates(actor)
+      .find((entry) => entry.cardInstanceId === use.id);
     return [action?.selection?.sourceId, action?.selection?.receiverId, action?.selection?.zone];
   };
   const before = choose();
@@ -24871,9 +24882,8 @@ test("AI·转移：以自己为转移来源时排除正在使用的转移实体"
   actor.hand.push(use, otherA, otherB);
   const { game }
     = makeGame([actor, ally]);
-  const action = game.aiController.actionGenerator.generate(
-    actor
-  ).find((entry) => entry.cardInstanceId === use.id);
+  const action = game.aiController.getActionCandidates(actor)
+    .find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
   assert.equal(action.selection.sourceId, actor.id);
   assert.equal(action.selection.zone, "hand");
@@ -25043,9 +25053,8 @@ test("AI·借势：根节点在无普通突袭敌人时仍生成同阵营借势�
   const { game }
     = makeGame([actor, first, ally]);
   assert.deepEqual(ActionLegality.getLegalAssaultTargets(game, first), []);
-  const actions = game.aiController.actionGenerator.generate(
-    actor
-  ).filter((action) => action.cardInstanceId === use.id);
+  const actions = game.aiController.getActionCandidates(actor)
+    .filter((action) => action.cardInstanceId === use.id);
   assert.ok(
     actions.some(
       (action) => action.selection.firstTargetId === first.id && action.selection.equipmentCardId === first.equipment.id && action.selection.secondTargetId === actor.id
@@ -39747,10 +39756,10 @@ test("AI·资源身份：部分概率高价值牌不再按完整确定身份评�
   assert.equal(partial.selectionKind, "unknown");
   assert.equal(partial.cardId, null);
   assertClose(partial.availableUnknownCount, .2);
-  const partialScore = scoreTransferCombination(
+  const partialScore = evaluateTransferCombinationForTest(
     { actor, from: makeFrom([partialCard], .2), receiver, zone: "hand" }
-  );
-  const fullScore = scoreTransferCombination(
+  ).score;
+  const fullScore = evaluateTransferCombinationForTest(
     {
       actor,
       from: makeFrom(
@@ -39766,7 +39775,7 @@ test("AI·资源身份：部分概率高价值牌不再按完整确定身份评�
       receiver,
       zone: "hand"
     }
-  );
+  ).score;
   assert.ok(partialScore < fullScore);
 });
 
@@ -40019,11 +40028,15 @@ test("AI·资源身份：未知牌转移只移动聚合数量且不创建身份"
       }
     ]
   };
+  upgradeProbabilityFixture(state);
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generate(
-    state, "a"
-  ).find((entry) => entry.cardId === "transfer");
+  const action = game.aiController.actionGenerator.generate(state, "a").find((entry) => (
+    entry.cardId === "transfer"
+    && entry.selection?.sourceId === "s"
+    && entry.selection?.receiverId === "a"
+    && entry.selection?.selectionKind === "unknown"
+  ));
   assert.ok(action);
   assert.equal(action.selection.selectionKind, "unknown");
   assert.equal(action.selection.availableUnknownCount, 2);
@@ -40197,11 +40210,15 @@ test("AI·资源身份：模拟执行评分阶段选中的同一已知牌身份"
       }
     ]
   };
+  upgradeProbabilityFixture(state);
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generate(
-    state, "a"
-  ).find((entry) => entry.cardId === "transfer");
+  const action = game.aiController.actionGenerator.generate(state, "a").find((entry) => (
+    entry.cardId === "transfer"
+    && entry.selection?.sourceId === "s"
+    && entry.selection?.receiverId === "r"
+    && entry.selection?.cardId === "high-counter"
+  ));
   assert.ok(action);
   assert.equal(action.selection.cardId, "high-counter");
   const simulator = new Simulator(state), next = simulator.apply(state, action, "a");
@@ -40218,31 +40235,42 @@ test("AI·资源身份：模拟执行评分阶段选中的同一已知牌身份"
   assert.ok(nextSource.knownCards.some((entry) => entry.cardId === "low-charge"));
 });
 
-test("AI·资源身份：Planner 描述不保存转移候选身份", () => {
+test("AI·资源身份：Planner 描述保留 canonical 身份但不保存战略分数", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     enemy = makePlayer("enemy", 1, "dusk"),
     ally = makePlayer("ally", 2, "dawn");
   const { game }
     = makeGame([actor, enemy, ally]);
   const descriptor = describeBenchmarkAction(
-    {
-      type: "card",
-      card: instance("transfer"),
-      targets: [],
+    createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"transfer",
+      cardInstanceId:"transfer-use",
       selection: {
         sourceId: "s",
         receiverId: "r",
         zone: "hand",
-        score: 9,
         selectionKind: "known",
         cardId: "c1",
         definitionId: "block",
-        expectedValue: 7,
+        knownCardIds:["c1"],
         availableUnknownCount: 0
       }
-    }
+    })
   );
-  assert.deepEqual(descriptor.selection, { sourceId: "s", receiverId: "r", zone: "hand" });
+  assert.deepEqual(descriptor.selection, {
+    sourceId:"s",
+    receiverId:"r",
+    zone:"hand",
+    selectionKind:"known",
+    cardId:"c1",
+    definitionId:"block",
+    knownCardIds:["c1"],
+    availableUnknownCount:0
+  });
+  assert.equal(Object.hasOwn(descriptor.selection, "score"), false);
+  assert.equal(Object.hasOwn(descriptor.selection, "expectedValue"), false);
 });
 
 test("AI·资源身份：确定性破坏已知 counter 移除身份并重算反制概率", () => {
@@ -40939,7 +40967,7 @@ test("AI·资源身份：高分支随机手牌 identity world 可 cooperative ab
   assert.throws(
     () => simulator.consumeRandomHandCards({ players:[player] }, player, 1),
     (error) => budget.isCurrentWorkInterruption(error)
-  );
+  ).score;
   assert.equal(budget.stopReason, "TIME");
   const diagnostics = budget.diagnostics();
   assert.equal(diagnostics.workAfterDeadline.probabilityOperations, 0);
@@ -40948,7 +40976,7 @@ test("AI·资源身份：高分支随机手牌 identity world 可 cooperative ab
   assert.match(
     diagnostics.lastProbabilityOperation.operation,
     /^CardEffectSimulation\.removeOneRandomCardFromHand:/u
-  );
+  ).score;
   assert.equal(diagnostics.rawProbabilityOperationsAfterTime, 0);
 });
 
@@ -46902,32 +46930,279 @@ test("AI·资源选择：掠夺模拟只执行 resolved selection 且无内部 s
 
 // ---- AI 评分·转移评分 ----
 
-test("AI·转移评分：候选构造与最终选择只使用同一组 canonical 函数", () => {
+const TRANSFER_TEST_EVALUATOR = new Evaluator();
+
+/*
+功能
+通过正式 Evaluator 查询一个明确 source/receiver 对的最佳转移资源。
+
+调用方
+AI 转移评分与隐藏身份回归测试。
+
+输入
+行动者、来源、接收者、排除 ID 与 remaining-card counts。
+
+输出
+Evaluator 的 known/unknown 资源描述。
+
+读取状态
+只读测试 fixture。
+
+写入状态
+无。
+
+调用函数
+Evaluator.chooseTransferHandCandidate。
+
+边界与不变量
+测试 helper 不生成 source/receiver，也不读取未知实体牌面。
+*/
+function chooseTransferHandCandidate(
+  actor,
+  from,
+  receiver,
+  excludedCardIds = null,
+  remainingCardCounts = null
+) {
+  return TRANSFER_TEST_EVALUATOR.chooseTransferHandCandidate(
+    actor,
+    from,
+    receiver,
+    excludedCardIds,
+    remainingCardCounts
+  );
+}
+
+/*
+功能
+把明确的测试 source/receiver/resource 组装为 canonical Action 并交给 Evaluator 评分。
+
+调用方
+AI 转移 contextual preference 回归测试。
+
+输入
+行动者、来源、接收者、zone、排除 ID 与 remaining-card counts。
+
+输出
+Evaluator 返回的 transfer preference。
+
+读取状态
+只读测试 fixture 与 CardValue/Evaluator 正式 owner。
+
+写入状态
+无。
+
+调用函数
+chooseTransferHandCandidate、createAction、Evaluator.evaluateTransferAction。
+
+边界与不变量
+仅构造测试所需的单个 canonical Action，不枚举或复制 Domain 合法候选空间。
+*/
+function evaluateTransferCombinationForTest({
+  actor,
+  from,
+  receiver,
+  zone = "hand",
+  excludedCardIds = null,
+  remainingCardCounts = null
+}) {
+  const resource = chooseTransferHandCandidate(
+    actor,
+    from,
+    receiver,
+    excludedCardIds,
+    remainingCardCounts
+  );
+  const action = createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"transfer",
+    cardInstanceId:"transfer-test-card",
+    selection:{
+      sourceId:from.id,
+      receiverId:receiver.id,
+      zone,
+      ...(resource ?? {})
+    }
+  });
+  const players = [...new Map(
+    [actor, from, receiver].map((player) => [player.id, player])
+  ).values()];
+  return TRANSFER_TEST_EVALUATOR.evaluateTransferAction(
+    action,
+    actor,
+    { players, remainingCardCounts }
+  );
+}
+
+test("AI·转移评分：Generator canonical Actions 只由 Evaluator 选择", () => {
   const actor = {
     id: "a", seatIndex: 0, battleTeam: "dawn", characterId: "blade-walker",
-    hp: 4, maxHp: 4, alive: true, aiMemory: { knownCardsByPlayer: {} }
+    hp: 2, maxHp: 4, alive: true, handCount:0, aiMemory: { knownCardsByPlayer: {} }
   };
   const source = {
     id: "e", seatIndex: 1, battleTeam: "dusk", characterId: "spirit-medic",
     hp: 2, maxHp: 4, alive: true, handCount: 1,
     knownCards: [{ cardId: "known", definitionId: "recover" }]
   };
-  const receiver = {
-    id: "a", seatIndex: 0, battleTeam: "dawn", characterId: "blade-walker",
-    hp: 2, maxHp: 4, alive: true, handCount: 0
-  };
-  const context = {
+  const resource = chooseTransferHandCandidate(actor, source, actor);
+  const action = createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"transfer",
+    cardInstanceId:"canonical-transfer",
+    selection:{ sourceId:source.id, receiverId:actor.id, zone:"hand", ...resource }
+  });
+  const state = { players:[actor, source], remainingCardCounts:null };
+  const preference = TRANSFER_TEST_EVALUATOR.evaluateTransferAction(action, actor, state);
+  const selected = TRANSFER_TEST_EVALUATOR.chooseTransferAction(
+    [action],
     actor,
-    sources: [source],
-    getReceivers: () => [receiver],
-    remainingCardCounts: null
-  };
-  const candidates = buildTransferCandidates(context);
-  assert.deepEqual(
-    chooseBestPositiveTransfer(buildTransferCandidates(context)),
-    chooseBestPositiveTransfer(candidates)
+    state
   );
+  assert.ok(selected);
+  assert.equal(selected.cardId, resource.cardId);
+  assert.equal(selected.score, preference.score);
 });
+
+/*
+功能
+验证四种阵营方向均保留 Domain 合法动作并由 Simulator 执行同一物理转移，同时排除 source self receiver。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game fixture、canonical World、Generator Action 与 Evaluator preference。
+
+写入状态
+Simulator 只写独立克隆 World。
+
+调用函数
+makePlayer、makeGame、createInitialWorld、AIController.getActionCandidates、Simulator.apply。
+
+边界与不变量
+阵营关系只影响 Evaluator preference，不得删除 Domain 合法方向或阻止 resolved physical transfer。
+*/
+function transferDirectionMatrixPreservesLegalityAndExecution() {
+  const cases = [
+    { name:"ally-to-ally", sourceTeam:"dawn", receiverTeam:"dawn", finite:true },
+    { name:"ally-to-enemy", sourceTeam:"dawn", receiverTeam:"dusk", finite:false },
+    { name:"enemy-to-ally", sourceTeam:"dusk", receiverTeam:"dawn", finite:true },
+    { name:"enemy-to-enemy", sourceTeam:"dusk", receiverTeam:"dusk", finite:false }
+  ];
+  for (const entry of cases) {
+    const actor = makePlayer(`${entry.name}-actor`, 0, "dawn"),
+      source = makePlayer(`${entry.name}-source`, 1, entry.sourceTeam),
+      receiver = makePlayer(`${entry.name}-receiver`, 2, entry.receiverTeam),
+      use = instance("transfer"),
+      held = instance("block");
+    actor.hand.push(use);
+    source.hand.push(held);
+    const { game } = makeGame([actor, source, receiver]);
+    game.rememberPrivateCard(actor, source, held);
+    const world = createInitialWorld(actor.id, game.state);
+    const actions = game.aiController.getActionCandidates(actor, world)
+      .filter((action) => action.cardInstanceId === use.id);
+    const action = actions.find((candidate) => (
+      candidate.selection?.sourceId === source.id
+      && candidate.selection?.receiverId === receiver.id
+    ));
+    assert.ok(action, `${entry.name} 应保留 Domain 合法 Action`);
+    assert.equal(
+      actions.some((candidate) => (
+        candidate.selection?.sourceId === candidate.selection?.receiverId
+      )),
+      false
+    );
+    const preference = game.aiController.stateEvaluator.evaluateTransferAction(
+      action,
+      world.players.find((player) => player.id === actor.id),
+      world
+    );
+    assert.equal(Number.isFinite(preference.score), entry.finite);
+    const after = new Simulator(world).apply(world, action, actor.id);
+    assert.equal(after.players.find((player) => player.id === source.id).handCount, 0);
+    assert.equal(after.players.find((player) => player.id === receiver.id).handCount, 1);
+  }
+}
+
+test(
+  "AI·转移评分：四种方向 legality 与 physical transition 不受策略偏好污染",
+  transferDirectionMatrixPreservesLegalityAndExecution
+);
+
+/*
+功能
+验证 main-thread 与 Worker composition 对同一 canonical Transfer Action 使用完全相同的 Evaluator 语义。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+同一 canonical World、Action 与两端 Evaluator 实例。
+
+写入状态
+无。
+
+调用函数
+createSearchEngine、Evaluator.evaluateTransferAction。
+
+边界与不变量
+Worker 不得回退旧 TransferPolicy，也不得形成第二套 transfer score 或 tie semantics。
+*/
+function transferMainWorkerEvaluatorParity() {
+  const actor = makePlayer("transfer-parity-actor", 0, "dawn"),
+    source = makePlayer("transfer-parity-source", 1, "dusk"),
+    receiver = makePlayer("transfer-parity-receiver", 2, "dawn"),
+    use = instance("transfer"),
+    held = instance("counter");
+  actor.hand.push(use);
+  source.hand.push(held);
+  const { game } = makeGame([actor, source, receiver]);
+  game.rememberPrivateCard(actor, source, held);
+  const world = createInitialWorld(
+    actor.id,
+    game.state,
+    deriveCurrentCardCounts(actor, game.state)
+  );
+  const action = game.aiController.getActionCandidates(actor, world).find((candidate) => (
+    candidate.cardInstanceId === use.id
+    && candidate.selection?.sourceId === source.id
+    && candidate.selection?.receiverId === receiver.id
+  ));
+  assert.ok(action);
+  const worldActor = world.players.find((player) => player.id === actor.id);
+  const mainPreference = game.aiController.stateEvaluator.evaluateTransferAction(
+    action,
+    worldActor,
+    world
+  );
+  const workerEngine = createSearchEngine({
+    world,
+    searchConfig:game.aiController.buildSearchConfig()
+  }, { next:() => 0 });
+  const workerPreference = workerEngine.searcher.evaluator.evaluateTransferAction(
+    action,
+    worldActor,
+    world
+  );
+  assert.deepEqual(workerPreference, mainPreference);
+}
+
+test("AI·Worker 边界：Transfer 使用 main-thread 同一 Evaluator", transferMainWorkerEvaluatorParity);
 
 test("AI·转移评分：掠夺最终选择由上下文收益覆盖静态牌值排序", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
@@ -46997,31 +47272,44 @@ test("AI·转移评分：对己方来源到敌方接收返回负无穷", () => {
   const { game }
     = makeGame([actor, from, receiver]);
   assert.equal(
-    scoreTransferCombination({ actor, from, receiver, zone: "hand" }), Number.NEGATIVE_INFINITY
+    evaluateTransferCombinationForTest({ actor, from, receiver }).score,
+    Number.NEGATIVE_INFINITY
   );
 });
 
-test("AI·转移评分：转移候选不包含己方来源到敌方接收组合", () => {
+test("AI·转移评分：Generator 保留己方到敌方合法候选但 Evaluator 令其不竞争", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     from = makePlayer("from", 1, "dawn"),
-    enemy = makePlayer("enemy", 2, "dusk"),
-    ally = makePlayer("ally", 3, "dawn");
+    enemy = makePlayer("enemy", 2, "dusk");
   from.hp = 1;
+  const use = instance("transfer");
+  actor.hand.push(use);
   from.hand.push(instance("charge"), instance("assault"));
   const { game }
-    = makeGame([actor, from, enemy, ally]);
-  const candidates = buildTransferCandidates(
-    { actor, sources: [from], getReceivers: () => [enemy, ally] }
-  );
+    = makeGame([actor, from, enemy]);
+  const world = createInitialWorld(actor.id, game.state);
+  const actions = game.aiController.getActionCandidates(actor).filter((action) => (
+    action.cardInstanceId === use.id && action.selection?.sourceId === from.id
+  ));
+  const enemyAction = actions.find((action) => action.selection.receiverId === enemy.id);
+  const allyAction = actions.find((action) => action.selection.receiverId === actor.id);
+  assert.ok(enemyAction);
+  assert.ok(allyAction);
   assert.equal(
-    candidates.find((entry) => entry.receiverId === enemy.id).score, Number.NEGATIVE_INFINITY
+    TRANSFER_TEST_EVALUATOR.evaluateTransferAction(enemyAction, actor, world).score,
+    Number.NEGATIVE_INFINITY
   );
-  const best = chooseBestPositiveTransfer(candidates);
+  const best = game.aiController.chooseTransferCombination(
+    actor,
+    use,
+    [from],
+    new Set([actor.id])
+  );
   assert.ok(best);
-  assert.notEqual(best.receiverId, enemy.id);
+  assert.equal(best.receiverId, actor.id);
 });
 
-test("AI·转移评分：异常己方给敌方转移计划在准备阶段被拒绝", async () => {
+test("AI·转移评分：AI 的显式 Domain 合法计划不再被执行阶段二次 veto", async () => {
   const actor = makePlayer("actor", 0, "dawn"),
     from = makePlayer("from", 1, "dawn"),
     receiver = makePlayer("receiver", 2, "dusk"),
@@ -47031,13 +47319,12 @@ test("AI·转移评分：异常己方给敌方转移计划在准备阶段被拒�
   from.hand.push(held);
   const { game }
     = makeGame([actor, from, receiver]);
-  assert.equal(
-    await game.prepareTransferIntent(
-      actor, use, { sourceId: from.id, receiverId: receiver.id, zone: "hand" }
-    ),
-    null
+  const prepared = await game.prepareTransferIntent(
+    actor, use, { sourceId: from.id, receiverId: receiver.id, zone: "hand" }
   );
-  assert.ok(from.hand.includes(held));
+  assert.ok(prepared);
+  assert.equal(prepared.privateIntent.card, held);
+  assert.equal(prepared.privateIntent.receiver, receiver);
 });
 
 test("AI·转移评分：真人仍可把己方手牌转移给敌方", async () => {
@@ -47110,7 +47397,7 @@ test("AI·转移评分：转移己方到己方不转走来源更需要的已知�
   assert.equal(chosen, charge);
 });
 
-test("AI·转移评分：转移己方到己方无溢出且无正支援收益时不生成", () => {
+test("AI·转移评分：己方无溢出且无正支援收益时 Generator 保留而 Evaluator 拒绝", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     from = makePlayer("from", 1, "dawn"),
     receiver = makePlayer("receiver", 2, "dawn");
@@ -47121,7 +47408,18 @@ test("AI·转移评分：转移己方到己方无溢出且无正支援收益时�
     = makeGame([actor, from, receiver]);
   game.rememberPrivateCard(actor, from, block);
   assert.equal(
-    game.aiController.actionGenerator.generate(actor).some((entry) => entry.cardInstanceId === use.id), false
+    game.aiController.getActionCandidates(actor)
+      .some((entry) => entry.cardInstanceId === use.id),
+    true
+  );
+  assert.equal(
+    game.aiController.chooseTransferCombination(
+      actor,
+      use,
+      [from],
+      new Set([receiver.id])
+    ),
+    null
   );
 });
 
@@ -47138,13 +47436,28 @@ test("AI·转移评分：转移己方到己方未知牌只在溢出空间收益�
   game.rememberPrivateCard(actor, from, known);
   from.hp = 3;
   assert.equal(
-    game.aiController.actionGenerator.generate(actor).some((entry) => entry.cardInstanceId === use.id), false
+    game.aiController.getActionCandidates(actor)
+      .some((entry) => entry.cardInstanceId === use.id),
+    true
+  );
+  assert.equal(
+    game.aiController.chooseTransferCombination(
+      actor,
+      use,
+      [from],
+      new Set([receiver.id])
+    ),
+    null
   );
   from.hp = 1;
-  const action = game.aiController.actionGenerator.generate(
-    actor
-  ).find((entry) => entry.cardInstanceId === use.id);
-  assert.ok(action);
+  const plan = game.aiController.chooseTransferCombination(
+    actor,
+    use,
+    [from],
+    new Set([receiver.id])
+  );
+  assert.ok(plan);
+  assert.equal(plan.selectionKind, "unknown");
   const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
@@ -47216,82 +47529,100 @@ test("AI·转移评分：转移敌方到己方未知候选胜出时只随机未�
   assert.equal(chosen, second);
 });
 
-test("AI·转移评分：敌方到敌方高威胁来源低威胁接收者且净削弱为正时生成", () => {
+test("AI·转移评分：敌方到敌方高威胁来源低威胁接收者且净削弱为正时胜出", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     source = makePlayer("source", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
     = makeGame([actor, source, receiver]);
-  const block = instance("block");
+  const use = instance("transfer"), block = instance("block");
+  actor.hand.push(use);
   source.hand.push(block);
   game.rememberPrivateCard(actor, source, block);
   source.hp = 1;
   source.energy = 3;
-  const candidates = buildTransferCandidates(
-    {
-      actor, sources: [source], allowedReceiverIds: new Set([receiver.id]), getReceivers: () => [receiver]
-    }
+  const best = game.aiController.chooseTransferCombination(
+    actor,
+    use,
+    [source],
+    new Set([receiver.id])
   );
-  const best = chooseBestPositiveTransfer(candidates);
   assert.ok(best);
   assert.equal(best.receiverId, receiver.id);
   assert.ok(best.score >= 5);
 });
 
-test("AI·转移评分：敌方到敌方威胁差不足时不生成", () => {
+test("AI·转移评分：敌方到敌方威胁差不足时 Evaluator 拒绝", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     source = makePlayer("source", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
     = makeGame([actor, source, receiver]);
-  const block = instance("block");
+  const use = instance("transfer"), block = instance("block");
+  actor.hand.push(use);
   source.hand.push(block);
   game.rememberPrivateCard(actor, source, block);
-  const candidates = buildTransferCandidates(
-    {
-      actor, sources: [source], allowedReceiverIds: new Set([receiver.id]), getReceivers: () => [receiver]
-    }
+  assert.ok(game.aiController.getActionCandidates(actor).some((action) => (
+    action.cardInstanceId === use.id
+    && action.selection?.sourceId === source.id
+    && action.selection?.receiverId === receiver.id
+  )));
+  assert.equal(
+    game.aiController.chooseTransferCombination(
+      actor,
+      use,
+      [source],
+      new Set([receiver.id])
+    ),
+    null
   );
-  assert.equal(chooseBestPositiveTransfer(candidates), null);
 });
 
-test("AI·转移评分：敌方到敌方低威胁来源高威胁接收者不生成", () => {
+test("AI·转移评分：敌方到敌方低威胁来源高威胁接收者由 Evaluator 拒绝", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     source = makePlayer("source", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
     = makeGame([actor, source, receiver]);
-  const block = instance("block");
+  const use = instance("transfer"), block = instance("block");
+  actor.hand.push(use);
   source.hand.push(block);
   game.rememberPrivateCard(actor, source, block);
   receiver.hp = 1;
   receiver.energy = 3;
-  const candidates = buildTransferCandidates(
-    {
-      actor, sources: [source], allowedReceiverIds: new Set([receiver.id]), getReceivers: () => [receiver]
-    }
+  assert.equal(
+    game.aiController.chooseTransferCombination(
+      actor,
+      use,
+      [source],
+      new Set([receiver.id])
+    ),
+    null
   );
-  assert.equal(chooseBestPositiveTransfer(candidates), null);
 });
 
-test("AI·转移评分：敌方到敌方接收者收益抵消来源损失时不生成", () => {
+test("AI·转移评分：敌方到敌方接收者收益抵消来源损失时由 Evaluator 拒绝", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     source = makePlayer("source", 1, "dusk"),
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
     = makeGame([actor, source, receiver]);
-  const block = instance("block");
+  const use = instance("transfer"), block = instance("block");
+  actor.hand.push(use);
   source.hand.push(block);
   game.rememberPrivateCard(actor, source, block);
   source.hp = 1;
   source.energy = 3;
   receiver.hp = 1;
-  const candidates = buildTransferCandidates(
-    {
-      actor, sources: [source], allowedReceiverIds: new Set([receiver.id]), getReceivers: () => [receiver]
-    }
+  assert.equal(
+    game.aiController.chooseTransferCombination(
+      actor,
+      use,
+      [source],
+      new Set([receiver.id])
+    ),
+    null
   );
-  assert.equal(chooseBestPositiveTransfer(candidates), null);
 });
 
 test("AI·转移评分：敌方到敌方极小正分被专用门槛拒绝", () => {
@@ -47300,7 +47631,8 @@ test("AI·转移评分：敌方到敌方极小正分被专用门槛拒绝", () =
     receiver = makePlayer("receiver", 2, "dusk");
   const { game }
     = makeGame([actor, source, receiver]);
-  const charge = instance("charge");
+  const use = instance("transfer"), charge = instance("charge");
+  actor.hand.push(use);
   source.hand.push(charge);
   game.rememberPrivateCard(actor, source, charge);
   source.hp = 2;
@@ -47309,12 +47641,15 @@ test("AI·转移评分：敌方到敌方极小正分被专用门槛拒绝", () =
   receiver.hand.push(
     instance("assault"), instance("assault"), instance("assault"), instance("assault")
   );
-  const candidates = buildTransferCandidates(
-    {
-      actor, sources: [source], allowedReceiverIds: new Set([receiver.id]), getReceivers: () => [receiver]
-    }
+  assert.equal(
+    game.aiController.chooseTransferCombination(
+      actor,
+      use,
+      [source],
+      new Set([receiver.id])
+    ),
+    null
   );
-  assert.equal(chooseBestPositiveTransfer(candidates), null);
 });
 
 test("AI·转移评分：与执行对同一已知牌选择一致", () => {
@@ -47367,7 +47702,10 @@ test("AI·转移评分：快照 handCount+非空 knownCards+未知位置混合�
   assert.equal(candidate.selectionKind, "known");
   assert.equal(candidate.cardId, "k2");
   assert.equal(candidate.expectedValue, 8);
-  assert.equal(scoreTransferCombination({ actor, from, receiver, zone: "hand" }), 16);
+  assert.equal(
+    evaluateTransferCombinationForTest({ actor, from, receiver, zone:"hand" }).score,
+    16
+  );
 });
 
 test("AI·转移评分：真实与深层模拟选择相同来源接收者及候选类型", () => {
@@ -47380,9 +47718,8 @@ test("AI·转移评分：真实与深层模拟选择相同来源接收者及候�
   const { game }
     = makeGame([actor, enemy, ally]);
   game.rememberPrivateCard(actor, enemy, held);
-  const realAction = game.aiController.actionGenerator.generate(
-    actor
-  ).find((entry) => entry.cardInstanceId === use.id);
+  const realAction = game.aiController.getActionCandidates(actor)
+    .find((entry) => entry.cardInstanceId === use.id);
   const visible = createInitialWorld(actor.id, game.state);
   const simAction = game.aiController.actionGenerator.generate(
     visible, actor.id
@@ -47436,8 +47773,13 @@ test("AI·转移评分：预计牌值已知牌接入角色价值且未知牌回�
   from.hand = [low, high, unknown];
   game.rememberPrivateCard(actor, from, low);
   game.rememberPrivateCard(actor, from, high);
-  assert.equal(expectedHandValue(actor, from, "highest"), 9);
-  assert.equal(expectedHandValue(actor, from, "lowest"), 4);
+  const values = [
+    cardSituationValue(low.definitionId, from),
+    cardSituationValue(high.definitionId, from),
+    getUnknownTransferCardValue(from)
+  ];
+  assert.equal(Math.max(...values), 9);
+  assert.equal(Math.min(...values), UNKNOWN_HAND_EXPECTED_VALUE);
 });
 
 test("AI·转移评分：转移角色权重：相同突袭不同来源角色的来源损失精确反映角色差值", () => {
@@ -47580,8 +47922,7 @@ test("AI·转移评分：转移角色权重：无有效剩余计数时未知值�
     assert.equal(candidate.expectedValue, UNKNOWN_HAND_EXPECTED_VALUE);
     assert.equal(candidate.utility, UNKNOWN_HAND_EXPECTED_VALUE * 2);
   }
-  assert.equal(expectedHandValue(actor, from, "lowest"), UNKNOWN_HAND_EXPECTED_VALUE);
-  assert.equal(expectedHandValue(actor, from, "highest"), UNKNOWN_HAND_EXPECTED_VALUE);
+  assert.equal(getUnknownTransferCardValue(from), UNKNOWN_HAND_EXPECTED_VALUE);
 });
 
 test("AI·转移评分：转移角色权重：characterId 缺失回退全局基础值且非法角色 ID 抛错", () => {
@@ -47603,28 +47944,38 @@ test("AI·转移评分：转移角色权重：根节点规划与实际选牌使�
   const { game }
     = makeGame([actor, from, receiver], { random: () => 0 });
   game.rememberPrivateCard(actor, from, known);
-  const counts = { recover: 10 };
-  game.aiController.knowledge.remainingCounts = () => ({ ...counts });
-  const plan = game.aiController.cardSelector.chooseTransferCombination(
-    actor, CARD_DEFINITIONS.transfer, [from]
+  const counts = deriveCurrentCardCounts(actor, game.state);
+  const plan = game.aiController.chooseTransferCombination(
+    actor,
+    use,
+    [from],
+    new Set([receiver.id])
   );
   assert.ok(plan);
   const candidate = chooseTransferHandCandidate(actor, from, receiver, null, counts);
-  assert.equal(candidate.selectionKind, "unknown");
+  assert.equal(plan.selectionKind, candidate.selectionKind);
+  assert.equal(plan.cardId, candidate.cardId);
   assert.equal(
     plan.score,
-    scoreTransferCombination({ actor, from, receiver, zone: "hand", remainingCardCounts: counts })
+    evaluateTransferCombinationForTest({
+      actor,
+      from,
+      receiver,
+      zone:"hand",
+      remainingCardCounts:counts
+    }).score
   );
   const chosen = game.aiController.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
   )[0];
-  assert.equal(chosen, unknown);
+  assert.equal(chosen, candidate.selectionKind === "known" ? known : unknown);
 });
 
 test("AI·转移评分：转移角色权重：深层规划使用可见快照剩余计数", () => {
   const makeState = (counts) => (
-    {
+    upgradeProbabilityFixture({
       playPhaseEnded: false,
+      phase:"play",
       remainingCardCounts: counts,
       players: [
         {
@@ -47678,23 +48029,36 @@ test("AI·转移评分：转移角色权重：深层规划使用可见快照剩�
           counterProbability: 0
         }
       ]
-    }
+    })
   );
   const actor = makePlayer("real", 0, "dawn"), enemy = makePlayer("other", 1, "dusk");
   const { game }
     = makeGame([actor, enemy]);
   const generator = game.aiController.actionGenerator;
   const assaultState = makeState({ assault: 10 }), recoverState = makeState({ recover: 10 });
-  const assaultAction = generator.generate(
-    assaultState, "a"
-  ).find((entry) => entry.cardId === "transfer");
-  const recoverAction = generator.generate(
-    recoverState, "a"
-  ).find((entry) => entry.cardId === "transfer");
+  const findTransferToReceiver = (state) => generator.generate(state, "a").find((entry) => (
+    entry.cardId === "transfer"
+    && entry.selection?.sourceId === "f"
+    && entry.selection?.receiverId === "r"
+    && entry.selection?.selectionKind === "unknown"
+  ));
+  const assaultAction = findTransferToReceiver(assaultState);
+  const recoverAction = findTransferToReceiver(recoverState);
   assert.ok(assaultAction);
   assert.ok(recoverAction);
-  assert.notEqual(assaultAction.selection.receiverId, recoverAction.selection.receiverId);
-  assert.notEqual(assaultAction.selection.score, recoverAction.selection.score);
+  assert.deepEqual(assaultAction.selection, recoverAction.selection);
+  const assaultPreference = TRANSFER_TEST_EVALUATOR.evaluateTransferAction(
+    assaultAction,
+    assaultState.players[0],
+    assaultState
+  );
+  const recoverPreference = TRANSFER_TEST_EVALUATOR.evaluateTransferAction(
+    recoverAction,
+    recoverState.players[0],
+    recoverState
+  );
+  assert.notEqual(assaultPreference.expectedValue, recoverPreference.expectedValue);
+  assert.notEqual(assaultPreference.score, recoverPreference.score);
   const assaultCandidate = chooseTransferHandCandidate(
     assaultState.players[0],
     assaultState.players[1],
@@ -47725,21 +48089,28 @@ test("AI·转移评分：转移动作携带已知候选身份", () => {
   const { game }
     = makeGame([actor, enemy, ally]);
   game.rememberPrivateCard(actor, enemy, held);
-  const action = game.aiController.actionGenerator.generate(
-    actor
-  ).find((entry) => entry.cardInstanceId === use.id);
+  const world = createInitialWorld(actor.id, game.state);
+  const action = game.aiController.getActionCandidates(actor, world).find((entry) => (
+    entry.cardInstanceId === use.id
+    && entry.selection?.sourceId === enemy.id
+    && entry.selection?.receiverId === ally.id
+    && entry.selection?.cardId === held.id
+  ));
   assert.ok(action);
   const selection = action.selection;
   assert.equal(selection.selectionKind, "known");
   assert.equal(selection.cardId, held.id);
   assert.equal(selection.definitionId, "block");
-  assert.equal(selection.expectedValue, getRoleCardAiValue("spirit-medic", "block"));
   assert.equal(selection.availableUnknownCount, 0);
-  assert.ok(
-    selection.sourceId && selection.receiverId && selection.zone === "hand" && Number.isFinite(
-      selection.score
-    )
+  assert.equal(Object.hasOwn(selection, "expectedValue"), false);
+  assert.equal(Object.hasOwn(selection, "score"), false);
+  const preference = game.aiController.stateEvaluator.evaluateTransferAction(
+    action,
+    world.players.find((player) => player.id === actor.id),
+    world
   );
+  assert.equal(preference.expectedValue, getRoleCardAiValue("spirit-medic", "block"));
+  assert.ok(Number.isFinite(preference.score));
 });
 
 test("AI·转移评分：转移动作携带未知候选类别与精确未知数量", () => {
@@ -47751,9 +48122,12 @@ test("AI·转移评分：转移动作携带未知候选类别与精确未知数�
   enemy.hand.push(instance("counter"), instance("harvest"));
   const { game }
     = makeGame([actor, enemy, ally]);
-  const action = game.aiController.actionGenerator.generate(
-    actor
-  ).find((entry) => entry.cardInstanceId === use.id);
+  const action = game.aiController.getActionCandidates(actor).find((entry) => (
+    entry.cardInstanceId === use.id
+    && entry.selection?.sourceId === enemy.id
+    && entry.selection?.receiverId === ally.id
+    && entry.selection?.selectionKind === "unknown"
+  ));
   assert.ok(action);
   const selection = action.selection;
   assert.equal(selection.selectionKind, "unknown");
@@ -47766,6 +48140,7 @@ test("AI·转移评分：转移动作携带未知候选类别与精确未知数�
 test("AI·转移评分：其他玩家已知突袭转入当前 AI 后下一层可生成突袭", () => {
   const state = {
     playPhaseEnded: false,
+    phase:"play",
     remainingCardCounts: { assault: 10 },
     players: [
       {
@@ -47810,11 +48185,15 @@ test("AI·转移评分：其他玩家已知突袭转入当前 AI 后下一层可
       }
     ]
   };
+  upgradeProbabilityFixture(state);
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generate(
-    state, "a"
-  ).find((entry) => entry.cardId === "transfer");
+  const action = game.aiController.actionGenerator.generate(state, "a").find((entry) => (
+    entry.cardId === "transfer"
+    && entry.selection?.sourceId === "s"
+    && entry.selection?.receiverId === "a"
+    && entry.selection?.cardId === "known-assault"
+  ));
   assert.ok(action);
   assert.equal(action.selection.selectionKind, "known");
   assert.equal(action.selection.cardId, "known-assault");
@@ -47835,6 +48214,7 @@ test("AI·转移评分：其他玩家已知突袭转入当前 AI 后下一层可
 test("AI·转移评分：当前 AI 把已知突袭转给其他玩家且不创建其 hand", () => {
   const state = {
     playPhaseEnded: false,
+    phase:"play",
     remainingCardCounts: { assault: 10 },
     players: [
       {
@@ -47881,11 +48261,15 @@ test("AI·转移评分：当前 AI 把已知突袭转给其他玩家且不创建
       }
     ]
   };
+  upgradeProbabilityFixture(state);
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generate(
-    state, "a"
-  ).find((entry) => entry.cardId === "transfer");
+  const action = game.aiController.actionGenerator.generate(state, "a").find((entry) => (
+    entry.cardId === "transfer"
+    && entry.selection?.sourceId === "a"
+    && entry.selection?.receiverId === "r"
+    && entry.selection?.cardId === "own-assault"
+  ));
   assert.ok(action);
   assert.equal(action.selection.sourceId, "a");
   assert.equal(action.selection.receiverId, "r");
@@ -47908,6 +48292,7 @@ test("AI·转移评分：当前 AI 把已知突袭转给其他玩家且不创建
 test("AI·转移评分：其他玩家之间移动已知身份", () => {
   const state = {
     playPhaseEnded: false,
+    phase:"play",
     remainingCardCounts: { block: 10 },
     players: [
       {
@@ -47967,22 +48352,22 @@ test("AI·转移评分：其他玩家之间移动已知身份", () => {
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
   const transferCard = state.players[0].hand[0];
-  const action = {
-    type: "card",
-    card: transferCard,
-    targets: [],
+  const action = createAction({
+    type:"card",
+    actorId:"a",
+    cardId:"transfer",
+    cardInstanceId:transferCard.id,
     selection: {
       sourceId: "s",
       receiverId: "r",
       zone: "hand",
-      score: 6,
       selectionKind: "known",
       cardId: "k5",
       definitionId: "block",
-      expectedValue: 7,
+      knownCardIds:["k5"],
       availableUnknownCount: 0
     }
-  };
+  });
   const next = new Simulator(state).apply(state, action, "a");
   const nextSource = next.players[1], nextReceiver = next.players[2];
   assert.equal(nextSource.knownCards.some((entry) => entry.cardId === "k5"), false);
@@ -47992,12 +48377,13 @@ test("AI·转移评分：其他玩家之间移动已知身份", () => {
   const moved = nextReceiver.knownCards.find((entry) => entry.cardId === "k5");
   assert.ok(moved);
   assert.equal(moved.definitionId, "block");
-  assert.equal(nextReceiver.blockProbability, 1);
+  assert.equal(new Simulator(next).cardAvailability(moved), 1);
 });
 
 test("AI·转移评分：目标反制风险下转移部分生效且来源与接收者身份互补", () => {
   const state = {
     playPhaseEnded: false,
+    phase:"play",
     remainingCardCounts: { assault: 10 },
     players: [
       {
@@ -48053,11 +48439,15 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
       }
     ]
   };
+  upgradeProbabilityFixture(state);
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generate(
-    state, "a"
-  ).find((entry) => entry.cardId === "transfer");
+  const action = game.aiController.actionGenerator.generate(state, "a").find((entry) => (
+    entry.cardId === "transfer"
+    && entry.selection?.sourceId === "s"
+    && entry.selection?.receiverId === "a"
+    && entry.selection?.cardId === "known-assault"
+  ));
   assert.ok(action);
   assert.equal(action.selection.selectionKind, "known");
   const simulator = new Simulator(state), next = simulator.apply(state, action, "a");
@@ -48076,12 +48466,23 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
 
 // ---- AI 评分·威胁评估 ----
 
-test("AI·威胁评估：转移威胁：threatView 保留玩家 ID", () => {
-  const player = { id: "player-b", alive: true, battleTeam: "dusk", hp: 3, maxHp: 4 };
-  assert.equal(threatView(player).id, "player-b");
+test("AI·威胁评估：转移 preference 保留来源与接收者 ID", () => {
+  const actor = { id:"actor", battleTeam:"dawn" };
+  const source = {
+    id:"player-b",
+    battleTeam:"dusk",
+    hp:3,
+    maxHp:4,
+    handCount:1,
+    knownCards:[{ cardId:"known", definitionId:"block" }]
+  };
+  const receiver = { id:"player-c", battleTeam:"dawn", hp:4, maxHp:4, handCount:0 };
+  const preference = evaluateTransferCombinationForTest({ actor, from:source, receiver });
+  assert.equal(preference.sourceId, source.id);
+  assert.equal(preference.receiverId, receiver.id);
 });
 
-test("AI·威胁评估：转移威胁：threatView 保留 ID 使近期攻击者记忆参与威胁评分", () => {
+test("AI·威胁评估：近期攻击者 ID 记忆参与 canonical ThreatValue", () => {
   const viewer = { battleTeam: "dawn" },
     target = {
       id: "player-b",
@@ -48096,12 +48497,10 @@ test("AI·威胁评估：转移威胁：threatView 保留 ID 使近期攻击者�
       roleTags: [],
       statuses: []
     };
-  const targetView = threatView(target);
-  assert.equal(targetView.id, "player-b");
   const withMemory = ThreatCalculator.calculate(
-    viewer, targetView, { recentAggressors: { "player-b": 3 } }, 1
+    viewer, target, { recentAggressors: { "player-b": 3 } }, 1
   );
-  const withoutMemory = ThreatCalculator.calculate(viewer, targetView, { recentAggressors: {} }, 1);
+  const withoutMemory = ThreatCalculator.calculate(viewer, target, { recentAggressors: {} }, 1);
   assert.equal(withMemory - withoutMemory, 6);
 });
 
@@ -48134,23 +48533,33 @@ test("AI·威胁评估：转移威胁：近期攻击者记忆决定敌方转移�
       tags: [],
       statuses: []
     };
-  const build = (memory) => buildTransferCandidates(
-    {
-      actor: { ...actor, aiMemory: { recentAggressors: memory } },
-      sources: [source],
-      allowedReceiverIds: new Set([receiver.id]),
-      getReceivers: () => [receiver]
-    }
-  );
-  assert.equal(chooseBestPositiveTransfer(build({})), null);
-  const best = chooseBestPositiveTransfer(build({ source: 3 }));
-  assert.ok(best);
-  assert.equal(best.receiverId, receiver.id);
+  const evaluate = (memory) => evaluateTransferCombinationForTest({
+    actor:{ ...actor, aiMemory:{ recentAggressors:memory } },
+    from:source,
+    receiver
+  });
+  assert.equal(evaluate({}).score, Number.NEGATIVE_INFINITY);
+  const preferred = evaluate({ source:3 });
+  assert.ok(preferred.score >= MIN_TRANSFER_UTILITY);
+  assert.equal(preferred.receiverId, receiver.id);
 });
 
-test("AI·威胁评估：转移威胁：threatView 无 ID 输入兼容", () => {
-  assert.equal(threatView(undefined).id, undefined);
-  assert.equal(threatView(null).id, undefined);
+test("AI·威胁评估：转移缺失来源或接收者时安全返回负无穷", () => {
+  const invalid = createAction({
+    type:"card",
+    actorId:"actor",
+    cardId:"transfer",
+    cardInstanceId:"use",
+    selection:{ sourceId:"missing", receiverId:"also-missing", zone:"hand" }
+  });
+  assert.equal(
+    TRANSFER_TEST_EVALUATOR.evaluateTransferAction(
+      invalid,
+      { id:"actor", battleTeam:"dawn" },
+      { players:[] }
+    ).score,
+    Number.NEGATIVE_INFINITY
+  );
 });
 
 test("AI·威胁评估：ThreatCalculator 的稳定角色标签与近期攻击者会进入目标评分", () => {

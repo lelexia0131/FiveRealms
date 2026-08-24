@@ -19,7 +19,6 @@ MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与�
 */
 import { createInitialWorld } from "./state/StateContracts.js";
 import { deriveCurrentCardCounts, hasFactStatus } from "./state/Fact.js";
-import { CardSelectionBoundary } from "./policy/CardSelectionBoundary.js";
 import {
   ActionGenerator,
   deduplicateSearchEquivalentActions
@@ -322,11 +321,6 @@ export class AIController {
       simulatorFactory
     );
     this.stateValue = new StateValue(this.stateEvaluator, this.valueSimulationQuery);
-    this.cardSelector = new CardSelectionBoundary({
-      random: () => this.searchRng.next(),
-      getState: () => this.getState(),
-      remainingCounts: (actor) => deriveCurrentCardCounts(actor, this.getState())
-    });
   }
 
   /*
@@ -1223,24 +1217,47 @@ export class AIController {
   最佳正收益选择描述；无正收益时为 null。
 
   读取状态
-  当前 GameState、Fact 与转移评分。
+  当前 GameState、canonical World、Generator 合法候选与 Evaluator 转移 preference。
 
   写入状态
   无。
 
   调用函数
-  CardSelectionBoundary.chooseTransferCombination。
+  createInitialWorld、ActionGenerator.generate、Evaluator.chooseTransferAction。
 
   边界与不变量
-  不解析或移动实体牌，真实执行仍必须重新验证。
+  Controller 只绑定当前 runtime 候选；不生成合法方向、不写评分公式，也不移动实体牌。
   */
-  chooseTransferCombination(...args) {
+  chooseTransferCombination(
+    actor,
+    card,
+    sources,
+    allowedReceiverIds = null,
+    excludedCardIds = null
+  ) {
     const startedAt = decisionNow();
-    const selection = this.cardSelector.chooseTransferCombination(...args);
+    const state = this.getState();
+    const remainingCardCounts = deriveCurrentCardCounts(actor, state);
+    const world = createInitialWorld(actor.id, state, remainingCardCounts);
+    const sourceIds = new Set((sources ?? []).map((source) => source.id));
+    const transferActions = this.actionGenerator.generate(world, actor.id).filter((action) => (
+      action.type === "card"
+      && action.cardId === "transfer"
+      && (!card?.id || action.cardInstanceId === card.id)
+      && sourceIds.has(action.selection?.sourceId)
+      && (!allowedReceiverIds || allowedReceiverIds.has(action.selection?.receiverId))
+      && (!excludedCardIds?.has(action.selection?.cardId))
+    ));
+    const worldActor = world.players.find((player) => player.id === actor.id) ?? actor;
+    const selection = this.stateEvaluator.chooseTransferAction(
+      transferActions,
+      worldActor,
+      world
+    );
     this.recordMainThreadOperation(
-      "CardSelectionBoundary.chooseTransferCombination",
+      "Evaluator.chooseTransferAction",
       startedAt,
-      { candidateCount:Array.isArray(args[2]) ? args[2].length : "unavailable" }
+      { candidateCount:transferActions.length }
     );
     return selection;
   }
@@ -1265,10 +1282,10 @@ export class AIController {
   随机源序列。
 
   调用函数
-  Evaluator card/resource comparison、CardSelectionBoundary transfer residue 与 search RNG。
+  Evaluator card/resource comparison 与 search RNG。
 
   边界与不变量
-  未知牌只能按位置采样；除 transfer residue 外，价值比较只发生在 Evaluator。
+  未知牌只能按位置采样；价值比较只发生在 Evaluator，Controller 只解析胜出的实体位置。
   */
   chooseHiddenCards(
     actor,
@@ -1280,23 +1297,44 @@ export class AIController {
   ) {
     const startedAt = decisionNow();
     const candidates = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
+    const candidateCount = candidates.length;
     const purpose = context?.purpose ?? null;
     if (purpose === "transfer") {
-      const cards = this.cardSelector.chooseTransferCards({
-        actor,
-        owner,
-        cards:candidates,
-        count,
-        receiver:context?.receiver,
-        excludedCardIds,
-        remainingCardCounts:resourceCounts
-      });
+      const selected = [];
+      const exclusions = new Set(excludedCardIds ?? []);
+      const remainingCardCounts = resourceCounts ?? deriveCurrentCardCounts(actor, this.getState());
+      while (selected.length < count && candidates.length) {
+        const choice = this.stateEvaluator.chooseTransferHandCandidate(
+          actor,
+          owner,
+          context?.receiver,
+          exclusions,
+          remainingCardCounts
+        );
+        if (!choice) break;
+        let index = choice.selectionKind === "known"
+          ? candidates.findIndex((card) => card.id === choice.cardId)
+          : -1;
+        if (choice.selectionKind === "unknown") {
+          const knownCardIds = new Set(choice.knownCardIds ?? []);
+          const unknownIndices = candidates.map((card, index) => (
+            knownCardIds.has(card.id) ? -1 : index
+          )).filter((index) => index >= 0);
+          index = unknownIndices[
+            Math.floor(this.searchRng.next() * unknownIndices.length)
+          ] ?? -1;
+        }
+        if (index < 0) break;
+        const [chosen] = candidates.splice(index, 1);
+        selected.push(chosen);
+        exclusions.add(chosen.id);
+      }
       this.recordMainThreadOperation(
-        "CardSelectionBoundary.chooseTransferCards",
+        "Evaluator.chooseTransferHandCandidate",
         startedAt,
-        { candidateCount:candidates.length }
+        { candidateCount }
       );
-      return cards;
+      return selected;
     }
     const selected = [];
     const known = actor.aiMemory?.knownCardsByPlayer?.[owner.id] ?? {};

@@ -3,7 +3,7 @@
 唯一拥有 AI 对角色公开战术定位的静态标签；不拥有角色规则、价值权重或选择算法。
 
 上游
-AI VisibleState、ResponseBoundary 与 TransferPolicy。
+AI VisibleState 与 ResponseBoundary。
 
 下游
 无。

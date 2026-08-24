@@ -23,7 +23,7 @@ const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "diagnostics", "responseWorkflow", "playCard",
   "moveEquipmentToHand", "getTransferSources", "getTransferReceivers", "getCardTargets",
   "chooseTransferCombination", "chooseHiddenCards", "choosePlayerZoneCard", "choosePrivatePeekCards",
-  "getLeverageFirstTargets", "getAssaultTargetCandidates", "isTransferExecutionAllowed",
+  "getLeverageFirstTargets", "getAssaultTargetCandidates",
   "requestHiddenCards", "createHiddenSelection", "resolveConfirmedTokens", "clearSelection"
 ];
 
@@ -101,8 +101,6 @@ export function createCardIntentRuntime(dependencies) {
     const from = state.players.find((player) => player.id === planned?.sourceId && player.alive) ?? null;
     const receiver = state.players.find((player) => player.id === planned?.receiverId && player.alive) ?? null;
     if (!sources.includes(from) || !runtime.getTransferReceivers(source, from, card).includes(receiver)) return null;
-    if (!runtime.isTransferExecutionAllowed(source, from, receiver)) return null;
-
     const hiddenCard = (await runtime.chooseHiddenCards(
       source, from, 1, "转移：选择1张手牌", planned, excludedCardIds, { purpose: "transfer", receiver }
     ))[0] ?? null;

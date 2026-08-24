@@ -60,7 +60,6 @@ import { createActionWorkflow } from "../application/action/ActionWorkflow.js";
 import { createCardRuntime } from "../application/action/CardRuntime.js";
 import { getActionLogMessage as getActionLogMessageFromRuntime, getActionTargetLabel as getActionTargetLabelFromRuntime, resolveActionDisplayTargets, shouldSuppressUseLog as shouldSuppressUseLogFromRuntime } from "../application/action/ActionPresentation.js";
 import { createCardIntentRuntime } from "../application/action/CardIntentRuntime.js";
-import { isTransferExecutionAllowed } from "../adapters/ai/TransferExecutionPolicyAdapter.js";
 import { createCardEffectRuntime } from "../application/action/CardEffectRuntime.js";
 import { createSkillEffectRuntime } from "../application/action/SkillEffectRuntime.js";
 import { createPassiveSkillTriggerRegistry } from "../application/trigger/PassiveSkillTriggerRegistry.js";
@@ -783,7 +782,6 @@ class MatchApplication {
       getCardTargets: (source, card) => ActionLegality.getCardTargets(this, source, card),
       getLeverageFirstTargets: (source) => ActionLegality.getLeverageFirstTargets(this, source),
       getAssaultTargetCandidates: (source) => ActionLegality.getAssaultTargetCandidates(this, source),
-      isTransferExecutionAllowed,
       chooseTransferCombination: (...args) => this.aiController.chooseTransferCombination(...args),
       chooseHiddenCards: (...args) => this.hiddenCardChoiceWorkflow.chooseHiddenCards(...args),
       choosePlayerZoneCard: (...args) => this.hiddenCardChoiceWorkflow.choosePlayerZoneCard(...args),
