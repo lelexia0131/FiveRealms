@@ -3,7 +3,7 @@
 定义搜索、Worker、计划复用与真实执行共同消费的唯一 Action 数据契约及其稳定身份。
 
 上游
-ActionGenerator、Searcher、PatternMatcher、AIController、Worker search runtime 与 TurnWorkflow。
+ActionGenerator、Searcher、Pattern、AIController、Worker search runtime 与 TurnWorkflow。
 
 下游
 无。
@@ -155,7 +155,7 @@ export function createAction({
 为 Action 或 Pattern step 生成不含实体 instance 和 execution 的稳定意图键。
 
 调用方
-PatternMatcher、ProductionPatterns 与普通搜索调度。
+Pattern 与普通搜索调度。
 
 输入
 canonical Action 或静态 Pattern step。

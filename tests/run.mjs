@@ -78,7 +78,7 @@ import {
 import { Simulator as ProductionSimulator } from "../js/ai/simulation/Simulator.js";
 import { Searcher } from "../js/ai/search/Searcher.js";
 import { createSearchEngine } from "../js/adapters/ai/worker/SearchEngineFactory.js";
-import { PatternMatcher } from "../js/ai/search/pattern/PatternMatcher.js";
+import { Pattern as PatternMatcher } from "../js/ai/Searcher/Pattern/Pattern.js";
 import { SearchBudget } from "../js/ai/search/SearchBudget.js";
 import { tacticResolutionScale } from "../js/ai/search/TacticResolutionQuery.js";
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
@@ -19331,18 +19331,18 @@ test("AI·搜索：Production Pattern 只重排 legal semantic set 且不改变 
   game.dispose();
 });
 
-test("AI·搜索：Pattern action aliases 解析为既有 intent key", () => {
+test("AI·搜索：Pattern exact step 直接消费 canonical Action 字段", () => {
   const matcher = new PatternMatcher({
     definitions:[{
-      id:"fake-descriptor-aliases",
+      id:"fake-canonical-actions",
       match:() => true,
       buildSequences:() => [{
         steps:[
-          { type:"card", definitionId:"recycleDevice" },
+          { type:"card", cardId:"recycleDevice" },
           { type:"skill", skillId:"symbiosis" }
         ],
         explorationPriority:1,
-        reason:"test-only descriptor aliases"
+        reason:"test-only canonical Action fields"
       }]
     }]
   });
@@ -19409,7 +19409,7 @@ test("AI·搜索：Pattern coarse intent 与 search-semantic secondary key 分�
       buildSequences:() => [{
         steps:[{
           type:"card",
-          definitionId:"assault",
+          cardId:"assault",
           targetIds:[target.id]
         }],
         explorationPriority:1,
@@ -19466,7 +19466,7 @@ test("AI·搜索：多 Pattern roots 只提升最高 proposal 并保留 ordinary
       id:`fake-guided-${index}`,
       match:() => true,
       buildSequences:() => [{
-        steps:[{ type:"card", definitionId:action.cardId }],
+        steps:[{ type:"card", cardId:action.cardId }],
         explorationPriority:100 - index,
         reason:"test-only guided root"
       }]
@@ -19507,7 +19507,7 @@ test("AI·搜索：Pattern proposal 语义与顺序不依赖 physical hand order
   const definition = {
     id:"fake-order",
     match:() => true,
-    buildSequences:({ legalActions, describeAction }) => legalActions.map((action) => ({
+    buildSequences:({ legalActions }) => legalActions.map((action) => ({
       steps:[describeBenchmarkAction(action)],
       explorationPriority:1,
       reason:"test-only order"

@@ -6,7 +6,7 @@
 Worker SearchEngineFactory 与搜索回归测试。
 
 下游
-注入的 PatternMatcher、Simulator/SearchBudget 工厂、Evaluator/StateValue、搜索先验与动作生成/让步能力。
+注入的 Pattern、Simulator/SearchBudget 工厂、Evaluator/StateValue、搜索先验与动作生成/让步能力。
 
 状态边界
 只读输入 World，所有分支写入由 simulatorFactory 创建的独立 Simulator 承担。
@@ -30,7 +30,7 @@ export class Searcher {
   Worker SearchEngineFactory 与正式边界。
 
   输入
-  Evaluator/StateValue/ValueLedger、SearchPrior、CounterfactualTerms、PatternMatcher、搜索配置、
+  Evaluator/StateValue/ValueLedger、SearchPrior、CounterfactualTerms、Pattern、搜索配置、
   Simulator/SearchBudget factory、候选去重、深层生成与可取消让步能力。
 
   输出
@@ -672,13 +672,13 @@ export class Searcher {
   仍可继续的 proposals、本步新完成 proposals 和继承后的完成 Pattern IDs。
 
   读取状态
-  PatternMatcher 的 exact/selector step contract 与只读 World assertions。
+  Pattern 的 exact/selector step contract 与只读 World assertions。
 
   写入状态
   无。
 
   调用函数
-  PatternMatcher.matchesStep。
+  Pattern.matchesStep。
 
   边界与不变量
   metadata 不进入 value/prune score；只有当前完整节点动作匹配完整 proposal step 时才可完成 Pattern。
@@ -1250,13 +1250,13 @@ export class Searcher {
   当前最佳完整根动作；TIME/NODE 零完整 root 时返回不受 Pattern promotion 影响的合法 provisional root，取消时安全终止。
 
   读取状态
-  World、PatternMatcher proposal、显式搜索归属模块、动作生成、预算与会话能力。
+  World、Pattern proposal、显式搜索归属模块、动作生成、预算与会话能力。
 
   写入状态
   lastSearchStats、lastSequence 与注入能力的既有随机/让步序列。
 
   调用函数
-  PatternMatcher.match、simulatorFactory、searchBudgetFactory、Searcher candidate scheduling/evaluation、
+  Pattern.match、simulatorFactory、searchBudgetFactory、Searcher candidate scheduling/evaluation、
   Searcher mechanics、generate、yieldControl。
 
   边界与不变量

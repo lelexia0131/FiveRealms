@@ -31,7 +31,7 @@ import {
   deduplicateSearchEquivalentActions
 } from "../../../ai/search/ActionGenerator.js";
 import { CounterfactualTerms } from "../../../ai/search/CounterfactualTerms.js";
-import { PatternMatcher } from "../../../ai/search/pattern/PatternMatcher.js";
+import { Pattern } from "../../../ai/Searcher/Pattern/Pattern.js";
 import { Searcher } from "../../../ai/search/Searcher.js";
 import { SearchBudget } from "../../../ai/search/SearchBudget.js";
 import { SearchPrior } from "../../../ai/search/SearchPrior.js";
@@ -184,7 +184,7 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     }),
     hiddenSampleCount:config.hiddenSamples
   });
-  const patternMatcher = new PatternMatcher();
+  const patternMatcher = new Pattern();
   const searcher = new Searcher({
     evaluator:stateEvaluator,
     stateValue,
