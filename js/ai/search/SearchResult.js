@@ -12,7 +12,7 @@ AIController acceptance boundary、TurnWorkflow 只经门面消费 action。
 只保存冻结普通值；不写 GameState。
 
 信息边界
-只保存 ActionDescriptor/计划描述与诊断，不保存真实 Card/Player/SearchState/Simulator。
+只保存 Action/计划描述与诊断，不保存真实 Card/Player/World/Simulator。
 
 架构约束
 不得 import Game/Application/Domain transitions；不得返回函数或 mutable candidate。
@@ -51,12 +51,12 @@ request、actionDescriptor、plannedSequenceDescriptors、stats、acceptance 状
 Object.freeze。
 
 边界与不变量
-不保存 raw action、Player、Card 或 SearchState；plannedSequenceDescriptors 必须已是 ActionDescriptor。
+不保存 raw action、Player、Card 或 World；plannedSequenceDescriptors 必须已是 Action。
 */
 export function createSearchResult({
   request,
-  actionDescriptor = null,
-  plannedSequenceDescriptors = [],
+  action = null,
+  plannedActions = [],
   stats = null,
   status,
   rejectionReason = null,
@@ -69,9 +69,9 @@ export function createSearchResult({
     actorId:request.actorId,
     status,
     rejectionReason,
-    actionDescriptor:actionDescriptor ? Object.freeze({ ...actionDescriptor }) : null,
-    plannedSequenceDescriptors:Object.freeze((plannedSequenceDescriptors ?? []).map(
-      (descriptor) => Object.freeze({ ...descriptor })
+    action,
+    plannedActions:Object.freeze((plannedActions ?? []).map(
+      (plannedAction) => plannedAction
     )),
     stats:stats ? Object.freeze({ ...stats }) : null,
     rngAfter:rngAfter ? Object.freeze({ ...rngAfter }) : null
@@ -101,7 +101,7 @@ SearchResult。
 Object.entries。
 
 边界与不变量
-不接受 SearchState/Simulator/真实 Card/Player；stats 只允许普通诊断值。
+不接受 World/Simulator/真实 Card/Player；stats 只允许普通诊断值。
 */
 export function searchResultViolations(result) {
   const violations = [];
@@ -111,7 +111,7 @@ export function searchResultViolations(result) {
       if (value.constructor?.name === "Card" || value.constructor?.name === "Player" || value.constructor?.name === "Game") {
         violations.push(`entity:${key}`);
       }
-      if (key !== "actionDescriptor" && key !== "plannedSequenceDescriptors" && value.players) {
+      if (key !== "action" && key !== "plannedActions" && value.players) {
         violations.push(`searchState:${key}`);
       }
     }

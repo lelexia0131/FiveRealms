@@ -1,6 +1,6 @@
 /*
 模块职责
-把真实 MatchState/Player 或 AI SearchState 玩家摘要投影为 Domain Rules 可读的 canonical data-only facts。
+把真实 MatchState/Player 或 AI World 玩家摘要投影为 Domain Rules 可读的 canonical data-only facts。
 
 上游
 js/ai/search、js/ai/simulation、js/ai/domain 与 AI 执行边界。
@@ -23,7 +23,7 @@ import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js";
 
 /*
 功能
-归一化真实 Player 的 statuses 对象或 SearchState 的 statusIds 数组。
+归一化真实 Player 的 statuses 对象或 World 的 statusIds 数组。
 
 调用方
 projectRulePlayer。
@@ -86,7 +86,7 @@ function getProjectedHandCount(player) {
 
 /*
 功能
-把单个真实 Player 或 SearchState 玩家投影为 Domain Rule canonical fact。
+把单个真实 Player 或 World 玩家投影为 Domain Rule canonical fact。
 
 调用方
 projectRulePlayers 与各 AI rule consumer。
@@ -261,7 +261,7 @@ export function hasPassiveSkill(player, skillId) {
 
 /*
 功能
-把真实 turnFlags 或 SearchState 使用标量归一化为 Domain TurnRule canonical attack usage。
+把真实 turnFlags 或 World 使用标量归一化为 Domain TurnRule canonical attack usage。
 
 调用方
 ActionGenerator root/deep legality 与 simulation queries。
@@ -273,7 +273,7 @@ ActionGenerator root/deep legality 与 simulation queries。
 Domain canonical { used, limit }。
 
 读取状态
-turnFlags.attackUsed/attackLimit 或 SearchState 同名标量。
+turnFlags.attackUsed/attackLimit 或 World 同名标量。
 
 写入状态
 无。

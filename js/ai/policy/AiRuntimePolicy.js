@@ -9,7 +9,7 @@ AIController、AI policy/search 与 composition root。
 无。
 
 状态边界
-纯静态只读配置，不读取或写入 MatchState/SearchState。
+纯静态只读配置，不读取或写入 MatchState/World。
 
 信息边界
 不含对局信息、领域规则、展示文案或设备状态。

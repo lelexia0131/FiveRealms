@@ -9,7 +9,7 @@ AIController、ResponseBoundary 正式边界 与 Simulator 的共享全体受益
 value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query。
 
 状态边界
-只读 plain DecisionContext 与纯查询结果，不投影 State、不修改 GameState/SearchState。
+只读 plain DecisionContext 与纯查询结果，不投影 State、不修改 GameState/World。
 
 信息边界
 只消费合法响应牌、公开玩家视图、合法记忆摘要和 Belief；不接收敌方未知手牌定义。
@@ -20,7 +20,11 @@ value/CardValue 常量尺度和调用方注入的 Value/Domain/simulation query�
 import { getBaseCardAiValue } from "../value/CardValue.js";
 import { cardAvailability } from "../value/CardValue.js";
 import { HP_VALUE } from "../value/Economics.js";
-import { hypergeometricProbabilityAtLeast } from "../state/BeliefState.js";
+import {
+  hypergeometricProbabilityAtLeast,
+  queryCurrentCardCounts,
+  queryPlayerHandProbability
+} from "../state/Probability.js";
 import { getRecoverHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 
 /*
@@ -113,13 +117,13 @@ export function globalBenefitCounterDecision(
 ResponseSimulation 的 planning counter query 与直接 parity 测试。
 
 输入
-只读 SearchState、响应者、施放者、root 卡牌、目标和可选资源选择。
+只读 World、响应者、施放者、root 卡牌、目标和可选资源选择。
 
 输出
 以现有 HP_VALUE、手牌、能量和状态尺度表示的非规格化收益。
 
 读取状态
-仅输入 SearchState 的公开/概率摘要字段。
+仅输入 World 的公开/概率摘要字段。
 
 写入状态
 无。
@@ -153,7 +157,7 @@ export function planningDynamicCounterGain(
   planningDynamicCounterGain。
 
   输入
-  只读公开 SearchState player。
+  只读公开 World player。
 
   输出
   布尔值。
@@ -180,7 +184,7 @@ export function planningDynamicCounterGain(
   planningDynamicCounterGain。
 
   输入
-  只读公开 SearchState player。
+  只读公开 World player。
 
   输出
   布尔值。
@@ -203,16 +207,22 @@ export function planningDynamicCounterGain(
   switch (definitionId) {
     case "shockwave": {
       if (!target?.alive) return 0;
-      const blockChance = Math.min(1, Number(target.blockProbability) || 0);
+      const blockChance = queryPlayerHandProbability(
+        state.probabilityState, target, "block"
+      ).probability;
       return HP_VALUE * (1 - blockChance) * (Number(target.shield) >= 1 ? 0 : 1);
     }
     case "provoke": {
       if (!target?.alive) return 0;
-      return (Number(target.assaultResponseProbability) || 0) > 0 ? 1.1 : HP_VALUE;
+      return queryPlayerHandProbability(
+        state.probabilityState, target, "assault"
+      ).probability > 0 ? 1.1 : HP_VALUE;
     }
     case "duel": {
       if (!target?.alive) return 0;
-      return HP_VALUE * ((Number(target.assaultResponseProbability) || 0) > 0 ? 0.5 : 1);
+      return HP_VALUE * (queryPlayerHandProbability(
+        state.probabilityState, target, "assault"
+      ).probability > 0 ? 0.5 : 1);
     }
     case "scout": {
       if (!target?.alive) return 0;
@@ -255,7 +265,7 @@ export function planningDynamicCounterGain(
 ResponseSimulation 的 card-scope 与 target-scope 响应评估。
 
 输入
-SearchState、响应上下文、全体受益 assessment、root guard 与动态收益查询。
+World、响应上下文、全体受益 assessment、root guard 与动态收益查询。
 
 输出
 确定的 respond / do not respond 布尔值。
@@ -289,14 +299,14 @@ export function planningCounterDecision(
     {
       rootSourceId:actor?.id ?? null,
       counterDepth:0,
-      remainingCardCounts:state?.remainingCardCounts ?? null
+      remainingCardCounts:queryCurrentCardCounts(state.probabilityState)
     }
   );
   if (globalDecision !== null) return globalDecision;
   if (simulatingRootResolution) return false;
-  const hasCounter = (responder.counterCountDistribution ?? [])
-    .some((branch) => (branch.counterCount ?? 0) >= 1 && (branch.probability ?? 0) > 0)
-    || (responder.counterProbability ?? 0) > 0;
+  const hasCounter = queryPlayerHandProbability(
+    state.probabilityState, responder, "counter"
+  ).probability > 0;
   if (!hasCounter) return false;
   const gain = dynamicCounterGain(state, responder, actor, card, targets, selection);
   if (!Number.isFinite(gain)) return false;
@@ -511,7 +521,7 @@ export class ResponsePolicy {
   只读 DecisionContext 和惰性纯查询结果。
 
   写入状态
-  无；查询只操作独立 SearchState clone。
+  无；查询只操作独立 World clone。
 
   调用函数
   assessDyingRescue、knownPendingAssaultBonus、状态/guardian/dynamic query。

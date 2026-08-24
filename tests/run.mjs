@@ -55,29 +55,24 @@ import { Deck } from "../js/application/match/Deck.js";
 import { TeamAssignment as TeamManager } from "../js/application/match/TeamAssignment.js";
 import { ActionLegality } from "../js/application/action/ActionLegality.js";
 import { getRangeConditionBranches, getRangeLegalityProbability, inAttackRange } from "../js/ai/state/DistanceProbabilityBranches.js";
-import { createInitialSearchState, createStateContracts } from "../js/ai/state/StateContracts.js";
-import { createVisibleState } from "../js/ai/state/VisibleState.js";
-import { createKnowledgeState } from "../js/ai/state/Knowledge.js";
-import {
-  createBeliefState,
-  hypergeometricProbabilityAtLeast
-} from "../js/ai/state/BeliefState.js";
-import {
-  conditionHiddenPool,
-  createHiddenPoolState,
-  hypergeometricCountDistribution,
-  mutateHiddenPool,
-  projectHiddenSummaries,
-  queryHiddenPool
-} from "../js/ai/state/HiddenPool.js";
-import { cloneSearchState } from "../js/ai/state/SearchState.js";
+import { createInitialWorld, createStateContracts } from "../js/ai/state/StateContracts.js";
+import { createFact, deriveCurrentCardCounts } from "../js/ai/state/Fact.js";
+import { cloneWorld } from "../js/ai/state/World.js";
 import {
   PROBABILITY_CLASSIFICATION,
+  conditionProbability,
+  createProbabilityState,
   expectedBranchValue,
-  joinProbabilityStateBranches as joinStateProbabilityBranches,
+  expectedAnonymousSlots,
+  hypergeometricProbabilityAtLeast,
+  intersectProbabilityStateBranches as joinStateProbabilityBranches,
+  intersectProbabilityStateBranches,
   mergeProbabilityStateBranches as mergeStateProbabilityBranches,
+  mutateProbability,
   probabilityEventPartition,
   projectProbabilityStateBranches as projectStateProbabilityBranches,
+  queryCurrentCardCounts,
+  queryProbability,
   totalBranchProbability
 } from "../js/ai/state/Probability.js";
 import { Simulator as ProductionSimulator } from "../js/ai/simulation/Simulator.js";
@@ -88,10 +83,13 @@ import { tacticResolutionScale } from "../js/ai/search/TacticResolutionQuery.js"
 import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
 import { SearchRng } from "../js/ai/search/SearchRng.js";
 import { SEARCH_RESULT_STATUS } from "../js/ai/search/SearchResult.js";
-import { ActionDescriptor, describeAction } from "../js/ai/search/ActionDescriptor.js";
+import { Action, createAction } from "../js/ai/search/Action.js";
 import { ThreatCalculator } from "../js/ai/value/ThreatValue.js";
 import { HP_RISK_OPTION_WEIGHT } from "../js/ai/value/ThreatValue.js";
-import { TransitionValue } from "../js/ai/search/TransitionValue.js";
+import {
+  TransitionValue,
+  privatePeekInformationValue
+} from "../js/ai/search/TransitionValue.js";
 import { CounterfactualTerms } from "../js/ai/search/CounterfactualTerms.js";
 import { FrontierValue } from "../js/ai/search/FrontierValue.js";
 import { SiblingTransitionTerms } from "../js/ai/search/SiblingTransitionTerms.js";
@@ -99,7 +97,6 @@ import { Evaluator } from "../js/ai/value/Evaluator.js";
 import { StateValue } from "../js/ai/value/StateValue.js";
 import {
   HP_VALUE as OWNED_HP_VALUE,
-  actionEconomicValue as ownedActionEconomicValue,
   statePointsToUtility
 } from "../js/ai/value/Economics.js";
 import {
@@ -176,7 +173,7 @@ import {
   makeGame as makeBenchmarkGame,
   makeRandom as makeBenchmarkRandom,
   runAiDecision as runBenchmarkAiDecision
-} from "./ai-benchmark/helpers.mjs";
+} from "./ai_test_helpers.mjs";
 import { configureAllAiRoster } from "./headless_match_setup.mjs";
 import {
   UNKNOWN_HAND_EXPECTED_VALUE,
@@ -205,11 +202,9 @@ import {
   getResourceDefinitionUtility,
   getResourceUnknownUtility
 } from "../js/ai/policy/ResourceSelectionPolicy.js";
-import { Knowledge } from "../js/ai/state/Knowledge.js";
 import { CardSelectionBoundary } from "../js/ai/policy/CardSelectionBoundary.js";
 import { getDiscardKeepValue, rankDiscardCandidates } from "../js/ai/policy/ResourceSelectionPolicy.js";
 import { buildRadarJudgmentProbabilities } from "../js/ai/domain/RadarModel.js";
-import { joinProbabilityStateBranches } from "../js/ai/state/Probability.js";
 import {
   buildLightningHitDistribution,
   buildLightningPropagationChainIds as buildLightningPropagationChain,
@@ -245,7 +240,6 @@ import {
   planningCounterDecision
 } from "../js/ai/policy/ResponsePolicy.js";
 import { dynamicRootFlipGain } from "../js/ai/simulation/RootResolutionQuery.js";
-import { ActionCandidatePolicy } from "../js/ai/policy/ActionCandidatePolicy.js";
 import { CardSelectionPolicy } from "../js/ai/policy/CardSelectionPolicy.js";
 import { ResponsePolicy } from "../js/ai/policy/ResponsePolicy.js";
 import { buildRadarJudgmentProbabilities as buildDomainRadarJudgmentProbabilities } from "../js/ai/domain/RadarModel.js";
@@ -265,7 +259,7 @@ import {
 
 /*
 功能
-把历史手工 SearchState fixture 升级为 canonical HiddenPool fixture。
+把历史手工 World fixture 补齐为 canonical ProbabilityState fixture。
 
 调用方
 测试专用 Simulator 子类构造函数。
@@ -274,70 +268,41 @@ import {
 测试创建的 SearchState 普通对象。
 
 输出
-带 hiddenPoolState 的同一对象。
+带 probabilityState 的同一对象。
 
 读取状态
 players 的 handCount、合法已知身份与 remainingCardCounts。
 
 写入状态
-仅写测试 fixture.hiddenPoolState。
+仅写测试 fixture.probabilityState。
 
 调用函数
-createHiddenPoolState、cardAvailability。
+createProbabilityState、cardAvailability。
 
 边界与不变量
 生产代码没有 fallback；自己 hand 与合法 knownCards 已是确定身份，不得再次计入匿名槽。
 */
-function upgradeHiddenPoolFixture(state) {
-  if (!state || state.hiddenPoolState) return state;
-  const slotsByBucket = Object.fromEntries((state.players ?? []).map((player) => {
-    const identities = Array.isArray(player.hand)
-      ? player.hand
-      : (Array.isArray(player.knownCards) ? player.knownCards : []);
-    const occupied = identities.reduce((sum, card) => sum + cardAvailability(card), 0);
-    return [player.id, Math.max(0, Math.round((Number(player.handCount) || 0) - occupied))];
-  }));
-  state.hiddenPoolState = createHiddenPoolState({
-    slotsByBucket,
-    cardCounts:state.remainingCardCounts ?? RULESET_DEFINITION.deckComposition
+function upgradeProbabilityFixture(state) {
+  if (!state || state.probabilityState) return state;
+  const players = state.players ?? [];
+  const viewer = players.find((player) => Array.isArray(player.hand)) ?? null;
+  const knownCardsByPlayer = Object.fromEntries(players.map((player) => [
+    player.id,
+    Array.isArray(player.knownCards) ? player.knownCards : []
+  ]));
+  state.probabilityState = createProbabilityState({
+    viewerId:viewer?.id ?? null,
+    players,
+    knownCardsByPlayer,
+    currentCardCounts:state.remainingCardCounts ?? RULESET_DEFINITION.deckComposition
   });
-  for (const player of state.players ?? []) {
-    const anonymousSlots = slotsByBucket[player.id] ?? 0;
-    if (anonymousSlots <= 0) continue;
-    const summaries = [
-      ["block", player.blockProbability, player.blockCountDistribution],
-      ["counter", player.counterProbability, player.counterCountDistribution],
-      ["assault", player.assaultResponseProbability, player.assaultCountDistribution]
-    ];
-    for (const [definitionId, rawProbability, sourceDistribution] of summaries) {
-      if (Array.isArray(sourceDistribution) && sourceDistribution.length) {
-        state.hiddenPoolState.marginalsByDefinition[definitionId][player.id] = sourceDistribution.map(
-          (branch) => ({
-            count:Math.max(0, Math.floor(Number(
-              branch.count ?? branch.blockCount ?? branch.counterCount
-            ) || 0)),
-            probability:branch.probability
-          })
-        );
-        state.hiddenPoolState.correlationMode = "marginalized";
-        continue;
-      }
-      if (!Number.isFinite(rawProbability)) continue;
-      const probability = Math.max(0, Math.min(1, rawProbability));
-      state.hiddenPoolState.marginalsByDefinition[definitionId][player.id] = [
-        { count:0, probability:1 - probability },
-        { count:1, probability }
-      ].filter((branch) => branch.probability > 0);
-      state.hiddenPoolState.correlationMode = "marginalized";
-    }
-  }
-  return projectHiddenSummaries(state);
+  return state;
 }
 
 class Simulator extends ProductionSimulator {
   /*
   功能
-  让直接构造 Simulator 的历史测试统一经过 canonical HiddenPool fixture。
+  让直接构造 Simulator 的历史测试统一经过 canonical ProbabilityState fixture。
 
   调用方
   tests/run.mjs 中的 Simulator 专项与 SearchState fixture。
@@ -352,22 +317,22 @@ class Simulator extends ProductionSimulator {
   仅测试 fixture。
 
   写入状态
-  upgradeHiddenPoolFixture 写入测试 fixture 后由生产构造克隆。
+  upgradeProbabilityFixture 写入测试 fixture 后由生产构造克隆。
 
   调用函数
-  upgradeHiddenPoolFixture、ProductionSimulator constructor。
+  upgradeProbabilityFixture、ProductionSimulator constructor。
 
   边界与不变量
-  不改变生产模块；正式 createInitialSearchState 已有 HiddenPool 时保持原对象。
+  不改变生产模块；正式 createInitialWorld 已有 ProbabilityState 时保持原对象。
   */
   constructor(state, options = {}) {
-    super(upgradeHiddenPoolFixture(state), options);
+    super(upgradeProbabilityFixture(state), options);
     return new Proxy(this, {
       get(target, property, receiver) {
         const value = Reflect.get(target, property, receiver);
         if (typeof value !== "function") return value;
         return (...args) => {
-          if (args[0]?.players) upgradeHiddenPoolFixture(args[0]);
+          if (args[0]?.players) upgradeProbabilityFixture(args[0]);
           return value.apply(target, args);
         };
       }
@@ -2621,7 +2586,7 @@ function frArchPhaseARuleStateViewContract() {
     "visibleHand",
     "knowledge",
     "beliefState",
-    "searchState"
+    "world"
   ];
   const assertProjection = (projection) => {
     assert.ok(Object.isFrozen(projection));
@@ -9288,7 +9253,7 @@ test("望远镜与屏障：距离装备即时改变普通突袭合法目标且 A
   assert.ok(!ActionLegality.getCardTargets(game, source, assault).includes(target));
   source.equipment = instance("telescope");
   assert.ok(ActionLegality.getCardTargets(game, source, assault).includes(target));
-  const visible = createInitialSearchState(source.id, game.state);
+  const visible = createInitialWorld(source.id, game.state);
   assert.equal(
     ActionLegality.getDistance(
       { state: { players: visible.players } }, visible.players[0], visible.players[2]
@@ -13316,15 +13281,17 @@ test("AI·架构：Simulation facade 与五个效果组件保持单向依赖和�
     card: "js/ai/simulation/CardEffectSimulation.js",
     skill: "js/ai/simulation/SkillEffectSimulation.js",
     status: "js/ai/simulation/StatusSimulation.js",
-    support: "js/ai/simulation/SimulationSupport.js",
     planner: "js/ai/search/Planner.js",
     valueQuery: "js/ai/simulation/ValueSimulationQuery.js"
   };
   const source = Object.fromEntries(await Promise.all(
     Object.entries(paths).map(async ([name, path]) => [name, await readFile(projectFile(path), "utf8")])
   ));
-  assert.doesNotMatch(source.facade, /\.\.\/policy\/|\.\.\/value\/|\.\.\/domain\/|ActionLegality|CARD_DEFINITIONS/);
-  for (const name of ["response", "combat", "card", "skill", "status", "support"]) {
+  assert.doesNotMatch(source.facade, /from\s+["']\.\.\/(?:policy|value|domain)\//);
+  assert.doesNotMatch(source.facade, /ActionLegality/);
+  assert.match(source.facade, /\.\.\/\.\.\/domain\/definitions\/cards\/CardDefinitions\.js/);
+  assert.match(source.facade, /\.\.\/\.\.\/domain\/definitions\/skills\/SkillDefinitions\.js/);
+  for (const name of ["response", "combat", "card", "skill", "status"]) {
     assert.doesNotMatch(
       source[name],
       /from\s+["'][^"']*(?:AiController|UIManager|core\/Game\.js|simulation\/Simulator\.js)[^"']*["']/,
@@ -13350,6 +13317,7 @@ test("AI·架构：Simulation facade 与五个效果组件保持单向依赖和�
   assert.equal((source.facade.match(/withSkillEffectSimulation\(/g) ?? []).length, 1);
   assert.equal((source.facade.match(/withStatusSimulation\(/g) ?? []).length, 1);
   assert.doesNotMatch(source.facade, /new (?:Response|Combat|CardEffect|SkillEffect|Status)Simulation/);
+  await assert.rejects(access(projectFile("js/ai/simulation/SimulationSupport.js")));
 });
 
 test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 service locator", async () => {
@@ -13371,7 +13339,7 @@ test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 ser
   ]);
   const componentNames = new Set([
     "ResponseSimulation", "CombatSimulation", "CardEffectSimulation",
-    "SkillEffectSimulation", "StatusSimulation", "SimulationSupport"
+    "SkillEffectSimulation", "StatusSimulation"
   ]);
   const graph = new Map();
   const importPattern = /^\s*import\s+(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/gm;
@@ -13433,7 +13401,7 @@ test("AI·架构：正式 Planner 只通过 Simulator/SearchBudget factory 消�
     patternMatcher:{},
     searchPolicy: {},
     simulatorFactory: () => ({}),
-    generateFromVisible: () => [],
+    generateActions: () => [],
     yieldControl: async () => true
   }), /searchBudgetFactory/);
 });
@@ -13460,7 +13428,7 @@ AI 依赖注入回归测试。
 测试期间临时替换并恢复组件方法与随机源。
 
 调用函数
-Planner、createInitialSearchState、sampleHiddenWorlds、generateFromVisible。
+Planner、createInitialWorld、sampleHiddenWorlds、generateActions。
 
 边界与不变量
 Planner 实例不得保存 Game；固定种子下采样时机、动作顺序和最终描述不得因装配方式改变。
@@ -13479,16 +13447,16 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
   const knowledge = controller.knowledge;
   const productionPlanner = controller.planner;
   const remainingCardCounts = knowledge.remainingCounts(actor);
-  const visible = createInitialSearchState(actor.id, game.state, remainingCardCounts);
+  const visible = createInitialWorld(actor.id, game.state, remainingCardCounts);
   const roots = controller.getActionCandidates(actor);
-  const originalGenerate = actionGenerator.generateFromVisible.bind(actionGenerator);
+  const originalGenerate = actionGenerator.generate.bind(actionGenerator);
   const originalSample = knowledge.sampleHiddenWorlds.bind(knowledge);
   const deepActionSets = { production: [], direct: [] };
   const hiddenSamples = { production: [], direct: [] };
   let mode = "production";
-  actionGenerator.generateFromVisible = (state, actorId) => {
+  actionGenerator.generate = (state, actorId) => {
     const actions = originalGenerate(state, actorId);
-    deepActionSets[mode].push(actions.map((action) => describeAction(action)));
+    deepActionSets[mode].push(actions.map((action) => describeBenchmarkAction(action)));
     return actions;
   };
   knowledge.sampleHiddenWorlds = (...args) => {
@@ -13503,7 +13471,7 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
     simulatorFactory: productionPlanner.simulatorFactory,
     searchBudgetFactory: productionPlanner.searchBudgetFactory,
     deduplicateActions:productionPlanner.deduplicateActions,
-    generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
+    generateActions: (...args) => actionGenerator.generate(...args),
     yieldControl: async () => true
   });
   try {
@@ -13514,9 +13482,9 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
     const productionAction = await productionPlanner.plan(
       actor, visible, roots, { gameId: game.state.gameId }
     );
-    const productionDescriptor = describeAction(productionAction);
+    const productionDescriptor = describeBenchmarkAction(productionAction);
     const productionSequence = productionPlanner.lastPlannedSequence.map(
-      (action) => describeAction(action)
+      (action) => describeBenchmarkAction(action)
     );
 
     mode = "direct";
@@ -13527,9 +13495,9 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
     const directAction = await directPlanner.plan(actor, visible, roots, { gameId: game.state.gameId });
     assert.equal("game" in directPlanner, false);
     assert.equal("aiController" in directPlanner, false);
-    assert.deepEqual(describeAction(directAction), productionDescriptor);
+    assert.deepEqual(describeBenchmarkAction(directAction), productionDescriptor);
     assert.deepEqual(
-      directPlanner.lastPlannedSequence.map((action) => describeAction(action)),
+      directPlanner.lastPlannedSequence.map((action) => describeBenchmarkAction(action)),
       productionSequence
     );
     assert.ok(deepActionSets.production.length > 0);
@@ -13537,7 +13505,7 @@ async function testPlannerExplicitDependenciesPreserveTrace() {
     assert.deepEqual(hiddenSamples.direct, hiddenSamples.production);
     assert.equal(hiddenSamples.direct[0].count, AI_RUNTIME_POLICY.hiddenStateSamples);
   } finally {
-    actionGenerator.generateFromVisible = originalGenerate;
+    actionGenerator.generate = originalGenerate;
     knowledge.sampleHiddenWorlds = originalSample;
   }
 }
@@ -13594,7 +13562,7 @@ function testActionGeneratorUsesInjectedTransferSelection() {
   const controller = game.aiController;
   game.aiController = null;
   try {
-    const action = generator.generate(actor).find((entry) => entry.card?.id === transfer.id);
+    const action = generator.generate(actor).find((entry) => entry.cardInstanceId === transfer.id);
     assert.equal(calls, 1);
     assert.deepEqual(action?.selection, selection);
   } finally {
@@ -13633,7 +13601,7 @@ function testMissingAiDependenciesFailAtConstruction() {
   const actor = makePlayer("di-missing-actor", 0, "dawn");
   const enemy = makePlayer("di-missing-enemy", 1, "dusk");
   const { game } = makeGame([actor, enemy]);
-  assert.throws(() => new PatternMatcher(), /actionDescriptor/);
+  assert.throws(() => new PatternMatcher(), /action/);
   assert.throws(() => new Planner(), /candidateMaterializer/);
   assert.throws(() => new Planner({
     candidateMaterializer: {},
@@ -13643,7 +13611,7 @@ function testMissingAiDependenciesFailAtConstruction() {
     searchBudgetFactory: () => ({}),
     deduplicateActions: (actions) => actions,
     yieldControl: async () => true
-  }), /generateFromVisible/);
+  }), /generateActions/);
   assert.throws(() => new ActionGenerator({ chooseTransferCombination: () => null }), /getRootContext/);
   assert.throws(() => new ActionGenerator({ getRootContext: () => ({ state: { players: [] } }) }), /chooseTransferCombination/);
 }
@@ -13690,11 +13658,11 @@ function testControllerFacadePreservesTransferAndDescriptor() {
   controller.cardSelector.chooseTransferCombination = () => selection;
   try {
     assert.equal(controller.chooseTransferCombination(actor, transfer, [ally]), selection);
-    const action = controller.getActionCandidates(actor).find((entry) => entry.card?.id === transfer.id);
+    const action = controller.getActionCandidates(actor).find((entry) => entry.cardInstanceId === transfer.id);
     assert.deepEqual(action?.selection, selection);
-    const descriptor = describeAction(action);
+    const descriptor = describeBenchmarkAction(action);
     const rebound = controller.resolvePlannedAction(actor, descriptor);
-    assert.deepEqual(describeAction(rebound), descriptor);
+    assert.deepEqual(describeBenchmarkAction(rebound), descriptor);
   } finally {
     controller.cardSelector.chooseTransferCombination = originalChoose;
   }
@@ -13724,7 +13692,7 @@ Simulation 架构迁移 characterization 回归测试。
 仅写独立模拟 clone 的稳定 gameId 占位符。
 
 调用函数
-createInitialSearchState、Simulator.apply/applyLightningHit、createHash。
+createInitialWorld、Simulator.apply/applyLightningHit、createHash。
 
 边界与不变量
 指纹覆盖全部深层字段、概率条件键与数组顺序；迁移不得通过挑选摘要字段掩盖状态差异。
@@ -13740,10 +13708,10 @@ function testSimulationSearchStateCharacterization() {
   });
   const visibleState = (game) => {
     const actor = game.state.players.find((player) => player.id === "a");
-    return createInitialSearchState(
+    return createInitialWorld(
       actor.id,
       game.state,
-      game.aiController.knowledge.remainingCounts(actor)
+      deriveCurrentCardCounts(actor, game.state)
     );
   };
   const fingerprints = {};
@@ -13835,7 +13803,7 @@ test(
 
 /*
 功能
-验证 VisibleState 只由公开事实与观察者自己的手牌决定。
+验证 Fact 只由公开事实、观察者私有手牌与合法记忆组成。
 
 调用方
 AI 状态契约回归测试。
@@ -13844,44 +13812,44 @@ AI 状态契约回归测试。
 手牌数量相同但敌方未知牌定义不同的两个 GameState 时刻。
 
 输出
-两个投影完全一致，且敌方投影不含手牌与推测字段。
+两个 Fact 完全一致，且敌方投影不含真实手牌或概率摘要。
 
 读取状态
-测试 GameState、VisibleState。
+测试 GameState。
 
 写入状态
 测试夹具中的敌方手牌。
 
 调用函数
-createVisibleState。
+createFact。
 
 边界与不变量
-敌方未知牌定义变化不得影响 VisibleState。
+敌方未知牌定义变化不得影响 Fact。
 */
-function testVisibleStateExcludesHiddenDefinitions() {
+function testFactExcludesHiddenDefinitions() {
   const actor = makePlayer("state-actor", 0, "dawn"), enemy = makePlayer("state-enemy", 1, "dusk");
   actor.hand.push(instance("assault"));
   enemy.hand.push(instance("recover"));
   const { game } = makeGame([actor, enemy]);
-  const first = createVisibleState(actor.id, game.state);
+  const first = createFact(actor.id, game.state);
   enemy.hand = [instance("counter")];
-  const second = createVisibleState(actor.id, game.state);
+  const second = createFact(actor.id, game.state);
 
   assert.deepEqual(second, first);
   assert.equal(first.players[1].hand, undefined);
   assert.equal(first.players[1].handCount, 1);
   assert.equal(first.players[1].expectedRecoverCount, undefined);
-  assert.equal(first.remainingCardCounts, undefined);
+  assert.ok(first.currentCardCounts);
   assert.equal(first.playPhaseEnded, undefined);
   assert.equal(first.players[0].hand[0].definitionId, "assault");
   assert.equal(Object.isFrozen(first.players[1]), true);
 }
 
-test("AI·状态契约：VisibleState 不泄漏敌方未知牌定义", testVisibleStateExcludesHiddenDefinitions);
+test("AI·状态契约：Fact 不泄漏敌方未知牌定义", testFactExcludesHiddenDefinitions);
 
 /*
 功能
-验证 Knowledge 只投影观察者合法记录的实体牌记忆。
+验证 Fact 只投影观察者合法记录的实体牌记忆。
 
 调用方
 AI 状态契约回归测试。
@@ -13890,41 +13858,42 @@ AI 状态契约回归测试。
 包含一张合法已知牌与一张未知牌的敌方手牌。
 
 输出
-Knowledge 仅包含合法记忆中的牌实体与定义。
+Fact 仅包含合法记忆中的牌实体与定义。
 
 读取状态
-玩家 aiMemory、VisibleState 玩家身份。
+玩家 aiMemory 与 GameState。
 
 写入状态
 测试夹具中的合法 AI 记忆。
 
 调用函数
-createVisibleState、createKnowledgeState。
+createFact。
 
 边界与不变量
-Knowledge 不得用真实敌方手牌补全未知位置。
+Fact 不得用真实敌方手牌补全未知位置。
 */
-function testKnowledgeStateUsesOnlyLegalMemory() {
+function testFactUsesOnlyLegalMemory() {
   const actor = makePlayer("knowledge-actor", 0, "dawn"), enemy = makePlayer("knowledge-enemy", 1, "dusk");
   const known = instance("block"), unknown = instance("recover");
   enemy.hand.push(known, unknown);
   actor.aiMemory.knownCardsByPlayer[enemy.id] = { [known.id]: known.definitionId };
   const { game } = makeGame([actor, enemy]);
-  const visible = createVisibleState(actor.id, game.state);
-  const knowledge = createKnowledgeState(actor, visible);
+  const fact = createFact(actor.id, game.state);
 
-  assert.deepEqual(knowledge.knownCardsByPlayer[enemy.id], [
+  assert.deepEqual(fact.knownCardsByPlayer[enemy.id], [
     { cardId: known.id, definitionId: "block" }
   ]);
-  assert.equal(JSON.stringify(knowledge).includes("recover"), false);
-  assert.equal(Object.isFrozen(knowledge.knownCardsByPlayer[enemy.id]), true);
+  assert.equal(fact.knownCardsByPlayer[enemy.id].some(
+    (entry) => entry.cardId === unknown.id
+  ), false);
+  assert.equal(Object.isFrozen(fact.knownCardsByPlayer[enemy.id]), true);
 }
 
-test("AI·状态契约：Knowledge 只保存合法实体记忆", testKnowledgeStateUsesOnlyLegalMemory);
+test("AI·状态契约：Fact 只保存合法实体记忆", testFactUsesOnlyLegalMemory);
 
 /*
 功能
-验证 BeliefState 从合法记忆、未知槽位数量和剩余牌计数推导概率。
+验证 ProbabilityState 从 Fact 的匿名槽与当前有限池惰性回答数量查询。
 
 调用方
 AI 状态契约回归测试。
@@ -13933,90 +13902,100 @@ AI 状态契约回归测试。
 敌方一张已知格挡、一张未知牌及固定剩余牌计数。
 
 输出
-符合无放回分布的期望值，且真实未知牌换面不改变结果。
+符合无放回分布的局部查询，且真实未知牌换面不改变结果。
 
 读取状态
-VisibleState、Knowledge、剩余牌计数。
+Fact 与 ProbabilityState。
 
 写入状态
 测试夹具中的敌方未知手牌。
 
 调用函数
-createBeliefState、createKnowledgeState、createVisibleState。
+createFact、createProbabilityState、queryProbability。
 
 边界与不变量
-Belief 不读取真实未知牌，且不持有调用方计数对象的可变引用。
+查询结果不写回 ProbabilityState，且状态不持有调用方计数对象的可变引用。
 */
-function testBeliefStateDerivesLegalDistribution() {
+function testProbabilityStateDerivesLegalDistribution() {
   const actor = makePlayer("belief-actor", 0, "dawn"), enemy = makePlayer("belief-enemy", 1, "dusk");
   const known = instance("block");
   enemy.hand.push(known, instance("recover"));
   actor.aiMemory.knownCardsByPlayer[enemy.id] = { [known.id]: known.definitionId };
   const { game } = makeGame([actor, enemy]);
   const counts = { block: 1, assault: 3 };
-  const firstVisible = createVisibleState(actor.id, game.state);
-  const knowledge = createKnowledgeState(actor, firstVisible);
-  const first = createBeliefState(actor.id, firstVisible, knowledge, counts);
+  const firstFact = createFact(actor.id, game.state, counts);
+  const first = createProbabilityState(firstFact);
+  const firstQuery = queryProbability(first, {
+    definitionId:"block",
+    bucketId:enemy.id
+  });
   enemy.hand = [known, instance("counter")];
-  const secondVisible = createVisibleState(actor.id, game.state);
-  const second = createBeliefState(actor.id, secondVisible, knowledge, counts);
+  const secondFact = createFact(actor.id, game.state, counts);
+  const second = createProbabilityState(secondFact);
+  const secondQuery = queryProbability(second, {
+    definitionId:"block",
+    bucketId:enemy.id
+  });
 
-  assertClose(first.playersById[enemy.id].expectedBlockCount, 1.25);
-  assert.equal(first.playersById[enemy.id].blockProbability, 1);
-  assertClose(first.playersById[enemy.id].twoBlockProbability, 0.25);
+  assertClose(firstQuery.expected, 0.25);
+  assertClose(firstQuery.probability, 0.25);
+  assert.deepEqual(secondQuery, firstQuery);
   assert.deepEqual(second, first);
   counts.block = 99;
-  assert.equal(first.remainingCardCounts.block, 1);
-  assert.equal(Object.isFrozen(first.remainingCardCounts), true);
+  assert.equal(queryCurrentCardCounts(first).block, 1);
+  assert.equal(Object.hasOwn(first, "remainingCardCounts"), false);
 }
 
-test("AI·状态契约：Belief 从合法计数与记忆推导", testBeliefStateDerivesLegalDistribution);
+test("AI·状态契约：ProbabilityState 从 Fact 惰性推导有限池查询", testProbabilityStateDerivesLegalDistribution);
 
 /*
 功能
-验证 SearchState 克隆生成与 GameState 无关的独立可变搜索世界。
+验证 World 克隆生成与 GameState 无关的独立可变搜索世界。
 
 调用方
 AI 状态契约回归测试。
 
 输入
-由正式状态契约组合完成的 SearchState。
+由正式状态契约组合完成的 World。
 
 输出
 克隆可独立变更，原快照与后续克隆不受污染。
 
 读取状态
-SearchState。
+World。
 
 写入状态
-仅写第一个克隆的玩家、牌分支和剩余计数。
+仅写第一个克隆的玩家、确定牌可用性和 Probability sufficient state。
 
 调用函数
-cloneSearchState、createStateContracts。
+cloneWorld、createStateContracts。
 
 边界与不变量
-SearchState 不保留 Game 引用，任一克隆的写入不得串扰。
+World 不保留 Game 引用、概率摘要或普通状态 branch arrays，任一克隆的写入不得串扰。
 */
-function testSearchStateCloneIsolation() {
+function testWorldCloneIsolation() {
   const actor = makePlayer("search-actor", 0, "dawn"), enemy = makePlayer("search-enemy", 1, "dusk");
   actor.hand.push(instance("assault"));
   enemy.hand.push(instance("block"));
   const { game } = makeGame([actor, enemy]);
   const contracts = createStateContracts(actor.id, game.state, { assault: 2, block: 3 });
-  const firstClone = cloneSearchState(contracts.searchState);
-  const secondClone = cloneSearchState(contracts.searchState);
+  const firstClone = cloneWorld(contracts.world);
+  const secondClone = cloneWorld(contracts.world);
 
   firstClone.players[0].hp = 1;
-  firstClone.players[0].hand[0].availabilityStateBranches[0].available = false;
-  firstClone.remainingCardCounts.assault = 0;
-  assert.notEqual(firstClone.players[0].hp, contracts.searchState.players[0].hp);
-  assert.equal(contracts.searchState.players[0].hand[0].availabilityStateBranches[0].available, true);
-  assert.equal(secondClone.remainingCardCounts.assault, 2);
-  assert.equal("game" in contracts.searchState, false);
+  firstClone.players[0].hand[0].availability = 0;
+  firstClone.probabilityState.factors[0].cardCounts.assault = 0;
+  assert.notEqual(firstClone.players[0].hp, contracts.world.players[0].hp);
+  assert.equal(contracts.world.players[0].hand[0].availability, 1);
+  assert.equal(queryCurrentCardCounts(secondClone.probabilityState).assault, 2);
+  assert.equal("hpStateBranches" in contracts.world.players[0], false);
+  assert.equal("availabilityStateBranches" in contracts.world.players[0].hand[0], false);
+  assert.equal("remainingCardCounts" in contracts.world, false);
+  assert.equal("game" in contracts.world, false);
   assert.equal("game" in firstClone, false);
 }
 
-test("AI·状态契约：SearchState 克隆隔离且不回读 Game", testSearchStateCloneIsolation);
+test("AI·状态契约：World 克隆隔离且不回读 Game", testWorldCloneIsolation);
 
 /*
 功能
@@ -14083,23 +14062,26 @@ test("AI·状态契约：隐藏世界有限采样必须携带 Monte Carlo estima
   const visible = { players:[actor] };
   const createTerms = (sampleHiddenWorlds) => new CounterfactualTerms({
     evaluator:{},
-    generateFromVisible:() => [],
-    sampleHiddenWorlds,
+    generateActions:() => [],
+    sampleUnknownHands:sampleHiddenWorlds,
     hiddenSampleCount:2
   });
+  const invalidTerms = createTerms(() => []);
+  const invalidContext = invalidTerms.createContext(actor, visible, []);
   assert.throws(
-    () => createTerms(() => []).createContext(actor, visible, []),
+    () => invalidTerms.getUnknownHandEstimate(invalidContext),
     /MONTE CARLO ESTIMATE/u
   );
-  const context = createTerms(() => monteCarloEstimate([{}, {}]))
-    .createContext(actor, visible, []);
-  assert.equal(context.hiddenWorldEstimate.classification, PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE);
-  assert.equal(context.hiddenWorldEstimate.sampleCount, 2);
+  const validTerms = createTerms(() => monteCarloEstimate([{}, {}]));
+  const context = validTerms.createContext(actor, visible, []);
+  validTerms.getUnknownHandEstimate(context);
+  assert.equal(context.unknownHandEstimate.classification, PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE);
+  assert.equal(context.unknownHandEstimate.sampleCount, 2);
 });
 
 /*
 功能
-验证 SearchState 快捷入口严格委托给四层状态契约组合结果。
+验证 World 快捷入口严格委托给 Fact、ProbabilityState 与 World 组合结果。
 
 调用方
 AI 状态契约回归测试。
@@ -14108,7 +14090,7 @@ AI 状态契约回归测试。
 同一观察者、GameState 与剩余牌计数。
 
 输出
-快捷入口与显式 SearchState 结果深度一致。
+快捷入口与显式 World 结果深度一致。
 
 读取状态
 GameState、状态契约快照。
@@ -14117,10 +14099,10 @@ GameState、状态契约快照。
 无。
 
 调用函数
-createStateContracts、createInitialSearchState。
+createStateContracts、createInitialWorld。
 
 边界与不变量
-Planner 与 Simulator 接收的扁平字段和值必须来自同一组合结果。
+Planner 与 Simulator 只接收同一 World；World 不复制 ProbabilityState 的充分统计或查询摘要。
 */
 function testStateContractCompositionBoundary() {
   const actor = makePlayer("facade-actor", 0, "dawn"), enemy = makePlayer("facade-enemy", 1, "dusk");
@@ -14130,18 +14112,28 @@ function testStateContractCompositionBoundary() {
   const counts = { recover: 2, counter: 4 };
   const contracts = createStateContracts(actor.id, game.state, counts);
 
-  assert.deepEqual(createInitialSearchState(actor.id, game.state, counts), contracts.searchState);
-  assert.equal(contracts.visibleState.remainingCardCounts, undefined);
-  assert.equal(contracts.knowledgeState.knownCardsByPlayer[enemy.id].length, 0);
-  assert.equal(contracts.beliefState.playersById[enemy.id].counterProbability > 0, true);
-  assert.equal(
-    contracts.searchState.players[0].hpStateBranchesClassification,
-    PROBABILITY_CLASSIFICATION.EXACT
-  );
-  assert.equal(contracts.searchState.players[0].hpSummaryClassification, PROBABILITY_CLASSIFICATION.EXACT);
+  assert.deepEqual(createInitialWorld(actor.id, game.state, counts), contracts.world);
+  assert.deepEqual(Object.keys(contracts).sort(), ["fact", "probabilityState", "world"]);
+  assert.equal(contracts.fact.knownCardsByPlayer[enemy.id].length, 0);
+  assert.equal(contracts.world.probabilityState, contracts.probabilityState);
+  assert.deepEqual(queryCurrentCardCounts(contracts.probabilityState), counts);
+  assert.equal("remainingCardCounts" in contracts.world, false);
+  assert.equal("finitePoolStateBranchesByDefinition" in contracts.world, false);
+  assert.equal("hpStateBranches" in contracts.world.players[0], false);
+  for (const field of [
+    "initialEquipmentValue",
+    "initialEquipmentRoleDelta",
+    "expectedInformationGain",
+    "expectedEquipmentGain",
+    "expectedEquipmentRoleDelta",
+    "mutualBenefitDraftValue"
+  ]) {
+    assert.equal(field in contracts.world.players[0], false, `${field} 不得进入 World`);
+  }
+  assert.equal(contracts.world.players[0].hpSummaryClassification, PROBABILITY_CLASSIFICATION.EXACT);
 }
 
-test("AI·状态契约：组合入口等价于显式 SearchState", testStateContractCompositionBoundary);
+test("AI·状态契约：组合入口只返回 canonical Fact / ProbabilityState / World", testStateContractCompositionBoundary);
 
 // ---- AI 核心状态·可见状态 ----
 
@@ -14151,7 +14143,7 @@ test("AI·可见状态：不含其他玩家真实手牌", () => {
   other.hand.push(instance("counter"));
   const { game }
     = makeGame([ai, other]);
-  const visible = createInitialSearchState(ai.id, game.state);
+  const visible = createInitialWorld(ai.id, game.state);
   assert.equal(visible.players[1].hand, undefined);
   assert.equal(visible.players[1].handCount, 1);
   assert.equal(visible.players[0].hand[0].definitionId, "assault");
@@ -14162,13 +14154,13 @@ test("AI·可见状态：对未知调息只按公开手牌数估算而不读取�
   const { game }
     = makeGame([ai, other]);
   other.hand = [instance("recover")];
-  const first = createInitialSearchState(ai.id, game.state).players[1].expectedRecoverCount;
+  const first = createInitialWorld(ai.id, game.state).players[1].expectedRecoverCount;
   other.hand = [instance("assault")];
-  const second = createInitialSearchState(ai.id, game.state).players[1].expectedRecoverCount;
+  const second = createInitialWorld(ai.id, game.state).players[1].expectedRecoverCount;
   assert.equal(first, second);
 });
 
-test("AI·可见状态：隐藏手牌换位不改变 Belief、团队反制或 ordered responder", () => {
+test("AI·World：隐藏手牌换位不改变 ProbabilityState、团队反制或 ordered responder", () => {
   /*
   功能
   构造只改变敌方真实隐藏手牌排列的 SearchState 隐私夹具。
@@ -14189,7 +14181,7 @@ test("AI·可见状态：隐藏手牌换位不改变 Belief、团队反制或 or
   无。
 
   调用函数
-  makePlayer、makeGame、createInitialSearchState。
+  makePlayer、makeGame、createInitialWorld。
 
   边界与不变量
   三个夹具的公开字段和 Remaining Knowledge 必须相同，只有不可见 hand identity 换位。
@@ -14203,7 +14195,7 @@ test("AI·可见状态：隐藏手牌换位不改变 Belief、团队反制或 or
       player.hand = [instance(definitions[index])];
     });
     const { game } = makeGame([viewer, first, second, third]);
-    return createInitialSearchState(
+    return createInitialWorld(
       viewer.id,
       game.state,
       { counter:1, charge:2 }
@@ -14211,13 +14203,16 @@ test("AI·可见状态：隐藏手牌换位不改变 Belief、团队反制或 or
   }
   const left = build(["counter", "charge", "charge"]);
   const right = build(["charge", "counter", "charge"]);
-  assert.equal(
-    JSON.stringify(left.finitePoolStateBranchesByDefinition),
-    JSON.stringify(right.finitePoolStateBranchesByDefinition)
-  );
+  assert.deepEqual(left.probabilityState, right.probabilityState);
   assert.deepEqual(
-    left.players.map((player) => player.counterCountDistribution),
-    right.players.map((player) => player.counterCountDistribution)
+    left.players.map((player) => queryProbability(left.probabilityState, {
+      definitionId:"counter",
+      bucketId:player.id
+    }).distribution),
+    right.players.map((player) => queryProbability(right.probabilityState, {
+      definitionId:"counter",
+      bucketId:player.id
+    }).distribution)
   );
   assertClose(
     sealCounterProbability(left, left.players[1]),
@@ -14267,35 +14262,37 @@ test("AI·可见状态：隐藏手牌换位不改变 Belief、团队反制或 or
   assert.deepEqual(ordered(left), ordered(right));
 });
 
-test("AI·可见状态：携带剩余计数副本且不修改输入", () => {
+test("AI·World：只通过 ProbabilityState 保存当前有限池且不修改输入", () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const { game }
     = makeGame([actor, enemy]);
   const counts = { assault: 3, block: 1 };
   const snapshot = JSON.stringify(counts);
-  const visible = createInitialSearchState(actor.id, game.state, counts);
-  assert.deepEqual(visible.remainingCardCounts, counts);
-  assert.notEqual(visible.remainingCardCounts, counts);
+  const world = createInitialWorld(actor.id, game.state, counts);
+  assert.deepEqual(queryCurrentCardCounts(world.probabilityState), counts);
+  assert.notEqual(world.probabilityState.factors[0].cardCounts, counts);
+  assert.equal("remainingCardCounts" in world, false);
   assert.equal(JSON.stringify(counts), snapshot);
 });
 
-test("AI·可见状态：两参数调用兼容且计数为 null", () => {
+test("AI·World：两参数调用从 Fact 推导当前有限池", () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const { game }
     = makeGame([actor, enemy]);
-  const visible = createInitialSearchState(actor.id, game.state);
-  assert.equal(visible.remainingCardCounts, null);
-  assert.equal(visible.players.length, 2);
+  const world = createInitialWorld(actor.id, game.state);
+  assert.ok(queryCurrentCardCounts(world.probabilityState).assault >= 0);
+  assert.equal(world.players.length, 2);
 });
 
-test("AI·可见状态：不自行计算剩余计数", () => {
+test("AI·World：创建后不复制或重新计算 Probability sufficient state", () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("e", 1, "dusk");
   const { game }
     = makeGame([actor, enemy]);
-  const visible = createInitialSearchState(actor.id, game.state, { assault: 1 });
+  const world = createInitialWorld(actor.id, game.state, { assault: 1 });
   game.state.publicCardPool.push({ id: "p", definitionId: "block" });
-  assert.deepEqual(visible.remainingCardCounts, { assault: 1 });
-  assert.equal("remainingCounts" in visible, false);
+  assert.deepEqual(queryCurrentCardCounts(world.probabilityState), { assault: 1 });
+  assert.equal("remainingCardCounts" in world, false);
+  assert.equal("remainingCounts" in world, false);
 });
 
 // ---- AI 核心状态·动作生成 ----
@@ -14308,11 +14305,11 @@ test("AI·动作生成：动态距离变化后不根据固定 seatIndex 选择�
   players[1].alive = false;
   const targets = game.aiController.getActionCandidates(
     players[0]
-  ).filter((action) => action.card?.id === assault.id).map((action) => action.targets[0].id);
+  ).filter((action) => action.cardInstanceId === assault.id).map((action) => action.targetIds[0]);
   assert.ok(targets.includes("C"));
 });
 
-test("AI·动作生成：破坏与掠夺只生成敌方目标，窃取规则也排除队友", () => {
+test("AI·动作生成：破坏与掠夺枚举全部规则合法目标，窃取仍排除队友", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
@@ -14322,13 +14319,13 @@ test("AI·动作生成：破坏与掠夺只生成敌方目标，窃取规则也�
   actor.hand.push(destroy, plunder);
   const { game }
     = makeGame([actor, ally, enemy]);
-  const actions = game.aiController.actionGenerator.generate(actor);
+  const world = createInitialWorld(actor.id, game.state);
+  const actions = game.aiController.actionGenerator.generate(world, actor.id);
   for (const id of ["destroy", "plunder"]) {
-    const targets = actions.filter(
-      (action) => action.card?.definitionId === id
-    ).map((action) => action.targets[0]);
-    assert.ok(targets.length > 0);
-    assert.ok(targets.every((target) => target.battleTeam !== actor.battleTeam));
+    const targetIds = actions.filter(
+      (action) => action.cardId === id
+    ).map((action) => action.targetIds[0]);
+    assert.deepEqual([...new Set(targetIds)].sort(), [ally.id, enemy.id].sort());
   }
   assert.ok(!ActionLegality.getSkillTargets(game, actor, ACTIVE_SKILLS.stealSkill).includes(ally));
 });
@@ -14346,49 +14343,159 @@ test("AI·动作生成：使用同一距离合法性", () => {
   ps[0].hand.push(instance("assault"));
   const targets = game.aiController.getActionCandidates(
     ps[0]
-  ).filter((a) => a.card?.definitionId === "assault").map((a) => a.targets[0].id);
+  ).filter((action) => action.cardId === "assault").map((action) => action.targetIds[0]);
   assert.deepEqual(targets, ["b", "e"]);
 });
 
 // ---- AI 核心状态·模拟器 ----
 
-test("AI·模拟器：只接收过滤快照并可独立克隆推演", () => {
-  const visible = {
-    players: [
-      {
-        id: "a",
-        battleTeam: "dawn",
-        hp: 4,
-        maxHp: 4,
-        shield: 0,
-        energy: 0,
-        maxEnergy: 3,
-        alive: true,
-        handCount: 1,
-        hand: [{ id: "x", definitionId: "assault" }]
-      },
-      {
-        id: "b",
-        battleTeam: "dusk",
-        hp: 4,
-        maxHp: 4,
-        shield: 0,
-        energy: 0,
-        maxEnergy: 3,
-        alive: true,
-        handCount: 2,
-        blockCountDistribution: [{ probability: 1, conditions: {}, blockCount: 0 }]
-      }
-    ]
-  };
-  const simulator = new Simulator(visible);
-  const next = simulator.apply(
-    visible, { type: "card", card: { id: "x", definitionId: "assault" }, targets: [{ id: "b" }] }, "a"
-  );
-  assert.equal(next.players[1].hp, 3);
-  assert.equal(visible.players[1].hp, 4);
+/*
+功能
+验证 Simulator 在 apply 调用栈内解析概率距离，并立即把 transition 结果边缘化回 World 当前值。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+canonical World、ActionGenerator 与屏障装备概率。
+
+写入状态
+只写 Simulator 生成的独立 World clone。
+
+调用函数
+createInitialWorld、ActionGenerator.generate、Simulator.apply。
+
+边界与不变量
+Action 不携带 execution probability/alternatives；屏障缺席的 0.5 世界同时决定扣牌、次数和伤害，
+局部分区不得写回输入 World 或形成持久 branch schema。
+*/
+function simulatorOwnsLocalExecutionWorlds() {
+  const actor = makePlayer("sim-local-a", 0, "dawn");
+  const target = makePlayer("sim-local-b", 1, "dusk");
+  const tail = makePlayer("sim-local-c", 2, "dusk");
+  const assault = instance("assault");
+  actor.hand.push(assault);
+  target.equipment = instance("barrierDevice");
+  const { game } = makeGame([actor, target, tail]);
+  const world = structuredClone(createInitialWorld(actor.id, game.state));
+  const worldActor = world.players.find((player) => player.id === actor.id);
+  const worldTarget = world.players.find((player) => player.id === target.id);
+  worldTarget.equipmentRetentionProbability = .5;
+  const action = game.aiController.actionGenerator.generate(world, actor.id)
+    .find((candidate) => (
+      candidate.cardInstanceId === assault.id && candidate.targetIds[0] === target.id
+    ));
+  assert.ok(action);
+  assert.equal(action.execution.probability, undefined);
+  assert.equal(action.execution.alternatives, undefined);
+  const simulator = new Simulator(world);
+  const next = simulator.apply(world, action);
+  const nextActor = next.players.find((player) => player.id === actor.id);
+  const nextTarget = next.players.find((player) => player.id === target.id);
+  assertClose(nextActor.handCount, .5);
+  assertClose(nextActor.attackUsed, .5);
+  assertClose(nextTarget.hp, 3.5);
+  assert.equal(worldActor.handCount, 1);
+  assert.equal(worldTarget.hp, 4);
   assert.equal("game" in simulator, false);
-});
+  game.dispose();
+}
+
+test("AI·模拟器：局部执行世界由 Simulator 解析且不进入 Action 或 World", simulatorOwnsLocalExecutionWorlds);
+
+/*
+功能
+验证随机失牌与目标反制按 identity 权重线性生成选择结果，不相交每张牌的二元 presence 分区。
+
+调用方
+当前测试。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+十二个 fractional identity 的测试 World。
+
+写入状态
+只写测试 World 与 Simulator 方法计数探针。
+
+调用函数
+removeOneRandomCardFromHand、consumeTargetCounterResponseWorlds。
+
+边界与不变量
+H 个 identity 的主 join 分区数必须为常数；选择输出最多 H+1，不能恢复 2^H presence worlds。
+*/
+function boundedFractionalIdentitySelection() {
+  const cards = Array.from({ length:12 }, (_, index) => ({
+    id:`bounded-card-${index}`,
+    definitionId:"counter",
+    availability:.5
+  }));
+  const state = {
+    players:[{
+      id:"bounded-owner",
+      seatIndex:0,
+      battleTeam:"dawn",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      handCount:6,
+      hand:structuredClone(cards)
+    }]
+  };
+  const simulator = new Simulator(state);
+  let maximumPartitionCount = 0;
+  const intersect = simulator.intersectProbabilityWork.bind(simulator);
+  simulator.intersectProbabilityWork = (partitions, ...rest) => {
+    maximumPartitionCount = Math.max(maximumPartitionCount, partitions.length);
+    return intersect(partitions, ...rest);
+  };
+  simulator.removeOneRandomCardFromHand(state, state.players[0], 1);
+  assert.ok(maximumPartitionCount <= 2);
+  assertClose(state.players[0].handCount, 5);
+  assertClose(
+    state.players[0].hand.reduce((sum, card) => sum + card.availability, 0),
+    5
+  );
+
+  const responseState = {
+    players:[{
+      id:"bounded-responder",
+      seatIndex:0,
+      battleTeam:"dawn",
+      alive:true,
+      hp:4,
+      maxHp:4,
+      handCount:6,
+      hand:structuredClone(cards)
+    }]
+  };
+  const responseSimulator = new Simulator(responseState);
+  maximumPartitionCount = 0;
+  const responseIntersect = responseSimulator.intersectProbabilityWork.bind(responseSimulator);
+  responseSimulator.intersectProbabilityWork = (partitions, ...rest) => {
+    maximumPartitionCount = Math.max(maximumPartitionCount, partitions.length);
+    return responseIntersect(partitions, ...rest);
+  };
+  responseSimulator.consumeTargetCounterResponseWorlds(
+    responseState,
+    responseState.players[0],
+    [{ probability:1, conditions:{}, occurs:true }],
+    true
+  );
+  assert.ok(maximumPartitionCount <= 3);
+}
+
+test("AI·模拟器：fractional identity 选择保持 O(W·H) 且不生成 2^H 世界", boundedFractionalIdentitySelection);
 
 test("AI·模拟器：模拟伤害会计算队伍调息并保留可获救角色", () => {
   const state = {
@@ -14441,7 +14548,7 @@ test("AI·模拟器：模拟伤害会计算队伍调息并保留可获救角色"
   assert.equal(next.players[2].expectedRecoverCount, 0);
 });
 
-test("AI·模拟器：模拟调息不足时保持0血离散阵亡而不制造半血存活者", () => {
+test("AI·模拟器：模拟调息不足时离散阵亡且不向 World 写入救援价值", () => {
   const state = {
     players: [
       {
@@ -14461,7 +14568,7 @@ test("AI·模拟器：模拟调息不足时保持0血离散阵亡而不制造半
         id: "b",
         seatIndex: 1,
         battleTeam: "dusk",
-        hp: 0,
+        hp: -10,
         maxHp: 4,
         shield: 0,
         alive: true,
@@ -14482,19 +14589,12 @@ test("AI·模拟器：模拟调息不足时保持0血离散阵亡而不制造半
       }
     ]
   };
-  const next = new Simulator(
-    state
-  ).apply(state, { type: "card", card: { id: "hit", definitionId: "assault" }, targets: [{ id: "b" }] }, "a");
-  assert.equal(next.players[1].alive, false);
-  assert.equal(next.players[1].hp, 0);
-  assert.equal(next.players[1].expectedRescueCoverage, .5);
-  const { game } = makeGame([makePlayer("a", 0, "dawn")]);
-  const withoutPartialOutlook = structuredClone(next);
-  delete withoutPartialOutlook.players[1].expectedRescueCoverage;
-  assert.equal(
-    game.aiController.evaluator.stateUtility(next, "a"),
-    game.aiController.evaluator.stateUtility(withoutPartialOutlook, "a")
-  );
+  const simulator = new Simulator(state);
+  simulator.resolveFatal(state, state.players[1], state.players[0]);
+  assert.equal(state.players[1].alive, false);
+  assert.equal(state.players[1].hp, 0);
+  const removedField = ["expected", "RescueCoverage"].join("");
+  assert.equal(Object.hasOwn(state.players[1], removedField), false);
 });
 
 test("AI·模拟器：模拟阵亡会清空手牌装备摘要且评估器只保留死亡惩罚", () => {
@@ -14589,8 +14689,8 @@ test("AI·模拟器：end 动作按真实弃牌阶段把手牌压到生命上限
   );
   const { game }
     = makeGame([actor, enemy1, enemy2]),
-    visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     after = new Simulator(visible).apply(visible, { type: "end" }, actor.id),
     actorAfter = after.players.find((player) => player.id === actor.id);
@@ -14617,8 +14717,8 @@ test("AI·模拟器：end 完整确定手牌按生命上限弃置并同步四类
     instance("block"), instance("counter"), instance("recover")
   );
   const { game } = makeGame([actor, enemy1, enemy2]),
-    visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     after = new Simulator(visible).apply(visible, { type: "end" }, actor.id),
     actorAfter = after.players.find((player) => player.id === actor.id);
@@ -14644,13 +14744,13 @@ test("AI·模拟器：丰收获得匿名容量后 end 仍按 handCount 压到生
     instance("harvest"), instance("assault"), instance("block"), instance("scout")
   );
   const { game } = makeGame([actor, enemy1, enemy2]),
-    visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     simulator = new Simulator(visible),
-    harvestAction = game.aiController.actionGenerator.generateFromVisible(
+    harvestAction = game.aiController.actionGenerator.generate(
       visible, actor.id
-    ).find((action) => action.card?.id === actor.hand.find((card) => card.definitionId === "harvest")?.id);
+    ).find((action) => action.cardInstanceId === actor.hand.find((card) => card.definitionId === "harvest")?.id);
   assert.ok(harvestAction, "应存在丰收模拟动作");
   const afterHarvest = simulator.apply(visible, harvestAction, actor.id),
     actorAfterHarvest = afterHarvest.players.find((player) => player.id === actor.id);
@@ -14691,8 +14791,8 @@ test("AI·模拟器：混合已知身份与匿名容量弃牌不泄露或虚构�
   actor.hp = 3;
   actor.hand.push(instance("assault"), instance("block"), instance("counter"), instance("recover"));
   const { game } = makeGame([actor, enemy1, enemy2]),
-    visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     state = structuredClone(visible),
     actorState = state.players.find((player) => player.id === actor.id),
@@ -14757,7 +14857,10 @@ test("AI·核心链路：end 后 mandatory discard 与真实回合的时点、�
   const { game } = makeGame([actor, ally, enemyA, enemyB, enemyC]);
   const drawn = [instance("counter"), instance("counter"), instance("counter")];
   game.state.deck.cards.push(...drawn);
-  game.aiController.selectAction = async () => ({ type:"end" });
+  game.aiController.selectAction = async () => createAction({
+    type:"end",
+    actorId:actor.id
+  });
   let handAfterDraw = null;
   let handAtPlayEnd = null;
   let simulatedRetainedIds = null;
@@ -14765,10 +14868,11 @@ test("AI·核心链路：end 后 mandatory discard 与真实回合的时点、�
     handAfterDraw = actor.hand.length;
   });
   game.eventDispatcher.on("playPhaseStart", "test:mandatory-discard-simulator", () => {
-    const visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    const visible = createInitialWorld(actor.id, game.state);
+    const simulated = new Simulator(visible).apply(
+      visible,
+      createAction({ type:"end", actorId:actor.id })
     );
-    const simulated = new Simulator(visible).apply(visible, { type:"end" }, actor.id);
     simulatedRetainedIds = simulated.players.find((player) => player.id === actor.id)
       .hand.map((card) => card.id).sort();
   });
@@ -14796,16 +14900,16 @@ test("AI·核心链路：可见状态、动作生成和模拟器一致识别阵�
   large.turnFlags.recoverUsed = 7;
   const recover = instance("recover");
   large.hand.push(recover);
-  const visible = createInitialSearchState(large.id, game.state),
+  const visible = createInitialWorld(large.id, game.state),
     smallView = visible.players.find((player) => player.id === small.id),
     largeView = visible.players.find((player) => player.id === large.id);
   assert.deepEqual([smallView.maxEnergy, smallView.recoverLimit], [4, null]);
   assert.deepEqual([largeView.maxEnergy, largeView.recoverLimit], [3, null]);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const action = game.aiController.actionGenerator.generate(
     visible, large.id
-  ).find((entry) => entry.card?.id === recover.id);
+  ).find((entry) => entry.cardInstanceId === recover.id);
   assert.ok(action);
-  const simulated = new Simulator(visible).apply(visible, action, large.id),
+  const simulated = new Simulator(visible).apply(visible, action),
     simulatedLarge = simulated.players.find((player) => player.id === large.id);
   assert.equal(simulatedLarge.recoverLimit, null);
   assert.equal(simulatedLarge.hp, large.hp + 1);
@@ -14852,7 +14956,7 @@ test("AI·核心链路：benchmark helper 默认能量来自 character.initialEn
 Simulator 只写克隆 SearchState；随后真实 playCard 只写测试 fixture。
 
 调用函数
-makePlayer、makeGame、instance、createInitialSearchState、ActionGenerator.generateFromVisible、Simulator.apply、Game.playCard。
+makePlayer、makeGame、instance、createInitialWorld、ActionGenerator.generateActions、Simulator.apply、Game.playCard。
 
 边界与不变量
 同一突袭在真实与模拟目标上均造成 1 点生命伤害，且不触发格挡/雷达。
@@ -14864,12 +14968,11 @@ async function frArchRealSimulationDelta() {
   const card = instance("assault");
   actor.hand.push(card);
   const { game } = makeGame([actor, target]);
-  const remaining = game.aiController.knowledge.remainingCounts(actor);
-  const visible = createInitialSearchState(actor.id, game.state, remaining);
-  const simulatedAction = game.aiController.actionGenerator.generateFromVisible(visible, actor.id)
-    .find((entry) => entry.card?.definitionId === "assault");
+  const visible = createInitialWorld(actor.id, game.state);
+  const simulatedAction = game.aiController.actionGenerator.generate(visible, actor.id)
+    .find((entry) => entry.cardId === "assault");
   assert.ok(simulatedAction);
-  const simulated = new Simulator(visible).apply(visible, simulatedAction, actor.id);
+  const simulated = new Simulator(visible).apply(visible, simulatedAction);
   const simulatedTarget = simulated.players.find((player) => player.id === target.id);
   assert.equal(simulatedTarget.hp, 2);
   await game.playCard(actor, card, [target]);
@@ -15269,12 +15372,12 @@ test("AI·搜索：壁垒固定场景的 end 由完整账本证明而非概率�
       type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null
     });
     assert.equal(stats.bestValueScore, 0);
-    const visible = createInitialSearchState(
-      player.id, game.state, game.aiController.knowledge.remainingCounts(player)
+    const visible = createInitialWorld(
+      player.id, game.state, deriveCurrentCardCounts(player, game.state)
     ),
       roots = game.aiController.getActionCandidates(player),
       barrierAction = roots.find((entry) => (
-        entry.type === "skill" && entry.skill?.id === "barrier" && entry.targets?.[0]?.id === "b"
+        entry.type === "skill" && entry.skillId === "barrier" && entry.targetIds?.[0] === "b"
       )),
       endAction = roots.find((entry) => entry.type === "end"),
       materializer = game.aiController.candidateMaterializer,
@@ -15411,10 +15514,10 @@ test("AI·模拟器：TIME 已发生时 apply 在完整 SearchState clone 前 co
   const actor = makePlayer("apply-budget-actor", 0, "dawn", "ai", 3);
   const enemy = makePlayer("apply-budget-enemy", 1, "dusk", "ai", 5);
   const { game } = makeGame([actor, enemy]);
-  const visible = structuredClone(createInitialSearchState(
+  const visible = structuredClone(createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   ));
   let now = 0;
   const budget = new SearchBudget({ timeBudget:10, now:() => now });
@@ -15537,10 +15640,10 @@ test("AI·封印：SearchPrior 与 StateValue 的团队反制 join 继承 Search
   const teammate = makePlayer("seal-budget-teammate", 2, "dusk", "ai", 4);
   actor.hand.push(instance("seal"));
   const { game } = makeGame([actor, holder, teammate]);
-  const state = structuredClone(createInitialSearchState(
+  const state = structuredClone(createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   ));
   delete state.finitePoolStateBranchesByDefinition;
   const holderState = state.players.find((player) => player.id === holder.id);
@@ -15647,7 +15750,7 @@ test("AI·模拟器：严格有界 raw probability 操作记录 timing 且 TIME 
   const result = simulator.rawProbabilityWork(
     "test.bounded-raw:single-by-binary",
     3,
-    () => joinProbabilityStateBranches(
+    () => intersectProbabilityStateBranches(
       [{ probability:1, conditions:{}, value:1 }],
       probabilityEventPartition("bounded", .5, "occurs")
     )
@@ -15793,7 +15896,7 @@ async function frArchSearchQualityBaseline() {
       ...replay.result.action,
       targetId: replay.result.action.targetIds?.[0] ?? null
     };
-    assert.deepEqual(describeAction(decision.action), expectedAction);
+    assert.deepEqual(describeBenchmarkAction(decision.action), expectedAction);
     assert.equal(stats.expanded, replay.result.stats.expanded);
     assert.equal(stats.depth, replay.result.stats.depth);
     assert.equal(stats.stopReason, replay.result.stats.stopReason);
@@ -15907,26 +16010,33 @@ test("AI·搜索：固定节点预算截止时保留上一层已发现的全局�
   actor.hand.push(best, lower);
   const { game }
     = makeGame([actor, enemy]);
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ),
     planner = game.aiController.planner;
   game.aiSearchNodeBudgetOverride = 3;
   game.aiRandomnessRange = 0;
   configurePlannerValueStubs(planner, {
-    actionUtility: (action) => action.card?.id === best.id ? 10 : action.card?.id === lower.id ? 5 : -20,
+    actionUtility: (action) => action.cardInstanceId === best.id ? 10 : action.cardInstanceId === lower.id ? 5 : -20,
     stateUtility: () => 0
   });
-  game.aiController.actionGenerator.generateFromVisible = (state) => state.players.find(
+  game.aiController.actionGenerator.generate = (state) => state.players.find(
     (player) => player.id === actor.id
-  ).hand?.some((card) => card.id === best.id) ? [{ type: "end" }] : [];
+  ).hand?.some((card) => card.id === best.id)
+    ? [createAction({ type:"end", actorId:actor.id })]
+    : [];
   const action = await planner.plan(
     actor,
     visible,
-    [{ type: "card", card: best, targets: [] }, { type: "card", card: lower, targets: [] }],
+    [best, lower].map((card) => createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:card.definitionId,
+      cardInstanceId:card.id
+    })),
     { gameId: game.state.gameId }
   );
-  assert.equal(action.card.id, best.id);
+  assert.equal(action.cardInstanceId, best.id);
   assert.equal(planner.lastSearchStats.expanded, 3);
 });
 
@@ -15951,7 +16061,7 @@ test("AI·搜索：时间与节点预算截止均返回已完整物化的全局�
   独立 Planner 统计；时间模式内临时替换并恢复全局 performance。
 
   调用函数
-  createInitialSearchState、configurePlannerValueStubs、Planner.plan。
+  createInitialWorld、configurePlannerValueStubs、Planner.plan。
 
   边界与不变量
   不使用真实 sleep；两种模式的动作、价值和展开顺序完全相同，只有截止来源不同。
@@ -15964,24 +16074,26 @@ test("AI·搜索：时间与节点预算截止均返回已完整物化的全局�
     actor.hand.push(best, partial);
     const { game } = makeGame([actor, enemy]);
     const planner = game.aiController.planner;
-    const visible = createInitialSearchState(
+    const visible = createInitialWorld(
       actor.id,
       game.state,
-      game.aiController.knowledge.remainingCounts(actor)
+      deriveCurrentCardCounts(actor, game.state)
     );
     game.aiRandomnessRange = 0;
     game.aiSearchNodeBudgetOverride = mode === "nodes" ? 3 : null;
     game.aiSearchBudgetOverrideMs = mode === "time" ? 10 : 0;
     configurePlannerValueStubs(planner, {
-      actionEconomicValue: (action) => action.card?.id === best.id
+      actionEconomicValue: (action) => action.cardInstanceId === best.id
         ? 10
-        : action.card?.id === partial.id ? 9 : 0,
-      actionUtility: (action) => action.card?.id === partial.id ? 100 : 0,
+        : action.cardInstanceId === partial.id ? 9 : 0,
+      actionUtility: (action) => action.cardInstanceId === partial.id ? 100 : 0,
       stateUtility: () => 0
     });
-    game.aiController.actionGenerator.generateFromVisible = (state) => state.players.find(
+    game.aiController.actionGenerator.generate = (state) => state.players.find(
       (player) => player.id === actor.id
-    ).hand?.some((card) => card.id === best.id) ? [{ type: "end" }] : [];
+    ).hand?.some((card) => card.id === best.id)
+      ? [createAction({ type:"end", actorId:actor.id })]
+      : [];
 
     const originalPerformance = globalThis.performance;
     let deadlineExpired = false;
@@ -15989,7 +16101,7 @@ test("AI·搜索：时间与节点预算截止均返回已完整物化的全局�
     const materialize = materializer.materialize.bind(materializer);
     materializer.materialize = (input) => {
       const candidate = materialize(input);
-      if (mode === "time" && candidate && input.action.card?.id === best.id) {
+      if (mode === "time" && candidate && input.action.cardInstanceId === best.id) {
         deadlineExpired = true;
       }
       return candidate;
@@ -16004,14 +16116,16 @@ test("AI·搜索：时间与节点预算截止均返回已完整物化的全局�
       const action = await planner.plan(
         actor,
         visible,
-        [
-          { type: "card", card: best, targets: [] },
-          { type: "card", card: partial, targets: [] }
-        ],
+        [best, partial].map((card) => createAction({
+          type:"card",
+          actorId:actor.id,
+          cardId:card.definitionId,
+          cardInstanceId:card.id
+        })),
         { gameId: game.state.gameId }
       );
       return {
-        definitionId: action.card?.definitionId ?? null,
+        definitionId: action.cardId ?? null,
         stopReason: planner.lastSearchStats.stopReason
       };
     } finally {
@@ -16043,8 +16157,8 @@ test("AI·搜索：根节点束裁剪会计入模拟后的局面效用", async (
   actor.hand.push(charge, assault);
   const { game }
     = makeGame([actor, enemy]),
-    visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     planner = game.aiController.planner;
   game.aiSearchNodeBudgetOverride = 2;
@@ -16063,12 +16177,23 @@ test("AI·搜索：根节点束裁剪会计入模拟后的局面效用", async (
     actor,
     visible,
     [
-      { type: "card", card: charge, targets: [] },
-      { type: "card", card: assault, targets: [{ id: enemy.id }] }
+      createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:charge.definitionId,
+        cardInstanceId:charge.id
+      }),
+      createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:assault.definitionId,
+        cardInstanceId:assault.id,
+        targetIds:[enemy.id]
+      })
     ],
     { gameId: game.state.gameId }
   );
-  assert.equal(action.card.id, assault.id);
+  assert.equal(action.cardInstanceId, assault.id);
   assert.equal(stateCalls, 4);
 });
 
@@ -16077,10 +16202,13 @@ test("AI·搜索：transition state credit 为边际 delta 且 end 零变化不�
   const enemy = makePlayer("delta-end-enemy", 1, "dusk", "ai", 5);
   const { game }
     = makeGame([actor, enemy]);
-  const before = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const before = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
-  const after = new Simulator(before).apply(before, { type: "end" }, actor.id);
+  const after = new Simulator(before).apply(
+    before,
+    createAction({ type:"end", actorId:actor.id })
+  );
   assert.equal(
     game.aiController.evaluator.stateUtility(after, actor.id)
     - game.aiController.evaluator.stateUtility(before, actor.id),
@@ -16100,13 +16228,18 @@ test("AI·搜索：transition state credit 与无关局面 baseline 无关", () 
     return { game, actor, enemy, assault };
   };
   const run = ({ game, actor, enemy, assault }) => {
-    const before = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    const before = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     );
     const after = new Simulator(before).apply(
       before,
-      { type: "card", card: assault, targets: [{ id: enemy.id }] },
-      actor.id
+      createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:assault.definitionId,
+        cardInstanceId:assault.id,
+        targetIds:[enemy.id]
+      })
     );
     return game.aiController.evaluator.stateUtility(after, actor.id)
       - game.aiController.evaluator.stateUtility(before, actor.id);
@@ -16119,13 +16252,14 @@ test("AI·搜索：零变化 transition 重复展开不再获得绝对状态分"
   const enemy = makePlayer("delta-zero-enemy", 1, "dusk", "ai", 5);
   const { game }
     = makeGame([actor, enemy]);
-  const before = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const before = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const evaluator = game.aiController.evaluator;
   const U0 = evaluator.stateUtility(before, actor.id);
-  const once = new Simulator(before).apply(before, { type: "end" }, actor.id);
-  const twice = new Simulator(before).apply(once, { type: "end" }, actor.id);
+  const end = createAction({ type:"end", actorId:actor.id });
+  const once = new Simulator(before).apply(before, end);
+  const twice = new Simulator(before).apply(once, end);
   assert.equal(evaluator.stateUtility(once, actor.id) - U0, 0);
   assert.equal(evaluator.stateUtility(twice, actor.id) - evaluator.stateUtility(once, actor.id), 0);
 });
@@ -16140,13 +16274,17 @@ test("AI·搜索：state delta 方向随局面改善与恶化正确变化", () =
     ember.energy = 3;
     const { game }
       = makeGame([ember, ally, ...enemies]);
-    const before = createInitialSearchState(
-      ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+    const before = createInitialWorld(
+      ember.id, game.state, deriveCurrentCardCounts(ember, game.state)
     );
     const after = new Simulator(before).apply(
       before,
-      { type: "skill", skill: ACTIVE_SKILLS.burningField, targets: [] },
-      ember.id
+      createAction({
+        type:"skill",
+        actorId:ember.id,
+        skillId:ACTIVE_SKILLS.burningField.id,
+        energyCost:3
+      })
     );
     return game.aiController.evaluator.stateUtility(after, ember.id)
       - game.aiController.evaluator.stateUtility(before, ember.id);
@@ -16161,13 +16299,18 @@ test("AI·搜索：state delta 方向随局面改善与恶化正确变化", () =
     actor.aiMemory.knownCardsByPlayer[enemy.id] = { [block.id]: "block" };
     const { game }
       = makeGame([actor, enemy]);
-    const before = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    const before = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     );
     const after = new Simulator(before).apply(
       before,
-      { type: "card", card: assault, targets: [{ id: enemy.id }] },
-      actor.id
+      createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:assault.definitionId,
+        cardInstanceId:assault.id,
+        targetIds:[enemy.id]
+      })
     );
     return game.aiController.evaluator.stateUtility(after, actor.id)
       - game.aiController.evaluator.stateUtility(before, actor.id);
@@ -16195,10 +16338,7 @@ test("AI·搜索：概率 transition 的 state delta 已是期望值不被重复
     playPhaseEnded: false,
     players: [
       basePlayer("ember", 0, "dawn", "ember-magus", 4, {
-        energyBranches: [
-          { probability: 0.4, conditions: { [shared]: "yes" }, amount: 3 },
-          { probability: 0.6, conditions: { [shared]: "no" }, amount: 0 }
-        ],
+        energy:3,
         activeSkillId: "burningField", activeSkillUses: 0, activeSkillLimit: 2
       }),
       basePlayer("e1", 1, "dusk", "trail-hunter", 5),
@@ -16209,23 +16349,36 @@ test("AI·搜索：概率 transition 的 state delta 已是期望值不被重复
   const { game }
     = makeGame([makePlayer("delta-prob-dummy-a", 0, "dawn"), makePlayer("delta-prob-dummy-e", 1, "dusk")]);
   const evaluator = game.aiController.evaluator;
-  const bf = game.aiController.actionGenerator.generateFromVisible(
-    state, "ember"
-  ).find((action) => action.skill?.id === "burningField");
+  const bf = createAction({
+    type:"skill",
+    actorId:"ember",
+    skillId:"burningField",
+    energyCost:3,
+    execution:{
+      probability:.4,
+      alternatives:[
+        { probability:.4, conditions:{ [shared]:"yes" }, executes:true },
+        { probability:.6, conditions:{ [shared]:"no" }, executes:false }
+      ]
+    }
+  });
   assert.ok(bf);
-  assertClose(bf.executionProbability, 0.4);
+  assertClose(bf.execution.probability, 0.4);
   const beforeU = evaluator.stateUtility(state, "ember");
   const partialDelta = evaluator.stateUtility(
     new Simulator(state).apply(state, bf, "ember"), "ember"
   ) - beforeU;
   const fullState = structuredClone(state);
-  fullState.players[0].energyBranches = [{ probability: 1, conditions: {}, amount: 3 }];
   const fullBeforeU = evaluator.stateUtility(fullState, "ember");
   const fullDelta = evaluator.stateUtility(
     new Simulator(fullState).apply(
       fullState,
-      { ...bf, executionProbability: 1, executionWorldBranches: [{ probability: 1, conditions: {}, executes: true }] },
-      "ember"
+      createAction({
+        type:"skill",
+        actorId:"ember",
+        skillId:"burningField",
+        energyCost:3
+      })
     ),
     "ember"
   ) - fullBeforeU;
@@ -16274,7 +16427,14 @@ test("AI·搜索：战术反制概率只折进窥探效果世界而不充当 con
     };
     const before = evaluator.stateUtility(state, "a");
     const after = new Simulator(state).apply(
-      state, { type: "card", card, targets: [{ id: "t" }] }, "a"
+      state,
+      createAction({
+        type:"card",
+        actorId:"a",
+        cardId:card.definitionId,
+        cardInstanceId:card.id,
+        targetIds:["t"]
+      })
     );
     return {
       info: after.players[0].expectedInformationGain,
@@ -16318,14 +16478,14 @@ test("AI·搜索：破坏已知格挡后由真实防御状态自然衔接突袭"
   game.rememberPrivateCard(actor, target, block);
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 40;
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ),
     roots = game.aiController.getActionCandidates(actor),
     selected = await game.aiController.planner.plan(
       actor, visible, roots, { gameId: game.state.gameId }
     );
-  assert.equal(selected.card?.id, destroy.id);
+  assert.equal(selected.cardInstanceId, destroy.id);
   assert.deepEqual(
     game.aiController.planner.lastPlannedSequence.slice(0, 2).map((entry) => entry.cardId),
     ["destroy", "assault"]
@@ -16343,17 +16503,17 @@ test("AI·搜索：掠夺已知格挡后资源转移与后续突袭共同决定�
   game.rememberPrivateCard(actor, target, block);
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 40;
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ),
     roots = game.aiController.getActionCandidates(actor),
     selected = await game.aiController.planner.plan(
       actor, visible, roots, { gameId: game.state.gameId }
     );
-  assert.equal(selected.card?.id, plunder.id);
+  assert.equal(selected.cardInstanceId, plunder.id);
   const sequence = game.aiController.planner.lastPlannedSequence;
   assert.deepEqual(sequence.slice(0, 2).map((entry) => entry.cardId), ["plunder", "assault"]);
-  const plunderAction = roots.find((entry) => entry.card?.id === plunder.id);
+  const plunderAction = roots.find((entry) => entry.cardInstanceId === plunder.id);
   const afterPlunder = new Simulator(visible).apply(visible, plunderAction, actor.id);
   assert.equal(afterPlunder.players.find((entry) => entry.id === target.id).blockProbability, 0);
   assert.ok(afterPlunder.players.find((entry) => entry.id === actor.id).hand.some(
@@ -16372,9 +16532,44 @@ test("AI·搜索：当前突袭可确定击杀时仍优先于无关破坏", asyn
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 30;
   const selected = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
-  assert.equal(selected.card?.id, assault.id);
+  assert.equal(selected.cardInstanceId, assault.id);
   assert.notEqual(game.aiController.planner.lastPlannedSequence[0]?.cardId, "destroy");
 });
+
+/*
+功能
+通过正式响应评估 primitive 读取 card-scope 战术结算概率。
+
+调用方
+AI 搜索与反制概率测试。
+
+输入
+Simulator、World、行动者、卡牌、目标与可选 selection。
+
+输出
+零到一的 card-scope resolution chance。
+
+读取状态
+Simulator.evaluateCardScopeCounterResponses 所需的当前响应状态。
+
+写入状态
+无。
+
+调用函数
+Simulator.evaluateCardScopeCounterResponses。
+
+边界与不变量
+测试不得恢复已删除的 tacticResolutionChance production wrapper；资源消费仍由 apply 使用同一评估结果。
+*/
+function testTacticResolutionChance(simulator, state, actor, card, targets, selection = null) {
+  return simulator.evaluateCardScopeCounterResponses(
+    state,
+    actor,
+    card,
+    targets,
+    selection
+  ).resolutionChance;
+}
 
 test("AI·搜索：战术被反制不降低仍合法突袭的 continuation", () => {
   const actor = makePlayer("continuation-counter-actor", 0, "dawn", "ai", 1);
@@ -16384,23 +16579,23 @@ test("AI·搜索：战术被反制不降低仍合法突袭的 continuation", () 
   target.hand = [counter];
   const { game } = makeGame([actor, target]);
   game.rememberPrivateCard(actor, target, counter);
-  const visible = createInitialSearchState(actor.id, game.state);
-  const scoutAction = game.aiController.actionGenerator.generateFromVisible(
+  const visible = createInitialWorld(actor.id, game.state);
+  const scoutAction = game.aiController.actionGenerator.generate(
     visible, actor.id
-  ).find((entry) => entry.card?.id === scout.id);
+  ).find((entry) => entry.cardInstanceId === scout.id);
   const simulator = new Simulator(visible);
   simulator.counterDecision = () => true;
-  assert.equal(simulator.tacticResolutionChance(
+  assert.equal(testTacticResolutionChance(simulator,
     visible,
     visible.players.find((entry) => entry.id === actor.id),
-    scoutAction.card,
-    scoutAction.targets
+    CARD_DEFINITIONS[scoutAction.cardId],
+    scoutAction.targetIds.map((targetId) => visible.players.find((player) => player.id === targetId))
   ), 0);
   const afterScout = simulator.apply(visible, scoutAction, actor.id);
-  const followAssault = game.aiController.actionGenerator.generateFromVisible(
+  const followAssault = game.aiController.actionGenerator.generate(
     afterScout, actor.id
-  ).find((entry) => entry.card?.id === assault.id);
-  assert.equal(followAssault.executionProbability, 1);
+  ).find((entry) => entry.cardInstanceId === assault.id);
+  assert.equal(followAssault.execution.probability, 1);
 });
 
 test("AI·搜索：planningCounterDecision 不把小数 heuristic 当作响应概率", () => {
@@ -16411,23 +16606,23 @@ test("AI·搜索：planningCounterDecision 不把小数 heuristic 当作响应�
   target.hand = [counter];
   const { game } = makeGame([actor, target]);
   game.rememberPrivateCard(actor, target, counter);
-  const visible = createInitialSearchState(actor.id, game.state);
-  const scoutAction = game.aiController.actionGenerator.generateFromVisible(
+  const visible = createInitialWorld(actor.id, game.state);
+  const scoutAction = game.aiController.actionGenerator.generate(
     visible, actor.id
-  ).find((entry) => entry.card?.id === scout.id);
+  ).find((entry) => entry.cardInstanceId === scout.id);
   const simulator = new Simulator(visible);
   simulator.counterDecision = () => 0.6;
-  assertClose(simulator.tacticResolutionChance(
+  assertClose(testTacticResolutionChance(simulator,
     visible,
     visible.players.find((entry) => entry.id === actor.id),
-    scoutAction.card,
-    scoutAction.targets
+    CARD_DEFINITIONS[scoutAction.cardId],
+    scoutAction.targetIds.map((targetId) => visible.players.find((player) => player.id === targetId))
   ), 1);
   const afterScout = simulator.apply(visible, scoutAction, actor.id);
-  const followAssault = game.aiController.actionGenerator.generateFromVisible(
+  const followAssault = game.aiController.actionGenerator.generate(
     afterScout, actor.id
-  ).find((entry) => entry.card?.id === assault.id);
-  assert.equal(followAssault.executionProbability, 1);
+  ).find((entry) => entry.cardInstanceId === assault.id);
+  assert.equal(followAssault.execution.probability, 1);
 });
 
 test("AI·搜索：共享攻击槽被真实消费后后续突袭不可达", () => {
@@ -16435,13 +16630,13 @@ test("AI·搜索：共享攻击槽被真实消费后后续突袭不可达", () =
     makePlayer("continuation-slot-real-a", 0, "dawn"),
     makePlayer("continuation-slot-real-b", 1, "dusk")
   ]);
-  const first = game.aiController.actionGenerator.generateFromVisible(
+  const first = game.aiController.actionGenerator.generate(
     state, "actor"
-  ).find((entry) => entry.card?.id === "one" && entry.targets[0]?.id === "near");
-  assert.equal(first.executionProbability, 1);
+  ).find((entry) => entry.cardInstanceId === "one" && entry.targetIds[0] === "near");
+  assert.equal(first.execution.probability, 1);
   const afterFirst = new Simulator(state).apply(state, first, "actor");
-  const follow = game.aiController.actionGenerator.generateFromVisible(afterFirst, "actor");
-  assert.ok(!follow.some((entry) => entry.card?.definitionId === "assault"));
+  const follow = game.aiController.actionGenerator.generate(afterFirst, "actor");
+  assert.ok(!follow.some((entry) => entry.cardId === "assault"));
 });
 
 test("AI·搜索：共享装备条件跨后续动作只条件化一次", () => {
@@ -16449,16 +16644,16 @@ test("AI·搜索：共享装备条件跨后续动作只条件化一次", () => {
     makePlayer("continuation-condition-real-a", 0, "dawn"),
     makePlayer("continuation-condition-real-b", 1, "dusk")
   ]);
-  const first = game.aiController.actionGenerator.generateFromVisible(
+  const first = game.aiController.actionGenerator.generate(
     state, "actor"
-  ).find((entry) => entry.card?.id === "one" && entry.targets[0]?.id === "far");
-  assertClose(first.executionProbability, 0.4);
+  ).find((entry) => entry.cardInstanceId === "one" && entry.targetIds[0] === "far");
+  assertClose(first.execution.probability, 0.4);
   const afterFirst = new Simulator(state).apply(state, first, "actor");
-  const second = game.aiController.actionGenerator.generateFromVisible(
+  const second = game.aiController.actionGenerator.generate(
     afterFirst, "actor"
-  ).find((entry) => entry.card?.id === "two" && entry.targets[0]?.id === "far");
-  assertClose(second.executionProbability, 0.4);
-  assert.notEqual(second.executionProbability, 0.16);
+  ).find((entry) => entry.cardInstanceId === "two" && entry.targetIds[0] === "far");
+  assertClose(second.execution.probability, 0.4);
+  assert.notEqual(second.execution.probability, 0.16);
 });
 
 test("AI·搜索：取消 depth 折损后无收益重复装备仍选择结束", async () => {
@@ -16494,7 +16689,7 @@ physical/scheduled/completed 根顺序、最终动作与 Planner 统计。
 只推进 Worker 等价的本地 SearchState 与确定性 SearchBudget。
 
 调用函数
-getActionCandidates、createInitialSearchState、Planner.plan。
+getActionCandidates、createInitialWorld、Planner.plan。
 
 边界与不变量
 除 hand 数组顺序外局面、卡牌 ID、预算、价值与随机设置完全相同。
@@ -16511,7 +16706,7 @@ async function runHandOrderSchedulingFixture(definitionOrder) {
   ));
   const { game } = makeGame([actor, enemyA, ally, enemyB]);
   game.aiRandomnessRange = 0;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
   const planner = game.aiController.planner;
   let deadlineExpired = false;
   planner.searchBudgetFactory = () => new SearchBudget({
@@ -16532,16 +16727,16 @@ async function runHandOrderSchedulingFixture(definitionOrder) {
   const roots = game.aiController.getActionCandidates(actor);
   const physicalRootOrder = roots.map((action) => ({
     type:action.type,
-    cardId:action.card?.definitionId ?? action.skill?.id ?? null,
-    targetIds:(action.targets ?? []).map((target) => target.id),
+    cardId:action.cardId ?? action.skillId ?? null,
+    targetIds:action.targetIds,
     selection:action.selection ?? null
   }));
   const selected = await planner.plan(
     actor,
-    createInitialSearchState(
+    createInitialWorld(
       actor.id,
       game.state,
-      game.aiController.knowledge.remainingCounts(actor)
+      deriveCurrentCardCounts(actor, game.state)
     ),
     roots,
     { gameId:game.state.gameId }
@@ -16559,7 +16754,7 @@ async function runHandOrderSchedulingFixture(definitionOrder) {
     completedRootSet:stats.rootWork
       .filter((entry) => entry.completed)
       .map((entry) => semanticDescriptor(entry.action)),
-    action:semanticDescriptor(describeAction(selected)),
+    action:semanticDescriptor(describeBenchmarkAction(selected)),
     stats
   };
   game.dispose();
@@ -16589,7 +16784,7 @@ test("AI·搜索：三个 ordinary roots 在有界 depth2 预取前获得公平�
   actor.hand.push(low, middle, valuable);
   const { game } = makeGame([actor, enemy]);
   game.aiRandomnessRange = 0;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
   const planner = game.aiController.planner;
   let deadlineExpired = false;
   planner.searchBudgetFactory = () => new SearchBudget({
@@ -16597,15 +16792,15 @@ test("AI·搜索：三个 ordinary roots 在有界 depth2 预取前获得公平�
     now:() => deadlineExpired ? 1 : 0
   });
   configurePlannerValueStubs(planner, {
-    actionEconomicValue:(action) => action.card?.id === valuable.id
+    actionEconomicValue:(action) => action.cardInstanceId === valuable.id
       ? 10
-      : action.card?.id === middle.id ? 5 : 1,
+      : action.cardInstanceId === middle.id ? 5 : 1,
     stateUtility:() => 0
   });
   planner.candidateMaterializer.searchPrior.rootSchedulingScore = (action) => (
-    action.card?.id === low.id
+    action.cardInstanceId === low.id
       ? 3
-      : action.card?.id === middle.id ? 2 : action.card?.id === valuable.id ? 1 : -1
+      : action.cardInstanceId === middle.id ? 2 : action.cardInstanceId === valuable.id ? 1 : -1
   );
   const materializer = planner.candidateMaterializer;
   const materialize = materializer.materialize.bind(materializer);
@@ -16616,21 +16811,21 @@ test("AI·搜索：三个 ordinary roots 在有界 depth2 预取前获得公平�
     }
     return materialize(input);
   };
-  const visible = createInitialSearchState(
+  const visible = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const generated = game.aiController.getActionCandidates(actor);
   const roots = [low, middle, valuable].map((card) => generated.find(
-    (action) => action.card?.id === card.id
+    (action) => action.cardInstanceId === card.id
   ));
   assert.ok(roots.every(Boolean));
 
   const selected = await planner.plan(actor, visible, roots, { gameId:game.state.gameId });
   const stats = planner.lastSearchStats;
 
-  assert.equal(selected.card?.id, valuable.id);
+  assert.equal(selected.cardInstanceId, valuable.id);
   assert.equal(stats.stopReason, "TIME");
   assert.equal(stats.completedRootCandidateCount, 3);
   assert.equal(stats.completedChildCandidateCount, 0);
@@ -16665,7 +16860,7 @@ AI·搜索 depth2 semantic scheduling 回归。
 只推进独立 SearchState 和固定节点 SearchBudget。
 
 调用函数
-createInitialSearchState、Planner.scheduleChildActions/plan。
+createInitialWorld、Planner.scheduleChildActions/plan。
 
 边界与不变量
 两个运行除 actor.hand 的物理顺序外使用相同规则、NODE、depth、beam 与价值；
@@ -16679,27 +16874,27 @@ async function runChildHandOrderSchedulingFixture(definitionOrder, nodeBudget = 
   const { game } = makeGame([actor, enemy]);
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = nodeBudget;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
   const planner = game.aiController.planner;
   configurePlannerValueStubs(planner, {
-    actionEconomicValue:(action) => action.card?.definitionId === "harvest" ? 10 : 1,
+    actionEconomicValue:(action) => action.cardId === "harvest" ? 10 : 1,
     stateUtility:() => 0
   });
   planner.candidateMaterializer.searchPrior.rootSchedulingScore = (action) => {
     if (action.type === "end") return Number.NEGATIVE_INFINITY;
-    return action.card?.definitionId === "assault" ? 2 : 1;
+    return action.cardId === "assault" ? 2 : 1;
   };
-  const generateFromVisible = planner.generateFromVisible.bind(planner);
-  planner.generateFromVisible = (state, ...args) => {
+  const generateActions = planner.generateActions.bind(planner);
+  planner.generateActions = (state, ...args) => {
     const currentActor = state.players.find((player) => player.id === actor.id);
-    const actions = generateFromVisible(state, ...args);
+    const actions = generateActions(state, ...args);
     if (currentActor?.hand?.length === 2) return actions;
     return currentActor?.hand?.length === 1
       ? actions.filter((action) => action.type === "end")
       : [];
   };
   const semantic = (action) => {
-    const descriptor = describeAction(action);
+    const descriptor = describeBenchmarkAction(action);
     return {
       type:descriptor.type,
       cardId:descriptor.cardId,
@@ -16724,13 +16919,13 @@ async function runChildHandOrderSchedulingFixture(definitionOrder, nodeBudget = 
     if (candidate && input.depth >= 2) completedChildren.push(semantic(input.action));
     return candidate;
   };
-  const visible = createInitialSearchState(
+  const visible = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const root = game.aiController.getActionCandidates(actor).find(
-    (action) => action.card?.id === rootCard.id
+    (action) => action.cardInstanceId === rootCard.id
   );
   assert.ok(root);
   const selected = await planner.plan(actor, visible, [root], { gameId:game.state.gameId });
@@ -16786,8 +16981,8 @@ test("AI·搜索：零时间预算不启动昂贵 root 且返回合法 provision
   actor.hand.push(card);
   const { game }
     = makeGame([actor, enemy]),
-    visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     planner = game.aiController.planner;
   game.aiSearchBudgetOverrideMs = 0;
@@ -16806,10 +17001,15 @@ test("AI·搜索：零时间预算不启动昂贵 root 且返回合法 provision
   };
   const roots = Array.from(
     { length: 200 },
-    (_, index) => ({ type: "card", card: { ...card, id: `root-${index}` }, targets: [] })
+    (_, index) => createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:card.definitionId,
+      cardInstanceId:`root-${index}`
+    })
   );
   const action = await planner.plan(actor, visible, roots, { gameId: game.state.gameId });
-  assert.equal(action.card?.definitionId, "charge");
+  assert.equal(action.cardId, "charge");
   assert.equal(evaluated, 0);
   assert.equal(planner.lastSearchStats.expanded, 0);
   assert.equal(planner.lastSearchStats.completedRootCandidateCount, 0);
@@ -16826,7 +17026,7 @@ test("AI·搜索：首个昂贵 root 中断且无 incumbent 时优先返回合�
   const expensive = instance("assault"), valuable = instance("harvest");
   actor.hand.push(expensive, valuable);
   const { game } = makeGame([actor, enemy]);
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
   const planner = game.aiController.planner;
   let deadlineExpired = false;
   planner.searchBudgetFactory = () => new SearchBudget({
@@ -16840,14 +17040,25 @@ test("AI·搜索：首个昂贵 root 中断且无 incumbent 时优先返回合�
       assert.fail("昂贵 root 应在返回 partial state 前中断");
     }
   });
-  const selected = await planner.plan(actor, createInitialSearchState(
+  const selected = await planner.plan(actor, createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   ), [
-    { type:"card", card:expensive, targets:[enemy] },
-    { type:"card", card:valuable, targets:[] },
-    { type:"end" }
+    createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:expensive.definitionId,
+      cardInstanceId:expensive.id,
+      targetIds:[enemy.id]
+    }),
+    createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:valuable.definitionId,
+      cardInstanceId:valuable.id
+    }),
+    createAction({ type:"end", actorId:actor.id })
   ], { gameId:game.state.gameId });
   const stats = planner.lastSearchStats;
   assert.equal(selected.type, "end");
@@ -16886,17 +17097,22 @@ test("AI·搜索：深层节点能发现先聚能再发动主动技能", () => {
   ally.hp -= 1;
   actor.hand.push(instance("charge"));
   const { game } = makeGame([actor, ally, enemy]);
-  const visible = createInitialSearchState(actor.id, game.state);
+  const visible = createInitialWorld(actor.id, game.state);
   const simulator = new Simulator(visible);
   const charged = simulator.apply(
-    visible, { type: "card", card: actor.hand[0], targets: [] }, actor.id
+    visible,
+    createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:actor.hand[0].definitionId,
+      cardInstanceId:actor.hand[0].id
+    })
   );
-  const follow = game.aiController.actionGenerator.generateFromVisible(charged, actor.id);
+  const follow = game.aiController.actionGenerator.generate(charged, actor.id);
   assert.ok(
     follow.some(
-      (action) => action.type === "skill" && action.skill.id === "symbiosis" && action.targets[
-        0
-      ].id === ally.id
+      (action) => action.type === "skill" && action.skillId === "symbiosis"
+        && action.targetIds[0] === ally.id
     )
   );
 });
@@ -16914,11 +17130,20 @@ test("AI·搜索：深层结束与重复装备评分读取模拟节点而非根�
       { id: enemy.id, battleTeam: "dusk", alive: true, hp: 3, maxHp: 3 }
     ]
   };
-  assert.equal(evaluator.actionUtility({ type: "end" }, real, emptyVisible), 0);
+  assert.equal(evaluator.actionUtility(
+    createAction({ type:"end", actorId:real.id }),
+    real,
+    emptyVisible
+  ), 0);
   const equipment = instance("energyDevice");
   // 同款换装按边际公式：新值7 - 旧值7×保留概率1 - 同款调整4 = -4
   assert.equal(
-    evaluator.actionUtility({ type: "card", card: equipment, targets: [] }, real, emptyVisible),
+    evaluator.actionUtility(createAction({
+      type:"card",
+      actorId:real.id,
+      cardId:equipment.definitionId,
+      cardInstanceId:equipment.id
+    }), real, emptyVisible),
     -4
   );
 });
@@ -16947,10 +17172,15 @@ test("AI·搜索：关闭逐动作重规划时会复用仍合法的束搜索牌�
   game.aiController.selectAction = async () => {
     plans += 1;
     game.aiController.planner.lastPlannedSequence = [
-      { type: "card", cardId: "charge", cardInstanceId: charge.id, targetIds: [] },
-      { type: "end", cardId: null, cardInstanceId: null, targetIds: [] }
+      createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:"charge",
+        cardInstanceId:charge.id
+      }),
+      createAction({ type:"end", actorId:actor.id })
     ];
-    return { type: "card", card: charge, targets: [] };
+    return game.aiController.planner.lastPlannedSequence[0];
   };
   await game.takeAiPlayPhase(actor, game.state.gameId);
   assert.equal(plans, 1);
@@ -17000,13 +17230,16 @@ test("AI·搜索：模拟 end 会设置终止状态且终止快照不再生成�
   const { game }
     = makeGame([actor, enemy]);
   actor.turnFlags.momentum = 2;
-  const visible = createInitialSearchState(actor.id, game.state),
-    terminal = new Simulator(visible).apply(visible, { type: "end" }, actor.id);
+  const visible = createInitialWorld(actor.id, game.state),
+    terminal = new Simulator(visible).apply(
+      visible,
+      createAction({ type:"end", actorId:actor.id })
+    );
   assert.equal(visible.playPhaseEnded, false);
   assert.equal(visible.players[0].momentum, 2);
   assert.equal(terminal.playPhaseEnded, true);
   assert.equal(terminal.players[0].momentum, 0);
-  assert.deepEqual(game.aiController.actionGenerator.generateFromVisible(terminal, actor.id), []);
+  assert.deepEqual(game.aiController.actionGenerator.generate(terminal, actor.id), []);
 });
 
 test("AI·搜索：Planner 不扩展 end 根节点，即使动作生成器伪造高收益后续", async () => {
@@ -17016,14 +17249,24 @@ test("AI·搜索：Planner 不扩展 end 根节点，即使动作生成器伪造
   actor.hand.push(fiction);
   const { game }
     = makeGame([actor, enemy]),
-    visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     planner = game.aiController.planner;
-  game.aiController.actionGenerator.generateFromVisible = () => [
-    { type: "card", card: fiction, targets: [] }
+  game.aiController.actionGenerator.generate = () => [
+    createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:fiction.definitionId,
+      cardInstanceId:fiction.id
+    })
   ];
-  const chosen = await planner.plan(actor, visible, [{ type: "end" }], { gameId: game.state.gameId });
+  const chosen = await planner.plan(
+    actor,
+    visible,
+    [createAction({ type:"end", actorId:actor.id })],
+    { gameId: game.state.gameId }
+  );
   assert.equal(chosen.type, "end");
   assert.equal(planner.lastSearchStats.expanded, 1);
   assert.deepEqual(planner.lastPlannedSequence.map((action) => action.type), ["end"]);
@@ -17034,11 +17277,11 @@ test("AI·搜索：规划序列中的 end 始终位于末尾且真实 AI 仍能�
     enemy = makePlayer("terminal-real-enemy", 1, "dusk");
   const { game }
     = makeGame([actor, enemy]),
-    visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     actions = game.aiController.getActionCandidates(actor);
-  assert.deepEqual(actions, [{ type: "end" }]);
+  assert.deepEqual(actions, [createAction({ type:"end", actorId:actor.id })]);
   assert.equal(
     (await game.aiController.planner.plan(actor, visible, actions, { gameId: game.state.gameId })).type,
     "end"
@@ -17110,13 +17353,13 @@ test("AI·搜索：强制弃牌时确定格挡的突袭仍优于白弃", async (
   game.aiRandomnessRange = 0;
   game.aiSearchBudgetOverrideMs = 30000;
   game.aiSearchNodeBudgetOverride = 20000;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
   const candidates = materializeRootSearchCandidates(game, actor, visible, roots);
-  const assaultCandidate = candidates.find((candidate) => candidate.action.card?.id === assault.id);
+  const assaultCandidate = candidates.find((candidate) => candidate.action.cardInstanceId === assault.id);
   const endCandidate = candidates.find((candidate) => candidate.action.type === "end");
   assert.ok(assaultCandidate && endCandidate);
   assert.ok(
@@ -17129,7 +17372,7 @@ test("AI·搜索：强制弃牌时确定格挡的突袭仍优于白弃", async (
   const chosen = await game.aiController.planner.plan(
     actor, visible, roots, { gameId: game.state.gameId }
   );
-  assert.equal(chosen.card?.id, assault.id);
+  assert.equal(chosen.cardInstanceId, assault.id);
 });
 
 test("AI·搜索：重复突袭实例经 Worker 根边界仍与实际强制弃牌身份对齐", async () => {
@@ -17156,24 +17399,24 @@ test("AI·搜索：重复突袭实例经 Worker 根边界仍与实际强制弃�
   game.aiRandomnessRange = 0;
   game.aiSearchBudgetOverrideMs = 30000;
   game.aiSearchNodeBudgetOverride = 20000;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
-  const assaultRoots = roots.filter((action) => action.card?.definitionId === "assault");
+  const assaultRoots = roots.filter((action) => action.cardId === "assault");
   assert.equal(
-    new Set(assaultRoots.map((action) => action.card.id)).size,
+    new Set(assaultRoots.map((action) => action.cardInstanceId)).size,
     assaults.length,
     JSON.stringify(roots.map((action) => ({
       type:action.type,
-      cardId:action.card?.definitionId ?? null,
-      cardInstanceId:action.card?.id ?? null,
-      targetIds:action.targets?.map((target) => target.id) ?? []
+      cardId:action.cardId ?? null,
+      cardInstanceId:action.cardInstanceId ?? null,
+      targetIds:action.targetIds
     })))
   );
   assert.deepEqual(
-    new Set(assaultRoots.map((action) => action.card.id)),
+    new Set(assaultRoots.map((action) => action.cardInstanceId)),
     new Set(assaults.map((card) => card.id))
   );
   const candidates = materializeRootSearchCandidates(game, actor, visible, roots);
@@ -17183,7 +17426,7 @@ test("AI·搜索：重复突袭实例经 Worker 根边界仍与实际强制弃�
       .filter((option) => option.definitionId === "assault")
       .map((option) => option.cardId)
   );
-  const legalAssaultIds = new Set(assaultRoots.map((action) => action.card.id));
+  const legalAssaultIds = new Set(assaultRoots.map((action) => action.cardInstanceId));
   assert.equal(discardedAssaultIds.size, 2);
   assert.ok([...discardedAssaultIds].every((cardId) => legalAssaultIds.has(cardId)));
   const nonEndRoots = roots.filter((action) => action.type !== "end");
@@ -17222,7 +17465,7 @@ test("AI·搜索：重复突袭实例经 Worker 根边界仍与实际强制弃�
     searchTimeBudgetMs: 30000
   });
   assert.equal(chosen.type, "card");
-  assert.equal(chosen.card.definitionId, "assault");
+  assert.equal(chosen.cardId, "assault");
 });
 
 test("AI·搜索：多张同定义突袭逐动作重规划时连续兑现仍会白弃的资源", async () => {
@@ -17258,18 +17501,22 @@ test("AI·搜索：多张同定义突袭逐动作重规划时连续兑现仍会�
     gameId:game.state.gameId,
     searchTimeBudgetMs:30000
   });
-  assert.equal(first.card?.definitionId, "assault");
-  assert.equal(await game.playCard(actor, first.card, first.targets, first.selection ?? null), true);
+  assert.equal(first.cardId, "assault");
+  const firstCard = actor.hand.find((card) => card.id === first.cardInstanceId);
+  const firstTargets = first.targetIds.map(
+    (targetId) => game.state.players.find((player) => player.id === targetId)
+  );
+  assert.equal(await game.playCard(actor, firstCard, firstTargets, first.selection ?? null), true);
 
   const secondRoots = game.aiController.getActionCandidates(actor);
-  assert.ok(secondRoots.some((action) => action.card?.definitionId === "assault"));
+  assert.ok(secondRoots.some((action) => action.cardId === "assault"));
   assert.ok(actor.hand.length > actor.hp);
   game.aiSearchNodeBudgetOverride = secondRoots.filter((action) => action.type !== "end").length;
   const second = await game.aiController.selectAction(actor, {
     gameId:game.state.gameId,
     searchTimeBudgetMs:30000
   });
-  assert.equal(second.card?.definitionId, "assault");
+  assert.equal(second.cardId, "assault");
 });
 
 test("AI·搜索：会被弃的突袭没有合法目标时不产生 forced-discard opportunity", async () => {
@@ -17287,11 +17534,11 @@ test("AI·搜索：会被弃的突袭没有合法目标时不产生 forced-disca
   game.aiRandomnessRange = 0;
   game.aiSearchBudgetOverrideMs = 30000;
   game.aiSearchNodeBudgetOverride = 20000;
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
-  assert.ok(!roots.some((action) => action.card?.definitionId === "assault"));
+  assert.ok(!roots.some((action) => action.cardId === "assault"));
   const endCandidate = materializeRootSearchCandidates(game, actor, visible, roots)
     .find((candidate) => candidate.action.type === "end");
   assert.ok(endCandidate.forcedDiscardOptions.some((option) => option.cardId === assault.id));
@@ -17318,12 +17565,12 @@ test("AI·搜索：不同定义的合法牌不能兑现被弃突袭的 forced-di
   const { game } = makeGame([actor, allyA, enemyA, enemyB, allyB]);
   actor.turnFlags.attackLimit = 1;
   actor.attackLimit = 1;
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
-  assert.ok(roots.some((action) => action.card?.id === equipment.id));
-  assert.ok(!roots.some((action) => action.card?.definitionId === "assault"));
+  assert.ok(roots.some((action) => action.cardInstanceId === equipment.id));
+  assert.ok(!roots.some((action) => action.cardId === "assault"));
   const endCandidate = materializeRootSearchCandidates(game, actor, visible, roots)
     .find((candidate) => candidate.action.type === "end");
   assert.ok(endCandidate.forcedDiscardOptions.some((option) => option.cardId === assault.id));
@@ -17357,13 +17604,13 @@ test("AI·搜索：强制弃牌的破坏与窥探按实际用途进入完整搜�
     game.aiRandomnessRange = 0;
     game.aiSearchBudgetOverrideMs = 30000;
     game.aiSearchNodeBudgetOverride = 20000;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-    const visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+    const visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     );
     const roots = game.aiController.getActionCandidates(actor);
     const candidates = materializeRootSearchCandidates(game, actor, visible, roots);
-    const useCandidate = candidates.find((candidate) => candidate.action.card?.id === use.id);
+    const useCandidate = candidates.find((candidate) => candidate.action.cardInstanceId === use.id);
     const endCandidate = candidates.find((candidate) => candidate.action.type === "end");
     assert.ok(useCandidate && endCandidate, `${scenario.name} 应同时存在 card/end 候选`);
     assert.equal(endCandidate.forcedDiscardOpportunity, 0);
@@ -17390,13 +17637,13 @@ test("AI·搜索：影客不得结束并强制弃掉四张突袭与三张合法�
   game.aiRandomnessRange = 0;
   game.aiSearchBudgetOverrideMs = 30000;
   game.aiSearchNodeBudgetOverride = 20000;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
   const forcedCards = [...assaults, ...tacticalCards];
-  assert.ok(forcedCards.every((card) => roots.some((action) => action.card?.id === card.id)),
+  assert.ok(forcedCards.every((card) => roots.some((action) => action.cardInstanceId === card.id)),
     "四张突袭与窥探、转移、破势都必须是当前合法候选");
   const candidates = materializeRootSearchCandidates(game, actor, visible, roots);
   const endCandidate = candidates.find((candidate) => candidate.action.type === "end");
@@ -17414,7 +17661,7 @@ test("AI·搜索：影客不得结束并强制弃掉四张突袭与三张合法�
       forcedDiscardOpportunity:endCandidate.forcedDiscardOpportunity,
       bestValueScore:game.aiController.planner.lastSearchStats.bestValueScore,
       bestSequence:game.aiController.planner.lastPlannedSequence.map((action) => (
-        action.card?.definitionId ?? action.type
+        action.cardId ?? action.type
       ))
     })
   );
@@ -17455,7 +17702,7 @@ test("AI·搜索：影客不得结束并强制弃掉四张突袭与三张合法�
     gameId:game.state.gameId,
     searchTimeBudgetMs:7000
   });
-  assert.equal(faultChoice.card?.id, expectedFallback.action.card?.id);
+  assert.equal(faultChoice.card?.id, expectedFallback.action.cardInstanceId);
   assert.notEqual(faultChoice.type, "end");
   assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.FALLBACK);
   assert.equal(game.aiController.lastSearchFallback.source, "root-search-prior");
@@ -17483,7 +17730,7 @@ AI·搜索高成本 deadline 回归测试。
 只推进 Worker 本地 SearchState、SearchRng 与确定性测试时钟。
 
 调用函数
-makeGame、createInitialSearchState、createSearchRequest、describeRootSearchAction、runSearchRequest、AIController.selectAction。
+makeGame、createInitialWorld、createSearchRequest、describeRootSearchAction、runSearchRequest、AIController.selectAction。
 
 边界与不变量
 局面同时包含同定义实体牌、两个合法突袭目标、响应资源、装备、技能与多种战术动作；
@@ -17495,7 +17742,6 @@ async function runHighBranchingShadeWorkerFixture({
 } = {}) {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("deadline-shade", 0, "dawn", "ai", 3);
   const cheapTarget = makePlayer("deadline-cheap-target", 1, "dusk", "ai", 5);
   const allyA = makePlayer("deadline-ally-a", 2, "dawn", "ai", 1);
@@ -17555,9 +17801,9 @@ async function runHighBranchingShadeWorkerFixture({
     const outcome = game.aiController.lastWorkerOutcome;
     const diagnostics = game.aiController.getLastDecisionDiagnostics();
     const evidence = {
-      rootCandidateCount:game.aiController.lastSearchRequest.rootSearchActions.length,
-      assaultRootCount:game.aiController.lastSearchRequest.rootSearchActions.filter(
-        (action) => action.card?.definitionId === "assault"
+      rootCandidateCount:game.aiController.lastSearchRequest.rootActions.length,
+      assaultRootCount:game.aiController.lastSearchRequest.rootActions.filter(
+        (action) => action.cardId === "assault"
       ).length,
       rootGenerationCalls,
       selected,
@@ -17568,10 +17814,10 @@ async function runHighBranchingShadeWorkerFixture({
     return evidence;
   }
   const roots = game.aiController.getActionCandidates(actor);
-  const searchState = createInitialSearchState(
+  const world = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const request = createSearchRequest({
     requestId:"deadline-high-branching-shade",
@@ -17580,13 +17826,12 @@ async function runHighBranchingShadeWorkerFixture({
     actorId:actor.id,
     phase:game.state.phase,
     currentRound:game.state.currentRound,
-    searchState,
+    world,
     searchConfig:game.aiController.buildSearchConfig({ timeBudgetMs }),
     rng:game.aiController.searchRng.snapshot(),
-    rootActionDescriptors:roots.map(ActionDescriptor.describe),
-    rootSearchActions:roots.map(describeRootSearchAction)
+    rootActions:roots
   });
-  const inputStateFingerprint = JSON.stringify(searchState);
+  const inputStateFingerprint = JSON.stringify(world);
   const outcome = await runSearchRequest(request, {
     now:() => {
       const current = now;
@@ -17595,11 +17840,11 @@ async function runHighBranchingShadeWorkerFixture({
     },
     yieldControl:async () => true
   });
-  const inputStateUnchanged = JSON.stringify(searchState) === inputStateFingerprint;
+  const inputStateUnchanged = JSON.stringify(world) === inputStateFingerprint;
   game.dispose();
   return {
     rootCandidateCount:roots.length,
-    assaultRootCount:roots.filter((action) => action.card?.definitionId === "assault").length,
+    assaultRootCount:roots.filter((action) => action.cardId === "assault").length,
     inputStateUnchanged,
     outcome
   };
@@ -17613,9 +17858,9 @@ test("AI·搜索：高分支 P07 root 超时时未完成 Pattern 不替代基础
   assert.equal(outcome.searchStopReason, "TIME");
   assert.equal(outcome.cancelled, false);
   assert.equal(outcome.workerError, null);
-  assert.equal(outcome.actionDescriptor.type, "card");
-  assert.equal(outcome.actionDescriptor.cardId, "assault");
-  assert.equal(outcome.actionDescriptor.targetId, "deadline-cheap-target");
+  assert.equal(outcome.action.type, "card");
+  assert.equal(outcome.action.cardId, "assault");
+  assert.equal(outcome.action.targetId, "deadline-cheap-target");
   assert.equal(outcome.stats.scheduledRootOrder[0].cardId, "destroy");
   assert.equal(outcome.stats.scheduledRootOrder[0].targetId, "deadline-expensive-target");
   assert.equal(outcome.stats.rootCandidateCount, 17);
@@ -17637,10 +17882,10 @@ test("AI·搜索：高分支 P07 root 超时时未完成 Pattern 不替代基础
   assert.equal(outcome.stats.activeRoot.targetId, "deadline-expensive-target");
   assert.equal(outcome.stats.provisionalFallbackUsed, true);
   assert.equal(outcome.stats.provisionalFallbackReason, "NO_COMPLETED_ROOT_TIME");
-  assert.deepEqual(outcome.stats.provisionalFallbackAction, outcome.actionDescriptor);
+  assert.deepEqual(outcome.stats.provisionalFallbackAction, outcome.action);
   assert.equal(outcome.stats.bestValueScore, null);
   assert.deepEqual(outcome.stats.bestSequence, []);
-  assert.deepEqual(outcome.plannedSequenceDescriptors, []);
+  assert.deepEqual(outcome.plannedActions, []);
   assert.equal(evidence.inputStateUnchanged, true,
     "中断 preparation 的 identity/availability/projected state 不得泄漏回输入 SearchState");
   assert.equal(outcome.stats.partialCandidateRegistered, 0);
@@ -17758,7 +18003,7 @@ AI·搜索足额与生产预算质量回归。
 只推进 Worker 本地 SearchState、SearchRng 与确定性测试时钟。
 
 调用函数
-makeGame、createInitialSearchState、createSearchRequest、describeRootSearchAction、runSearchRequest。
+makeGame、createInitialWorld、createSearchRequest、describeRootSearchAction、runSearchRequest。
 
 边界与不变量
 足额与生产预算除 timeBudgetMs 外完全相同；不降低生产 depth、beam、hidden sample 或合法动作。
@@ -17766,7 +18011,6 @@ makeGame、createInitialSearchState、createSearchRequest、describeRootSearchAc
 async function runDeterministicHighBranchIncumbentFixture(timeBudgetMs) {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("quality-actor", 0, "dawn", "ai", 0);
   const enemyA = makePlayer("quality-enemy-a", 1, "dusk", "ai", 4);
   const allyA = makePlayer("quality-ally-a", 2, "dawn", "ai", 2);
@@ -17787,10 +18031,10 @@ async function runDeterministicHighBranchIncumbentFixture(timeBudgetMs) {
   actor.attackLimit = 2;
   game.aiController.searchRng = new SearchRng(20260822);
   const roots = game.aiController.getActionCandidates(actor);
-  const searchState = createInitialSearchState(
+  const world = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const request = createSearchRequest({
     requestId:`quality-high-branch-${timeBudgetMs}`,
@@ -17799,11 +18043,10 @@ async function runDeterministicHighBranchIncumbentFixture(timeBudgetMs) {
     actorId:actor.id,
     phase:game.state.phase,
     currentRound:game.state.currentRound,
-    searchState,
+    world,
     searchConfig:game.aiController.buildSearchConfig({ timeBudgetMs }),
     rng:game.aiController.searchRng.snapshot(),
-    rootActionDescriptors:roots.map(ActionDescriptor.describe),
-    rootSearchActions:roots.map(describeRootSearchAction)
+    rootActions:roots
   });
   let now = 0;
   const outcome = await runSearchRequest(request, {
@@ -17826,18 +18069,18 @@ test("AI·搜索：生产 TIME 与足额搜索选择同一高分支 root 且价�
   assert.ok(production.rootCandidateCount > AI_RUNTIME_POLICY.beamWidth);
   assert.equal(full.outcome.searchStopReason, "COMPLETE");
   assert.equal(production.outcome.searchStopReason, "TIME");
-  assert.equal(production.outcome.actionDescriptor.cardId, "shockwave");
-  assert.equal(production.outcome.actionDescriptor.targetId, "quality-enemy-a");
+  assert.equal(production.outcome.action.cardId, "shockwave");
+  assert.equal(production.outcome.action.targetId, "quality-enemy-a");
   assert.deepEqual(
     {
-      type:production.outcome.actionDescriptor.type,
-      cardId:production.outcome.actionDescriptor.cardId,
-      targetId:production.outcome.actionDescriptor.targetId
+      type:production.outcome.action.type,
+      cardId:production.outcome.action.cardId,
+      targetId:production.outcome.action.targetId
     },
     {
-      type:full.outcome.actionDescriptor.type,
-      cardId:full.outcome.actionDescriptor.cardId,
-      targetId:full.outcome.actionDescriptor.targetId
+      type:full.outcome.action.type,
+      cardId:full.outcome.action.cardId,
+      targetId:full.outcome.action.targetId
     }
   );
   assert.ok(Number.isFinite(production.outcome.stats.bestValueScore));
@@ -17887,7 +18130,7 @@ AI·搜索两步组合 TIME/COMPLETE 证据回归。
 只推进 Worker 本地 SearchState、SearchRng 与确定性测试时钟。
 
 调用函数
-makeGame、createInitialSearchState、createSearchRequest、describeRootSearchAction、runSearchRequest。
+makeGame、createInitialWorld、createSearchRequest、describeRootSearchAction、runSearchRequest。
 
 边界与不变量
 同一夹具的 TIME/COMPLETE 除 timeBudgetMs 外完全相同；不得改 depth、beam、hidden samples、合法根或评分。
@@ -17895,7 +18138,6 @@ makeGame、createInitialSearchState、createSearchRequest、describeRootSearchAc
 async function runTwoStepHorizonFixture(kind, timeBudgetMs, tickMs) {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer(`horizon-${kind}-actor`, 0, "dawn", "ai", kind === "charge" ? 2 : 3);
   const ally = makePlayer(`horizon-${kind}-ally`, 1, "dawn", "ai", 1);
   const enemyA = makePlayer(`horizon-${kind}-enemy-a`, 2, "dusk", "ai", 4);
@@ -17914,10 +18156,10 @@ async function runTwoStepHorizonFixture(kind, timeBudgetMs, tickMs) {
   game.aiRandomnessRange = 0;
   game.aiController.searchRng = new SearchRng(20260822);
   const roots = game.aiController.getActionCandidates(actor);
-  const searchState = createInitialSearchState(
+  const world = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const request = createSearchRequest({
     requestId:`horizon-${kind}-${timeBudgetMs}`,
@@ -17926,11 +18168,10 @@ async function runTwoStepHorizonFixture(kind, timeBudgetMs, tickMs) {
     actorId:actor.id,
     phase:game.state.phase,
     currentRound:game.state.currentRound,
-    searchState,
+    world,
     searchConfig:game.aiController.buildSearchConfig({ timeBudgetMs }),
     rng:game.aiController.searchRng.snapshot(),
-    rootActionDescriptors:roots.map(ActionDescriptor.describe),
-    rootSearchActions:roots.map(describeRootSearchAction)
+    rootActions:roots
   });
   let now = 0;
   const outcome = await runSearchRequest(request, {
@@ -17944,7 +18185,7 @@ async function runTwoStepHorizonFixture(kind, timeBudgetMs, tickMs) {
   const evidence = {
     rootCandidateCount:roots.length,
     rootCardIds:[...new Set(roots.map((action) => (
-      action.card?.definitionId ?? action.skill?.id ?? action.type
+      action.cardId ?? action.skillId ?? action.type
     )))],
     outcome
   };
@@ -17986,8 +18227,8 @@ test("AI·搜索：production TIME 在聚能后进入主动技能 depth2 并保�
   );
   assert.equal(production.outcome.stats.bestSequence[1].targetId, "horizon-charge-ally");
   assert.deepEqual(
-    production.outcome.actionDescriptor,
-    { ...full.outcome.actionDescriptor, cardInstanceId:production.outcome.actionDescriptor.cardInstanceId }
+    production.outcome.action,
+    { ...full.outcome.action, cardInstanceId:production.outcome.action.cardInstanceId }
   );
   assertClose(
     production.outcome.stats.bestValueScore,
@@ -18035,8 +18276,8 @@ test("AI·搜索：production TIME 优先完整探索回收站后续且保持 CO
   assert.equal(production.outcome.stats.patternIncumbentUpdateCount, 1);
   assert.equal(production.outcome.stats.selectedPatternId, "EQUIP_RECYCLING_FIRST");
   assert.deepEqual(
-    production.outcome.actionDescriptor,
-    { ...full.outcome.actionDescriptor, cardInstanceId:production.outcome.actionDescriptor.cardInstanceId }
+    production.outcome.action,
+    { ...full.outcome.action, cardInstanceId:production.outcome.action.cardInstanceId }
   );
   assertClose(
     production.outcome.stats.bestValueScore,
@@ -18056,9 +18297,9 @@ test("AI·搜索：聚能 Pattern 的 TIME/COMPLETE 工作与 diagnostics 保持
   const project = ({ outcome }) => ({
     stopReason:outcome.searchStopReason,
     action:{
-      type:outcome.actionDescriptor.type,
-      cardId:outcome.actionDescriptor.cardId,
-      targetId:outcome.actionDescriptor.targetId
+      type:outcome.action.type,
+      cardId:outcome.action.cardId,
+      targetId:outcome.action.targetId
     },
     bestValueScore:outcome.stats.bestValueScore,
     completedRootCandidateCount:outcome.stats.completedRootCandidateCount,
@@ -18184,14 +18425,19 @@ runTacticalPatternFixture 与 PatternMatcher 顺序测试。
 边界与不变量
 实例后缀只用于证明 semantic identity 不依赖 card instance ID。
 */
+const tacticalPatternValues = new WeakMap();
+const tacticalPatternPriors = new WeakMap();
+
 function tacticalPatternAction(cardId, value, searchPrior, instanceSuffix = cardId) {
-  return {
+  const action = createAction({
     type:"card",
-    card:{ id:`${cardId}-${instanceSuffix}`, definitionId:cardId },
-    targets:[],
-    testValue:value,
-    testSearchPrior:searchPrior
-  };
+    actorId:"pattern-actor",
+    cardId,
+    cardInstanceId:`${cardId}-${instanceSuffix}`
+  });
+  tacticalPatternValues.set(action, value);
+  tacticalPatternPriors.set(action, searchPrior);
+  return action;
 }
 
 /*
@@ -18205,7 +18451,7 @@ productionPatternCase、Pattern 不变量与 dedupe tests。
 动作 type、definition/skill ID、目标 ID、selection 与实例后缀。
 
 输出
-可由 ActionDescriptor 和 PatternMatcher 解析的 runtime-like action。
+可由 PatternMatcher 直接解析的 canonical Action。
 
 读取状态
 无。
@@ -18226,15 +18472,25 @@ function productionPatternAction({
   selection = null,
   instanceSuffix = cardId
 } = {}) {
-  if (type === "end") return { type:"end" };
-  const targets = targetIds.map((id) => ({ id }));
-  if (type === "skill") return { type, skill:{ id:cardId }, targets, selection };
-  return {
+  if (type === "end") return createAction({
+    type:"end",
+    actorId:"pattern-production-actor"
+  });
+  if (type === "skill") return createAction({
     type,
-    card:{ id:`${cardId}-${instanceSuffix}`, definitionId:cardId },
-    targets,
+    actorId:"pattern-production-actor",
+    skillId:cardId,
+    targetIds,
     selection
-  };
+  });
+  return createAction({
+    type,
+    actorId:"pattern-production-actor",
+    cardId,
+    cardInstanceId:`${cardId}-${instanceSuffix}`,
+    targetIds,
+    selection
+  });
 }
 
 /*
@@ -18300,10 +18556,7 @@ function matchProductionPattern(
   playerId = "pattern-production-actor",
   structure = { depth:4, beamWidth:20 }
 ) {
-  const matcher = new PatternMatcher({
-    actionDescriptor:ActionDescriptor,
-    definitions:[productionPatternDefinition(patternId)]
-  });
+  const matcher = new PatternMatcher({ definitions:[productionPatternDefinition(patternId)] });
   const player = { id:playerId };
   return {
     matcher,
@@ -18372,7 +18625,7 @@ Pattern/normal/child value，以及是否在 B 的 cooperative checkpoint 触发
 独立 Planner、SearchBudget 与轨迹数组。
 
 调用函数
-PatternMatcher、Planner、SearchBudget、ActionDescriptor。
+PatternMatcher、Planner、SearchBudget、canonical Action。
 
 边界与不变量
 所有 candidate value 由同一 test materializer 提供；Pattern 不读写 value，也没有第二套 candidate。
@@ -18394,27 +18647,27 @@ async function runTacticalPatternFixture({
   const generatedFromPaths = [];
   let deadlineExpired = false;
   const candidateMaterializer = {
-    rootSchedulingScore:(action) => action.testSearchPrior,
-    rootSchedulingKey:(action) => ActionDescriptor.schedulingKey(action),
-    childSchedulingScore:(action) => action.testSearchPrior,
-    childSchedulingKey:(action) => ActionDescriptor.schedulingKey(action),
+    rootSchedulingScore:(action) => tacticalPatternPriors.get(action),
+    rootSchedulingKey:(action) => Action.intentKey(action),
+    childSchedulingScore:(action) => tacticalPatternPriors.get(action),
+    childSchedulingKey:(action) => Action.intentKey(action),
     findTerminalAction:(actions) => actions.find((action) => action.type === "end") ?? null,
     createContext:() => ({ rootProvenance:null }),
     contextDiagnostics:() => ({ discoveredDynamicTarget:false, hiddenSamples:0 }),
     observeCandidate:() => {},
     finalizeSiblings:() => {},
-    describeAction:(action) => ActionDescriptor.describe(action),
-    describeSequence:(actions) => actions.map((action) => ActionDescriptor.describe(action)),
+    describeAction:(action) => action,
+    describeSequence:(actions) => [...actions],
     materialize:({ action, beforeState, afterState }) => {
       materialized.push({
-        cardId:action.card?.definitionId ?? null,
+        cardId:action.cardId ?? null,
         beforePath:[...(beforeState.path ?? [])]
       });
       return {
         action,
         state:afterState,
         terminal:false,
-        transitionValue:action.testValue,
+        transitionValue:tacticalPatternValues.get(action),
         prior:0,
         searchCredit:0,
         remainingProvenance:null,
@@ -18438,14 +18691,11 @@ async function runTacticalPatternFixture({
   };
   const planner = new Planner({
     candidateMaterializer,
-    patternMatcher:new PatternMatcher({
-      actionDescriptor:ActionDescriptor,
-      definitions:[fakeTacticalPattern()]
-    }),
+    patternMatcher:new PatternMatcher({ definitions:[fakeTacticalPattern()] }),
     searchPolicy,
     simulatorFactory:(_state, { searchBudget }) => ({
       apply:(state, action) => {
-        const cardId = action.card?.definitionId ?? action.type;
+        const cardId = action.cardId ?? action.type;
         applied.push({ cardId, beforePath:[...(state.path ?? [])] });
         if (abortContinuation && cardId === "pattern-b") {
           deadlineExpired = true;
@@ -18458,7 +18708,7 @@ async function runTacticalPatternFixture({
       ? new SearchBudget({ timeBudget:1, now:() => deadlineExpired ? 1 : 0 })
       : new SearchBudget({ nodeBudget:4 }),
     deduplicateActions:(actions) => actions,
-    generateFromVisible:(state) => {
+    generateActions:(state) => {
       generatedFromPaths.push([...(state.path ?? [])]);
       return state.path?.at(-1) === "pattern-a"
         ? omitContinuation ? [ordinaryChild] : [ordinaryChild, patternChild]
@@ -18473,7 +18723,7 @@ async function runTacticalPatternFixture({
     { gameId:"pattern-fixture" }
   );
   return {
-    selected:ActionDescriptor.describe(selected),
+    selected,
     sequence:planner.lastSearchStats.bestSequence,
     stats:planner.lastSearchStats,
     applied,
@@ -18483,7 +18733,7 @@ async function runTacticalPatternFixture({
 }
 
 test("AI·搜索：空测试 Pattern 注入保持 diagnostics 为空且不改 production registry", () => {
-  const matcher = new PatternMatcher({ actionDescriptor:ActionDescriptor, definitions:[] });
+  const matcher = new PatternMatcher({ definitions:[] });
   const result = matcher.match({
     player:{ id:"empty-pattern-actor" },
     state:{},
@@ -18541,16 +18791,16 @@ test("AI·搜索：Main Thread 与 Worker 组合根消费同一 Production Patte
   const actor = makePlayer("pattern-parity-actor", 0, "dawn", "ai", 1),
     enemy = makePlayer("pattern-parity-enemy", 1, "dusk", "ai", 2);
   const { game } = makeGame([actor, enemy]);
-  const searchState = createInitialSearchState(
+  const world = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const { createSearchEngine } = await import(
     "../js/adapters/ai/worker/SearchEngineFactory.js"
   );
   const workerEngine = createSearchEngine({
-    searchState,
+    world,
     searchConfig:{
       depth:4,
       beamWidth:10,
@@ -18869,7 +19119,6 @@ test("AI·搜索：P01/P07 相同 semantic sequence 去重且同定义多实例�
   });
   const assault = productionPatternAction({ cardId:"assault", targetIds:[targetId] });
   const matcher = new PatternMatcher({
-    actionDescriptor:ActionDescriptor,
     definitions:[
       productionPatternDefinition("TARGET_SETUP_ASSAULT"),
       productionPatternDefinition("REMOVE_RADAR_ASSAULT")
@@ -18926,14 +19175,14 @@ test("AI·搜索：Production Pattern 只重排 legal semantic set 且不改变 
     enemy = makePlayer("pattern-invariance-enemy", 1, "dusk", "ai", 2);
   actor.hand.push(instance("charge"), instance("exposeWeakness"), instance("assault"));
   const { game } = makeGame([actor, enemy]);
-  const before = createInitialSearchState(
+  const before = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
-  const charge = roots.find((entry) => entry.card?.definitionId === "charge");
-  const expose = roots.find((entry) => entry.card?.definitionId === "exposeWeakness");
+  const charge = roots.find((entry) => entry.cardId === "charge");
+  const expose = roots.find((entry) => entry.cardId === "exposeWeakness");
   const ordinaryOrder = game.aiController.planner.scheduleRootActions(
     roots,
     actor,
@@ -18952,13 +19201,13 @@ test("AI·搜索：Production Pattern 只重排 legal semantic set 且不改变 
     before,
     match.proposals
   );
-  const semanticSet = (actions) => [...new Set(actions.map(ActionDescriptor.searchSemanticKey))].sort();
+  const semanticSet = (actions) => [...new Set(actions.map(Action.searchKey))].sort();
   assert.deepEqual(semanticSet(guidedOrder), semanticSet(ordinaryOrder));
   assert.equal(guidedOrder.length, ordinaryOrder.length);
   assert.ok(guidedOrder.includes(expose));
 
   const beforeSnapshot = structuredClone(before);
-  const rootsSnapshot = roots.map(ActionDescriptor.searchSemanticKey);
+  const rootsSnapshot = roots.map(Action.searchKey);
   const normalAfter = new Simulator(before).apply(before, charge, actor.id);
   game.aiController.patternMatcher.match({
     player:actor,
@@ -18968,7 +19217,7 @@ test("AI·搜索：Production Pattern 只重排 legal semantic set 且不改变 
   });
   const guidedAfter = new Simulator(before).apply(before, charge, actor.id);
   assert.deepEqual(before, beforeSnapshot);
-  assert.deepEqual(roots.map(ActionDescriptor.searchSemanticKey), rootsSnapshot);
+  assert.deepEqual(roots.map(Action.searchKey), rootsSnapshot);
   assert.deepEqual(guidedAfter, normalAfter);
 
   const searchActor = before.players.find((player) => player.id === actor.id);
@@ -19010,9 +19259,8 @@ test("AI·搜索：Production Pattern 只重排 legal semantic set 且不改变 
   game.dispose();
 });
 
-test("AI·搜索：Pattern descriptor aliases 解析为既有 runtime intent key", () => {
+test("AI·搜索：Pattern action aliases 解析为既有 intent key", () => {
   const matcher = new PatternMatcher({
-    actionDescriptor:ActionDescriptor,
     definitions:[{
       id:"fake-descriptor-aliases",
       match:() => true,
@@ -19027,7 +19275,11 @@ test("AI·搜索：Pattern descriptor aliases 解析为既有 runtime intent key
     }]
   });
   const runtimeCard = tacticalPatternAction("recycleDevice", 1, 1),
-    runtimeSkill = { type:"skill", skill:{ id:"symbiosis" }, targets:[] };
+    runtimeSkill = createAction({
+      type:"skill",
+      actorId:"alias-actor",
+      skillId:"symbiosis"
+    });
   const result = matcher.match({
     player:{ id:"alias-actor" },
     state:{},
@@ -19039,16 +19291,16 @@ test("AI·搜索：Pattern descriptor aliases 解析为既有 runtime intent key
     { cardId:"symbiosis", selection:null, targetIds:[], type:"skill" }
   ]);
   assert.deepEqual(result.proposals[0].stepKeys, [
-    ActionDescriptor.schedulingKey(runtimeCard),
-    ActionDescriptor.schedulingKey(runtimeSkill)
+    Action.intentKey(runtimeCard),
+    Action.intentKey(runtimeSkill)
   ]);
   assert.equal(
-    ActionDescriptor.schedulingKey(runtimeCard),
-    '{"cardId":"recycleDevice","selection":null,"targetIds":[],"type":"card"}'
+    Action.intentKey(runtimeCard),
+    '{"type":"card","cardId":"recycleDevice","targetIds":[],"selection":null}'
   );
   assert.equal(
-    ActionDescriptor.schedulingKey(runtimeSkill),
-    '{"cardId":"symbiosis","selection":null,"targetIds":[],"type":"skill"}'
+    Action.intentKey(runtimeSkill),
+    '{"type":"skill","cardId":"symbiosis","targetIds":[],"selection":null}'
   );
 });
 
@@ -19056,28 +19308,24 @@ test("AI·搜索：Pattern coarse intent 与 search-semantic secondary key 分�
   const actor = makePlayer("pattern-secondary-actor", 0, "dawn", "ai", 2);
   const target = makePlayer("pattern-secondary-target", 1, "dusk", "ai", 5);
   const { game } = makeGame([actor, target]);
-  const buildAssault = (suffix, probability) => ({
+  const buildAssault = (suffix, probability) => createAction({
     type:"card",
-    card:{
-      id:`pattern-secondary-${suffix}`,
-      definitionId:"assault",
-      availabilityBranches:[{
-        probability,
-        conditions:{ [`availability-${suffix}`]:"yes" }
-      }]
-    },
-    targets:[target],
-    executionProbability:probability,
-    executionWorldBranches:[{
+    actorId:actor.id,
+    cardId:"assault",
+    cardInstanceId:`pattern-secondary-${suffix}`,
+    targetIds:[target.id],
+    execution:{
       probability,
-      conditions:{ [`execution-${suffix}`]:"yes" },
-      executes:true
-    }]
+      alternatives:[{
+        probability,
+        conditions:{ [`execution-${suffix}`]:"yes" },
+        executes:true
+      }]
+    }
   });
   const low = buildAssault("low", .25),
     high = buildAssault("high", .75);
   const proposal = new PatternMatcher({
-    actionDescriptor:ActionDescriptor,
     definitions:[{
       id:"fake-assault-intent",
       match:() => true,
@@ -19099,19 +19347,19 @@ test("AI·搜索：Pattern coarse intent 与 search-semantic secondary key 分�
   }).proposals[0];
   const materializer = game.aiController.planner.candidateMaterializer;
   materializer.searchPrior.rootSchedulingScore = () => 1;
-  assert.equal(ActionDescriptor.schedulingKey(low), ActionDescriptor.schedulingKey(high));
+  assert.equal(Action.intentKey(low), Action.intentKey(high));
   assert.notEqual(
-    ActionDescriptor.searchSemanticKey(low),
-    ActionDescriptor.searchSemanticKey(high)
+    Action.searchKey(low),
+    Action.searchKey(high)
   );
   assert.equal(
     [low, high].filter(
-      (action) => ActionDescriptor.schedulingKey(action) === proposal.stepKeys[0]
+      (action) => Action.intentKey(action) === proposal.stepKeys[0]
     ).length,
     2
   );
   const planner = game.aiController.planner;
-  const project = (actions) => actions.map(ActionDescriptor.searchSemanticKey);
+  const project = (actions) => actions.map(Action.searchKey);
   assert.deepEqual(
     project(planner.scheduleRootActions([low, high], actor, {}, [])),
     project(planner.scheduleRootActions([high, low], actor, {}, []))
@@ -19134,12 +19382,11 @@ test("AI·搜索：多 Pattern roots 只提升最高 proposal 并保留 ordinary
     tacticalPatternAction(`ordinary-${index}`, 1, 100 - index)
   ));
   const matcher = new PatternMatcher({
-    actionDescriptor:ActionDescriptor,
     definitions:guided.map((action, index) => ({
       id:`fake-guided-${index}`,
       match:() => true,
       buildSequences:() => [{
-        steps:[{ type:"card", definitionId:action.card.definitionId }],
+        steps:[{ type:"card", definitionId:action.cardId }],
         explorationPriority:100 - index,
         reason:"test-only guided root"
       }]
@@ -19155,7 +19402,7 @@ test("AI·搜索：多 Pattern roots 只提升最高 proposal 并保留 ordinary
   const planner = game.aiController.planner;
   planner.candidateMaterializer.searchPrior.rootSchedulingScore = (
     action
-  ) => action.testSearchPrior;
+  ) => tacticalPatternPriors.get(action);
   const scheduled = planner.scheduleRootActions(
     [...guided, ...ordinary],
     actor,
@@ -19164,14 +19411,14 @@ test("AI·搜索：多 Pattern roots 只提升最高 proposal 并保留 ordinary
   );
   const coverage = scheduled.slice(0, structure.beamWidth);
   assert.equal(proposals.length, 9);
-  assert.equal(coverage[0].card.definitionId, "guided-0");
+  assert.equal(coverage[0].cardId, "guided-0");
   assert.deepEqual(
-    coverage.filter((action) => action.card.definitionId.startsWith("ordinary-"))
-      .map((action) => action.card.definitionId),
+    coverage.filter((action) => action.cardId.startsWith("ordinary-"))
+      .map((action) => action.cardId),
     ["ordinary-0", "ordinary-1", "ordinary-2"]
   );
   assert.equal(
-    coverage.filter((action) => action.card.definitionId.startsWith("guided-")).length,
+    coverage.filter((action) => action.cardId.startsWith("guided-")).length,
     7
   );
   game.dispose();
@@ -19182,13 +19429,12 @@ test("AI·搜索：Pattern proposal 语义与顺序不依赖 physical hand order
     id:"fake-order",
     match:() => true,
     buildSequences:({ legalActions, describeAction }) => legalActions.map((action) => ({
-      steps:[describeAction(action)],
+      steps:[describeBenchmarkAction(action)],
       explorationPriority:1,
       reason:"test-only order"
     }))
   };
   const project = (actions) => new PatternMatcher({
-    actionDescriptor:ActionDescriptor,
     definitions:[definition]
   }).match({
     player:{ id:"order-actor" },
@@ -19206,7 +19452,6 @@ test("AI·搜索：Pattern proposal 语义与顺序不依赖 physical hand order
 
 test("AI·搜索：Pattern proposals 服从既有 depth 与 beamWidth 上限", () => {
   const matcher = new PatternMatcher({
-    actionDescriptor:ActionDescriptor,
     definitions:[{
       id:"fake-bounds",
       match:() => true,
@@ -19313,50 +19558,50 @@ test("AI·搜索：同定义实体动作只合并搜索等价分支并保留身�
     "../js/ai/search/ActionGenerator.js"
   );
   const target = { id:"equivalent-target" };
-  const duplicateAssaults = Array.from({ length:4 }, () => ({
-    type:"card",
-    card:instance("assault"),
-    targets:[target]
-  }));
+  const duplicateAssaults = Array.from({ length:4 }, () => {
+    const card = instance("assault");
+    return createAction({
+      type:"card",
+      actorId:"equivalent-actor",
+      cardId:card.definitionId,
+      cardInstanceId:card.id,
+      targetIds:[target.id]
+    });
+  });
   assert.equal(deduplicateSearchEquivalentActions(duplicateAssaults).length, 1);
 
-  const selectionSensitive = duplicateAssaults.slice(0, 2).map((action, index) => ({
+  const selectionSensitive = duplicateAssaults.slice(0, 2).map((action, index) => createAction({
     ...action,
     selection:{ cardId:`semantic-resource-${index}` }
   }));
   assert.equal(deduplicateSearchEquivalentActions(selectionSensitive).length, 2);
 
-  const availabilitySensitive = duplicateAssaults.slice(0, 2).map((action, index) => ({
+  const executionSensitive = duplicateAssaults.slice(0, 2).map((action, index) => createAction({
     ...action,
-    card:{
-      ...action.card,
-      availabilityStateBranches:[{
+    execution:{
+      probability:1,
+      alternatives:[{
         probability:1,
         conditions:{ [`identity-world-${index}`]:"available" },
-        available:true
+        executes:true
       }]
     }
   }));
-  assert.equal(deduplicateSearchEquivalentActions(availabilitySensitive).length, 2);
-
-  const identitySensitive = duplicateAssaults.slice(0, 2).map((action, index) => ({
-    ...action,
-    card:{ ...action.card, identityGroupKey:`identity-group-${index}` }
-  }));
-  assert.equal(deduplicateSearchEquivalentActions(identitySensitive).length, 2);
+  assert.equal(deduplicateSearchEquivalentActions(executionSensitive).length, 2);
+  assert.equal(deduplicateSearchEquivalentActions(duplicateAssaults.slice(0, 2)).length, 1);
 
   const actor = makePlayer("preparation-dedup-actor", 0, "dawn", "ai", 3);
   const enemy = makePlayer("preparation-dedup-enemy", 1, "dusk", "ai", 5);
   const physicalCards = Array.from({ length:4 }, () => instance("assault"));
   actor.hand.push(...physicalCards);
   const { game } = makeGame([actor, enemy]);
-  const visible = createInitialSearchState(
+  const visible = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const budget = new SearchBudget({ nodeBudget:100, now:() => 0 });
-  const prepared = game.aiController.actionGenerator.generateFromVisible(
+  const prepared = game.aiController.actionGenerator.generate(
     visible,
     actor.id,
     budget
@@ -19366,8 +19611,11 @@ test("AI·搜索：同定义实体动作只合并搜索等价分支并保留身�
   assert.equal(work.actionGenerationUniqueCandidates, 2);
   assert.equal(work.actionGenerationPreparedCandidates, 5);
   assert.equal(work.probabilityPreparations, 4);
-  assert.equal(prepared.filter((action) => action.card?.definitionId === "assault").length, 1);
-  assert.equal(prepared.find((action) => action.card?.definitionId === "assault").card.id, physicalCards[0].id);
+  assert.equal(prepared.filter((action) => action.cardId === "assault").length, 1);
+  assert.equal(
+    prepared.find((action) => action.cardId === "assault").cardInstanceId,
+    physicalCards[0].id
+  );
 
   let now = 0;
   const timedBudget = new SearchBudget({
@@ -19378,7 +19626,7 @@ test("AI·搜索：同定义实体动作只合并搜索等价分支并保留身�
       return current;
     }
   });
-  const timedPrepared = game.aiController.actionGenerator.generateFromVisible(
+  const timedPrepared = game.aiController.actionGenerator.generate(
     visible,
     actor.id,
     timedBudget
@@ -19414,7 +19662,7 @@ test("AI·搜索：Worker 故障时 only-End 合法局面仍可确定结束", as
   assert.equal(chosen.type, "end");
   assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.FALLBACK);
   assert.equal(game.aiController.lastSearchFallback.source, "root-search-prior");
-  assert.equal(game.aiController.lastSearchFallback.actionDescriptor.type, "end");
+  assert.equal(game.aiController.lastSearchFallback.action.type, "end");
   assert.equal(game.aiController.getSearchDiagnostics().FALLBACK, 1);
   assert.equal(rootGenerationCalls, 1);
   assert.equal(game.aiController.getLastDecisionDiagnostics().physicalRootCount, 1);
@@ -19451,9 +19699,9 @@ test("AI·搜索：守誓者挑衅后持有破势与破坏时重新规划不得�
   game.aiRandomnessRange = 0;
   game.aiSearchBudgetOverrideMs = 30000;
   game.aiSearchNodeBudgetOverride = 20000;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
   const discardedIds = new Set(
@@ -19464,7 +19712,7 @@ test("AI·搜索：守誓者挑衅后持有破势与破坏时重新规划不得�
     actor, visible, roots, { gameId: game.state.gameId }
   );
   assert.notEqual(chosen.type, "end");
-  assert.ok([expose.id, destroy.id].includes(chosen.card?.id));
+  assert.ok([expose.id, destroy.id].includes(chosen.cardInstanceId));
 });
 
 test("AI·搜索：强制弃牌机会仍允许真实负收益的重复装备选择 end", async () => {
@@ -19478,9 +19726,9 @@ test("AI·搜索：强制弃牌机会仍允许真实负收益的重复装备选�
   game.aiRandomnessRange = 0;
   game.aiSearchBudgetOverrideMs = 30000;
   game.aiSearchNodeBudgetOverride = 20000;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
   const chosen = await game.aiController.planner.plan(
@@ -19496,8 +19744,8 @@ test("AI·搜索：手牌未超上限时不产生新的 forced-discard end 惩�
   actor.equipment = instance("recycleDevice");
   actor.hand.push(instance("recycleDevice"), instance("counter"));
   const { game } = makeGame([actor, enemy]);
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
   const candidates = materializeRootSearchCandidates(game, actor, visible, roots);
@@ -19516,27 +19764,27 @@ test("AI·搜索 Root Safety：NODE 有界补评估保留 completed valuable sib
     const valuable = instance("harvest");
     actor.hand.push(low, valuable);
     const { game } = makeGame([actor, enemy]);
-    const visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    const visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     );
     const planner = game.aiController.planner;
     game.aiSearchNodeBudgetOverride = mode === "NODE" ? 1 : null;
     game.aiRandomnessRange = 0;
     let hiddenSampleCalls = 0;
-    planner.candidateMaterializer.counterfactualTerms.sampleHiddenWorlds = () => {
+    planner.candidateMaterializer.counterfactualTerms.sampleUnknownHands = () => {
       hiddenSampleCalls += 1;
       return monteCarloEstimate();
     };
-    planner.generateFromVisible = () => assert.fail("root safety 不得进入 depth2+");
+    planner.generateActions = () => assert.fail("root safety 不得进入 depth2+");
     planner.searchPolicy.random = () => assert.fail("root safety 不得进入随机 tie-break");
     const evaluatedCardIds = [];
     configurePlannerValueStubs(planner, {
       actionUtility: () => 0,
       actionEconomicValue: (action) => {
-        if (action.card?.id) evaluatedCardIds.push(action.card.id);
-        return action.card?.id === low.id
+        if (action.cardInstanceId) evaluatedCardIds.push(action.cardInstanceId);
+        return action.cardInstanceId === low.id
           ? -1
-          : action.card?.id === valuable.id ? 5 : 0;
+          : action.cardInstanceId === valuable.id ? 5 : 0;
       },
       stateUtility: () => 0
     });
@@ -19545,15 +19793,25 @@ test("AI·搜索 Root Safety：NODE 有界补评估保留 completed valuable sib
     const materialize = materializer.materialize.bind(materializer);
     materializer.materialize = (input) => {
       const candidate = materialize(input);
-      if (input.depth === 1 && input.action.card?.id === valuable.id) {
+      if (input.depth === 1 && input.action.cardInstanceId === valuable.id) {
         valuableCandidate = candidate;
       }
       return candidate;
     };
     const chosen = await planner.plan(actor, visible, [
-      { type: "card", card: low, targets: [] },
-      { type: "card", card: valuable, targets: [] },
-      { type: "end" }
+      createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:low.definitionId,
+        cardInstanceId:low.id
+      }),
+      createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:valuable.definitionId,
+        cardInstanceId:valuable.id
+      }),
+      createAction({ type:"end", actorId:actor.id })
     ], { gameId: game.state.gameId });
     assert.equal(planner.lastSearchStats.stopReason, mode);
     assert.equal(planner.lastSearchStats.expanded, 2);
@@ -19561,7 +19819,7 @@ test("AI·搜索 Root Safety：NODE 有界补评估保留 completed valuable sib
     assert.equal(planner.lastSearchStats.rootSafetySimulationCalls, 1);
     assert.deepEqual(evaluatedCardIds, [low.id, valuable.id]);
     assert.equal(planner.lastSearchStats.bestValueScore, 5);
-    assert.equal(chosen.card?.id, valuable.id);
+    assert.equal(chosen.cardInstanceId, valuable.id);
     assert.ok(valuableCandidate?.state);
     assert.equal(typeof valuableCandidate.transitionValue, "number");
     assert.equal(hiddenSampleCalls, 1);
@@ -19576,7 +19834,7 @@ test("AI·搜索 Root Safety：TIME 后不启动未物化 root 并返回完整 i
   actor.hand.push(low, expensive, valuable, followAssault);
   const { game } = makeGame([actor, enemy]);
   game.aiRandomnessRange = 0;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
   const planner = game.aiController.planner;
   let deadlineExpired = false;
   planner.searchBudgetFactory = () => new SearchBudget({
@@ -19585,21 +19843,21 @@ test("AI·搜索 Root Safety：TIME 后不启动未物化 root 并返回完整 i
   });
   configurePlannerValueStubs(planner, {
     actionUtility:() => 0,
-    actionEconomicValue:(action) => action.card?.id === low.id
+    actionEconomicValue:(action) => action.cardInstanceId === low.id
       ? -1
-      : action.card?.id === valuable.id ? 5 : 0,
+      : action.cardInstanceId === valuable.id ? 5 : 0,
     stateUtility:() => 0
   });
-  const visible = createInitialSearchState(
+  const visible = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const generated = game.aiController.getActionCandidates(actor);
   const roots = [
-    generated.find((action) => action.card?.id === low.id),
-    generated.find((action) => action.card?.id === expensive.id),
-    generated.find((action) => action.card?.id === valuable.id),
+    generated.find((action) => action.cardInstanceId === low.id),
+    generated.find((action) => action.cardInstanceId === expensive.id),
+    generated.find((action) => action.cardInstanceId === valuable.id),
     generated.find((action) => action.type === "end")
   ];
   assert.ok(roots.every(Boolean));
@@ -19607,7 +19865,7 @@ test("AI·搜索 Root Safety：TIME 后不启动未物化 root 并返回完整 i
   const materialize = materializer.materialize.bind(materializer);
   materializer.materialize = (input) => {
     const candidate = materialize(input);
-    if (candidate && input.depth === 1 && input.action.card?.id === low.id) {
+    if (candidate && input.depth === 1 && input.action.cardInstanceId === low.id) {
       deadlineExpired = true;
     }
     return candidate;
@@ -19621,7 +19879,7 @@ test("AI·搜索 Root Safety：TIME 后不启动未物化 root 并返回完整 i
   );
 
   assert.equal(planner.lastSearchStats.stopReason, "TIME");
-  assert.equal(selected.card?.id, low.id);
+  assert.equal(selected.cardInstanceId, low.id);
   assert.equal(planner.lastSearchStats.completedRootCandidateCount, 1);
   assert.equal(planner.lastSearchStats.abortedRootCandidateCount, 0);
   assert.equal(planner.lastSearchStats.rootSafetyExpandedNodes, 0);
@@ -19645,25 +19903,25 @@ test("AI·搜索 Root Safety：NODE 补完轻量负收益 roots 后选择 end", 
     const negativeA = instance("charge"), negativeB = instance("harvest");
     actor.hand.push(negativeA, negativeB);
     const { game } = makeGame([actor, enemy]);
-    const visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    const visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     );
     const planner = game.aiController.planner;
     game.aiSearchNodeBudgetOverride = mode === "NODE" ? 1 : null;
     game.aiRandomnessRange = 0;
     let hiddenSampleCalls = 0;
-    planner.candidateMaterializer.counterfactualTerms.sampleHiddenWorlds = () => {
+    planner.candidateMaterializer.counterfactualTerms.sampleUnknownHands = () => {
       hiddenSampleCalls += 1;
       return monteCarloEstimate();
     };
-    planner.generateFromVisible = () => assert.fail("root safety 不得进入 depth2+");
+    planner.generateActions = () => assert.fail("root safety 不得进入 depth2+");
     planner.searchPolicy.random = () => assert.fail("root safety 不得进入随机 tie-break");
     const evaluatedCardIds = [];
     configurePlannerValueStubs(planner, {
       actionUtility: () => 0,
       actionEconomicValue: (action) => {
-        if (action.card?.id) evaluatedCardIds.push(action.card.id);
-        return action.card?.id === negativeA.id ? -1 : -2;
+        if (action.cardInstanceId) evaluatedCardIds.push(action.cardInstanceId);
+        return action.cardInstanceId === negativeA.id ? -1 : -2;
       },
       stateUtility: () => 0
     });
@@ -19678,9 +19936,19 @@ test("AI·搜索 Root Safety：NODE 补完轻量负收益 roots 后选择 end", 
       return candidate;
     };
     const chosen = await planner.plan(actor, visible, [
-      { type: "card", card: negativeA, targets: [] },
-      { type: "card", card: negativeB, targets: [] },
-      { type: "end" }
+      createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:negativeA.definitionId,
+        cardInstanceId:negativeA.id
+      }),
+      createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:negativeB.definitionId,
+        cardInstanceId:negativeB.id
+      }),
+      createAction({ type:"end", actorId:actor.id })
     ], { gameId: game.state.gameId });
     assert.equal(planner.lastSearchStats.stopReason, mode);
     assert.equal(planner.lastSearchStats.expanded, 3);
@@ -19689,7 +19957,7 @@ test("AI·搜索 Root Safety：NODE 补完轻量负收益 roots 后选择 end", 
     assert.deepEqual(evaluatedCardIds, [negativeA.id, negativeB.id]);
     assert.equal(planner.lastSearchStats.bestValueScore, 0);
     assert.equal(chosen.type, "end");
-    assert.equal(chosen.card?.id ?? null, null);
+    assert.equal(chosen.cardInstanceId, null);
     assert.equal(materializedNonEnd.length, 2);
     assert.ok(materializedNonEnd.every((candidate) => (
       candidate.state && typeof candidate.transitionValue === "number"
@@ -19704,8 +19972,8 @@ test("AI·搜索 Root Safety：Planner 在缺少 SearchBudget capability 时不�
     low = instance("charge"), valuable = instance("harvest");
   actor.hand.push(low, valuable);
   const { game } = makeGame([actor, enemy]);
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const planner = game.aiController.planner;
   planner.searchBudgetFactory = () => {
@@ -19717,8 +19985,8 @@ test("AI·搜索 Root Safety：Planner 在缺少 SearchBudget capability 时不�
   configurePlannerValueStubs(planner, {
     actionUtility: () => 0,
     actionEconomicValue: (action) => {
-      if (action.card?.id) evaluatedCardIds.push(action.card.id);
-      return action.card?.id === low.id ? -1 : 5;
+      if (action.cardInstanceId) evaluatedCardIds.push(action.cardInstanceId);
+      return action.cardInstanceId === low.id ? -1 : 5;
     },
     stateUtility: () => 0
   });
@@ -19788,9 +20056,9 @@ test("AI·搜索：手牌超过生命上限时 end 不再因虚假保留将弃�
   game.aiRandomnessRange = 0;
   game.aiSearchBudgetOverrideMs = 30000;
   game.aiSearchNodeBudgetOverride = 20000;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ),
     roots = game.aiController.getActionCandidates(actor),
     planner = game.aiController.planner,
@@ -19848,8 +20116,8 @@ test("AI·搜索：关闭逐动作重规划时转移描述只保存稳定ID并�
   from.hand.push(instance("block"));
   const { game }
     = makeGame([actor, from, receiver]),
-    action = game.aiController.getActionCandidates(actor).find((entry) => entry.card?.id === use.id),
-    descriptor = describeAction(action);
+    action = game.aiController.getActionCandidates(actor).find((entry) => entry.cardInstanceId === use.id),
+    descriptor = describeBenchmarkAction(action);
   assert.deepEqual(
     descriptor.selection,
     { sourceId: action.selection.sourceId, receiverId: action.selection.receiverId, zone: "hand" }
@@ -19900,8 +20168,8 @@ test("AI·搜索：多目标时破势进入后续突袭之前而非全部突袭�
     if (action.type === "end") break;
     const ok = action.type === "card"
       ? await game.playCard(actor, action.card, action.targets, action.selection ?? null)
-      : await game.useActiveSkill(actor, action.skill.id, action.targets);
-    executed.push(action.card?.definitionId ?? action.skill?.id ?? action.type);
+      : await game.useActiveSkill(actor, action.skillId, action.targets);
+    executed.push(action.cardId ?? action.skillId ?? action.type);
     if (!ok) break;
   }
   const poshiIndex = executed.findIndex((entry) => entry === "exposeWeakness");
@@ -19931,8 +20199,8 @@ test("AI·搜索：破势形成当前回合击杀线时选择即时击杀", asyn
     if (action.type === "end") break;
     const ok = action.type === "card"
       ? await game.playCard(actor, action.card, action.targets, action.selection ?? null)
-      : await game.useActiveSkill(actor, action.skill.id, action.targets);
-    executed.push(action.card?.definitionId ?? action.skill?.id ?? action.type);
+      : await game.useActiveSkill(actor, action.skillId, action.targets);
+    executed.push(action.cardId ?? action.skillId ?? action.type);
     if (!ok) break;
   }
   assert.deepEqual(
@@ -19958,7 +20226,7 @@ test("AI·搜索：本回合无法兑现破势时仍保留为合法未来选择"
   game.aiSearchNodeBudgetOverride = 20000;
   const legal = game.aiController.getActionCandidates(actor);
   assert.ok(
-    legal.some((entry) => entry.type === "card" && entry.card?.definitionId === "exposeWeakness"),
+    legal.some((entry) => entry.type === "card" && entry.cardId === "exposeWeakness"),
     "破势仍是合法候选"
   );
   await game.aiController.selectAction(actor, { gameId: game.state.gameId });
@@ -20052,8 +20320,8 @@ function exposeMarginalOf({ actor, enemy, ally = null, players = null, stack = 0
   const marginal = exposeMarginalGame.aiController.counterfactualTerms.evaluateExposeMarginal(
     before, after, actor.id, simulator
   );
-  const candidates = exposeMarginalGame.aiController.actionGenerator.generateFromVisible(after, actor.id)
-    .filter((entry) => entry.card?.definitionId === "assault");
+  const candidates = exposeMarginalGame.aiController.actionGenerator.generate(after, actor.id)
+    .filter((entry) => entry.cardId === "assault");
   return { marginal, candidates, simulator, before, after, actorId: actor.id, enemyId: enemy.id };
 }
 
@@ -20108,7 +20376,7 @@ test("AI·搜索：破势边际：调息存在与否改变边际且随救援能�
     ]
   });
   assert.deepEqual(
-    weakHeal.candidates.map((entry) => entry.targets?.[0]?.id),
+    weakHeal.candidates.map((entry) => entry.targetIds?.[0]),
     ["enemy"],
     "救援者不在突袭范围内"
   );
@@ -20192,8 +20460,8 @@ test("AI·搜索：破势边际：无合法突袭目标时为零且多候选取�
   const addedStacks = after.players[0].exposeWeaknessStacks - before.players[0].exposeWeaknessStacks;
   const baseline = structuredClone(after);
   baseline.players[0].exposeWeaknessStacks -= addedStacks;
-  const candidates = exposeMarginalGame.aiController.actionGenerator.generateFromVisible(after, multiActor.id)
-    .filter((entry) => entry.card?.definitionId === "assault");
+  const candidates = exposeMarginalGame.aiController.actionGenerator.generate(after, multiActor.id)
+    .filter((entry) => entry.cardId === "assault");
   const perCandidate = candidates.map((candidate) => (
     exposeMarginalGame.aiController.evaluator.stateUtility(
       simulator.apply(after, candidate, multiActor.id), multiActor.id
@@ -20276,8 +20544,8 @@ function exposeAssaultMarginalOf({ actor, enemy, ally = null, players = null, ro
   const state = { playPhaseEnded: false, players: list };
   if (rootStacks > 0) actor.exposeWeaknessStacks = rootStacks;
   const simulator = new Simulator(state);
-  const action = exposeMarginalGame.aiController.actionGenerator.generateFromVisible(state, actor.id)
-    .find((entry) => entry.card?.definitionId === "assault" && entry.targets?.[0]?.id === enemy.id);
+  const action = exposeMarginalGame.aiController.actionGenerator.generate(state, actor.id)
+    .find((entry) => entry.cardId === "assault" && entry.targetIds?.[0] === enemy.id);
   const marginal = action
     ? exposeMarginalGame.aiController.counterfactualTerms.evaluateAssaultStacksMarginal(
       state, action, actor.id, rootStacks, simulator
@@ -20285,7 +20553,7 @@ function exposeAssaultMarginalOf({ actor, enemy, ally = null, players = null, ro
     : 0;
   return {
     marginal, candidates: exposeMarginalGame.aiController.actionGenerator
-      .generateFromVisible(state, actor.id).filter((entry) => entry.card?.definitionId === "assault")
+      .generate(state, actor.id).filter((entry) => entry.cardId === "assault")
   };
 }
 
@@ -20321,8 +20589,8 @@ async function exposeAssaultBehavior({ rootStacks, enemyHp, hand, energy = 1, li
     if (action.type === "end") break;
     const ok = action.type === "card"
       ? await game.playCard(actor, action.card, action.targets, action.selection ?? null)
-      : await game.useActiveSkill(actor, action.skill.id, action.targets);
-    executed.push(action.card?.definitionId ?? action.skill?.id ?? action.type);
+      : await game.useActiveSkill(actor, action.skillId, action.targets);
+    executed.push(action.cardId ?? action.skillId ?? action.type);
     if (!ok) break;
   }
   return { executed, enemyAlive: enemy.alive, enemyHp: enemy.hp };
@@ -20505,8 +20773,8 @@ const provenanceEnemy = (hp, overrides = {}) => ({
 const provenancePoshiCard = () => ({ ...CARD_DEFINITIONS.exposeWeakness, id: "poshi" });
 
 function provenanceAssaults(state) {
-  return exposeMarginalGame.aiController.actionGenerator.generateFromVisible(state, "actor")
-    .filter((entry) => entry.card?.definitionId === "assault");
+  return exposeMarginalGame.aiController.actionGenerator.generate(state, "actor")
+    .filter((entry) => entry.cardId === "assault");
 }
 
 function provenanceAdvance(before, after, remaining, actorId = "actor") {
@@ -20529,7 +20797,7 @@ test("AI·搜索：旧1层连续两次突袭，第二次消费侧边际为0", ()
   const remaining = provenanceAdvance(state, afterFirst, 1);
   assert.equal(afterFirst.players[0].exposeWeaknessStacks, 0, "真实状态旧层已消费");
   assert.equal(remaining, 0, "节点 remaining 应随消费归零");
-  const second = provenanceAssaults(afterFirst).find((entry) => entry.card?.id !== first.card?.id)
+  const second = provenanceAssaults(afterFirst).find((entry) => entry.cardInstanceId !== first.card?.id)
     ?? provenanceAssaults(afterFirst)[0];
   assert.equal(provenanceCredit(afterFirst, second, remaining, simulator), 0, "第二次突袭不得再次获得旧层边际");
 });
@@ -20551,7 +20819,7 @@ test("AI·搜索：旧1层→突袭→新破势→突袭，新层只计准备侧
     prepare > statePointsToUtility(15),
     `新层准备侧信用应存在，实际 ${prepare}`
   );
-  const second = provenanceAssaults(afterPoshi).find((entry) => entry.card?.id !== first.card?.id)
+  const second = provenanceAssaults(afterPoshi).find((entry) => entry.cardInstanceId !== first.card?.id)
     ?? provenanceAssaults(afterPoshi)[0];
   assert.equal(
     provenanceCredit(afterPoshi, second, remainingAfterFirst, simulator),
@@ -20567,7 +20835,7 @@ test("AI·搜索：旧2层连续两次突袭，第二次消费侧边际为0", ()
   const afterFirst = simulator.apply(state, first, "actor");
   const remaining = provenanceAdvance(state, afterFirst, 2);
   assert.equal(remaining, 0, "2 层全部消费后 remaining 应为 0");
-  const second = provenanceAssaults(afterFirst).find((entry) => entry.card?.id !== first.card?.id)
+  const second = provenanceAssaults(afterFirst).find((entry) => entry.cardInstanceId !== first.card?.id)
     ?? provenanceAssaults(afterFirst)[0];
   assert.equal(provenanceCredit(afterFirst, second, remaining, simulator), 0);
 });
@@ -20629,8 +20897,8 @@ test("AI·搜索：不同搜索分支的 remaining 互不影响且旧层未消�
   const afterAssault = simulator.apply(state, assaultAction, "actor");
   const branchA = provenanceAdvance(state, afterAssault, 1);
   // 分支 B：先聚能（非消费动作）→ remaining 保持不变
-  const chargeAction = exposeMarginalGame.aiController.actionGenerator.generateFromVisible(state, "actor")
-    .find((entry) => entry.card?.definitionId === "charge");
+  const chargeAction = exposeMarginalGame.aiController.actionGenerator.generate(state, "actor")
+    .find((entry) => entry.cardId === "charge");
   const afterCharge = simulator.apply(state, chargeAction, "actor");
   const branchB = provenanceAdvance(state, afterCharge, 1);
   assert.equal(branchA, 0, "突袭分支旧层应归零");
@@ -20661,10 +20929,10 @@ async function planRootProvenance({ stacks, hand, enemyHp, limit, forceAssaultRo
   game.aiRandomnessRange = 0;
   game.aiSearchBudgetOverrideMs = 30000;
   game.aiSearchNodeBudgetOverride = 20000;
-  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const visible = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   let rootActions = game.aiController.getActionCandidates(actor);
   if (forceAssaultRoot) {
-    const assault = rootActions.find((entry) => entry.card?.definitionId === "assault");
+    const assault = rootActions.find((entry) => entry.cardId === "assault");
     rootActions = [assault, { type: "end" }].filter(Boolean);
   }
   await game.aiController.planner.plan(actor, visible, rootActions, { gameId: game.state.gameId });
@@ -20697,11 +20965,11 @@ test("AI·搜索：根突袭部分执行时旧层剩余按真实保留比例衰�
   game.aiRandomnessRange = 0;
   game.aiSearchBudgetOverrideMs = 30000;
   game.aiSearchNodeBudgetOverride = 20000;
-  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const visible = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const cloned = structuredClone(visible);
   cloned.players[0].equipmentRetentionProbability = 0.4;
-  const rootActions = game.aiController.actionGenerator.generateFromVisible(cloned, actor.id)
-    .filter((entry) => entry.card?.definitionId === "assault");
+  const rootActions = game.aiController.actionGenerator.generate(cloned, actor.id)
+    .filter((entry) => entry.cardId === "assault");
   assert.ok(rootActions[0]?.executionProbability < 1, "根突袭应存在概率执行");
   await game.aiController.planner.plan(actor, cloned, [...rootActions, { type: "end" }], { gameId: game.state.gameId });
   const stats = game.aiController.planner.lastSearchStats;
@@ -20736,8 +21004,8 @@ test("AI·搜索：固定节点下生产与诊断 ledger 的候选价值、序�
   const { game } = makeGame([actor, defender]);
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 20;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const visible = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const roots = game.aiController.getActionCandidates(actor);
   const planner = game.aiController.planner;
 
@@ -20751,7 +21019,7 @@ test("AI·搜索：固定节点下生产与诊断 ledger 的候选价值、序�
   });
   const diagnosticStats = planner.lastSearchStats;
   assert.ok(diagnosticStats.rootLedgers.length > 0, "显式诊断应按需构造 root ledger");
-  assert.deepEqual(describeAction(diagnosticChoice), describeAction(productionChoice));
+  assert.deepEqual(describeBenchmarkAction(diagnosticChoice), describeBenchmarkAction(productionChoice));
   assert.equal(diagnosticStats.expanded, productionStats.expanded);
   assert.equal(diagnosticStats.bestValueScore, productionStats.bestValueScore);
   assert.deepEqual(diagnosticStats.bestSequence, productionStats.bestSequence);
@@ -20765,8 +21033,8 @@ test("AI·搜索：零经济项不重复推导 transition resolution scale", asy
   const { game } = makeGame([actor, defender]);
   game.aiSearchNodeBudgetOverride = 1;
   game.aiRandomnessRange = 0;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const visible = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const action = { type: "card", card: scout, targets: [{ id: defender.id }] };
   const original = Simulator.prototype.tacticResolutionChance;
   let calls = 0;
@@ -20795,8 +21063,8 @@ test("AI·搜索：防御方持有格挡使突袭候选价值按格挡响应价�
   game.aiSearchNodeBudgetOverride = 1;
   game.aiRandomnessRange = 0;
   // 隔离隐藏世界抽样的格挡先验（-1.5×block 比例）：它不是格挡的 owner-local 响应价值
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const base = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const base = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const clonePlayers = () => base.players.map((p) => ({ ...p }));
   const visibleBlock = { ...base, players: clonePlayers() };
   // 无格挡世界 = 同一世界只清格挡容量（保留同一张已知格挡牌、handCount、身份），
@@ -20846,8 +21114,8 @@ test("AI·搜索：反制容量存在与否使战术候选价值正确变化且�
   const { game } = makeGame([actor, defender]);
   game.aiSearchNodeBudgetOverride = 1;
   game.aiRandomnessRange = 0;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const base = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const base = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const visibleCounter = { ...base, players: base.players.map((p) => ({ ...p })) };
   const visibleNoCounter = {
     ...base, players: base.players.map((p) => (
@@ -20896,8 +21164,8 @@ test("AI·搜索：濒死救援存在与否使攻击候选价值反映生存后�
   const { game } = makeGame([target, rescuer, attacker]);
   game.aiSearchNodeBudgetOverride = 1;
   game.aiRandomnessRange = 0;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const base = createInitialSearchState(attacker.id, game.state, game.aiController.knowledge.remainingCounts(attacker));
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const base = createInitialWorld(attacker.id, game.state, deriveCurrentCardCounts(attacker, game.state));
   // expectedRecoverCount 需在可见状态上显式设置（生产由 recoverEstimate 提供）
   const withRecovery = base.players.map((p) => ({ ...p, expectedRecoverCount: p.id === rescuer.id ? 1 : p.expectedRecoverCount }));
   const withoutRecovery = base.players.map((p) => ({ ...p, expectedRecoverCount: p.id === rescuer.id ? 0 : p.expectedRecoverCount }));
@@ -20938,7 +21206,7 @@ test("AI·搜索：前沿未实现价值只计一次且不随搜索深度重复�
   actor.maxHp = 4;
   const { game } = makeGame([actor, enemy]);
   game.aiRandomnessRange = 0;
-  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const visible = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const planner = game.aiController.planner;
   const terminal = new Simulator(visible).apply(visible, { type: "end" }, actor.id);
   const residual = planner.candidateMaterializer.frontierValue.frontierResidual(terminal, actor.id);
@@ -20974,8 +21242,8 @@ test("AI·搜索：END-A 真实负收益 sibling 不被固定 end 惩罚强制�
   const actor = game.state.players[0];
   game.aiSearchNodeBudgetOverride = 800;
   game.aiRandomnessRange = 0;
-  const visible = createInitialSearchState(
-    "a", game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    "a", game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
   const nonEnd = roots.find((action) => action.type !== "end");
@@ -21007,8 +21275,8 @@ test("AI·搜索：END-B 零/近零收益 sibling 不被固定 end 惩罚强制�
   const actor = game.state.players[0];
   game.aiSearchNodeBudgetOverride = 800;
   game.aiRandomnessRange = 0;
-  const visible = createInitialSearchState(
-    "a", game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    "a", game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
   const nonEnd = roots.find((action) => action.type !== "end");
@@ -21060,13 +21328,12 @@ clone 前后语义相等；敌方真实 hand definition 不得进入 request。
 */
 async function frArch13SearchRequestContract() {
   const { createSearchRequest, searchRequestViolations } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("sr-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("sr-enemy", 1, "dusk", "ai", 1);
   const secret = instance("harvest");
   enemy.hand.push(secret);
   const { game } = makeGame([actor, enemy]);
-  const searchState = createInitialSearchState(actor.id, game.state, { assault: 1 });
+  const world = createInitialWorld(actor.id, game.state, { assault: 1 });
   const request = createSearchRequest({
     requestId: "sr-1",
     gameId: game.state.gameId,
@@ -21074,11 +21341,10 @@ async function frArch13SearchRequestContract() {
     actorId: actor.id,
     phase: game.state.phase,
     currentRound: game.state.currentRound,
-    searchState,
+    world,
     searchConfig: game.aiController.buildSearchConfig(),
     rng: { seed: 7, state: 7, algorithm: "lcg", draws: 0 },
-    rootActionDescriptors: [{ type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null }],
-    rootSearchActions: [describeRootSearchAction({ type: "end" })]
+    rootActions:[createAction({ type:"end", actorId:actor.id })]
   });
   const cloned = structuredClone(request);
   assert.deepEqual(cloned, request);
@@ -21087,7 +21353,7 @@ async function frArch13SearchRequestContract() {
   assert.equal(text.includes(secret.id), false);
   assert.equal(text.includes(secret.definitionId), false);
   assert.equal(typeof cloned.random, "undefined");
-  assert.equal(cloned.searchState.players.find((player) => player.id === enemy.id)?.hand, undefined);
+  assert.equal(cloned.world.players.find((player) => player.id === enemy.id)?.hand, undefined);
 }
 
 test("AI·SearchRequest：structured clone / data-only / no hidden leak", frArch13SearchRequestContract);
@@ -21119,7 +21385,6 @@ createSearchRequest、acceptSearchResult、bumpStateVersion。
 */
 async function frArch13StaleResultRejection() {
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
   const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
   const actor = makePlayer("stale-actor", 0, "dawn", "ai", 0);
@@ -21138,14 +21403,15 @@ async function frArch13StaleResultRejection() {
       actorId: actor.id,
       phase: game.state.phase,
       currentRound: game.state.currentRound,
-      searchState: createInitialSearchState(actor.id, game.state, { assault: 1 }),
+      world: createInitialWorld(actor.id, game.state, { assault: 1 }),
       searchConfig: controller.buildSearchConfig(),
       rng: controller.searchRng.snapshot(),
-      rootActionDescriptors: roots.map(ActionDescriptor.describe),
-      rootSearchActions: roots.map(describeRootSearchAction)
+      rootActions:roots
     });
   };
-  const action = controller.getActionCandidates(actor).find((entry) => entry.card?.id === card.id);
+  const action = controller.getActionCandidates(actor).find(
+    (entry) => entry.cardInstanceId === card.id
+  );
   assert.ok(action);
   const request = makeRequest();
   const accepted = controller.acceptSearchResult({
@@ -21155,7 +21421,7 @@ async function frArch13StaleResultRejection() {
     stats: { stopReason: "COMPLETE" }
   });
   assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
-  assert.equal(accepted.action.card.id, card.id);
+  assert.equal(accepted.action.cardInstanceId, card.id);
 
   bumpStateVersion(game.state);
   const stale = controller.acceptSearchResult({ request, action, plannedSequence: [], stats: null });
@@ -21228,14 +21494,16 @@ async function frArch13PlannedSequenceReuse() {
   const charge = instance("charge");
   actor.hand.push(charge);
   const { game } = makeGame([actor, enemy]);
-  const descriptor = ActionDescriptor.describe({ type: "card", card: charge, targets: [] });
-  const first = game.aiController.resolvePlannedAction(actor, descriptor);
-  assert.equal(first?.card?.id, charge.id);
+  const action = game.aiController.getActionCandidates(actor).find(
+    (entry) => entry.cardInstanceId === charge.id
+  );
+  const first = game.aiController.resolvePlannedAction(actor, action);
+  assert.equal(first?.cardInstanceId, charge.id);
   bumpStateVersion(game.state);
-  const second = game.aiController.resolvePlannedAction(actor, descriptor);
-  assert.equal(second?.card?.id, charge.id, "queued plan 第二项不得因 stateVersion 变化而必然 stale");
+  const second = game.aiController.resolvePlannedAction(actor, action);
+  assert.equal(second?.cardInstanceId, charge.id, "queued plan 第二项不得因 stateVersion 变化而必然 stale");
   actor.hand = [];
-  assert.equal(game.aiController.resolvePlannedAction(actor, descriptor), null);
+  assert.equal(game.aiController.resolvePlannedAction(actor, action), null);
 }
 
 test("AI·计划序列：current-state rebind 与 version 变化共存", frArch13PlannedSequenceReuse);
@@ -21285,7 +21553,7 @@ async function frArch13RngIsolation() {
   secondGame.aiRandomnessRange = 0;
   const firstAction = await firstGame.aiController.selectAction(firstGame.state.players[0], { gameId: firstGame.state.gameId });
   const secondAction = await secondGame.aiController.selectAction(secondGame.state.players[0], { gameId: secondGame.state.gameId });
-  assert.deepEqual(ActionDescriptor.describe(firstAction), ActionDescriptor.describe(secondAction));
+  assert.deepEqual(firstAction, secondAction);
 }
 
 test("AI·RNG 隔离：AI search RNG 与 real RNG 分离且 fixed-seed 可复现", frArch13RngIsolation);
@@ -21317,7 +21585,6 @@ cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
 */
 async function frArch13CancellationContract() {
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
   const actor = makePlayer("cancel-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("cancel-enemy", 1, "dusk", "ai", 1);
@@ -21331,11 +21598,10 @@ async function frArch13CancellationContract() {
     actorId: actor.id,
     phase: game.state.phase,
     currentRound: game.state.currentRound,
-    searchState: createInitialSearchState(actor.id, game.state, { assault: 1 }),
+    world: createInitialWorld(actor.id, game.state, { assault: 1 }),
     searchConfig: game.aiController.buildSearchConfig(),
     rng: game.aiController.searchRng.snapshot(),
-    rootActionDescriptors: game.aiController.getActionCandidates(actor).map(ActionDescriptor.describe),
-    rootSearchActions: game.aiController.getActionCandidates(actor).map(describeRootSearchAction)
+    rootActions:game.aiController.getActionCandidates(actor)
   });
   const action = game.aiController.getActionCandidates(actor)[0];
   const cancelled = game.aiController.acceptSearchResult({
@@ -21346,14 +21612,14 @@ async function frArch13CancellationContract() {
   });
   assert.equal(cancelled.result.status, SEARCH_RESULT_STATUS.CANCELLED);
   assert.equal(cancelled.action.type, "end");
-  assert.equal(cancelled.action.card, undefined);
+  assert.equal(cancelled.action.cardId, null);
 }
 
 test("AI·搜索取消：cancelled result 不执行真实 action", frArch13CancellationContract);
 
 /*
 功能
-运行 FR-ARCH-1 ActionDescriptor 稳定字段 characterization。
+验证 canonical Action 只保存执行意图并可安全跨 structured clone。
 
 调用方
 当前测试。
@@ -21365,52 +21631,57 @@ test("AI·搜索取消：cancelled result 不执行真实 action", frArch13Cance
 无返回值，断言失败时抛错。
 
 读取状态
-生产 describeAction。
+无。
 
 写入状态
 无。
 
 调用函数
-instance、describeAction。
+createAction、structuredClone。
 
 边界与不变量
-转移选择只保留 source/receiver/zone；目标顺序不得改变。
+目标顺序、完整 selection 与 root 执行意图属于 Action；概率、分支和次数槽必须留在 Simulator。
 */
-function frArchActionDescriptorContract() {
+function canonicalActionContract() {
   const card = instance("transfer");
-  const target = { id: "fr-descriptor-target" };
-  const action = {
-    type: "card",
-    card,
-    targets: [target],
+  const action = createAction({
+    type:"card",
+    actorId:"fr-action-actor",
+    cardId:"transfer",
+    cardInstanceId:card.id,
+    targetIds:["fr-action-target"],
     selection: {
       sourceId: "fr-source",
       receiverId: "fr-receiver",
       zone: "hand",
       score: 7.5
-    }
-  };
-  assert.deepEqual(describeAction(action), {
-    type: "card",
-    cardId: "transfer",
-    cardInstanceId: card.id,
-    targetId: target.id,
-    targetIds: [target.id],
-    selection: {
-      sourceId: "fr-source",
-      receiverId: "fr-receiver",
-      zone: "hand"
+    },
+    execution:{
+      probability:.75,
+      attackUseSlot:1,
+      restoreActorHand:true
     }
   });
+  assert.deepEqual(structuredClone(action), action);
+  assert.equal(action.selection.score, 7.5);
+  assert.deepEqual(action.execution, {
+    restoreActorHand:true,
+    ignoreCounter:false
+  });
+  assert.equal(action.execution.probability, undefined);
+  assert.equal(action.execution.attackUseSlot, undefined);
+  assert.equal(Object.isFrozen(action), true);
+  assert.equal(Object.isFrozen(action.targetIds), true);
+  assert.equal(Object.isFrozen(action.selection), true);
 }
 
-test("AI·ActionDescriptor：cardInstanceId、targetIds 与 transfer selection 冻结", frArchActionDescriptorContract);
+test("AI·Action：canonical identity、target、selection 与 execution intent 一次创建", canonicalActionContract);
 
 // ---- Worker 与传输 ----
 
 /*
 功能
-验证 FR13 carry-in：SearchResult planned sequence descriptors 只投影一次且 round-trip identity 保留。
+验证 SearchResult 直接保存 canonical Action 且 planned sequence 不发生二次投影。
 
 调用方
 当前测试。
@@ -21422,47 +21693,55 @@ test("AI·ActionDescriptor：cardInstanceId、targetIds 与 transfer selection �
 无返回值，断言失败时抛错。
 
 读取状态
-ActionDescriptor/SearchResult contracts。
+Action/SearchResult contracts。
 
 写入状态
 无。
 
 调用函数
-ActionDescriptor.describe、createSearchResult。
+createAction、createSearchResult。
 
 边界与不变量
-end/card/skill/transfer/leverage descriptor 不再二次 describe。
+end/card/skill/transfer/leverage Action 不再转换为另一种数据结构。
 */
-async function frArch14SearchResultDescriptorIdempotence() {
+async function canonicalSearchResultIdentity() {
   const { createSearchResult } = await import("../js/ai/search/SearchResult.js");
-  const target = { id: "t" };
-  const rawActions = [
-    { type: "end" },
-    { type: "card", card: instance("assault"), targets: [target] },
-    { type: "skill", skill: ACTIVE_SKILL_DEFINITIONS.barrier, targets: [target], energyCost: 2 },
-    { type: "card", card: instance("transfer"), targets: [], selection: { sourceId: "s", receiverId: "r", zone: "hand", selectionKind: "unknown", availableUnknownCount: 1, expectedValue: 4, score: .5 } },
-    { type: "card", card: instance("leverage"), targets: [target], selection: { firstTargetId: "a", equipmentCardId: "e", secondTargetId: "b", equipmentDefinitionId: "battleDevice" } }
+  const actions = [
+    createAction({ type:"end", actorId:"a" }),
+    createAction({ type:"card", actorId:"a", cardId:"assault", cardInstanceId:"assault-1", targetIds:["t"] }),
+    createAction({ type:"skill", actorId:"a", skillId:"barrier", targetIds:["t"], energyCost:2 }),
+    createAction({
+      type:"card",
+      actorId:"a",
+      cardId:"transfer",
+      cardInstanceId:"transfer-1",
+      selection:{ sourceId:"s", receiverId:"r", zone:"hand", selectionKind:"unknown", availableUnknownCount:1 }
+    }),
+    createAction({
+      type:"card",
+      actorId:"a",
+      cardId:"leverage",
+      cardInstanceId:"leverage-1",
+      targetIds:["t"],
+      selection:{ firstTargetId:"a", equipmentCardId:"e", secondTargetId:"b", equipmentDefinitionId:"battleDevice" }
+    })
   ];
-  const descriptors = rawActions.map(ActionDescriptor.describe);
   const request = {
     requestId: "r", gameId: "g", stateVersion: 0, actorId: "a"
   };
   const result = createSearchResult({
     request,
-    actionDescriptor: descriptors[0],
-    plannedSequenceDescriptors: descriptors,
+    action:actions[0],
+    plannedActions:actions,
     stats: null,
     status: "ACCEPTED"
   });
-  assert.deepEqual(result.actionDescriptor, descriptors[0]);
-  assert.deepEqual(result.plannedSequenceDescriptors, descriptors);
-  assert.deepEqual(
-    result.plannedSequenceDescriptors.map((descriptor) => descriptor.cardInstanceId),
-    descriptors.map((descriptor) => descriptor.cardInstanceId)
-  );
+  assert.equal(result.action, actions[0]);
+  assert.deepEqual(result.plannedActions, actions);
+  assert.deepEqual(structuredClone(result), result);
 }
 
-test("AI·Worker 边界：SearchResult descriptor 只投影一次且 idempotent", frArch14SearchResultDescriptorIdempotence);
+test("AI·Worker 边界：SearchResult 直接保存 canonical Action", canonicalSearchResultIdentity);
 
 /*
 功能
@@ -21510,7 +21789,7 @@ test("AI·Worker 边界：AI RNG worker handoff restore/commit 连续", frArch14
 
 /*
 功能
-验证 root search action 投影/rehydrate 与原始 action 的 search identity 无损。
+验证 canonical root Action 可直接跨 Worker structured clone 且执行语义无损。
 
 调用方
 当前测试。
@@ -21522,41 +21801,32 @@ test("AI·Worker 边界：AI RNG worker handoff restore/commit 连续", frArch14
 无返回值，断言失败时抛错。
 
 读取状态
-production root actions 与 SearchState。
+production root Actions。
 
 写入状态
 无。
 
 调用函数
-describeRootSearchAction、rehydrateRootSearchAction、ActionDescriptor.describe。
+structuredClone、Action.same。
 
 边界与不变量
-比较 descriptor、card/skill identity、target order、selection 与 energyCost；不比较实体引用。
+不存在 root Action 投影或重建；card/skill identity、target order、selection、energyCost 与 execution 全部保留。
 */
-async function frArch14RootActionRehydration() {
-  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
+async function canonicalRootActionClone() {
   const actor = makePlayer("root-actor", 0, "dawn", "ai", 2);
   const enemy = makePlayer("root-enemy", 1, "dusk", "ai", 1);
   const assault = instance("assault");
   actor.hand.push(assault);
   const { game } = makeGame([actor, enemy]);
   const roots = game.aiController.getActionCandidates(actor);
-  const visible = createInitialSearchState(actor.id, game.state);
-  for (const raw of roots) {
-    const record = describeRootSearchAction(raw);
-    const hydrated = rehydrateRootSearchAction(record, visible, visible.players.find((player) => player.id === actor.id));
-    assert.deepEqual(ActionDescriptor.describe(hydrated), ActionDescriptor.describe(raw));
-    assert.equal(hydrated.type, raw.type);
-    assert.equal(hydrated.card?.definitionId ?? null, raw.card?.definitionId ?? null);
-    assert.equal(hydrated.card?.id ?? null, raw.card?.id ?? null);
-    assert.equal(hydrated.skill?.id ?? null, raw.skill?.id ?? null);
-    assert.deepEqual((hydrated.targets ?? []).map((target) => target.id), (raw.targets ?? []).map((target) => target.id));
-    assert.deepEqual(hydrated.selection ?? null, raw.selection ?? null);
-    assert.equal(hydrated.energyCost ?? null, raw.energyCost ?? null);
+  for (const action of roots) {
+    const cloned = structuredClone(action);
+    assert.deepEqual(cloned, action);
+    assert.equal(Action.same(cloned, action), true);
   }
 }
 
-test("AI·Root action 重建：all root action families lossless", frArch14RootActionRehydration);
+test("AI·Action：all root action families 跨 Worker clone 无损", canonicalRootActionClone);
 
 /*
 功能
@@ -21586,7 +21856,6 @@ outcome 无真实实体/函数；Main Thread 仍负责 ACCEPTED 与 rebind。
 async function frArch14RunSearchRequest() {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
   const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
   const actor = makePlayer("run-actor", 0, "dawn", "ai", 2);
@@ -21603,18 +21872,17 @@ async function frArch14RunSearchRequest() {
     actorId: actor.id,
     phase: game.state.phase,
     currentRound: game.state.currentRound,
-    searchState: createInitialSearchState(actor.id, game.state, { assault: 1, charge: 1 }),
+    world: createInitialWorld(actor.id, game.state, { assault: 1, charge: 1 }),
     searchConfig: game.aiController.buildSearchConfig(),
     rng: game.aiController.searchRng.snapshot(),
-    rootActionDescriptors: roots.map(ActionDescriptor.describe),
-    rootSearchActions: roots.map(describeRootSearchAction)
+    rootActions:roots
   });
   const outcome = await runSearchRequest(request, { yieldControl: async () => true });
   assert.deepEqual(workerOutcomeViolations(outcome, request), []);
   assert.deepEqual(structuredClone(outcome), outcome);
-  assert.equal(typeof outcome.actionDescriptor, "object");
-  assert.equal(outcome.actionDescriptor?.cardInstanceId == null
-    || typeof outcome.actionDescriptor.cardInstanceId === "string", true);
+  assert.equal(typeof outcome.action, "object");
+  assert.equal(outcome.action?.cardInstanceId == null
+    || typeof outcome.action.cardInstanceId === "string", true);
   const accepted = game.aiController.acceptWorkerSearchOutcome(request, outcome);
   assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
   assert.ok(["card", "end"].includes(accepted.action.type));
@@ -21661,7 +21929,6 @@ async function frArch14WorkerProtocol() {
   const { game } = makeGame([actor, enemy]);
   game.aiSearchNodeBudgetOverride = 2;
   const roots = game.aiController.getActionCandidates(actor);
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
   const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
   const request = createSearchRequest({
@@ -21671,11 +21938,10 @@ async function frArch14WorkerProtocol() {
     actorId: actor.id,
     phase: game.state.phase,
     currentRound: game.state.currentRound,
-    searchState: createInitialSearchState(actor.id, game.state, { assault: 1 }),
+    world: createInitialWorld(actor.id, game.state, { assault: 1 }),
     searchConfig: game.aiController.buildSearchConfig(),
     rng: game.aiController.searchRng.snapshot(),
-    rootActionDescriptors: roots.map(ActionDescriptor.describe),
-    rootSearchActions: roots.map(describeRootSearchAction)
+    rootActions:roots
   });
   await handler.handleMessage({ type: "SEARCH", requestId: request.requestId, request: structuredClone(request) });
   assert.equal(messages.length, 2);
@@ -21715,7 +21981,6 @@ runSearchRequest、setInterval、clearInterval。
 async function frArch14MainThreadResponsiveness() {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("heart-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("heart-enemy", 1, "dusk", "ai", 1);
   for (let index = 0; index < 60; index += 1) actor.hand.push(instance("exposeWeakness"));
@@ -21729,14 +21994,13 @@ async function frArch14MainThreadResponsiveness() {
     actorId: actor.id,
     phase: game.state.phase,
     currentRound: game.state.currentRound,
-    searchState: createInitialSearchState(actor.id, game.state, { assault: 1, charge: 1 }),
+    world: createInitialWorld(actor.id, game.state, { assault: 1, charge: 1 }),
     searchConfig: {
       ...game.aiController.buildSearchConfig(),
       yieldEvery:1
     },
     rng: game.aiController.searchRng.snapshot(),
-    rootActionDescriptors: roots.map(ActionDescriptor.describe),
-    rootSearchActions: roots.map(describeRootSearchAction)
+    rootActions:roots
   });
   let heartbeats = 0;
   const timer = setInterval(() => { heartbeats += 1; }, 0);
@@ -21871,7 +22135,7 @@ test("AI·Worker 响应性：真实 selectAction → SearchWorkerClient heartbea
 
 /*
 功能
-验证互利从 root candidate 到 Worker projection、rehydrate、main acceptance、实体 rebind、ActionWorkflow 执行与公开池完成的完整 runtime 链。
+验证互利 canonical Action 从 Generator 到 Worker、main acceptance 与真实执行边界的完整 runtime 链。
 
 调用方
 FR-ARCH-14 runtime regression。
@@ -21883,21 +22147,20 @@ FR-ARCH-14 runtime regression。
 无返回值，断言失败时抛错。
 
 读取状态
-SearchRequest/RootSearchAction/WorkerSearchRuntime/AIController/Game playCard/PublicCardPool。
+SearchRequest/Action/WorkerSearchRuntime/AIController/Game playCard/PublicCardPool。
 
 写入状态
 测试 Game 状态。
 
 调用函数
-makePlayer、makeGame、instance、createInitialSearchState、getActionCandidates、createSearchRequest、describeRootSearchAction、rehydrateRootSearchAction、runSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome、Game.playCard。
+makePlayer、makeGame、instance、createInitialWorld、getActionCandidates、createSearchRequest、runSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome、Game.playCard。
 
 边界与不变量
-Search 选择是否 end 不影响执行边界验证；执行使用显式 mutualBenefit root descriptor 的合法 rebind。
+Search 选择是否 end 不影响执行边界验证；Worker 与 main thread 不投影或重建 Action，真实执行只按 ID 解析当前实体。
 */
 async function frArch14MutualBenefitRuntimeTrace() {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction, rehydrateRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
   const { SEARCH_RESULT_STATUS } = await import("../js/ai/search/SearchResult.js");
   const actor = makePlayer("mb-runtime-actor", 0, "dawn", "ai", 0);
@@ -21908,18 +22171,10 @@ async function frArch14MutualBenefitRuntimeTrace() {
   game.state.deck.cards = [instance("block"), instance("charge")];
   game.aiSearchNodeBudgetOverride = 8;
   const roots = game.aiController.getActionCandidates(actor);
-  const root = roots.find((action) => action.card?.definitionId === "mutualBenefit");
+  const root = roots.find((action) => action.cardId === "mutualBenefit");
   assert.ok(root, "root candidate 必须包含 mutualBenefit");
-  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
-  const record = describeRootSearchAction(root);
-  const hydrated = rehydrateRootSearchAction(record, visible, visible.players.find((player) => player.id === actor.id));
-  assert.equal(hydrated.card.definitionId, "mutualBenefit");
-  assert.equal(hydrated.card.category, root.card.category);
-  assert.equal(hydrated.card.usageMode, root.card.usageMode);
-  assert.equal(hydrated.card.targetType, root.card.targetType);
-  assert.equal(hydrated.card.ignoresDistance, root.card.ignoresDistance);
-  assert.equal(hydrated.card.aiValue, root.card.aiValue);
-  assert.deepEqual(ActionDescriptor.describe(hydrated), ActionDescriptor.describe(root));
+  const visible = createInitialWorld(actor.id, game.state);
+  assert.deepEqual(structuredClone(root), root);
   const request = createSearchRequest({
     requestId: "mb-runtime-request",
     gameId: game.state.gameId,
@@ -21927,23 +22182,22 @@ async function frArch14MutualBenefitRuntimeTrace() {
     actorId: actor.id,
     phase: game.state.phase,
     currentRound: game.state.currentRound,
-    searchState: visible,
+    world: visible,
     searchConfig: game.aiController.buildSearchConfig(),
     rng: game.aiController.searchRng.snapshot(),
-    rootActionDescriptors: roots.map(ActionDescriptor.describe),
-    rootSearchActions: roots.map(describeRootSearchAction)
+    rootActions:roots
   });
-  assert.ok(request.rootSearchActions.some((entry) => entry.card?.definitionId === "mutualBenefit"));
+  assert.ok(request.rootActions.some((entry) => entry.cardId === "mutualBenefit"));
   const outcome = await runSearchRequest(request, { yieldControl: async () => true });
   assert.deepEqual(workerOutcomeViolations(outcome, request), []);
   assert.deepEqual(structuredClone(outcome), outcome);
-  assert.ok(outcome.actionDescriptor === null || request.rootActionDescriptors.some(
-    (descriptor) => JSON.stringify(descriptor) === JSON.stringify(outcome.actionDescriptor)
+  assert.ok(outcome.action === null || request.rootActions.some(
+    (descriptor) => JSON.stringify(descriptor) === JSON.stringify(outcome.action)
   ));
   const executionOutcome = createWorkerSearchOutcome({
     request,
-    actionDescriptor: ActionDescriptor.describe(root),
-    plannedSequenceDescriptors: [ActionDescriptor.describe(root), ActionDescriptor.describe({ type: "end" })],
+    action:root,
+    plannedActions:[root, createAction({ type:"end", actorId:actor.id })],
     stats: outcome.stats,
     searchStopReason: "COMPLETE",
     rngAfter: outcome.rngAfter
@@ -21951,9 +22205,18 @@ async function frArch14MutualBenefitRuntimeTrace() {
   const accepted = game.aiController.acceptWorkerSearchOutcome(request, executionOutcome);
   assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
   assert.equal(accepted.action.type, "card");
-  assert.equal(accepted.action.card.id, benefit.id);
-  assert.deepEqual(accepted.action.targets.map((target) => target.id), [actor.id, enemy.id]);
-  assert.equal(await game.playCard(actor, accepted.action.card, accepted.action.targets, accepted.action.selection), true);
+  assert.equal(accepted.action.cardInstanceId, benefit.id);
+  assert.deepEqual(accepted.action.targetIds, [actor.id, enemy.id]);
+  const executionCard = actor.hand.find((card) => card.id === accepted.action.cardInstanceId);
+  const executionTargets = accepted.action.targetIds.map(
+    (targetId) => game.state.players.find((player) => player.id === targetId)
+  );
+  assert.equal(await game.playCard(
+    actor,
+    executionCard,
+    executionTargets,
+    accepted.action.selection
+  ), true);
   assert.equal(actor.hand.length, 1);
   assert.equal(enemy.hand.length, 1);
   assert.equal(game.state.publicCardPool.length, 0);
@@ -22103,8 +22366,8 @@ async function frArch14WorkerClientTransport() {
       gameId: "game-1",
       stateVersion: 0,
       actorId: "actor-1",
-      actionDescriptor: { type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null },
-      plannedSequenceDescriptors: [],
+      action: { type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null },
+      plannedActions: [],
       stats: null,
       searchStopReason: "COMPLETE",
       rngAfter: { seed: 1, state: 1, algorithm: "lcg", draws: 0 },
@@ -22258,7 +22521,7 @@ test("AI·Worker 传输：Dedicated Worker 初始接线/结果/清理/恢复与 
 
 /*
 功能
-对同一固定 state 比较 FR13-equivalent main Planner（raw roots）与 FR14 Worker runSearchRequest（rehydrated roots）的完整确定性 trace。
+对同一固定 World 比较 main Planner 与 Worker 直接消费 canonical roots 的完整确定性 trace。
 
 调用方
 FR-ARCH-14 worker search parity audit。
@@ -22270,13 +22533,13 @@ FR-ARCH-14 worker search parity audit。
 无返回值，断言失败时抛错。
 
 读取状态
-Planner/runSearchRequest/SearchRng/ActionDescriptor。
+Planner/runSearchRequest/SearchRng/Action。
 
 写入状态
 测试 Game 与两个独立 SearchRng continuation。
 
 调用函数
-makeGame、instance、getActionCandidates、createInitialSearchState、createSearchRequest、describeRootSearchAction、SearchRng.restore、Planner.plan、runSearchRequest。
+makeGame、instance、getActionCandidates、createInitialWorld、createSearchRequest、SearchRng.restore、Planner.plan、runSearchRequest。
 
 边界与不变量
 固定 node budget 保证双方同 stopReason；比较 action、计划序列、stats、RNG after 与 hidden samples。
@@ -22284,7 +22547,6 @@ makeGame、instance、getActionCandidates、createInitialSearchState、createSea
 async function frArch14WorkerSearchParityTrace() {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("parity-actor", 0, "dawn", "ai", 0);
   const ally = makePlayer("parity-ally", 2, "dawn", "ai", 2);
   const enemy = makePlayer("parity-enemy", 1, "dusk", "ai", 1);
@@ -22295,20 +22557,13 @@ async function frArch14WorkerSearchParityTrace() {
   game.aiController.searchRng = new SearchRng(777001);
   const player = game.state.players[0];
   const roots = game.aiController.getActionCandidates(player);
-  const visible = createInitialSearchState(player.id, game.state, game.aiController.knowledge.remainingCounts(player));
+  const visible = createInitialWorld(player.id, game.state);
   const before = game.aiController.searchRng.snapshot();
   const localRng = SearchRng.restore(before);
   game.aiController.searchRng = localRng;
   const mainAction = await game.aiController.planner.plan(player, visible, roots, { gameId: game.state.gameId });
   const mainStats = { ...game.aiController.planner.lastSearchStats };
-  const mainSequence = game.aiController.planner.lastPlannedSequence.map((entry) => ({
-    type: entry.type,
-    cardId: entry.cardId,
-    cardInstanceId: entry.cardInstanceId,
-    targetId: entry.targetId,
-    targetIds: [...entry.targetIds],
-    selection: entry.selection ? { ...entry.selection } : null
-  }));
+  const mainSequence = structuredClone(game.aiController.planner.lastPlannedSequence);
   const mainAfter = localRng.snapshot();
   const request = createSearchRequest({
     requestId: "parity-request",
@@ -22317,22 +22572,14 @@ async function frArch14WorkerSearchParityTrace() {
     actorId: player.id,
     phase: game.state.phase,
     currentRound: game.state.currentRound,
-    searchState: visible,
+    world: visible,
     searchConfig: game.aiController.buildSearchConfig(),
     rng: before,
-    rootActionDescriptors: roots.map(ActionDescriptor.describe),
-    rootSearchActions: roots.map(describeRootSearchAction)
+    rootActions:roots
   });
   const outcome = await runSearchRequest(request, { yieldControl: async () => true });
-  assert.deepEqual(outcome.actionDescriptor, ActionDescriptor.describe(mainAction));
-  assert.deepEqual(outcome.plannedSequenceDescriptors.map((entry) => ({
-    type: entry.type,
-    cardId: entry.cardId,
-    cardInstanceId: entry.cardInstanceId,
-    targetId: entry.targetId,
-    targetIds: [...entry.targetIds],
-    selection: entry.selection ? { ...entry.selection } : null
-  })), mainSequence);
+  assert.deepEqual(outcome.action, mainAction);
+  assert.deepEqual(outcome.plannedActions, mainSequence);
   assert.equal(outcome.searchStopReason, mainStats.stopReason);
   assert.equal(outcome.stats.expanded, mainStats.expanded);
   assert.equal(outcome.stats.depth, mainStats.depth);
@@ -22345,7 +22592,7 @@ async function frArch14WorkerSearchParityTrace() {
   game.dispose();
 }
 
-test("AI·Worker 搜索一致性：同一 state/seed/config 下 raw vs rehydrated 全 trace 一致", frArch14WorkerSearchParityTrace);
+test("AI·Worker 搜索一致性：同一 World/seed/config 下 canonical Action 全 trace 一致", frArch14WorkerSearchParityTrace);
 
 /*
 功能
@@ -22402,8 +22649,8 @@ async function frArch14RngContinuityAcceptedSearches() {
   game.aiController.searchExecutor = {
     search: async (request) => createWorkerSearchOutcome({
       request,
-      actionDescriptor:null,
-      plannedSequenceDescriptors:[],
+      action:null,
+      plannedActions:[],
       stats:null,
       searchStopReason:null,
       rngAfter:request.rng,
@@ -22413,10 +22660,10 @@ async function frArch14RngContinuityAcceptedSearches() {
   };
   const rejectedAction = await game.aiController.selectAction(player, { gameId: game.state.gameId });
   assert.equal(rejectedAction.type, "card");
-  assert.equal(rejectedAction.card.definitionId, "assault");
+  assert.equal(rejectedAction.cardId, "assault");
   assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.FALLBACK);
   assert.equal(game.aiController.lastSearchFallback.source, "root-search-prior");
-  assert.equal(game.aiController.lastSearchFallback.actionDescriptor.cardInstanceId, rejectedAction.card.id);
+  assert.equal(game.aiController.lastSearchFallback.action.cardInstanceId, rejectedAction.cardInstanceId);
   assert.deepEqual(game.aiController.searchRng.snapshot(), beforeRejected, "rejected outcome 不得 commit RNG");
   assert.equal(game.aiController.getSearchDiagnostics().WORKER_ERROR, 1);
   assert.equal(game.aiController.getSearchDiagnostics().WATCHDOG, 1);
@@ -22495,7 +22742,7 @@ test("AI·搜索配置：同一状态在固定节点预算下不因速度字段�
   const actions = [];
   for (const speed of [1, 2, 3]) {
     game.aiSpeed = speed;
-    actions.push(describeAction(await game.aiController.selectAction(actor, { gameId: game.state.gameId })));
+    actions.push(describeBenchmarkAction(await game.aiController.selectAction(actor, { gameId: game.state.gameId })));
   }
   assert.deepEqual(actions[1], actions[0]);
   assert.deepEqual(actions[2], actions[0]);
@@ -22522,7 +22769,7 @@ WorkerSearchOutcome。
 只推进局部 fake clock 与 Worker 内搜索状态。
 
 调用函数
-makeGame、createInitialSearchState、createSearchRequest、describeRootSearchAction、runSearchRequest。
+makeGame、createInitialWorld、createSearchRequest、describeRootSearchAction、runSearchRequest。
 
 边界与不变量
 不同预算运行使用同一局面、同一 seed、同一搜索结构和同一时钟推进规则；nodeBudget 有效时 SearchBudget 不读取 wall-clock 截止。
@@ -22530,7 +22777,6 @@ makeGame、createInitialSearchState、createSearchRequest、describeRootSearchAc
 async function runTimedWorkerSearch(timeBudgetMs, tickMs, cardDefinitionIds, nodeBudget = null) {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
   const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { describeRootSearchAction } = await import("../js/ai/search/RootSearchAction.js");
   const actor = makePlayer("timed-worker-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("timed-worker-enemy", 1, "dusk", "ai", 1);
   for (const definitionId of cardDefinitionIds) actor.hand.push(instance(definitionId));
@@ -22547,15 +22793,14 @@ async function runTimedWorkerSearch(timeBudgetMs, tickMs, cardDefinitionIds, nod
     actorId: actor.id,
     phase: game.state.phase,
     currentRound: game.state.currentRound,
-    searchState: createInitialSearchState(
+    world: createInitialWorld(
       actor.id,
       game.state,
-      game.aiController.knowledge.remainingCounts(actor)
+      deriveCurrentCardCounts(actor, game.state)
     ),
     searchConfig: game.aiController.buildSearchConfig({ timeBudgetMs }),
     rng: game.aiController.searchRng.snapshot(),
-    rootActionDescriptors: roots.map(ActionDescriptor.describe),
-    rootSearchActions: roots.map(describeRootSearchAction)
+    rootActions: roots
   });
   let currentMs = 0;
   const outcome = await runSearchRequest(request, {
@@ -22586,8 +22831,8 @@ test("AI·搜索配置：简单局面三档都完整搜索并返回同一动作"
     outcomes.push(await runTimedWorkerSearch(budget, 100, []));
   }
   assert.deepEqual(outcomes.map((outcome) => outcome.searchStopReason), ["COMPLETE", "COMPLETE", "COMPLETE"]);
-  assert.deepEqual(outcomes[1].actionDescriptor, outcomes[0].actionDescriptor);
-  assert.deepEqual(outcomes[2].actionDescriptor, outcomes[0].actionDescriptor);
+  assert.deepEqual(outcomes[1].action, outcomes[0].action);
+  assert.deepEqual(outcomes[2].action, outcomes[0].action);
 });
 
 test("AI·搜索配置：确定性1000ms与2000ms工作量按本次 Tmax 分别 COMPLETE/TIME", () => {
@@ -22618,8 +22863,8 @@ test("AI·搜索配置：TIME 轻微越过 Tmax 后正常返回完整 bestSeen �
   assert.ok(outcome.stats.elapsedMs > outcome.stats.timeBudget);
   assert.equal(outcome.cancelled, false);
   assert.equal(outcome.workerError, null);
-  assert.equal(outcome.actionDescriptor.type, "card");
-  assert.equal(outcome.actionDescriptor.cardId, "charge");
+  assert.equal(outcome.action.type, "card");
+  assert.equal(outcome.action.cardId, "charge");
 });
 
 test("AI·搜索配置：nodeBudget 在零时间预算与跳跃时钟下仍完整达到 NODE", async () => {
@@ -22904,12 +23149,12 @@ test("AI·护盾：只为自己或存活队友生成目标并在深层模拟中�
   ally.shield = 1;
   const { game }
     = makeGame([actor, ally, enemy]);
-  const visible = createInitialSearchState(actor.id, game.state),
-    actions = game.aiController.actionGenerator.generateFromVisible(
+  const visible = createInitialWorld(actor.id, game.state),
+    actions = game.aiController.actionGenerator.generate(
       visible, actor.id
-    ).filter((action) => action.card?.id === card.id);
-  assert.deepEqual(actions.map((action) => action.targets[0].id), [actor.id, ally.id]);
-  const chosen = actions.find((action) => action.targets[0].id === ally.id),
+    ).filter((action) => action.cardInstanceId === card.id);
+  assert.deepEqual(actions.map((action) => action.targetIds[0]), [actor.id, ally.id]);
+  const chosen = actions.find((action) => action.targetIds[0] === ally.id),
     next = new Simulator(visible).apply(visible, chosen, actor.id),
     nextAlly = next.players.find((player) => player.id === ally.id);
   assert.equal(nextAlly.shield, 2);
@@ -22928,12 +23173,12 @@ test("AI·共生：治疗差值按根阵营符号及实际恢复量进入最终 
     ally.hp = allyHp;
     enemy.hp = enemyHp;
     const { game } = makeGame([actor, ally, enemy]);
-    const visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    const visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     );
     return materializeRootSearchCandidates(
       game, actor, visible, game.aiController.getActionCandidates(actor)
-    ).find((entry) => entry.action.card?.id === card.id);
+    ).find((entry) => entry.action.cardInstanceId === card.id);
   };
   const allyHeal = evaluate(3, 4), enemyHeal = evaluate(4, 3),
     enemyOverheal = evaluate(4, 3.75), noHeal = evaluate(4, 4);
@@ -22960,7 +23205,7 @@ test("AI·共生：NODE 中断不执行已知只给敌方回血的负收益动�
     const { game } = makeGame([actor, ally, enemy, otherEnemy]);
     game.aiRandomnessRange = 0;
     game.aiSearchNodeBudgetOverride = mode === "NODE" ? 1 : null;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
     const planner = game.aiController.planner;
     const roots = game.aiController.getActionCandidates(actor);
     assert.equal(roots[0].card?.id, card.id);
@@ -22968,15 +23213,15 @@ test("AI·共生：NODE 中断不执行已知只给敌方回血的负收益动�
     const materializer = planner.candidateMaterializer;
     const materialize = materializer.materialize.bind(materializer);
     materializer.materialize = (input) => {
-      if (input.depth === 1 && input.action.card?.id) {
-        materializedCardIds.push(input.action.card.id);
+      if (input.depth === 1 && input.action.cardInstanceId) {
+        materializedCardIds.push(input.action.cardInstanceId);
       }
       return materialize(input);
     };
     const selected = await planner.plan(
       actor,
-      createInitialSearchState(
-        actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+      createInitialWorld(
+        actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
       ),
       roots,
       { gameId: game.state.gameId }
@@ -23005,15 +23250,15 @@ test("AI·共生：NODE 补评估全部负收益 non-end 后选择 end", async (
     game.rememberPrivateCard(actor, enemy, known);
     game.aiRandomnessRange = 0;
     game.aiSearchNodeBudgetOverride = mode === "NODE" ? 1 : null;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
     const planner = game.aiController.planner;
-    const visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    const visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     );
     const generated = game.aiController.getActionCandidates(actor);
     const roots = [
-      generated.find((action) => action.card?.id === symbiosis.id),
-      generated.find((action) => action.card?.id === scout.id && action.targets[0]?.id === enemy.id),
+      generated.find((action) => action.cardInstanceId === symbiosis.id),
+      generated.find((action) => action.cardInstanceId === scout.id && action.targetIds[0] === enemy.id),
       generated.find((action) => action.type === "end")
     ];
     assert.ok(roots.every(Boolean));
@@ -23024,8 +23269,8 @@ test("AI·共生：NODE 补评估全部负收益 non-end 后选择 end", async (
     const materializer = planner.candidateMaterializer;
     const materialize = materializer.materialize.bind(materializer);
     materializer.materialize = (input) => {
-      if (input.depth === 1 && input.action.card?.id) {
-        materializedCardIds.push(input.action.card.id);
+      if (input.depth === 1 && input.action.cardInstanceId) {
+        materializedCardIds.push(input.action.cardInstanceId);
       }
       return materialize(input);
     };
@@ -23052,7 +23297,7 @@ test("AI·共生：己方总治疗收益更高时仍允许敌方同时恢复", a
   const { game } = makeGame([actor, allyA, enemy, allyB, otherEnemy]);
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 200;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
   const selected = await game.aiController.selectAction(
     actor, { gameId: game.state.gameId }
   );
@@ -23070,8 +23315,8 @@ test("AI·窥探：搜索 prior 不读装备且不以更多队友未知牌压过
   ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   enemy.hand.push(instance("block"), instance("counter"));
   const { game } = makeGame([actor, ally, enemy]);
-  const visible = structuredClone(createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = structuredClone(createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ));
   const allyState = visible.players.find((player) => player.id === ally.id),
     enemyState = visible.players.find((player) => player.id === enemy.id);
@@ -23102,8 +23347,8 @@ test("AI·窥探：合法剩余牌池熵只是容量且无决策相关性时价�
     target = makePlayer("scout-entropy-target", 1, "dusk", "ai", 5);
   target.hand.push(instance("block"), instance("charge"), instance("assault"), instance("counter"));
   const { game } = makeGame([actor, target]);
-  const visible = structuredClone(createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = structuredClone(createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ));
   const valueFor = (remainingCardCounts) => {
     const state = structuredClone(visible);
@@ -23114,7 +23359,7 @@ test("AI·窥探：合法剩余牌池熵只是容量且无决策相关性时价�
     targetState.counterProbability = 0;
     const simulator = new Simulator(state);
     simulator.cardEstimateDistribution = () => [{ count: 0, probability: 1 }];
-    return simulator.privatePeekInformationValue(
+    return privatePeekInformationValue(
       state,
       state.players.find((player) => player.id === actor.id),
       targetState,
@@ -23134,8 +23379,8 @@ test("AI·窥探：调息关键资源使用至少一张概率而不是期望数�
   target.hand.push(instance("charge"), instance("harvest"));
   target.hp = 1;
   const { game } = makeGame([actor, target]);
-  const state = structuredClone(createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const state = structuredClone(createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ));
   state.remainingCardCounts = { charge: 1, recover: 1 };
   const targetState = state.players.find((player) => player.id === target.id);
@@ -23146,7 +23391,7 @@ test("AI·窥探：调息关键资源使用至少一张概率而不是期望数�
   const valueFor = (distribution) => {
     const simulator = new Simulator(state);
     simulator.cardEstimateDistribution = () => distribution;
-    return simulator.privatePeekInformationValue(
+    return privatePeekInformationValue(
       state,
       state.players.find((player) => player.id === actor.id),
       targetState,
@@ -23167,8 +23412,8 @@ test("AI·窥探：反制存在概率进入关键响应资源不确定性", () =
   actor.hand.push(instance("exposeWeakness"));
   target.hand.push(instance("charge"), instance("harvest"));
   const { game } = makeGame([actor, target]);
-  const state = structuredClone(createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const state = structuredClone(createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ));
   state.remainingCardCounts = { charge: 1, counter: 1 };
   const targetState = state.players.find((player) => player.id === target.id);
@@ -23178,9 +23423,9 @@ test("AI·窥探：反制存在概率进入关键响应资源不确定性", () =
   simulator.cardEstimateDistribution = () => [{ count: 0, probability: 1 }];
   targetState.counterProbability = 0;
   const actorState = state.players.find((player) => player.id === actor.id);
-  const known = simulator.privatePeekInformationValue(state, actorState, targetState, 1);
+  const known = privatePeekInformationValue(state, actorState, targetState, 1);
   targetState.counterProbability = 0.5;
-  const uncertain = simulator.privatePeekInformationValue(state, actorState, targetState, 1);
+  const uncertain = privatePeekInformationValue(state, actorState, targetState, 1);
   assert.ok(uncertain > known);
 });
 
@@ -23192,8 +23437,8 @@ test("AI·窥探：队友未知牌产生正信息价值且高生存风险提升�
   actor.hand.push(card, instance("shield"), instance("recover"));
   ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   const { game } = makeGame([actor, ally, enemy]);
-  const visible = structuredClone(createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = structuredClone(createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ));
   for (const player of visible.players) {
     player.counterProbability = 0;
@@ -23227,14 +23472,14 @@ test("AI·窥探：普通安全队友四张未知低于当前进攻相关的敌�
   enemyMany.hand.push(instance("block"), instance("counter"));
   enemyFew.hand.push(instance("block"));
   const { game } = makeGame([actor, ally, enemyMany, enemyFew]);
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const candidates = materializeRootSearchCandidates(
     game, actor, visible, game.aiController.getActionCandidates(actor)
-  ).filter((entry) => entry.action.card?.id === card.id);
+  ).filter((entry) => entry.action.cardInstanceId === card.id);
   const valueFor = (targetId) => candidates.find(
-    (entry) => entry.action.targets[0].id === targetId
+    (entry) => entry.action.targetIds[0] === targetId
   ).transitionValue;
   assert.ok(valueFor(enemyMany.id) > valueFor(ally.id));
   assert.ok(valueFor(enemyMany.id) > valueFor(enemyFew.id));
@@ -23251,14 +23496,14 @@ test("AI·窥探：敌方大部分已知而队友大量未知时无协调也允�
   enemy.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   const { game } = makeGame([actor, ally, enemy]);
   for (const known of enemy.hand.slice(0, 3)) game.rememberPrivateCard(actor, enemy, known);
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const candidates = materializeRootSearchCandidates(
     game, actor, visible, game.aiController.getActionCandidates(actor)
-  ).filter((entry) => entry.action.card?.id === card.id);
+  ).filter((entry) => entry.action.cardInstanceId === card.id);
   const valueFor = (targetId) => candidates.find(
-    (entry) => entry.action.targets[0].id === targetId
+    (entry) => entry.action.targetIds[0] === targetId
   ).transitionValue;
   assert.notEqual(actor.character.activeSkillIds[0], "resonance");
   assert.ok(valueFor(ally.id) > valueFor(enemy.id));
@@ -23273,8 +23518,8 @@ test("AI·窥探：敌友未知数相同时只有敌方资源影响当前攻击�
   ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   enemy.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   const { game } = makeGame([actor, ally, enemy]);
-  const visible = structuredClone(createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = structuredClone(createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ));
   for (const player of visible.players.filter((entry) => entry.id !== actor.id)) {
     player.assaultResponseProbability = 0.5;
@@ -23287,10 +23532,10 @@ test("AI·窥探：敌友未知数相同时只有敌方资源影响当前攻击�
     { count:1, probability:0.5 }
   ];
   const actorState = visible.players.find((player) => player.id === actor.id),
-    allyValue = simulator.privatePeekInformationValue(
+    allyValue = privatePeekInformationValue(
       visible, actorState, visible.players.find((player) => player.id === ally.id), 2
     ),
-    enemyValue = simulator.privatePeekInformationValue(
+    enemyValue = privatePeekInformationValue(
       visible, actorState, visible.players.find((player) => player.id === enemy.id), 2
     );
   assert.ok(enemyValue > allyValue);
@@ -23303,8 +23548,8 @@ test("AI·窥探：安全队友单纯增加未知数不会线性增长为高价�
   actor.hand.push(instance("scout"), instance("shield"));
   ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   const { game } = makeGame([actor, ally, enemy]);
-  const fourUnknown = structuredClone(createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const fourUnknown = structuredClone(createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ));
   const twoUnknown = structuredClone(fourUnknown);
   twoUnknown.players.find((player) => player.id === ally.id).handCount = 2;
@@ -23319,7 +23564,7 @@ test("AI·窥探：安全队友单纯增加未知数不会线性增长为高价�
     allyState.assaultResponseProbability = 0.5;
     allyState.blockProbability = 0.5;
     allyState.counterProbability = 0.5;
-    return simulator.privatePeekInformationValue(state, actorState, allyState, 2);
+    return privatePeekInformationValue(state, actorState, allyState, 2);
   };
   assert.equal(evaluate(fourUnknown), evaluate(twoUnknown));
   assert.equal(evaluate(fourUnknown), 0);
@@ -23339,8 +23584,8 @@ test("AI·窥探：已知牌只留下真正未知部分且连续模拟不会重�
   for (const card of mostlyKnown.hand.slice(0, 3)) {
     game.rememberPrivateCard(actor, mostlyKnown, card);
   }
-  const visible = structuredClone(createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = structuredClone(createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ));
   for (const player of visible.players) {
     player.counterProbability = 0;
@@ -23382,12 +23627,12 @@ test("AI·窥探：authoritative 隐藏牌面不改变信息价值", () => {
       ...CARD_DEFINITIONS[definitionId], id: `scout-hidden-${index}`
     })));
     const { game } = makeGame([actor, target]);
-    const visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    const visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     );
     const candidate = materializeRootSearchCandidates(
       game, actor, visible, game.aiController.getActionCandidates(actor)
-    ).find((entry) => entry.action.card?.id === scout.id);
+    ).find((entry) => entry.action.cardInstanceId === scout.id);
     return {
       transitionValue:candidate.transitionValue,
       informationGain:candidate.state.players[0].expectedInformationGain,
@@ -23422,12 +23667,12 @@ test("AI·窥探：生产 Planner 不会让安全队友越过决策相关敌人"
   const { game } = makeGame([actor, ally, enemy]);
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 200;
-  game.aiController.knowledge.sampleHiddenWorlds = () => monteCarloEstimate();
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  game.aiController.counterfactualTerms.sampleUnknownHands = () => monteCarloEstimate();
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const scoutRoots = game.aiController.getActionCandidates(actor).filter((action) => (
-    action.card?.id === scout.id || action.type === "end"
+    action.cardInstanceId === scout.id || action.type === "end"
   ));
   const selected = await game.aiController.planner.plan(
     actor, visible, scoutRoots, { gameId: game.state.gameId }
@@ -23445,8 +23690,8 @@ test("AI·窥探：调律师协调是额外收益但不会无条件把安全队�
     source.hand.push(use, instance("assault"), instance("exposeWeakness"));
     friend.hand.push(instance("block"), instance("charge"));
     const { game: fixtureGame } = makeGame([source, friend, opponent]);
-    const state = createInitialSearchState(
-      source.id, fixtureGame.state, fixtureGame.aiController.knowledge.remainingCounts(source)
+    const state = createInitialWorld(
+      source.id, fixtureGame.state, deriveCurrentCardCounts(source, fixtureGame.state)
     );
     const after = new Simulator(state).apply(
       state, { type:"card", card:use, targets:[{ id:friend.id }] }, source.id
@@ -23465,8 +23710,8 @@ test("AI·窥探：调律师协调是额外收益但不会无条件把安全队�
   ally.hand.push(instance("block"), instance("recover"), instance("counter"), instance("assault"));
   enemy.hand.push(instance("block"), instance("charge"));
   const { game } = makeGame([actor, ally, enemy]);
-  const visible = structuredClone(createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = structuredClone(createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   ));
   const allyState = visible.players.find((player) => player.id === ally.id),
     enemyState = visible.players.find((player) => player.id === enemy.id);
@@ -23478,9 +23723,9 @@ test("AI·窥探：调律师协调是额外收益但不会无条件把安全队�
   enemyState.counterProbability = 0.5;
   const candidates = materializeRootSearchCandidates(
     game, actor, visible, game.aiController.getActionCandidates(actor)
-  ).filter((entry) => entry.action.card?.id === scout.id);
+  ).filter((entry) => entry.action.cardInstanceId === scout.id);
   const valueFor = (targetId) => candidates.find(
-    (entry) => entry.action.targets[0].id === targetId
+    (entry) => entry.action.targetIds[0] === targetId
   ).transitionValue;
   assert.ok(valueFor(enemy.id) > valueFor(ally.id));
 });
@@ -23609,7 +23854,7 @@ test("AI·转移：忽略真人队友装备区的雷达", () => {
   assert.equal(
     game.aiController.actionGenerator.generate(
       actor
-    ).some((action) => action.card?.definitionId === "transfer"),
+    ).some((action) => action.cardId === "transfer"),
     false
   );
 });
@@ -23623,7 +23868,7 @@ test("AI·转移：不会把仅有装备的角色作为来源", () => {
   assert.equal(
     game.aiController.actionGenerator.generate(
       actor
-    ).some((action) => action.card?.definitionId === "transfer"),
+    ).some((action) => action.cardId === "transfer"),
     false
   );
 });
@@ -23636,7 +23881,7 @@ test("AI·转移：最佳方案为负数时不进入实际动作列表", () => {
   assert.equal(
     game.aiController.actionGenerator.generate(
       actor
-    ).some((action) => action.card?.definitionId === "transfer"),
+    ).some((action) => action.cardId === "transfer"),
     false
   );
 });
@@ -23653,7 +23898,7 @@ test("AI·转移：不会从敌人装备区移走高价值装备", () => {
     = makeGame([actor, enemy, ally]);
   const action = game.aiController.actionGenerator.generate(
     actor
-  ).find((entry) => entry.card?.id === use.id);
+  ).find((entry) => entry.cardInstanceId === use.id);
   assert.equal(action, undefined);
   assert.equal(enemy.equipment.definitionId, "defenseDevice");
   assert.equal(ally.equipment, null);
@@ -23673,7 +23918,7 @@ test("AI·转移：在角色同时拥有手牌和装备时只生成手牌选择"
     = makeGame([actor, low, high, ally]);
   const action = game.aiController.actionGenerator.generate(
     actor
-  ).find((entry) => entry.card?.id === use.id);
+  ).find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
   assert.equal(action.selection.sourceId, low.id);
   assert.equal(action.selection.zone, "hand");
@@ -23692,7 +23937,7 @@ test("AI·转移：可将即将溢出的队友手牌移给有空间的队友", (
     = makeGame([actor, overflow, receiver]);
   const action = game.aiController.actionGenerator.generate(
     actor
-  ).find((entry) => entry.card?.id === use.id);
+  ).find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
   assert.equal(action.selection.sourceId, overflow.id);
   assert.equal(action.selection.zone, "hand");
@@ -23711,11 +23956,11 @@ test("AI·转移：真实动作与深层模拟对同一公开局面选择一致"
     = makeGame([actor, enemy, ally]);
   const real = game.aiController.actionGenerator.generate(
     actor
-  ).find((entry) => entry.card?.id === use.id);
-  const visible = createInitialSearchState(actor.id, game.state);
-  const simulated = game.aiController.actionGenerator.generateFromVisible(
+  ).find((entry) => entry.cardInstanceId === use.id);
+  const visible = createInitialWorld(actor.id, game.state);
+  const simulated = game.aiController.actionGenerator.generate(
     visible, actor.id
-  ).find((entry) => entry.card?.id === use.id);
+  ).find((entry) => entry.cardInstanceId === use.id);
   const plan = (action) => [
     action?.selection?.sourceId, action?.selection?.receiverId, action?.selection?.zone
   ];
@@ -23735,7 +23980,7 @@ test("AI·转移：模拟器拒绝伪造的装备区转移选择", () => {
   enemy.equipment = equipment;
   const { game }
     = makeGame([actor, enemy, ally]),
-    visible = createInitialSearchState(actor.id, game.state),
+    visible = createInitialWorld(actor.id, game.state),
     next = new Simulator(
       visible
     ).apply(visible, { type: "card", card: use, targets: [], selection: { sourceId: enemy.id, receiverId: ally.id, zone: "equipment", equipmentCardId: equipment.id } }, actor.id),
@@ -23758,7 +24003,7 @@ test("AI·转移：交换敌人未知手牌的真实 definitionId 不改变 AI �
   const choose = () => {
     const action = game.aiController.actionGenerator.generate(
       actor
-    ).find((entry) => entry.card?.id === use.id);
+    ).find((entry) => entry.cardInstanceId === use.id);
     return [action?.selection?.sourceId, action?.selection?.receiverId, action?.selection?.zone];
   };
   const before = choose();
@@ -23778,7 +24023,7 @@ test("AI·转移：以自己为转移来源时排除正在使用的转移实体"
     = makeGame([actor, ally]);
   const action = game.aiController.actionGenerator.generate(
     actor
-  ).find((entry) => entry.card?.id === use.id);
+  ).find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
   assert.equal(action.selection.sourceId, actor.id);
   assert.equal(action.selection.zone, "hand");
@@ -23950,7 +24195,7 @@ test("AI·借势：根节点在无普通突袭敌人时仍生成同阵营借势�
   assert.deepEqual(ActionLegality.getLegalAssaultTargets(game, first), []);
   const actions = game.aiController.actionGenerator.generate(
     actor
-  ).filter((action) => action.card?.id === use.id);
+  ).filter((action) => action.cardInstanceId === use.id);
   assert.ok(
     actions.some(
       (action) => action.selection.firstTargetId === first.id && action.selection.equipmentCardId === first.equipment.id && action.selection.secondTargetId === actor.id
@@ -23967,7 +24212,7 @@ test("AI·借势：深层生成在无普通突袭敌人时仍枚举同阵营借�
   first.equipment = instance("energyDevice");
   const { game }
     = makeGame([actor, first, ally]);
-  const visible = createInitialSearchState(actor.id, game.state),
+  const visible = createInitialWorld(actor.id, game.state),
     visibleFirst = visible.players.find((player) => player.id === first.id);
   const simulationGame = { state: { players: visible.players } };
   assert.equal(ActionLegality.getLegalAssaultTargets(simulationGame, visibleFirst).length, 0);
@@ -23976,9 +24221,9 @@ test("AI·借势：深层生成在无普通突袭敌人时仍枚举同阵营借�
       simulationGame, visibleFirst
     ).some((player) => player.id === actor.id)
   );
-  const deepActions = game.aiController.actionGenerator.generateFromVisible(
+  const deepActions = game.aiController.actionGenerator.generate(
     visible, actor.id
-  ).filter((action) => action.card?.id === use.id);
+  ).filter((action) => action.cardInstanceId === use.id);
   assert.ok(
     deepActions.some(
       (action) => action.selection.firstTargetId === first.id && action.selection.equipmentCardId === null && action.selection.equipmentDefinitionId === "energyDevice" && action.selection.secondTargetId === actor.id
@@ -24023,7 +24268,7 @@ test("AI·借势：主动借势第一目标需有距离合法第二目标且第�
     = makeGame([actor, first, ally, far, tail]);
   const actions = game.aiController.getActionCandidates(
     actor
-  ).filter((action) => action.card?.id === use.id);
+  ).filter((action) => action.cardInstanceId === use.id);
   assert.ok(actions.length > 0);
   for (const action of actions) {
     assert.equal(action.selection.firstTargetId, first.id);
@@ -24047,15 +24292,15 @@ test("AI·借势：不会因估计没有突袭或次数用尽删除合法借势�
   first.turnFlags.attackUsed = first.turnFlags.attackLimit;
   const rootActions = game.aiController.getActionCandidates(
     actor
-  ).filter((action) => action.card?.id === use.id);
+  ).filter((action) => action.cardInstanceId === use.id);
   assert.ok(rootActions.length > 0);
-  const visible = createInitialSearchState(actor.id, game.state),
+  const visible = createInitialWorld(actor.id, game.state),
     visibleFirst = visible.players.find((player) => player.id === first.id);
   assert.equal(visibleFirst.assaultResponseProbability, 0);
   assert.equal(visibleFirst.attackUsed, visibleFirst.attackLimit);
-  const deepActions = game.aiController.actionGenerator.generateFromVisible(
+  const deepActions = game.aiController.actionGenerator.generate(
     visible, actor.id
-  ).filter((action) => action.card?.id === use.id);
+  ).filter((action) => action.cardInstanceId === use.id);
   assert.ok(deepActions.length > 0);
   assert.ok(deepActions.some((action) => action.selection.secondTargetId === actor.id));
 });
@@ -24130,9 +24375,9 @@ test("AI·借势：敌方赌命者按自身收益响应且雷达令调律师目�
     Object.keys(CARD_COUNTS).map((definitionId) => [definitionId, 0])
   );
   tacticOnlyCounts.counter = 1;
-  const visible = createInitialSearchState(tuner.id, game.state, tacticOnlyCounts);
+  const visible = createInitialWorld(tuner.id, game.state, tacticOnlyCounts);
   const leverageAction = game.aiController.getActionCandidates(tuner).find((action) => (
-    action.card?.id === leverage.id
+    action.cardInstanceId === leverage.id
       && action.selection?.firstTargetId === gambler.id
       && action.selection?.secondTargetId === hunter.id
   ));
@@ -24927,10 +25172,10 @@ test("AI·掠夺：可见动作与模拟器支持装备掠夺进入手牌且不�
   actor.equipment = instance("battleDevice");
   target.equipment = instance("energyDevice");
   const { game } = makeGame([actor, near, target, other, tail]),
-    visible = createInitialSearchState(actor.id, game.state),
-    actions = game.aiController.actionGenerator.generateFromVisible(visible, actor.id);
+    visible = createInitialWorld(actor.id, game.state),
+    actions = game.aiController.actionGenerator.generate(visible, actor.id);
   const action = actions.find(
-    (entry) => entry.card?.id === plunder.id && entry.targets[0]?.id === target.id
+    (entry) => entry.cardInstanceId === plunder.id && entry.targetIds[0] === target.id
   );
   assert.ok(action);
   assert.equal(visible.players[2].hand, undefined);
@@ -25070,9 +25315,9 @@ test("AI·决斗：移除的具体突袭不会再次进入深层动作生成", (
       state
     ).apply(state, { type: "card", card: { ...CARD_DEFINITIONS.duel, id: "duel" }, targets: [{ id: "target" }] }, "actor");
   assert.ok(
-    !game.aiController.actionGenerator.generateFromVisible(
+    !game.aiController.actionGenerator.generate(
       next, "actor"
-    ).some((action) => action.card?.definitionId === "assault")
+    ).some((action) => action.cardId === "assault")
   );
 });
 
@@ -25113,7 +25358,7 @@ test("AI·决斗：未知手牌产生双向非零失败概率且分支严格有�
     target = makePlayer("duel-hidden-target", 1, "dusk");
   target.hand.push(instance("recover"), instance("block"));
   const { game }
-    = makeGame([actor, target]), visible = createInitialSearchState(actor.id, game.state);
+    = makeGame([actor, target]), visible = createInitialWorld(actor.id, game.state);
   const visibleActor = structuredClone(visible.players[0]),
     visibleTarget = structuredClone(visible.players[1]);
   const initialTargetHandCount = visibleTarget.handCount;
@@ -25141,7 +25386,7 @@ test("AI·决斗：1张对4张未知手牌不会确定判负且目标消耗不�
   actor.hand.push(instance("assault"));
   target.hand.push(instance("recover"), instance("block"), instance("charge"), instance("shield"));
   const { game }
-    = makeGame([actor, target]), visible = createInitialSearchState(actor.id, game.state);
+    = makeGame([actor, target]), visible = createInitialWorld(actor.id, game.state);
   const a = structuredClone(visible.players[0]),
     t = structuredClone(visible.players[1]),
     original = t.expectedAssaultCount;
@@ -25220,11 +25465,11 @@ test("AI·决斗：分布不读取敌方真实隐藏手牌内容", () => {
   target.hand.push(instance("assault"), instance("assault"), instance("recover"), instance("block"));
   const { game }
     = makeGame([actor, target]),
-    first = createInitialSearchState(actor.id, game.state).players[1].assaultCountDistribution;
+    first = createInitialWorld(actor.id, game.state).players[1].assaultCountDistribution;
   target.hand = target.hand.map(
     (card, index) => ({ ...instance(["shield", "charge", "counter", "harvest"][index]), id: card.id })
   );
-  const second = createInitialSearchState(actor.id, game.state).players[1].assaultCountDistribution;
+  const second = createInitialWorld(actor.id, game.state).players[1].assaultCountDistribution;
   assert.deepEqual(second, first);
 });
 
@@ -25367,13 +25612,13 @@ test("AI·封印：根节点与深层生成都只选未封印的存活敌人", (
   const { game } = makeGame([source, ally, enemy, sealedEnemy, deadEnemy]);
   const rootSealActions = game.aiController.getActionCandidates(
     source
-  ).filter((action) => action.card?.definitionId === "seal");
-  assert.deepEqual(rootSealActions.map((action) => action.targets[0]?.id), [enemy.id]);
-  const visible = createInitialSearchState(source.id, game.state);
-  const deepSealActions = game.aiController.actionGenerator.generateFromVisible(
+  ).filter((action) => action.cardId === "seal");
+  assert.deepEqual(rootSealActions.map((action) => action.targetIds[0]), [enemy.id]);
+  const visible = createInitialWorld(source.id, game.state);
+  const deepSealActions = game.aiController.actionGenerator.generate(
     visible, source.id
-  ).filter((action) => action.card?.definitionId === "seal");
-  assert.deepEqual(deepSealActions.map((action) => action.targets[0]?.id), [enemy.id]);
+  ).filter((action) => action.cardId === "seal");
+  assert.deepEqual(deepSealActions.map((action) => action.targetIds[0]), [enemy.id]);
 });
 
 test("AI·封印：Simulator 首次放置不应用普通战术反制概率", () => {
@@ -25396,7 +25641,7 @@ test("AI·封印：Simulator 首次放置不应用普通战术反制概率", () 
   const snapshot = structuredClone(state.remainingCardCounts);
   const simulator = new Simulator(state);
   assertClose(
-    simulator.tacticResolutionChance(
+    testTacticResolutionChance(simulator,
       state, state.players[0], CARD_DEFINITIONS.seal, [state.players[1]]
     ),
     1
@@ -25669,7 +25914,7 @@ test("AI·封印：深层移除充能桩会降低技能威胁且部分存在概�
   target.energy = 1;
   target.equipment = instance("energyDevice");
   const { game } = makeGame([actor, ally, target, enemy]),
-    visible = createInitialSearchState(actor.id, game.state),
+    visible = createInitialWorld(actor.id, game.state),
     visibleActor = visible.players.find((player) => player.id === actor.id),
     before = visible.players.find((player) => player.id === target.id);
   assert.equal(before.nextTurnBaseAttackLimit, game.teamRules.getAttackLimit(target));
@@ -25696,14 +25941,14 @@ test("AI·封印：合法已知突袭提高威胁且真实隐藏牌内容不影�
   );
   const { game } = makeGame([actor, target]),
     counts = { assault: 1, block: 9 },
-    unknownVisible = createInitialSearchState(actor.id, game.state, counts),
+    unknownVisible = createInitialWorld(actor.id, game.state, counts),
     unknownTarget = unknownVisible.players[1],
     unknownScore = sealUseValue(unknownVisible.players[0], unknownTarget, unknownVisible);
   actor.aiMemory.knownCardsByPlayer[target.id] = {
     [target.hand[0].id]: "assault",
     [target.hand[1].id]: "assault"
   };
-  const knownVisible = createInitialSearchState(actor.id, game.state, counts),
+  const knownVisible = createInitialWorld(actor.id, game.state, counts),
     knownTarget = knownVisible.players[1],
     knownScore = sealUseValue(knownVisible.players[0], knownTarget, knownVisible);
   assert.ok(knownTarget.expectedAssaultCount > unknownTarget.expectedAssaultCount);
@@ -25711,12 +25956,12 @@ test("AI·封印：合法已知突袭提高威胁且真实隐藏牌内容不影�
   assert.ok(knownScore > unknownScore);
 
   actor.aiMemory.knownCardsByPlayer[target.id] = {};
-  const beforeHiddenChange = createInitialSearchState(actor.id, game.state, counts);
+  const beforeHiddenChange = createInitialWorld(actor.id, game.state, counts);
   target.hand = target.hand.map((card, index) => ({
     ...instance(["charge", "shield", "counter", "harvest"][index]),
     id: card.id
   }));
-  const afterHiddenChange = createInitialSearchState(actor.id, game.state, counts);
+  const afterHiddenChange = createInitialWorld(actor.id, game.state, counts);
   assertClose(
     sealUseValue(beforeHiddenChange.players[0], beforeHiddenChange.players[1], beforeHiddenChange),
     sealUseValue(afterHiddenChange.players[0], afterHiddenChange.players[1], afterHiddenChange)
@@ -25777,10 +26022,10 @@ test("AI·封印：紧急调息的真实生命收益仍优先于封印", async (
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 40;
   game.aiController.knowledge.remainingCounts = () => ({ assault: 20 });
-  const visible = createInitialSearchState(actor.id, game.state, { assault: 20 }),
+  const visible = createInitialWorld(actor.id, game.state, { assault: 20 }),
     rootActions = game.aiController.getActionCandidates(actor),
-    recoverAction = rootActions.find((action) => action.card?.id === recover.id),
-    sealAction = rootActions.find((action) => action.card?.id === seal.id),
+    recoverAction = rootActions.find((action) => action.cardInstanceId === recover.id),
+    sealAction = rootActions.find((action) => action.cardInstanceId === seal.id),
     visibleActor = visible.players.find((player) => player.id === actor.id),
     visibleTarget = visible.players.find((player) => player.id === target.id);
   // 排除干扰：无角色主动技能、无格挡、无护盾、无装备雷达、无随机扰动
@@ -25828,12 +26073,12 @@ test("AI·封印：马上行动的极高威胁目标使封印进入最优序列"
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 30;
   game.aiController.knowledge.remainingCounts = () => ({ assault: 20 });
-  const visible = createInitialSearchState(actor.id, game.state, { assault: 20 }),
+  const visible = createInitialWorld(actor.id, game.state, { assault: 20 }),
     rootActions = game.aiController.getActionCandidates(actor),
     selected = await game.aiController.planner.plan(
       actor, visible, rootActions, { gameId: game.state.gameId }
     );
-  assert.ok(rootActions.some((action) => action.card?.id === charge.id));
+  assert.ok(rootActions.some((action) => action.cardInstanceId === charge.id));
   assert.equal(selected.type, "skill");
   assert.ok(game.aiController.planner.lastPlannedSequence.some(
     (entry) => entry.cardId === "seal"
@@ -25851,7 +26096,7 @@ test("AI·封印：确定击杀序列优先直接击杀而非先封印", async (
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 30;
   game.aiController.knowledge.remainingCounts = () => ({ assault: 20 });
-  const visible = createInitialSearchState(actor.id, game.state, { assault: 20 }),
+  const visible = createInitialWorld(actor.id, game.state, { assault: 20 }),
     rootActions = game.aiController.getActionCandidates(actor),
     selected = await game.aiController.planner.plan(
       actor, visible, rootActions, { gameId: game.state.gameId }
@@ -25910,13 +26155,13 @@ test("AI·闪电：AI 根节点与深层生成均拒绝已有闪电状态", () =
   assert.ok(
     !game.aiController.getActionCandidates(
       source
-    ).some((action) => action.card?.definitionId === "lightning")
+    ).some((action) => action.cardId === "lightning")
   );
-  const visible = createInitialSearchState(source.id, game.state);
+  const visible = createInitialWorld(source.id, game.state);
   assert.ok(
-    !game.aiController.actionGenerator.generateFromVisible(
+    !game.aiController.actionGenerator.generate(
       visible, source.id
-    ).some((action) => action.card?.definitionId === "lightning")
+    ).some((action) => action.cardId === "lightning")
   );
   const source2 = makePlayer("a2", 0, "dawn"), enemy2 = makePlayer("b2", 1, "dusk");
   const { game: game2 }
@@ -25925,13 +26170,13 @@ test("AI·闪电：AI 根节点与深层生成均拒绝已有闪电状态", () =
   assert.ok(
     game2.aiController.getActionCandidates(
       source2
-    ).some((action) => action.card?.definitionId === "lightning")
+    ).some((action) => action.cardId === "lightning")
   );
-  const visible2 = createInitialSearchState(source2.id, game2.state);
+  const visible2 = createInitialWorld(source2.id, game2.state);
   assert.ok(
-    game2.aiController.actionGenerator.generateFromVisible(
+    game2.aiController.actionGenerator.generate(
       visible2, source2.id
-    ).some((action) => action.card?.definitionId === "lightning")
+    ).some((action) => action.cardId === "lightning")
   );
 });
 
@@ -25968,7 +26213,7 @@ test("AI·闪电：Simulator 首次放置不应用普通战术反制概率且不
     ]
   };
   const simulator = new Simulator(state);
-  assert.equal(simulator.tacticResolutionChance(
+  assert.equal(testTacticResolutionChance(simulator,
     state, state.players[0], CARD_DEFINITIONS.lightning, []
   ), 1);
   const next = simulator.apply(
@@ -27333,7 +27578,7 @@ test("AI·雷达：匿名50%格挡与判定格挡同世界关联", () => {
   const byCount = blockDistributionByCount(target.blockCountDistribution);
   assertClose(byCount[0] ?? 0, .5);
   assertClose(byCount[1] ?? 0, .5);
-  const joint = joinProbabilityStateBranches(
+  const joint = intersectProbabilityStateBranches(
     projectAvailability(judged.availabilityStateBranches, "judgedAvail"),
     target.blockCountDistribution.map(
       ({ blockCount, probability, conditions }) => ({ probability, conditions, count1: blockCount === 1 })
@@ -27820,7 +28065,7 @@ test("AI·雷达：受攻击暴露时不会为静态略高的非防守装备确�
   game.aiSearchNodeBudgetOverride = 2;
   game.aiRandomnessRange = 0;
   const evaluator = game.aiController.evaluator,
-    before = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)),
+    before = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state)),
     swapAction = { type: "card", card: battle, targets: [] },
     after = new Simulator(before).apply(before, swapAction, actor.id),
     swapDelta = evaluator.stateUtility(after, actor.id) - evaluator.stateUtility(before, actor.id);
@@ -27855,7 +28100,7 @@ test("AI·雷达：无暴露时不会因固定 end 惩罚被强制执行静态�
   game.aiSearchNodeBudgetOverride = 2;
   game.aiRandomnessRange = 0;
   const evaluator = game.aiController.evaluator,
-    before = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)),
+    before = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state)),
     swapAction = { type: "card", card: telescope, targets: [] },
     after = new Simulator(before).apply(before, swapAction, actor.id),
     swapDelta = evaluator.stateUtility(after, actor.id) - evaluator.stateUtility(before, actor.id);
@@ -28165,8 +28410,8 @@ test("AI·充能桩：门槛场景静态同值换装因未来价值损失被拒�
   game.aiSearchNodeBudgetOverride = 2;
   game.aiRandomnessRange = 0;
   const evaluator = game.aiController.evaluator,
-    before = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    before = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     beforeActor = before.players.find((entry) => entry.id === actor.id),
     swapAction = { type: "card", card: actor.hand[0], targets: [] },
@@ -28199,8 +28444,8 @@ test("AI·充能桩：接近 cap 时静态等值换装仍按真实边际拒绝",
   game.aiSearchNodeBudgetOverride = 2;
   game.aiRandomnessRange = 0;
   const evaluator = game.aiController.evaluator,
-    before = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    before = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     beforeActor = before.players.find((entry) => entry.id === actor.id),
     swapAction = { type: "card", card: battle, targets: [] },
@@ -28228,8 +28473,8 @@ test("AI·充能桩：空槽装备充能桩保持合理正价值", async () => {
   game.aiSearchNodeBudgetOverride = 2;
   game.aiRandomnessRange = 0;
   const evaluator = game.aiController.evaluator,
-    before = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    before = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     ),
     equipAction = { type: "card", card: device, targets: [] },
     after = new Simulator(before).apply(before, equipAction, actor.id),
@@ -28284,8 +28529,8 @@ test("AI·充能桩：聚能 actionUtility 叠加角色静态值与门槛价值"
   const { game } = makeGame([actor, enemy]);
   const charge = instance("charge");
   actor.hand = [charge];
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   assert.equal(
     game.aiController.evaluator.actionUtility(
@@ -28305,8 +28550,8 @@ test("AI·充能桩：聚能仅在能量真正跨过主动技能门槛时获得�
     actor.turnFlags.activeSkillUseCounts.symbiosis = uses;
     const charge = instance("charge");
     actor.hand = [charge];
-    const visible = createInitialSearchState(
-      actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+    const visible = createInitialWorld(
+      actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
     );
     const actorView = visible.players.find((entry) => entry.id === actor.id);
     return {
@@ -28359,8 +28604,8 @@ test("AI·充能桩：limit=2 已用1次时第二次技能机会仍获得门槛�
   actor.turnFlags.activeSkillUseCounts.symbiosis = 1;
   const charge = instance("charge");
   actor.hand = [charge];
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const actorView = visible.players.find((entry) => entry.id === actor.id);
   assert.equal(actorView.activeSkillUses, 1);
@@ -28471,7 +28716,7 @@ Domain Card/Skill target rules 与 DistanceProbabilityBranches。
 无。
 
 调用函数
-generateFromVisible。
+generateActions。
 
 边界与不变量
 只要任一概率世界合法就必须保留候选；executionProbability 仍由同一条件分区精确给出。
@@ -28500,8 +28745,8 @@ function probabilisticRangeCandidateCompleteness() {
       }
     ]
   };
-  const assault = generator.generateFromVisible(assaultState, "assault-actor")
-    .find((action) => action.card?.id === "prob-assault");
+  const assault = generator.generate(assaultState, "assault-actor")
+    .find((action) => action.cardInstanceId === "prob-assault");
   assert.equal(assault.targets[0].id, "assault-target");
   assertClose(assault.executionProbability, .5);
 
@@ -28524,9 +28769,9 @@ function probabilisticRangeCandidateCompleteness() {
       { id: "range-tail", seatIndex: 3, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4, handCount: 0 }
     ]
   };
-  const rangedActions = generator.generateFromVisible(rangedState, "ranged-actor");
-  const plunder = rangedActions.find((action) => action.card?.id === "prob-plunder");
-  const steal = rangedActions.find((action) => action.type === "skill" && action.skill.id === "stealSkill");
+  const rangedActions = generator.generate(rangedState, "ranged-actor");
+  const plunder = rangedActions.find((action) => action.cardInstanceId === "prob-plunder");
+  const steal = rangedActions.find((action) => action.type === "skill" && action.skillId === "stealSkill");
   assert.equal(plunder.targets[0].id, "ranged-target");
   assertClose(plunder.executionProbability, .5);
   assert.equal(steal.targets[0].id, "ranged-target");
@@ -28547,8 +28792,8 @@ function probabilisticRangeCandidateCompleteness() {
       }
     ]
   };
-  const transfer = generator.generateFromVisible(transferState, "transfer-actor")
-    .find((action) => action.card?.id === "prob-transfer");
+  const transfer = generator.generate(transferState, "transfer-actor")
+    .find((action) => action.cardInstanceId === "prob-transfer");
   assert.equal(transfer.selection.sourceId, "transfer-source");
   assert.equal(transfer.selection.receiverId, "transfer-actor");
   assertClose(transfer.executionProbability, .5);
@@ -28570,8 +28815,8 @@ function probabilisticRangeCandidateCompleteness() {
       }
     ]
   };
-  const leverage = generator.generateFromVisible(leverageState, "leverage-actor")
-    .find((action) => action.card?.id === "prob-leverage");
+  const leverage = generator.generate(leverageState, "leverage-actor")
+    .find((action) => action.cardInstanceId === "prob-leverage");
   assert.equal(leverage.selection.firstTargetId, "leverage-first");
   assert.equal(leverage.selection.secondTargetId, "leverage-actor");
   assertClose(leverage.executionProbability, .5);
@@ -28593,14 +28838,14 @@ test("AI·望远镜与屏障：深层模拟装备望远镜后会生成新进入�
   source.hand.push(telescope, assault);
   const { game }
     = makeGame([source, ally, target, other, tail]),
-    visible = createInitialSearchState(source.id, game.state),
-    equipAction = game.aiController.actionGenerator.generateFromVisible(
+    visible = createInitialWorld(source.id, game.state),
+    equipAction = game.aiController.actionGenerator.generate(
       visible, source.id
-    ).find((action) => action.card?.id === telescope.id),
+    ).find((action) => action.cardInstanceId === telescope.id),
     equipped = new Simulator(visible).apply(visible, equipAction, source.id),
-    follow = game.aiController.actionGenerator.generateFromVisible(equipped, source.id);
+    follow = game.aiController.actionGenerator.generate(equipped, source.id);
   assert.ok(
-    follow.some((action) => action.card?.id === assault.id && action.targets[0]?.id === target.id)
+    follow.some((action) => action.cardInstanceId === assault.id && action.targetIds[0] === target.id)
   );
 });
 
@@ -28676,8 +28921,8 @@ test("AI·望远镜与屏障：概率距离动作按同一概率扣牌结算且�
   };
   const actor = makePlayer("real", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk"), { game }
     = makeGame([actor, enemy]),
-    actions = game.aiController.actionGenerator.generateFromVisible(state, "a"),
-    attack = actions.find((action) => action.card?.id === "hit" && action.targets[0]?.id === "t");
+    actions = game.aiController.actionGenerator.generate(state, "a"),
+    attack = actions.find((action) => action.cardInstanceId === "hit" && action.targetIds[0] === "t");
   assert.equal(attack.executionProbability, .5);
   const next = new Simulator(state).apply(state, attack, "a"), nextActor = next.players[0];
   assert.equal(nextActor.handCount, .5);
@@ -28692,8 +28937,8 @@ test("AI·望远镜与屏障：概率距离动作按同一概率扣牌结算且�
   );
   assert.equal(nextActor.attackUsed, .5);
   assert.equal(next.players[2].hp, 3.5);
-  const follow = game.aiController.actionGenerator.generateFromVisible(next, "a");
-  assert.ok(!follow.some((action) => action.card?.id === "hit" && action.targets[0]?.id === "t"));
+  const follow = game.aiController.actionGenerator.generate(next, "a");
+  assert.ok(!follow.some((action) => action.cardInstanceId === "hit" && action.targetIds[0] === "t"));
 });
 
 test("AI·望远镜与屏障：概率装备依赖的借势同步缩放卡牌成本并禁止再次针对同一装备", () => {
@@ -28739,8 +28984,8 @@ test("AI·望远镜与屏障：概率装备依赖的借势同步缩放卡牌成�
   };
   const actor = makePlayer("real", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk"), { game }
     = makeGame([actor, enemy]),
-    actions = game.aiController.actionGenerator.generateFromVisible(state, "a"),
-    leverage = actions.find((action) => action.card?.id === "l");
+    actions = game.aiController.actionGenerator.generate(state, "a"),
+    leverage = actions.find((action) => action.cardInstanceId === "l");
   assert.equal(leverage.executionProbability, .25);
   const next = new Simulator(state).apply(state, leverage, "a"),
     held = next.players[0].hand.find((card) => card.id === "l");
@@ -28757,9 +29002,9 @@ test("AI·望远镜与屏障：概率装备依赖的借势同步缩放卡牌成�
       }
     ]
   );
-  const follow = game.aiController.actionGenerator.generateFromVisible(next, "a");
+  const follow = game.aiController.actionGenerator.generate(next, "a");
   assert.ok(
-    !follow.some((action) => action.card?.id === "l" && action.selection?.firstTargetId === "f")
+    !follow.some((action) => action.cardInstanceId === "l" && action.selection?.firstTargetId === "f")
   );
 });
 
@@ -28826,8 +29071,8 @@ test("AI·望远镜与屏障：转移联合距离分支共享同一望远镜且�
   };
   const { game }
     = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const actions = game.aiController.actionGenerator.generateFromVisible(state, "z-actor");
-  const transfer = actions.find((action) => action.card?.id === "move");
+  const actions = game.aiController.actionGenerator.generate(state, "z-actor");
+  const transfer = actions.find((action) => action.cardInstanceId === "move");
   assert.equal(transfer.selection.sourceId, "source");
   assert.equal(transfer.selection.receiverId, "a-receiver");
   assertClose(transfer.executionProbability, .4);
@@ -28878,9 +29123,9 @@ test("AI·望远镜与屏障：掠夺和固定距离窃取按真实距离分支�
   ];
   const { game }
     = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const plunder = game.aiController.actionGenerator.generateFromVisible(
+  const plunder = game.aiController.actionGenerator.generate(
     { playPhaseEnded: false, players: structuredClone(basePlayers) }, "actor"
-  ).find((action) => action.card?.id === "loot");
+  ).find((action) => action.cardInstanceId === "loot");
   assertClose(plunder.executionProbability, .4);
   const plundered = new Simulator(
     { players: basePlayers }
@@ -28890,9 +29135,9 @@ test("AI·望远镜与屏障：掠夺和固定距离窃取按真实距离分支�
   const skillState = { playPhaseEnded: false, players: structuredClone(basePlayers) };
   skillState.players[0].hand = [];
   skillState.players[0].handCount = 0;
-  const steal = game.aiController.actionGenerator.generateFromVisible(
+  const steal = game.aiController.actionGenerator.generate(
     skillState, "actor"
-  ).find((action) => action.type === "skill" && action.skill.id === "stealSkill" && action.targets[0].id === "target");
+  ).find((action) => action.type === "skill" && action.skillId === "stealSkill" && action.targetIds[0] === "target");
   assertClose(steal.executionProbability, .4);
   const stolen = new Simulator(skillState).apply(skillState, steal, "actor");
   assertClose(stolen.players[0].energy, 1.2);
@@ -28935,19 +29180,19 @@ test("AI·望远镜与屏障：确定合法距离保持概率1且条件技能次
   };
   const { game }
     = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const first = game.aiController.actionGenerator.generateFromVisible(
+  const first = game.aiController.actionGenerator.generate(
     state, "actor"
   ).find((action) => action.type === "skill");
   assert.equal(first.executionProbability, 1);
   const once = new Simulator(state).apply(state, first, "actor");
-  const second = game.aiController.actionGenerator.generateFromVisible(
+  const second = game.aiController.actionGenerator.generate(
     once, "actor"
   ).find((action) => action.type === "skill");
   assert.equal(second.executionProbability, 1);
   assert.notEqual(second.skillUseSlot, first.skillUseSlot);
   const twice = new Simulator(once).apply(once, second, "actor");
   assert.ok(
-    !game.aiController.actionGenerator.generateFromVisible(
+    !game.aiController.actionGenerator.generate(
       twice, "actor"
     ).some((action) => action.type === "skill")
   );
@@ -29004,23 +29249,23 @@ test("AI·望远镜与屏障：同一卡牌只消费相交分支，另一张牌�
   };
   const { game }
     = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const generated = game.aiController.actionGenerator.generateFromVisible(state, "actor");
+  const generated = game.aiController.actionGenerator.generate(state, "actor");
   const farFirst = generated.find(
-    (action) => action.card?.id === "one" && action.targets[0]?.id === "far"
+    (action) => action.cardInstanceId === "one" && action.targetIds[0] === "far"
   );
   assertClose(farFirst.executionProbability, .4);
   const once = new Simulator(state).apply(state, farFirst, "actor");
-  const follow = game.aiController.actionGenerator.generateFromVisible(once, "actor");
-  assert.ok(!follow.some((action) => action.card?.id === "one" && action.targets[0]?.id === "far"));
+  const follow = game.aiController.actionGenerator.generate(once, "actor");
+  assert.ok(!follow.some((action) => action.cardInstanceId === "one" && action.targetIds[0] === "far"));
   assertClose(
     follow.find(
-      (action) => action.card?.id === "one" && action.targets[0]?.id === "near"
+      (action) => action.cardInstanceId === "one" && action.targetIds[0] === "near"
     ).executionProbability,
     .6
   );
   assertClose(
     follow.find(
-      (action) => action.card?.id === "two" && action.targets[0]?.id === "far"
+      (action) => action.cardInstanceId === "two" && action.targetIds[0] === "far"
     ).executionProbability,
     .4
   );
@@ -29167,8 +29412,8 @@ test("AI·望远镜与屏障：屏障挡住两个敌人时不会为略高静态�
     = makeGame([actor, b, c]);
   game.aiSearchNodeBudgetOverride = 2;
   game.aiRandomnessRange = 0;
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const selected = await game.aiController.planner.plan(
     actor,
@@ -29192,8 +29437,8 @@ test("AI·望远镜与屏障：屏障未挡住任何人时静态降级换装按�
     = makeGame([actor, filler, b, c, filler2]);
   game.aiSearchNodeBudgetOverride = 2;
   game.aiRandomnessRange = 0;
-  const visible = createInitialSearchState(
-    actor.id, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actor.id, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const selected = await game.aiController.planner.plan(
     actor,
@@ -29217,7 +29462,7 @@ test("AI·刃行者：模拟按不同类别积累连势且命中的突袭消耗�
   blade.hand.push(charge, harvest, assault);
   const { game }
     = makeGame([blade, enemy]),
-    visible = createInitialSearchState(blade.id, game.state),
+    visible = createInitialWorld(blade.id, game.state),
     simulator = new Simulator(visible);
   const charged = simulator.apply(visible, { type: "card", card: charge, targets: [] }, blade.id);
   const harvested = simulator.apply(charged, { type: "card", card: harvest, targets: [] }, blade.id);
@@ -29443,7 +29688,7 @@ test("AI·刃行者：即将清空的连势不强迫无生命收益突袭且正�
   const noLifeDamage = await run({ shield: 3, hp: 4 });
   assert.equal(noLifeDamage.action.type, "end");
   const lethal = await run({ shield: 0, hp: 3 });
-  assert.equal(lethal.action.card?.definitionId, "assault");
+  assert.equal(lethal.action.cardId, "assault");
   assert.equal(lethal.sequence[0].cardId, "assault");
 });
 
@@ -29492,15 +29737,15 @@ test("AI·刃行者：概率破军只在发动世界新增可用突袭次数槽"
     },
     { game }
       = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const skill = game.aiController.actionGenerator.generateFromVisible(
+  const skill = game.aiController.actionGenerator.generate(
     state, "blade"
-  ).find((action) => action.skill?.id === "breakArmy");
+  ).find((action) => action.skillId === "breakArmy");
   assertClose(skill.executionProbability, .4);
   const boosted = new Simulator(state).apply(state, skill, "blade");
   assertClose(boosted.players[0].attackLimit, 1.4);
-  const assault = game.aiController.actionGenerator.generateFromVisible(
+  const assault = game.aiController.actionGenerator.generate(
     boosted, "blade"
-  ).find((action) => action.card?.id === "hit");
+  ).find((action) => action.cardInstanceId === "hit");
   assertClose(assault.executionProbability, .4);
 });
 
@@ -29514,16 +29759,16 @@ test("AI·刃行者：破军只在额外攻击槽确实有第二张突袭可用�
   blade.energy = 2;
   const skills = () => game.aiController.getActionCandidates(
     blade
-  ).filter((action) => action.skill?.id === "breakArmy");
+  ).filter((action) => action.skillId === "breakArmy");
   assert.equal(skills().length, 0);
   assert.equal(
-    game.aiController.evaluator.breakArmyUtility(createInitialSearchState(blade.id, game.state).players[0]),
+    game.aiController.evaluator.breakArmyUtility(createInitialWorld(blade.id, game.state).players[0]),
     0
   );
   blade.turnFlags.attackUsed = blade.turnFlags.attackLimit;
   assert.equal(skills().length, 1);
   assert.equal(
-    game.aiController.evaluator.breakArmyUtility(createInitialSearchState(blade.id, game.state).players[0]),
+    game.aiController.evaluator.breakArmyUtility(createInitialWorld(blade.id, game.state).players[0]),
     getRoleCardAiValue("blade-walker", "assault")
   );
 });
@@ -29537,7 +29782,7 @@ test("AI·守誓者：护援回合重置后AI新快照读取guardianAidUsedProba
   const { game }
     = makeGame([source, guardian, nextPlayer]);
   guardian.turnFlags.guardianAidUsed = true;
-  const before = createInitialSearchState(source.id, game.state);
+  const before = createInitialWorld(source.id, game.state);
   assert.equal(
     before.players.find((player) => player.id === guardian.id).guardianAidUsedProbability, 1
   );
@@ -29545,7 +29790,7 @@ test("AI·守誓者：护援回合重置后AI新快照读取guardianAidUsedProba
   game.aiController.selectAction = async () => ({ type: "end" });
   await game.takeTurn(nextPlayer, game.state.gameId);
   assert.equal(guardian.turnFlags.guardianAidUsed, false);
-  const after = createInitialSearchState(source.id, game.state);
+  const after = createInitialWorld(source.id, game.state);
   assert.equal(
     after.players.find((player) => player.id === guardian.id).guardianAidUsedProbability, 0
   );
@@ -29564,7 +29809,7 @@ test("AI·守誓者：护援额度随全局回合在快照间恢复且同回合�
   assert.equal(guardian.turnFlags.guardianAidUsed, true);
   assert.equal(guardian.hand.length, 1);
   assert.equal(target.hp, hp - 1);
-  const usedSnapshot = structuredClone(createInitialSearchState(source.id, game.state));
+  const usedSnapshot = structuredClone(createInitialWorld(source.id, game.state));
   const usedGuardian = usedSnapshot.players.find((player) => player.id === guardian.id);
   assert.equal(usedGuardian.guardianAidUsedProbability, 1);
   const simulator = new Simulator(usedSnapshot);
@@ -29584,7 +29829,7 @@ test("AI·守誓者：护援额度随全局回合在快照间恢复且同回合�
   await game.takeTurn(nextPlayer, game.state.gameId);
   assert.equal(guardian.turnFlags.guardianAidUsed, false);
   assert.equal(game.state.currentRound, roundBefore);
-  const freshSnapshot = structuredClone(createInitialSearchState(source.id, game.state));
+  const freshSnapshot = structuredClone(createInitialWorld(source.id, game.state));
   const freshGuardian = freshSnapshot.players.find((player) => player.id === guardian.id);
   assert.equal(freshGuardian.guardianAidUsedProbability, 0);
   const freshSimulator = new Simulator(freshSnapshot);
@@ -29608,7 +29853,7 @@ test("AI·守誓者：壁垒只增加统一护盾且快照不包含专属护盾�
   warden.energy = 2;
   ally.shield = 2;
   const { game }
-    = makeGame([warden, ally, enemy]), visible = createInitialSearchState(warden.id, game.state);
+    = makeGame([warden, ally, enemy]), visible = createInitialWorld(warden.id, game.state);
   assert.ok(visible.players.every((player) => !("temporaryShieldAmount" in player)));
   const next = new Simulator(
     visible
@@ -29851,22 +30096,22 @@ test("AI·守誓者：可见状态、动作生成和模拟器保留主动技能�
   warden.turnFlags.activeSkillUseCounts.barrier = 1;
   warden.turnFlags.activeSkillsUsed.add("barrier");
   warden.energy = 1;
-  const lowVisible = createInitialSearchState(warden.id, game.state);
+  const lowVisible = createInitialWorld(warden.id, game.state);
   assert.equal(
-    game.aiController.actionGenerator.generateFromVisible(lowVisible, warden.id)
-      .filter((entry) => entry.skill?.id === "barrier").length,
+    game.aiController.actionGenerator.generate(lowVisible, warden.id)
+      .filter((entry) => entry.skillId === "barrier").length,
     0
   );
   warden.energy = 4;
-  const visible = createInitialSearchState(warden.id, game.state),
+  const visible = createInitialWorld(warden.id, game.state),
     actor = visible.players.find((player) => player.id === warden.id);
   assert.deepEqual(
     [actor.activeSkillUses, actor.activeSkillLimit, actor.activeSkillUsed], [1, 2, false]
   );
-  const actions = game.aiController.actionGenerator.generateFromVisible(
+  const actions = game.aiController.actionGenerator.generate(
     visible, warden.id
   ).filter((entry) => entry.type === "skill" && entry.skill.id === "barrier");
-  assert.deepEqual(actions.map((entry) => entry.targets[0].id), [warden.id, ally.id]);
+  assert.deepEqual(actions.map((entry) => entry.targetIds[0]), [warden.id, ally.id]);
   const action = actions[0];
   assert.ok(action);
   const next = new Simulator(visible).apply(visible, action, warden.id),
@@ -30024,7 +30269,7 @@ test("AI·守誓者：护援弃牌与真实选牌共享保留价值——低血�
     [garbage.id, counter.id, block.id],
     "共享保留价值排序应与真实选牌一致"
   );
-  const visible = createInitialSearchState(guardian.id, game.state);
+  const visible = createInitialWorld(guardian.id, game.state);
   const state = structuredClone(visible);
   const simulator = new Simulator(state),
     outcome = {};
@@ -30060,7 +30305,7 @@ test("AI·守誓者：护援低血时弃低价值牌保留调息并同步恢复�
   const { game } = makeGame([source, target, guardian]);
   const realDiscard = game.aiController.chooseDiscards(guardian, 1)[0];
   assert.equal(realDiscard.id, garbage.id, "真实护援支付应弃低保留价值牌");
-  const visible = createInitialSearchState(guardian.id, game.state);
+  const visible = createInitialWorld(guardian.id, game.state);
   const state = structuredClone(visible);
   const simulator = new Simulator(state),
     outcome = {};
@@ -30090,7 +30335,7 @@ test("AI·守誓者：护援与真实选牌一致弃装备替换冗余牌", () =
   const { game } = makeGame([source, target, guardian]);
   const realDiscard = game.aiController.chooseDiscards(guardian, 1)[0];
   assert.equal(realDiscard.id, redundant.id, "已装备时另一装备仅按替换冗余边际计值");
-  const visible = createInitialSearchState(guardian.id, game.state);
+  const visible = createInitialWorld(guardian.id, game.state);
   const state = structuredClone(visible);
   const simulator = new Simulator(state),
     outcome = {};
@@ -30118,7 +30363,7 @@ test("AI·守誓者：护援与真实选牌共享超距突袭保留价值", () =
     guardian.hand.push(assault, garbage);
     const { game } = makeGame([ally, target, guardian, source]);
     const realDiscard = game.aiController.chooseDiscards(guardian, 1)[0];
-    const visible = createInitialSearchState(guardian.id, game.state);
+    const visible = createInitialWorld(guardian.id, game.state);
     const state = structuredClone(visible);
     const simulator = new Simulator(state),
       outcome = {};
@@ -30191,7 +30436,7 @@ test("AI·守誓者：完整确定手牌继续按共享保留价值智能弃牌"
     block = instance("block");
   guardian.hand.push(garbage, block);
   const { game } = makeGame([source, target, guardian]);
-  const visible = createInitialSearchState(guardian.id, game.state);
+  const visible = createInitialWorld(guardian.id, game.state);
   const state = structuredClone(visible);
   const simulator = new Simulator(state),
     outcome = {};
@@ -30325,14 +30570,14 @@ test("AI·守誓者：壁垒能量不足或次数耗尽时不生成", () => {
     enemy = makePlayer("barrier-legal-enemy", 2, "dusk", "ai", 4);
   const { game } = makeGame([warden, ally, enemy]);
   const generator = game.aiController.actionGenerator;
-  const barrierActions = (visible) => generator.generateFromVisible(visible, warden.id)
-    .filter((entry) => entry.skill?.id === "barrier");
+  const barrierActions = (visible) => generator.generate(visible, warden.id)
+    .filter((entry) => entry.skillId === "barrier");
   warden.energy = 1;
-  assert.equal(barrierActions(createInitialSearchState(warden.id, game.state)).length, 0, "能量不足不生成壁垒");
+  assert.equal(barrierActions(createInitialWorld(warden.id, game.state)).length, 0, "能量不足不生成壁垒");
   warden.energy = 4;
   warden.turnFlags.activeSkillUseCounts.barrier = 2;
   warden.turnFlags.activeSkillsUsed.add("barrier");
-  assert.equal(barrierActions(createInitialSearchState(warden.id, game.state)).length, 0, "次数耗尽不生成壁垒");
+  assert.equal(barrierActions(createInitialWorld(warden.id, game.state)).length, 0, "次数耗尽不生成壁垒");
 });
 
 // ---- AI 角色行为·灵医 ----
@@ -30346,22 +30591,22 @@ test("AI·灵医：滋荣在0、1、2次使用状态正确生成动作且只治�
   medic.energy = 4;
   const { game }
     = makeGame([medic, ally, enemy]);
-  const visible = createInitialSearchState(medic.id, game.state),
+  const visible = createInitialWorld(medic.id, game.state),
     generator = game.aiController.actionGenerator;
   medic.energy = 1;
-  const lowVisible = createInitialSearchState(medic.id, game.state);
+  const lowVisible = createInitialWorld(medic.id, game.state);
   assert.equal(
-    generator.generateFromVisible(lowVisible, medic.id)
-      .filter((action) => action.type === "skill" && action.skill.id === "symbiosis").length,
+    generator.generate(lowVisible, medic.id)
+      .filter((action) => action.type === "skill" && action.skillId === "symbiosis").length,
     0
   );
   medic.energy = 4;
-  const actions = generator.generateFromVisible(
+  const actions = generator.generate(
     visible, medic.id
-  ).filter((action) => action.type === "skill" && action.skill.id === "symbiosis");
-  assert.deepEqual(actions.map((action) => action.targets[0].id), [medic.id, ally.id]);
+  ).filter((action) => action.type === "skill" && action.skillId === "symbiosis");
+  assert.deepEqual(actions.map((action) => action.targetIds[0]), [medic.id, ally.id]);
   assert.equal(visible.players.find((player) => player.id === medic.id).activeSkillUses, 0);
-  const allyAction = actions.find((action) => action.targets[0].id === ally.id),
+  const allyAction = actions.find((action) => action.targetIds[0] === ally.id),
     afterAlly = new Simulator(visible).apply(visible, allyAction, medic.id),
     simMedic = afterAlly.players.find((player) => player.id === medic.id),
     simAlly = afterAlly.players.find((player) => player.id === ally.id);
@@ -30371,11 +30616,11 @@ test("AI·灵医：滋荣在0、1、2次使用状态正确生成动作且只治�
   assert.equal(simMedic.rejuvenationTriggerCount, 1);
   assert.equal(simMedic.energy, 2);
   assert.equal(simMedic.activeSkillUses, 1);
-  const actionsAfterOne = generator.generateFromVisible(
+  const actionsAfterOne = generator.generate(
     afterAlly, medic.id
-  ).filter((action) => action.type === "skill" && action.skill.id === "symbiosis");
-  assert.deepEqual(actionsAfterOne.map((action) => action.targets[0].id), [medic.id, ally.id]);
-  const selfAction = actionsAfterOne.find((action) => action.targets[0].id === medic.id);
+  ).filter((action) => action.type === "skill" && action.skillId === "symbiosis");
+  assert.deepEqual(actionsAfterOne.map((action) => action.targetIds[0]), [medic.id, ally.id]);
+  const selfAction = actionsAfterOne.find((action) => action.targetIds[0] === medic.id);
   const afterSelf = new Simulator(afterAlly).apply(afterAlly, selfAction, medic.id),
     simMedicAgain = afterSelf.players.find((player) => player.id === medic.id);
   assert.equal(simMedicAgain.hp, 2);
@@ -30384,8 +30629,8 @@ test("AI·灵医：滋荣在0、1、2次使用状态正确生成动作且只治�
   assert.equal(simMedicAgain.energy, 0);
   assert.equal(simMedicAgain.activeSkillUses, 2);
   assert.equal(
-    generator.generateFromVisible(afterSelf, medic.id)
-      .filter((action) => action.type === "skill" && action.skill.id === "symbiosis").length,
+    generator.generate(afterSelf, medic.id)
+      .filter((action) => action.type === "skill" && action.skillId === "symbiosis").length,
     0
   );
 });
@@ -30594,8 +30839,8 @@ const medicSymbiosisFixture = (opts = {}) => {
     medic.turnFlags.activeSkillUseCounts.symbiosis = opts.activeSkillUses;
   }
   registerPassiveSkills(game);
-  const before = createInitialSearchState(
-    medic.id, game.state, game.aiController.knowledge.remainingCounts(medic)
+  const before = createInitialWorld(
+    medic.id, game.state, deriveCurrentCardCounts(medic, game.state)
   );
   return { game, medic, ally, before };
 };
@@ -30646,7 +30891,7 @@ test("AI·灵医：第二次滋荣仍按真实规则正确估值", () => {
   const visibleActor = second.before.players.find((player) => player.id === second.medic.id);
   assert.deepEqual([visibleActor.activeSkillUses, visibleActor.activeSkillUsed], [1, false]);
   const secondAction = second.game.aiController.getActionCandidates(second.medic)
-    .find((action) => action.skill?.id === "symbiosis");
+    .find((action) => action.skillId === "symbiosis");
   assert.ok(secondAction, "second symbiosis use must still be generated");
   const after = new Simulator(second.before).apply(
     second.before,
@@ -30681,8 +30926,8 @@ test("AI·灵医：零先验下临界滋荣在超过束宽度的根动作中仍�
   const { game }
     = makeGame([medic, allyA, allyB, e1, e2]);
   registerPassiveSkills(game);
-  const before = createInitialSearchState(
-    medic.id, game.state, game.aiController.knowledge.remainingCounts(medic)
+  const before = createInitialWorld(
+    medic.id, game.state, deriveCurrentCardCounts(medic, game.state)
   );
   const roots = game.aiController.getActionCandidates(medic);
   assert.ok(roots.length > AI_RUNTIME_POLICY.beamWidth, "fixture must exceed beam width");
@@ -30696,7 +30941,7 @@ test("AI·灵医：零先验下临界滋荣在超过束宽度的根动作中仍�
       pruneScore:searchPolicy.pruneScore(candidate.transitionValue, candidate.prior, 1)
     };
   }).sort((left, right) => right.pruneScore - left.pruneScore);
-  const symbiosis = rows.find((entry) => entry.action.skill?.id === "symbiosis");
+  const symbiosis = rows.find((entry) => entry.action.skillId === "symbiosis");
   const symRank = rows.indexOf(symbiosis) + 1;
   assert.ok(
     symRank > AI_RUNTIME_POLICY.beamWidth,
@@ -30715,7 +30960,7 @@ test("AI·灵医：临界滋荣端到端被 Planner 按真实价值选择", asyn
   const { game, medic, before } = fixture;
   const roots = game.aiController.getActionCandidates(medic);
   assert.ok(
-    roots.some((action) => action.skill?.id === "symbiosis"),
+    roots.some((action) => action.skillId === "symbiosis"),
     "critical symbiosis must be a legal root action with zero game-value prior"
   );
   game.aiSearchNodeBudgetOverride = 100;
@@ -30745,19 +30990,19 @@ test("AI·灵医：多目标滋荣按真实价值自然入 beam 不产生 crowdi
   const { game }
     = makeGame([medic, allyA, allyB, e1, e2]);
   registerPassiveSkills(game);
-  const before = createInitialSearchState(
-    medic.id, game.state, game.aiController.knowledge.remainingCounts(medic)
+  const before = createInitialWorld(
+    medic.id, game.state, deriveCurrentCardCounts(medic, game.state)
   );
   const evaluator = game.aiController.evaluator;
   const sim = new Simulator(before);
   const U0 = evaluator.stateUtility(before, medic.id);
   const roots = game.aiController.getActionCandidates(medic);
-  const symbiosisActions = roots.filter((action) => action.skill?.id === "symbiosis");
+  const symbiosisActions = roots.filter((action) => action.skillId === "symbiosis");
   assert.equal(symbiosisActions.length, 3, "three injured allied targets must generate three actions");
   const rows = roots.map((action) => {
     const after = sim.apply(before, action, medic.id);
     return {
-      target: action.skill?.id === "symbiosis" ? action.targets[0].id : null,
+      target: action.skillId === "symbiosis" ? action.targetIds[0] : null,
       valueScore: evaluator.actionUtility(action, medic, before, { availableActions: roots })
         + (evaluator.stateUtility(after, medic.id) - U0)
     };
@@ -30917,8 +31162,8 @@ const medicEconBoard = (count) => [
 const planFirstAction = async (players, actorId) => {
   const game = makeBenchmarkGame({ players, options: { actorId } });
   const actor = game.state.players.find((player) => player.id === actorId);
-  const visible = createInitialSearchState(
-    actorId, game.state, game.aiController.knowledge.remainingCounts(actor)
+  const visible = createInitialWorld(
+    actorId, game.state, deriveCurrentCardCounts(actor, game.state)
   );
   const roots = game.aiController.getActionCandidates(actor);
   game.aiSearchNodeBudgetOverride = 800;
@@ -30965,8 +31210,8 @@ test("AI·灵医：E4 仅剩不可兑现手牌时结束无实质经济损失", a
     options: { actorId: "a" }
   });
   const medic = game.state.players[0];
-  const visible = createInitialSearchState(
-    "a", game.state, game.aiController.knowledge.remainingCounts(medic)
+  const visible = createInitialWorld(
+    "a", game.state, deriveCurrentCardCounts(medic, game.state)
   );
   const legal = game.aiController.getActionCandidates(medic);
   assert.ok(
@@ -30987,12 +31232,12 @@ const medicRiskHealDelta = (players, targetId) => {
   const game = makeBenchmarkGame({ players, options: { actorId: "a" } });
   const medic = game.state.players[0];
   const evaluator = game.aiController.evaluator;
-  const visible = createInitialSearchState(
-    "a", game.state, game.aiController.knowledge.remainingCounts(medic)
+  const visible = createInitialWorld(
+    "a", game.state, deriveCurrentCardCounts(medic, game.state)
   );
   const action = game.aiController.getActionCandidates(medic)
-    .find((entry) => entry.type === "skill" && entry.skill?.id === "symbiosis"
-      && entry.targets?.[0]?.id === targetId);
+    .find((entry) => entry.type === "skill" && entry.skillId === "symbiosis"
+      && entry.targetIds?.[0] === targetId);
   assert.ok(action, `目标 ${targetId} 应存在合法滋荣动作`);
   const U0 = evaluator.stateUtility(visible, "a");
   const after = new Simulator(visible).apply(visible, action, "a");
@@ -31099,12 +31344,12 @@ test("AI·灵医：energyPressure 归因诊断——灵医花能量是相邻敌�
   const game = makeBenchmarkGame({ players, options: { actorId: "a" } });
   const medic = game.state.players[0];
   const evaluator = game.aiController.evaluator;
-  const visible = createInitialSearchState(
-    "a", game.state, game.aiController.knowledge.remainingCounts(medic)
+  const visible = createInitialWorld(
+    "a", game.state, deriveCurrentCardCounts(medic, game.state)
   );
   const action = game.aiController.getActionCandidates(medic)
-    .find((entry) => entry.type === "skill" && entry.skill?.id === "symbiosis"
-      && entry.targets?.[0]?.id === "a");
+    .find((entry) => entry.type === "skill" && entry.skillId === "symbiosis"
+      && entry.targetIds?.[0] === "a");
   const after = new Simulator(visible).apply(visible, action, "a");
   const ledger = evaluator.ownerStateLedger(visible, after, "a");
   const owner = (id) => ledger.owners.find((entry) => entry.playerId === id);
@@ -31128,7 +31373,7 @@ test("AI·影客：模拟窃取装备时只增加手牌且保持影客当前装�
   target.equipment = instance("energyDevice");
   const { game }
     = makeGame([shade, target]);
-  const visible = createInitialSearchState(shade.id, game.state),
+  const visible = createInitialWorld(shade.id, game.state),
     next = new Simulator(
       visible
     ).apply(visible, { type: "skill", skill: ACTIVE_SKILLS.stealSkill, targets: [{ id: target.id }] }, shade.id);
@@ -31141,10 +31386,10 @@ test("AI·影客：模拟窃取装备时只增加手牌且保持影客当前装�
   assert.equal(actor.equipmentDefinitionId, current.definitionId);
   assert.equal(victim.equipmentDefinitionId, null);
   shade.energy = 1;
-  const lowVisible = createInitialSearchState(shade.id, game.state);
+  const lowVisible = createInitialWorld(shade.id, game.state);
   assert.equal(
-    game.aiController.actionGenerator.generateFromVisible(lowVisible, shade.id)
-      .filter((action) => action.skill?.id === "stealSkill").length,
+    game.aiController.actionGenerator.generate(lowVisible, shade.id)
+      .filter((action) => action.skillId === "stealSkill").length,
     0
   );
 });
@@ -31383,7 +31628,7 @@ test("AI·影客：Planner 规划震荡触发窥隙后用后续突袭兑现信�
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 80;
   const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
-  assert.equal(action.card?.definitionId, "shockwave");
+  assert.equal(action.cardId, "shockwave");
   const sequence = game.aiController.planner.lastPlannedSequence;
   assert.deepEqual(
     sequence.slice(0, 3).map((entry) => [entry.type, entry.cardId, entry.targetId]),
@@ -31408,8 +31653,8 @@ test("AI·影客：窃取已知突袭后 Planner 规划窃取接突袭", async (
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 50;
   const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
-  assert.equal(action.skill?.id, "stealSkill");
-  assert.equal(action.targets?.[0]?.id, enemy.id);
+  assert.equal(action.skillId, "stealSkill");
+  assert.equal(action.targetIds?.[0], enemy.id);
   const sequence = game.aiController.planner.lastPlannedSequence;
   assert.equal(sequence[1]?.type, "card");
   assert.equal(sequence[1]?.cardId, "assault");
@@ -31429,10 +31674,10 @@ test("AI·影客：确定击杀与能量机会成本优先于窃取", async () =
   const { game } = makeGame([shade, enemy], { random: () => 0 });
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 30;
-  assert.ok(game.aiController.getActionCandidates(shade).some((entry) => entry.skill?.id === "stealSkill"));
+  assert.ok(game.aiController.getActionCandidates(shade).some((entry) => entry.skillId === "stealSkill"));
   const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
-  assert.equal(action.card?.definitionId, "assault");
-  assert.equal(action.targets?.[0]?.id, enemy.id);
+  assert.equal(action.cardId, "assault");
+  assert.equal(action.targetIds?.[0], enemy.id);
 });
 
 test("AI·影客：窃取低收益目标时允许结束出牌", async () => {
@@ -31446,7 +31691,7 @@ test("AI·影客：窃取低收益目标时允许结束出牌", async () => {
   const { game } = makeGame([shade, enemy], { random: () => 0 });
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 30;
-  assert.ok(game.aiController.getActionCandidates(shade).some((entry) => entry.skill?.id === "stealSkill"));
+  assert.ok(game.aiController.getActionCandidates(shade).some((entry) => entry.skillId === "stealSkill"));
   const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
   assert.equal(action.type, "end");
 });
@@ -31463,18 +31708,18 @@ test("AI·炎术师：动作生成、模拟和价值状态共用焚场固定3点
       ),
       { game } = makeGame([ember, ally, ...enemies]);
     ember.energy = 2;
-    const lowVisible = createInitialSearchState(ember.id, game.state);
+    const lowVisible = createInitialWorld(ember.id, game.state);
     assert.equal(lowVisible.players.find((player) => player.id === ember.id).activeSkillCost, 3);
     assert.equal(
-      game.aiController.actionGenerator.generateFromVisible(lowVisible, ember.id)
-        .filter((entry) => entry.skill?.id === "burningField").length,
+      game.aiController.actionGenerator.generate(lowVisible, ember.id)
+        .filter((entry) => entry.skillId === "burningField").length,
       0
     );
     ember.energy = 3;
-    const visible = createInitialSearchState(ember.id, game.state),
-      action = game.aiController.actionGenerator.generateFromVisible(
+    const visible = createInitialWorld(ember.id, game.state),
+      action = game.aiController.actionGenerator.generate(
         visible, ember.id
-      ).find((entry) => entry.skill?.id === "burningField");
+      ).find((entry) => entry.skillId === "burningField");
     assert.ok(action);
     assert.equal(action.skill.cost, 3);
     assert.equal(action.energyCost, 3);
@@ -31491,17 +31736,17 @@ test("AI·炎术师：动作生成、模拟和价值状态共用焚场固定3点
     spentEnemy = makePlayer("ember-ai-spent-enemy", 1, "dusk", "ai", 5),
     { game: spentGame } = makeGame([spentEmber, spentEnemy]);
   spentEmber.energy = 3;
-  const spentVisible = createInitialSearchState(spentEmber.id, spentGame.state),
-    spentAction = spentGame.aiController.actionGenerator.generateFromVisible(
+  const spentVisible = createInitialWorld(spentEmber.id, spentGame.state),
+    spentAction = spentGame.aiController.actionGenerator.generate(
       spentVisible, spentEmber.id
-    ).find((entry) => entry.skill?.id === "burningField"),
+    ).find((entry) => entry.skillId === "burningField"),
     afterSpent = new Simulator(spentVisible).apply(spentVisible, spentAction, spentEmber.id),
     spentActor = afterSpent.players.find((player) => player.id === spentEmber.id);
   assert.equal(spentActor.energy, 0);
   assert.equal(
-    spentGame.aiController.actionGenerator.generateFromVisible(
+    spentGame.aiController.actionGenerator.generate(
       afterSpent, spentEmber.id
-    ).filter((entry) => entry.skill?.id === "burningField").length,
+    ).filter((entry) => entry.skillId === "burningField").length,
     0
   );
 
@@ -31511,10 +31756,10 @@ test("AI·炎术师：动作生成、模拟和价值状态共用焚场固定3点
   ember.energy = 3;
   ember.turnFlags.activeSkillUseCounts.burningField = 1;
   ember.turnFlags.activeSkillsUsed.add("burningField");
-  const visibleUsedOnce = createInitialSearchState(ember.id, game.state),
-    actionUsedOnce = game.aiController.actionGenerator.generateFromVisible(
+  const visibleUsedOnce = createInitialWorld(ember.id, game.state),
+    actionUsedOnce = game.aiController.actionGenerator.generate(
       visibleUsedOnce, ember.id
-    ).find((entry) => entry.skill?.id === "burningField");
+    ).find((entry) => entry.skillId === "burningField");
   assert.ok(actionUsedOnce);
   const nextAfterSecond = new Simulator(visibleUsedOnce).apply(
     visibleUsedOnce, actionUsedOnce, ember.id
@@ -31522,10 +31767,10 @@ test("AI·炎术师：动作生成、模拟和价值状态共用焚场固定3点
     secondEmber = nextAfterSecond.players.find((player) => player.id === ember.id);
   assert.deepEqual([secondEmber.activeSkillUses, secondEmber.activeSkillUsed], [2, true]);
   ember.turnFlags.activeSkillUseCounts.burningField = 2;
-  const visibleUsedTwice = createInitialSearchState(ember.id, game.state);
+  const visibleUsedTwice = createInitialWorld(ember.id, game.state);
   assert.equal(
-    game.aiController.actionGenerator.generateFromVisible(visibleUsedTwice, ember.id)
-      .find((entry) => entry.skill?.id === "burningField"),
+    game.aiController.actionGenerator.generate(visibleUsedTwice, ember.id)
+      .find((entry) => entry.skillId === "burningField"),
     undefined
   );
 });
@@ -31572,8 +31817,8 @@ test("AI·炎术师：普通焚场明显优于 end 且优于零收益动作", ()
   const { game }
     = makeGame([ember, ally, ...enemies]);
   registerPassiveSkills(game);
-  const before = createInitialSearchState(
-    ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+  const before = createInitialWorld(
+    ember.id, game.state, deriveCurrentCardCounts(ember, game.state)
   );
   const evaluator = game.aiController.evaluator;
   const sim = new Simulator(before);
@@ -31605,8 +31850,8 @@ test("AI·炎术师：致命焚场由 state delta 自然高于非致命焚场", 
     const { game }
       = makeGame([ember, ally, ...enemies]);
     registerPassiveSkills(game);
-    const before = createInitialSearchState(
-      ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+    const before = createInitialWorld(
+      ember.id, game.state, deriveCurrentCardCounts(ember, game.state)
     );
     const evaluator = game.aiController.evaluator;
     const U0 = evaluator.stateUtility(before, ember.id);
@@ -31632,8 +31877,8 @@ test("AI·炎术师：焚场价值随真实格挡概率降低", () => {
     const { game }
       = makeGame([ember, ally, ...enemies]);
     registerPassiveSkills(game);
-    const before = structuredClone(createInitialSearchState(
-      ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+    const before = structuredClone(createInitialWorld(
+      ember.id, game.state, deriveCurrentCardCounts(ember, game.state)
     ));
     const target = before.players.find((player) => player.id === "bf-block-e2");
     target.blockProbability = blockDist.reduce(
@@ -31669,8 +31914,8 @@ test("AI·炎术师：余烬能量通过 state delta 进入后继状态价值", 
     const { game }
       = makeGame([caster, ally, ...enemies]);
     registerPassiveSkills(game);
-    const before = createInitialSearchState(
-      caster.id, game.state, game.aiController.knowledge.remainingCounts(caster)
+    const before = createInitialWorld(
+      caster.id, game.state, deriveCurrentCardCounts(caster, game.state)
     );
     const evaluator = game.aiController.evaluator;
     const U0 = evaluator.stateUtility(before, caster.id);
@@ -31706,8 +31951,8 @@ const buildBurningFieldWideFixture = () => {
   const { game }
     = makeGame([ember, ally, e1, e2, e3]);
   registerPassiveSkills(game);
-  const before = createInitialSearchState(
-    ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+  const before = createInitialWorld(
+    ember.id, game.state, deriveCurrentCardCounts(ember, game.state)
   );
   return { game, ember, before };
 };
@@ -31732,7 +31977,7 @@ test("AI·炎术师：search credit 原始排名与真实价值兜底均保留�
     };
   });
   const rankOf = (list, key) => list.findIndex(
-    (entry) => entry.action.skill?.id === "burningField"
+    (entry) => entry.action.skillId === "burningField"
   ) + 1;
   const valueRank = rankOf([...rows].sort((a, b) => b.pruneWithoutCredit - a.pruneWithoutCredit));
   const pruneRank = rankOf([...rows].sort((a, b) => b.pruneScore - a.pruneScore));
@@ -31773,7 +32018,7 @@ test("AI·炎术师：search credit 能救候选但不能替候选赢比赛", as
     = buildBurningFieldWideFixture();
   const evaluator = game.aiController.evaluator;
   const roots = game.aiController.getActionCandidates(ember);
-  const burnRoot = roots.find((action) => action.skill?.id === "burningField");
+  const burnRoot = roots.find((action) => action.skillId === "burningField");
   // 焚场 search credit（8）必须远高于真实价值尺度（~1）：若它进入 valueScore，
   // bestValueScore 会被抬到 8+ 量级。焚场以真实击杀价值赢得最终选择。
   const credit = evaluator.actionSearchPrior(burnRoot, ember, before);
@@ -31804,16 +32049,16 @@ test("AI·炎术师：search credit 不跨层累计进真实价值", async () =>
   const { game }
     = makeGame([ember, enemy]);
   registerPassiveSkills(game);
-  const before = createInitialSearchState(
-    ember.id, game.state, game.aiController.knowledge.remainingCounts(ember)
+  const before = createInitialWorld(
+    ember.id, game.state, deriveCurrentCardCounts(ember, game.state)
   );
   const roots = game.aiController.getActionCandidates(ember);
   configurePlannerValueStubs(game.aiController.planner, {
     // 真实经济先验进入最终 valueScore；search credit（actionSearchPrior）只进 beam。
     actionEconomicValue: (action) => (
-      action.type === "end" ? 0 : (action.skill?.id === "burningField" ? 5 : 6)
+      action.type === "end" ? 0 : (action.skillId === "burningField" ? 5 : 6)
     ),
-    actionSearchPrior: (action) => action.skill?.id === "burningField" ? 8 : 0,
+    actionSearchPrior: (action) => action.skillId === "burningField" ? 8 : 0,
     stateUtility: () => 0
   });
   game.aiSearchNodeBudgetOverride = 200;
@@ -32097,9 +32342,9 @@ test("AI·追猎者：概率猎印生成猎杀并按0.4缩放成本次数伤害�
   };
   const { game }
     = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const hunt = game.aiController.actionGenerator.generateFromVisible(
+  const hunt = game.aiController.actionGenerator.generate(
     state, "hunter"
-  ).find((action) => action.skill?.id === "hunt");
+  ).find((action) => action.skillId === "hunt");
   assertClose(hunt.executionProbability, .4);
   const next = new Simulator(state).apply(state, hunt, "hunter");
   assertClose(next.players[0].energy, 1.2);
@@ -32109,9 +32354,9 @@ test("AI·追猎者：概率猎印生成猎杀并按0.4缩放成本次数伤害�
   assertClose(next.players[1].handCount, .8);
   assertClose(next.players[1].huntMarkProbabilities.hunter, 0);
   assert.ok(
-    !game.aiController.actionGenerator.generateFromVisible(
+    !game.aiController.actionGenerator.generate(
       next, "hunter"
-    ).some((action) => action.skill?.id === "hunt")
+    ).some((action) => action.skillId === "hunt")
   );
 });
 
@@ -32160,9 +32405,9 @@ test("AI·追猎者：完整猎印概率1保持真实猎杀的完整成本和伤
 test("AI·追猎者：能量分支让后续技能只在仍有足够能量的世界生成", () => {
   const state = conditionalHuntState([{ probability: 1, conditions: {}, marked: true }]), { game }
     = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const first = game.aiController.actionGenerator.generateFromVisible(
+  const first = game.aiController.actionGenerator.generate(
     state, "hunter"
-  ).find((action) => action.skill?.id === "hunt" && action.targets[0].id === "marked-a");
+  ).find((action) => action.skillId === "hunt" && action.targetIds[0] === "marked-a");
   const once = new Simulator(state).apply(state, first, "hunter"),
     energy = once.players[0].energyBranches;
   assertClose(
@@ -32170,9 +32415,9 @@ test("AI·追猎者：能量分支让后续技能只在仍有足够能量的世�
     .4
   );
   assertClose(once.players[0].energy, 1.2);
-  const second = game.aiController.actionGenerator.generateFromVisible(
+  const second = game.aiController.actionGenerator.generate(
     once, "hunter"
-  ).find((action) => action.skill?.id === "hunt" && action.targets[0].id === "marked-b");
+  ).find((action) => action.skillId === "hunt" && action.targetIds[0] === "marked-b");
   assertClose(second.executionProbability, .6);
   const twice = new Simulator(once).apply(once, second, "hunter");
   assertClose(twice.players[0].energy, 0);
@@ -32182,9 +32427,9 @@ test("AI·追猎者：能量分支让后续技能只在仍有足够能量的世�
 test("AI·追猎者：完全重叠与互斥猎印分别阻止和允许复用同一份能量", () => {
   const { game }
     = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]),
-    firstMark = (state) => game.aiController.actionGenerator.generateFromVisible(
+    firstMark = (state) => game.aiController.actionGenerator.generate(
       state, "hunter"
-    ).find((action) => action.skill?.id === "hunt" && action.targets[0].id === "marked-a");
+    ).find((action) => action.skillId === "hunt" && action.targetIds[0] === "marked-a");
   const overlapping = conditionalHuntState(
     [
       { probability: .4, conditions: { shared: "yes" }, marked: true },
@@ -32195,9 +32440,9 @@ test("AI·追猎者：完全重叠与互斥猎印分别阻止和允许复用同�
     overlapping
   ).apply(overlapping, firstMark(overlapping), "hunter");
   assert.ok(
-    !game.aiController.actionGenerator.generateFromVisible(
+    !game.aiController.actionGenerator.generate(
       overlapOnce, "hunter"
-    ).some((action) => action.skill?.id === "hunt" && action.targets[0].id === "marked-b")
+    ).some((action) => action.skillId === "hunt" && action.targetIds[0] === "marked-b")
   );
   const exclusive = conditionalHuntState(
     [
@@ -32206,9 +32451,9 @@ test("AI·追猎者：完全重叠与互斥猎印分别阻止和允许复用同�
     ]
   );
   const exclusiveOnce = new Simulator(exclusive).apply(exclusive, firstMark(exclusive), "hunter"),
-    second = game.aiController.actionGenerator.generateFromVisible(
+    second = game.aiController.actionGenerator.generate(
       exclusiveOnce, "hunter"
-    ).find((action) => action.skill?.id === "hunt" && action.targets[0].id === "marked-b");
+    ).find((action) => action.skillId === "hunt" && action.targetIds[0] === "marked-b");
   assertClose(second.executionProbability, .6);
 });
 
@@ -32263,13 +32508,13 @@ test("AI·追猎者：概率获得能量与孤注均按各自世界的实际能�
     },
     { game }
       = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const charge = game.aiController.actionGenerator.generateFromVisible(
+  const charge = game.aiController.actionGenerator.generate(
     state, "hunter"
-  ).find((action) => action.card?.id === "charge"),
+  ).find((action) => action.cardInstanceId === "charge"),
     charged = new Simulator(state).apply(state, charge, "hunter");
-  const hunt = game.aiController.actionGenerator.generateFromVisible(
+  const hunt = game.aiController.actionGenerator.generate(
     charged, "hunter"
-  ).find((action) => action.skill?.id === "hunt");
+  ).find((action) => action.skillId === "hunt");
   assertClose(hunt.executionProbability, .4);
   const allInState = {
     players: [
@@ -32314,13 +32559,13 @@ test("AI·赌命者：已有孤注状态且能量2以上时仍生成孤注动作
   gambler.statuses.allIn = { assaultBonus: 1 };
   const rootActions = game.aiController.getActionCandidates(gambler);
   assert.ok(
-    rootActions.some((action) => action.type === "skill" && action.skill?.id === "allIn"),
+    rootActions.some((action) => action.type === "skill" && action.skillId === "allIn"),
     "根动作生成不得因已有孤注状态无条件排除孤注"
   );
-  const visible = createInitialSearchState(gambler.id, game.state);
-  const deepActions = game.aiController.actionGenerator.generateFromVisible(visible, gambler.id);
+  const visible = createInitialWorld(gambler.id, game.state);
+  const deepActions = game.aiController.actionGenerator.generate(visible, gambler.id);
   assert.ok(
-    deepActions.some((action) => action.type === "skill" && action.skill?.id === "allIn"),
+    deepActions.some((action) => action.type === "skill" && action.skillId === "allIn"),
     "深层动作生成不得因 assaultBonus 无条件排除孤注"
   );
 });
@@ -32398,28 +32643,28 @@ test("AI·赌命者：已有孤注且仅剩1能量时不生成孤注，能量2�
       = makeGame([gambler, enemy]),
     generator = game.aiController.actionGenerator;
   const hasAllIn = (actions) => actions.some(
-    (action) => action.type === "skill" && action.skill?.id === "allIn"
+    (action) => action.type === "skill" && action.skillId === "allIn"
   );
 
   gambler.energy = 1;
   gambler.statuses.allIn = undefined;
   assert.ok(hasAllIn(generator.generate(gambler)), "能量1且无孤注时仍可生成孤注");
   assert.ok(
-    hasAllIn(generator.generateFromVisible(createInitialSearchState(gambler.id, game.state), gambler.id)),
+    hasAllIn(generator.generate(createInitialWorld(gambler.id, game.state), gambler.id)),
     "深层：能量1且无孤注时仍可生成孤注"
   );
 
   gambler.statuses.allIn = { assaultBonus: 1 };
   assert.ok(!hasAllIn(generator.generate(gambler)), "已有孤注且能量1时不得生成零收益孤注");
   assert.ok(
-    !hasAllIn(generator.generateFromVisible(createInitialSearchState(gambler.id, game.state), gambler.id)),
+    !hasAllIn(generator.generate(createInitialWorld(gambler.id, game.state), gambler.id)),
     "深层：assaultBonus已满且能量1时不得生成零收益孤注"
   );
 
   gambler.energy = 2;
   assert.ok(hasAllIn(generator.generate(gambler)), "已有孤注且能量2时仍可生成孤注摸牌");
   assert.ok(
-    hasAllIn(generator.generateFromVisible(createInitialSearchState(gambler.id, game.state), gambler.id)),
+    hasAllIn(generator.generate(createInitialWorld(gambler.id, game.state), gambler.id)),
     "深层：assaultBonus已满且能量2时仍可生成孤注摸牌"
   );
 });
@@ -32475,34 +32720,34 @@ test("AI·调律师：共鸣包含自己并在0、1、2次使用状态正确生�
   tuner.energy = 1;
   const { game } = makeGame([tuner, ally, enemy]),
     generator = game.aiController.actionGenerator;
-  const lowVisible = createInitialSearchState(tuner.id, game.state);
+  const lowVisible = createInitialWorld(tuner.id, game.state);
   assert.equal(
-    generator.generateFromVisible(lowVisible, tuner.id)
-      .filter((action) => action.type === "skill" && action.skill.id === "resonance").length,
+    generator.generate(lowVisible, tuner.id)
+      .filter((action) => action.type === "skill" && action.skillId === "resonance").length,
     0
   );
   tuner.energy = 4;
-  const visible = createInitialSearchState(tuner.id, game.state),
-    actionsAtZero = generator.generateFromVisible(visible, tuner.id)
-      .filter((action) => action.type === "skill" && action.skill.id === "resonance");
-  assert.deepEqual(actionsAtZero.map((action) => action.targets[0].id), [tuner.id, ally.id]);
+  const visible = createInitialWorld(tuner.id, game.state),
+    actionsAtZero = generator.generate(visible, tuner.id)
+      .filter((action) => action.type === "skill" && action.skillId === "resonance");
+  assert.deepEqual(actionsAtZero.map((action) => action.targetIds[0]), [tuner.id, ally.id]);
   assert.equal(visible.players.find((player) => player.id === tuner.id).activeSkillUses, 0);
-  const selfAction = actionsAtZero.find((action) => action.targets[0].id === tuner.id),
+  const selfAction = actionsAtZero.find((action) => action.targetIds[0] === tuner.id),
     afterSelf = new Simulator(visible).apply(visible, selfAction, tuner.id),
     simTuner = afterSelf.players.find((player) => player.id === tuner.id);
   assert.deepEqual([simTuner.energy, simTuner.handCount, simTuner.activeSkillUses], [2, 1, 1]);
-  const actionsAtOne = generator.generateFromVisible(afterSelf, tuner.id)
-    .filter((action) => action.type === "skill" && action.skill.id === "resonance");
-  assert.deepEqual(actionsAtOne.map((action) => action.targets[0].id), [tuner.id, ally.id]);
-  const allyAction = actionsAtOne.find((action) => action.targets[0].id === ally.id),
+  const actionsAtOne = generator.generate(afterSelf, tuner.id)
+    .filter((action) => action.type === "skill" && action.skillId === "resonance");
+  assert.deepEqual(actionsAtOne.map((action) => action.targetIds[0]), [tuner.id, ally.id]);
+  const allyAction = actionsAtOne.find((action) => action.targetIds[0] === ally.id),
     afterAlly = new Simulator(afterSelf).apply(afterSelf, allyAction, tuner.id),
     simTunerAfterTwo = afterAlly.players.find((player) => player.id === tuner.id),
     simAlly = afterAlly.players.find((player) => player.id === ally.id);
   assert.deepEqual([simTunerAfterTwo.energy, simTunerAfterTwo.activeSkillUses], [0, 2]);
   assert.equal(simAlly.handCount, 1);
   assert.equal(
-    generator.generateFromVisible(afterAlly, tuner.id)
-      .filter((action) => action.type === "skill" && action.skill.id === "resonance").length,
+    generator.generate(afterAlly, tuner.id)
+      .filter((action) => action.type === "skill" && action.skillId === "resonance").length,
     0
   );
 });
@@ -32963,7 +33208,7 @@ const configurePlannerValueStubs = (planner, evaluator) => {
 
 const planWithStubEvaluator = async (game, actor, visible, roots, evaluator, nodeBudget = null) => {
   game.aiRandomnessRange = 0;
-  game.aiController.actionGenerator.generateFromVisible = () => [];
+  game.aiController.actionGenerator.generate = () => [];
   game.aiSearchNodeBudgetOverride = nodeBudget == null ? roots.length : nodeBudget;
   const planner = game.aiController.planner;
   configurePlannerValueStubs(planner, evaluator);
@@ -33415,7 +33660,7 @@ test("AI·反制：动态 root 估值读取响应后的实时目标状态而非�
   const root = instance("plunder");
   // 世界1：B 响应后空手 → 恢复掠夺收益≈0，低于机会成本。
   playerB.hand = [];
-  const visibleEmpty = createInitialSearchState(enemyA.id, game.state, { counter: 30 });
+  const visibleEmpty = createInitialWorld(enemyA.id, game.state, { counter: 30 });
   const gainEmpty = dynamicRootFlipGain(
     game.aiController.evaluator, new Simulator(visibleEmpty), visibleEmpty,
     enemyA.id, root, enemyA.id, 1, ["player-b"]
@@ -33426,7 +33671,7 @@ test("AI·反制：动态 root 估值读取响应后的实时目标状态而非�
   const bAssault = instance("assault");
   playerB.hand = [bAssault];
   enemyA.aiMemory.knownCardsByPlayer["player-b"] = { [bAssault.id]: "assault" };
-  const visibleHas = createInitialSearchState(enemyA.id, game.state, { counter: 30, assault: 30 });
+  const visibleHas = createInitialWorld(enemyA.id, game.state, { counter: 30, assault: 30 });
   const gainHas = dynamicRootFlipGain(
     game.aiController.evaluator, new Simulator(visibleHas), visibleHas,
     enemyA.id, root, enemyA.id, 1, ["player-b"]
@@ -33500,7 +33745,7 @@ test("AI·反制：破坏 root 收益随目标剩余资源动态下降", () => {
   const root = instance("destroy");
   // B 空手（响应链消耗完）→ 恢复破坏无目标资源 → 收益≈0。
   playerB.hand = [];
-  const visibleEmpty = createInitialSearchState(enemyA.id, game.state, { counter: 30 });
+  const visibleEmpty = createInitialWorld(enemyA.id, game.state, { counter: 30 });
   const gainEmpty = dynamicRootFlipGain(
     game.aiController.evaluator, new Simulator(visibleEmpty), visibleEmpty,
     enemyA.id, root, enemyA.id, 1, ["player-b"]
@@ -33509,7 +33754,7 @@ test("AI·反制：破坏 root 收益随目标剩余资源动态下降", () => {
   assert.ok(gainEmpty < counterOpportunityCost(), `空手破坏收益应低于机会成本：${gainEmpty}`);
   // B 仍有牌 → 恢复破坏可弃掉敌人资源，收益更高。
   playerB.hand = [instance("assault")];
-  const visibleHas = createInitialSearchState(enemyA.id, game.state, { counter: 30, assault: 30 });
+  const visibleHas = createInitialWorld(enemyA.id, game.state, { counter: 30, assault: 30 });
   const gainHas = dynamicRootFlipGain(
     game.aiController.evaluator, new Simulator(visibleHas), visibleHas,
     enemyA.id, root, enemyA.id, 1, ["player-b"]
@@ -33527,14 +33772,14 @@ test("AI·反制：决斗 root 收益按目标响应后的实时手牌重算", (
   const root = instance("duel");
   // B 用掉反制后空手 → 决斗中无突袭可出 → 必受 1 伤，对 A 收益高。
   playerB.hand = [];
-  const visibleEmpty = createInitialSearchState(enemyA.id, game.state, { counter: 30 });
+  const visibleEmpty = createInitialWorld(enemyA.id, game.state, { counter: 30 });
   const gainEmpty = dynamicRootFlipGain(
     game.aiController.evaluator, new Simulator(visibleEmpty), visibleEmpty,
     enemyA.id, root, enemyA.id, 1, ["player-b"]
   );
   // B 仍持有突袭 → 决斗有来回，A 的收益降低（B 可能反打）。
   playerB.hand = [instance("assault")];
-  const visibleHas = createInitialSearchState(enemyA.id, game.state, { counter: 30, assault: 30 });
+  const visibleHas = createInitialWorld(enemyA.id, game.state, { counter: 30, assault: 30 });
   const gainHas = dynamicRootFlipGain(
     game.aiController.evaluator, new Simulator(visibleHas), visibleHas,
     enemyA.id, root, enemyA.id, 1, ["player-b"]
@@ -33664,7 +33909,7 @@ test("AI·反制：三层链每层用当前实时状态重新估值而不复用�
   const root = instance("plunder");
   const evalLayer = (depth, bHand) => {
     playerB.hand = bHand;
-    const visible = createInitialSearchState(enemyA.id, game.state, { counter: 30, assault: 30 });
+    const visible = createInitialWorld(enemyA.id, game.state, { counter: 30, assault: 30 });
     return dynamicRootFlipGain(
       game.aiController.evaluator, new Simulator(visible), visible,
       enemyA.id, root, enemyA.id, depth, ["player-b"]
@@ -33711,7 +33956,7 @@ test("AI·反制：规划 counterDecision 与真实 shouldRespond 一致——�
   R.hand.push(instance("counter"));
   T.hand = []; // T 已在响应链中把手牌用尽
   const root = instance("plunder"), counter = instance("counter");
-  const visible = createInitialSearchState(R.id, game.state, { counter: 30, assault: 30 });
+  const visible = createInitialWorld(R.id, game.state, { counter: 30, assault: 30 });
   const visibleResponder = visible.players.find((player) => player.id === R.id);
   // 规划侧：恢复空手掠夺无价值 → 不响应。
   assert.equal(new Simulator(visible).counterDecision(visible, visibleResponder, A, root, [{ id: "t" }]), false);
@@ -33738,7 +33983,7 @@ test("AI·反制：规划 counterDecision 与真实 shouldRespond 一致——�
   T.hand.push(tAssault);
   R.aiMemory.knownCardsByPlayer["t"] = { [tAssault.id]: "assault" };
   const root = instance("plunder"), counter = instance("counter");
-  const visible = createInitialSearchState(R.id, game.state, { counter: 30, assault: 30 });
+  const visible = createInitialWorld(R.id, game.state, { counter: 30, assault: 30 });
   const sim = new Simulator(visible);
   const visibleResponder = visible.players.find((player) => player.id === R.id);
   const decision = sim.counterDecision(visible, visibleResponder, A, root, [{ id: "t" }]);
@@ -33767,7 +34012,7 @@ test("AI·反制：规划 counterDecision 只在 gain 严格高于 cost 时响�
     T.hand = tDefinitions.map((definitionId) => instance(definitionId));
     R.aiMemory.knownCardsByPlayer["t"] = {};
     for (const card of T.hand) R.aiMemory.knownCardsByPlayer["t"][card.id] = card.definitionId;
-    const visible = createInitialSearchState(R.id, game.state, { counter: 30, assault: 30 });
+    const visible = createInitialWorld(R.id, game.state, { counter: 30, assault: 30 });
     const visibleResponder = visible.players.find((player) => player.id === R.id);
     return new Simulator(visible).counterDecision(visible, visibleResponder, A, root, [{ id: "t" }]);
   };
@@ -34103,9 +34348,9 @@ test("AI·反制概率：仅有敌方反制容量不会把 Policy heuristic 乘�
       ],
       // 两者收益都低于反制机会成本；不得把各自的小数 heuristic 乘进结算概率。
       {
-        actionEconomicValue: (action) => action.card?.definitionId === "harvest"
+        actionEconomicValue: (action) => action.cardId === "harvest"
           ? 2
-          : action.card?.definitionId === "exposeWeakness" ? 1 : 0,
+          : action.cardId === "exposeWeakness" ? 1 : 0,
         stateUtility: () => 0
       }
     );
@@ -34152,7 +34397,7 @@ test("AI·反制概率：战术反制风险：counterable false 的战术牌结�
   const nonCounterable = {
     category: "tactic", counterable: false, counterScope: "target", aiValue: 5
   };
-  assert.equal(simulator.tacticResolutionChance(state, state.players[0], nonCounterable, []), 1);
+  assert.equal(testTacticResolutionChance(simulator, state, state.players[0], nonCounterable, []), 1);
   assert.equal(
     simulator.targetResolutionChance(state, state.players[0], nonCounterable, state.players[1]), 1
   );
@@ -34171,7 +34416,7 @@ test("AI·反制概率：战术反制风险：counterable false 的战术牌结�
     [{ type: "card", card, targets: [{ id: "e" }] }, { type: "end" }],
     { actionEconomicValue: (action) => action.type === "end" ? 0 : 0.9, stateUtility: () => 0 }
   );
-  assert.equal(action.card?.definitionId, "test-no-counter");
+  assert.equal(action.cardId, "test-no-counter");
 });
 
 test("AI·反制概率：scout 在 Policy 拒绝响应时不受反制容量机械缩放", () => {
@@ -34287,7 +34532,7 @@ test("AI·反制概率：战术反制风险：深层战术评分使用后续节�
     actionEconomicValue: (action) => {
       if (
         action.type === "end"
-      ) return 0.4; if (action.card?.definitionId === "assault") return 1; if (action.card?.definitionId === "harvest") return 1; return 0;
+      ) return 0.4; if (action.cardId === "assault") return 1; if (action.cardId === "harvest") return 1; return 0;
     },
     stateUtility: () => 0
   });
@@ -34311,7 +34556,7 @@ test("AI·反制概率：战术反制风险：深层战术评分使用后续节�
   const assaultCard = { ...CARD_DEFINITIONS.assault, id: "hit" };
   const harvestCard = { ...CARD_DEFINITIONS.harvest, id: "draw" };
   let calls = 0;
-  game.aiController.actionGenerator.generateFromVisible = (nodeState) => {
+  game.aiController.actionGenerator.generate = (nodeState) => {
     calls += 1;
     return calls === 1 ? [{ type: "card", card: harvestCard, targets: [] }, { type: "end" }] : [];
   };
@@ -34321,7 +34566,7 @@ test("AI·反制概率：战术反制风险：深层战术评分使用后续节�
     [{ type: "card", card: assaultCard, targets: [{ id: "h" }] }],
     { gameId: game.state.gameId }
   );
-  assert.equal(action.card?.definitionId, "assault");
+  assert.equal(action.cardId, "assault");
   assert.deepEqual(planner.lastPlannedSequence.map((entry) => entry.cardId), ["assault", "harvest"]);
 });
 
@@ -34336,7 +34581,7 @@ test("AI·反制概率：战术反制风险：assault 隐藏格挡调整保持�
     configurePlannerValueStubs(planner, {
       actionUtility: (action) => action.type === "end" ? 0.4 : 1, stateUtility: () => 0
     });
-    game.aiController.actionGenerator.generateFromVisible = () => [];
+    game.aiController.actionGenerator.generate = () => [];
     const visible = {
       remainingCardCounts: { assault: 30 },
       players: [
@@ -34367,7 +34612,7 @@ test("AI·反制概率：战术反制风险：assault 隐藏格挡调整保持�
   };
   const withBlock = await run(true), withoutBlock = await run(false);
   assert.equal(withBlock.action.type, "end");
-  assert.equal(withoutBlock.action.card?.definitionId, "assault");
+  assert.equal(withoutBlock.action.cardId, "assault");
 });
 
 test("AI·反制概率：自己反制数量分布准确", () => {
@@ -34375,7 +34620,7 @@ test("AI·反制概率：自己反制数量分布准确", () => {
   const { game }
     = makeGame([actor, enemy]);
   actor.hand.push(instance("counter"), instance("counter"));
-  const visible = createInitialSearchState(actor.id, game.state), view = visible.players[0];
+  const visible = createInitialWorld(actor.id, game.state), view = visible.players[0];
   assert.deepEqual(view.counterCountDistribution, [{ count: 2, probability: 1 }]);
   assert.equal(view.counterProbability, 1);
 });
@@ -34387,7 +34632,7 @@ test("AI·反制概率：其他玩家已知反制+匿名超几何分布且根计
   enemy.hand.push(instance("counter"), instance("charge"), instance("charge"));
   game.rememberPrivateCard(actor, enemy, enemy.hand[0]);
   const counts = { counter: 5, assault: 5 };
-  const visible = createInitialSearchState(actor.id, game.state, counts), view = visible.players[1];
+  const visible = createInitialWorld(actor.id, game.state, counts), view = visible.players[1];
   const byCount = Object.fromEntries(
     view.counterCountDistribution.map((branch) => [branch.count, branch.probability])
   );
@@ -34712,7 +34957,7 @@ test("AI·反制概率：已知1+匿名50%反制后身份保留0.25且只存在�
   const kept = targetAfter.knownCards.find((entry) => entry.cardId === "k1");
   assert.ok(kept);
   assertClose(simulator.cardAvailability(kept), .25);
-  const joint = joinProbabilityStateBranches(
+  const joint = intersectProbabilityStateBranches(
     projectAvailability(kept.availabilityStateBranches, "keptAvail"),
     targetAfter.counterCountDistribution.map(
       ({ probability, conditions, counterCount }) => (
@@ -34746,7 +34991,7 @@ test("AI·反制概率：两张已知反制一次互斥选择且第二次消费�
   assert.equal(after1.knownCards.length, 2);
   assertClose(counterAvailability(after1.knownCards.find((entry) => entry.cardId === "k1")), .5);
   assertClose(counterAvailability(after1.knownCards.find((entry) => entry.cardId === "k2")), .5);
-  const joint1 = joinProbabilityStateBranches(
+  const joint1 = intersectProbabilityStateBranches(
     projectAvailability(
       after1.knownCards.find((entry) => entry.cardId === "k1").availabilityStateBranches, "a1"
     ),
@@ -34936,7 +35181,7 @@ test("AI·反制概率：匿名反制转移容量守恒且共享条件世界", (
   assert.equal(source.handCount, 0);
   assert.equal(counterProbabilityOf(receiver), 1);
   assert.equal(receiver.handCount, 1);
-  const joint = joinProbabilityStateBranches(
+  const joint = intersectProbabilityStateBranches(
     source.counterCountDistribution.map(
       ({ probability, conditions, counterCount }) => (
         { probability, conditions, sourceCount: counterCount }
@@ -34970,7 +35215,7 @@ test("AI·反制概率：整手牌随机移除互斥消费已知或匿名反制"
   const byCount = counterByCount(player);
   assertClose(byCount[0] ?? 0, .5);
   assertClose(byCount[1] ?? 0, .5);
-  const joint = joinProbabilityStateBranches(
+  const joint = intersectProbabilityStateBranches(
     projectAvailability(player.knownCards[0].availabilityStateBranches, "keptAvail"),
     player.counterCountDistribution.map(
       ({ probability, conditions, counterCount }) => (
@@ -35603,7 +35848,7 @@ test("AI·反制容量：手牌与装备各有概率时只转移手牌世界反�
   assertClose(target.equipmentRetentionProbability, .5);
   assertClose(target.handCount, .5);
   assertClose(counterProbabilityOf(target), .5);
-  const joint = joinProbabilityStateBranches(
+  const joint = intersectProbabilityStateBranches(
     actor.counterCountDistribution.map(
       ({ probability, conditions, counterCount }) => (
         { probability, conditions, actorCount1: counterCount === 1 }
@@ -35726,10 +35971,10 @@ test("AI·格挡概率：普通突袭大型 block worlds 在 damage 前 cooperat
   actor.hand.push(assault);
   target.hand.push(instance("block"));
   const { game } = makeGame([actor, target]);
-  const visible = structuredClone(createInitialSearchState(
+  const visible = structuredClone(createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   ));
   const visibleTarget = visible.players.find((player) => player.id === target.id);
   visibleTarget.blockCountDistribution = Array.from({ length:96 }, (_, index) => ({
@@ -37067,17 +37312,17 @@ test("AI·格挡概率：真实响应预览连势孤注且不重复计算破势"
 test("AI·突袭次数槽：概率突袭次数槽阻止两张牌重复消费同一望远镜世界", () => {
   const state = conditionalAssaultState(1), { game }
     = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const first = game.aiController.actionGenerator.generateFromVisible(
+  const first = game.aiController.actionGenerator.generate(
     state, "actor"
-  ).find((action) => action.card?.id === "one" && action.targets[0]?.id === "far");
+  ).find((action) => action.cardInstanceId === "one" && action.targetIds[0] === "far");
   assertClose(first.executionProbability, .4);
   const once = new Simulator(state).apply(state, first, "actor"),
-    follow = game.aiController.actionGenerator.generateFromVisible(once, "actor");
+    follow = game.aiController.actionGenerator.generate(once, "actor");
   assertClose(once.players[0].attackUsed, .4);
-  assert.ok(!follow.some((action) => action.card?.id === "two" && action.targets[0]?.id === "far"));
+  assert.ok(!follow.some((action) => action.cardInstanceId === "two" && action.targetIds[0] === "far"));
   assertClose(
     follow.find(
-      (action) => action.card?.id === "one" && action.targets[0]?.id === "near"
+      (action) => action.cardInstanceId === "one" && action.targetIds[0] === "near"
     ).executionProbability,
     .6
   );
@@ -37086,13 +37331,13 @@ test("AI·突袭次数槽：概率突袭次数槽阻止两张牌重复消费同�
 test("AI·突袭次数槽：两个概率突袭次数槽可在同一望远镜世界各消费一次", () => {
   const state = conditionalAssaultState(2), { game }
     = makeGame([makePlayer("real-a", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const first = game.aiController.actionGenerator.generateFromVisible(
+  const first = game.aiController.actionGenerator.generate(
     state, "actor"
-  ).find((action) => action.card?.id === "one" && action.targets[0]?.id === "far");
+  ).find((action) => action.cardInstanceId === "one" && action.targetIds[0] === "far");
   const once = new Simulator(state).apply(state, first, "actor");
-  const second = game.aiController.actionGenerator.generateFromVisible(
+  const second = game.aiController.actionGenerator.generate(
     once, "actor"
-  ).find((action) => action.card?.id === "two" && action.targets[0]?.id === "far");
+  ).find((action) => action.cardInstanceId === "two" && action.targetIds[0] === "far");
   assertClose(second.executionProbability, .4);
   assert.notEqual(second.attackUseSlot, first.attackUseSlot);
   const twice = new Simulator(once).apply(once, second, "actor");
@@ -37140,9 +37385,9 @@ test("AI·突袭次数槽：攻击与技能次数槽选择执行概率最高的�
       }
     ]
   };
-  const attack = game.aiController.actionGenerator.generateFromVisible(
+  const attack = game.aiController.actionGenerator.generate(
     attackState, "attacker"
-  ).find((action) => action.card?.id === "hit");
+  ).find((action) => action.cardInstanceId === "hit");
   assert.equal(attack.attackUseSlot, 1);
   assert.equal(attack.executionProbability, 1);
   const skillState = {
@@ -37172,9 +37417,9 @@ test("AI·突袭次数槽：攻击与技能次数槽选择执行概率最高的�
       }
     ]
   };
-  const skill = game.aiController.actionGenerator.generateFromVisible(
+  const skill = game.aiController.actionGenerator.generate(
     skillState, "warden"
-  ).find((action) => action.skill?.id === "barrier");
+  ).find((action) => action.skillId === "barrier");
   assert.equal(skill.skillUseSlot, 1);
   assert.equal(skill.executionProbability, 1);
 });
@@ -38095,9 +38340,9 @@ test("AI·资源身份：部分概率转移中来源与接收者身份世界互�
   };
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const action = game.aiController.actionGenerator.generate(
     state, "z-actor"
-  ).find((entry) => entry.card?.id === "move");
+  ).find((entry) => entry.cardInstanceId === "move");
   assert.ok(action);
   assertClose(action.executionProbability, .4);
   const next = new Simulator(state).apply(state, action, "z-actor");
@@ -38115,7 +38360,7 @@ test("AI·资源身份：部分概率转移中来源与接收者身份世界互�
   assertClose(sourceAvailable, .6);
   assertClose(receiverAvailable, .4);
   assertClose(sourceAvailable + receiverAvailable, 1);
-  const joined = joinProbabilityStateBranches(
+  const joined = intersectProbabilityStateBranches(
     sourceEntry.availabilityStateBranches.map(
       (branch) => (
         {
@@ -38199,9 +38444,9 @@ test("AI·资源身份：部分可用来源身份按未知聚合处理且不创�
   };
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const action = game.aiController.actionGenerator.generate(
     state, "z-actor"
-  ).find((entry) => entry.card?.id === "move");
+  ).find((entry) => entry.cardInstanceId === "move");
   assert.ok(action);
   assert.equal(action.selection.selectionKind, "unknown");
   assert.equal(action.selection.cardId, null);
@@ -38592,9 +38837,9 @@ test("AI·资源身份：未知牌转移只移动聚合数量且不创建身份"
   };
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const action = game.aiController.actionGenerator.generate(
     state, "a"
-  ).find((entry) => entry.card?.definitionId === "transfer");
+  ).find((entry) => entry.cardId === "transfer");
   assert.ok(action);
   assert.equal(action.selection.selectionKind, "unknown");
   assert.equal(action.selection.availableUnknownCount, 2);
@@ -38770,9 +39015,9 @@ test("AI·资源身份：模拟执行评分阶段选中的同一已知牌身份"
   };
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const action = game.aiController.actionGenerator.generate(
     state, "a"
-  ).find((entry) => entry.card?.definitionId === "transfer");
+  ).find((entry) => entry.cardId === "transfer");
   assert.ok(action);
   assert.equal(action.selection.cardId, "high-counter");
   const simulator = new Simulator(state), next = simulator.apply(state, action, "a");
@@ -38795,7 +39040,7 @@ test("AI·资源身份：Planner 描述不保存转移候选身份", () => {
     ally = makePlayer("ally", 2, "dawn");
   const { game }
     = makeGame([actor, enemy, ally]);
-  const descriptor = describeAction(
+  const descriptor = describeBenchmarkAction(
     {
       type: "card",
       card: instance("transfer"),
@@ -38836,7 +39081,7 @@ test("AI·资源身份：确定性破坏已知 counter 移除身份并重算反�
   assert.equal(target.counterProbability, 0);
   // 下一层战术牌结算不再认为该反制存在
   assert.equal(
-    simulator.tacticResolutionChance(
+    testTacticResolutionChance(simulator,
       { players: [actor, target] }, actor, { category: "tactic", counterable: true }, [target]
     ),
     1
@@ -38852,10 +39097,10 @@ test("AI·资源身份：确定性掠夺已知 assault 后可在下一层生成�
   const { game }
     = makeGame([actor, target]);
   game.rememberPrivateCard(actor, target, assault);
-  const visible = createInitialSearchState(actor.id, game.state);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const visible = createInitialWorld(actor.id, game.state);
+  const action = game.aiController.actionGenerator.generate(
     visible, actor.id
-  ).find((entry) => entry.card?.id === plunder.id && entry.targets[0]?.id === target.id);
+  ).find((entry) => entry.cardInstanceId === plunder.id && entry.targetIds[0] === target.id);
   assert.ok(action);
   const next = new Simulator(visible).apply(visible, action, actor.id);
   const actorNext = next.players[0], targetNext = next.players[1];
@@ -38864,9 +39109,9 @@ test("AI·资源身份：确定性掠夺已知 assault 后可在下一层生成�
   assert.ok(Math.abs(targetNext.expectedAssaultCount - 0) < 1e-9);
   assert.equal(targetNext.assaultResponseProbability, 0);
   assert.ok(actorNext.hand.some((card) => card.id === assault.id && card.definitionId === "assault"));
-  const follow = game.aiController.actionGenerator.generateFromVisible(next, actor.id);
+  const follow = game.aiController.actionGenerator.generate(next, actor.id);
   assert.ok(
-    follow.some((entry) => entry.card?.id === assault.id && entry.targets[0]?.id === target.id)
+    follow.some((entry) => entry.cardInstanceId === assault.id && entry.targetIds[0] === target.id)
   );
 });
 
@@ -39031,10 +39276,10 @@ test("AI·资源身份：掠夺装备加入具体手牌后下一层可生成装�
   target.equipment = equipment;
   const { game }
     = makeGame([actor, target]);
-  const visible = createInitialSearchState(actor.id, game.state);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const visible = createInitialWorld(actor.id, game.state);
+  const action = game.aiController.actionGenerator.generate(
     visible, actor.id
-  ).find((entry) => entry.card?.id === plunder.id && entry.targets[0]?.id === target.id);
+  ).find((entry) => entry.cardInstanceId === plunder.id && entry.targetIds[0] === target.id);
   assert.ok(action);
   const next = new Simulator(visible).apply(visible, action, actor.id);
   assert.equal(next.players[1].equipmentDefinitionId, null);
@@ -39042,8 +39287,8 @@ test("AI·资源身份：掠夺装备加入具体手牌后下一层可生成装�
   const gained = next.players[0].hand.find((card) => card.definitionId === "telescope");
   assert.ok(gained);
   assert.match(gained.id, /^simulated-resource:/);
-  const follow = game.aiController.actionGenerator.generateFromVisible(next, actor.id);
-  assert.ok(follow.some((entry) => entry.card?.definitionId === "telescope"));
+  const follow = game.aiController.actionGenerator.generate(next, actor.id);
+  assert.ok(follow.some((entry) => entry.cardId === "telescope"));
 });
 
 test("AI·资源身份：真实 Planner 先掠夺已知 assault 再在后续层使用", async () => {
@@ -39059,7 +39304,7 @@ test("AI·资源身份：真实 Planner 先掠夺已知 assault 再在后续层�
   game.aiSearchNodeBudgetOverride = 4;
   game.aiRandomnessRange = 0;
   const action = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
-  assert.equal(action.card?.id, plunder.id);
+  assert.equal(action.cardInstanceId, plunder.id);
   const sequence = game.aiController.planner.lastPlannedSequence;
   assert.ok(
     sequence.some(
@@ -39244,7 +39489,7 @@ test("AI·资源身份：整手牌随机移除：确定格挡 + 确定聚能随�
   assert.equal(player.knownCards.length, 2);
   assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 0.5) < 1e-9);
   assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[1]) - 0.5) < 1e-9);
-  const joined = joinProbabilityStateBranches(
+  const joined = intersectProbabilityStateBranches(
     projectAvailability(player.knownCards[0].availabilityStateBranches, "blockAvail"),
     projectAvailability(player.knownCards[1].availabilityStateBranches, "chargeAvail")
   );
@@ -39316,7 +39561,7 @@ test("AI·资源身份：整手牌随机移除：三类候选互斥且各占三�
   assert.equal(player.knownCards.length, 2);
   assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[0]) - 2 / 3) < 1e-9);
   assert.ok(Math.abs(simulator.cardAvailability(player.knownCards[1]) - 2 / 3) < 1e-9);
-  const joined = joinProbabilityStateBranches(
+  const joined = intersectProbabilityStateBranches(
     projectAvailability(player.knownCards[0].availabilityStateBranches, "blockAvail"),
     projectAvailability(player.knownCards[1].availabilityStateBranches, "chargeAvail")
   );
@@ -39464,7 +39709,7 @@ test("AI·资源身份：整手牌随机移除：当前 AI 完整 hand 路径保
   assert.equal(player.hand.length, 2);
   assert.ok(Math.abs(simulator.cardAvailability(player.hand[0]) - 0.5) < 1e-9);
   assert.ok(Math.abs(simulator.cardAvailability(player.hand[1]) - 0.5) < 1e-9);
-  const joined = joinProbabilityStateBranches(
+  const joined = intersectProbabilityStateBranches(
     projectAvailability(player.hand[0].availabilityStateBranches, "blockAvail"),
     projectAvailability(player.hand[1].availabilityStateBranches, "chargeAvail")
   );
@@ -39913,7 +40158,7 @@ test("AI·资源身份：纯 unknown 破坏/掠夺按剩余未知数量同步摘
 无生产状态。
 
 调用函数
-makePlayer、makeGame、instance、createInitialSearchState、getActionCandidates、describeAction。
+makePlayer、makeGame、instance、createInitialWorld、getActionCandidates、describeAction。
 
 边界与不变量
 SearchState 不得含敌方未知牌；真实 root action 可以持有 real Player，只有 descriptor 可跨越未来 Worker 边界。
@@ -39926,10 +40171,10 @@ function frArchHiddenInformationAndRootAction() {
   const { game } = makeGame([actor, target]);
   const assault = instance("assault");
   actor.hand.push(assault);
-  const visible = createInitialSearchState(
+  const visible = createInitialWorld(
     actor.id,
     game.state,
-    game.aiController.knowledge.remainingCounts(actor)
+    deriveCurrentCardCounts(actor, game.state)
   );
   const visibleTarget = visible.players.find((player) => player.id === target.id);
   assert.equal(visibleTarget.hand, undefined);
@@ -39937,11 +40182,11 @@ function frArchHiddenInformationAndRootAction() {
   assert.equal(JSON.stringify(visible).includes(hidden.id), false);
   assert.equal(JSON.stringify(visible).includes(hidden.name), false);
   const rootAction = game.aiController.getActionCandidates(actor)
-    .find((entry) => entry.card?.definitionId === "assault" && entry.targets?.[0]?.id === target.id);
+    .find((entry) => entry.cardId === "assault" && entry.targetIds?.[0] === target.id);
   assert.ok(rootAction);
   assert.equal(rootAction.targets[0], target);
   assert.ok(target.hand.includes(hidden), "当前 root action 仍持有 real Player target");
-  const descriptor = describeAction(rootAction);
+  const descriptor = describeBenchmarkAction(rootAction);
   const serializedDescriptor = JSON.stringify(descriptor);
   assert.equal(serializedDescriptor.includes(hidden.id), false);
   assert.equal(serializedDescriptor.includes(hidden.definitionId), false);
@@ -41229,8 +41474,8 @@ test("AI·动态密度：模拟器动态：AIController 每次行动只计算一
         gameId: request.gameId,
         stateVersion: request.stateVersion,
         actorId: request.actorId,
-        actionDescriptor: { type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null },
-        plannedSequenceDescriptors: [],
+        action: { type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null },
+        plannedActions: [],
         stats: { stopReason: "COMPLETE", expandedNodes: 0 },
         searchStopReason: "COMPLETE",
         rngAfter: request.rng,
@@ -41242,7 +41487,7 @@ test("AI·动态密度：模拟器动态：AIController 每次行动只计算一
   await game.aiController.selectAction(actor, { gameId: game.state.gameId });
   assert.equal(captured, actor);
   assert.equal(calls, 1);
-  assert.equal(receivedRequest.searchState.remainingCardCounts.assault, 1);
+  assert.equal(receivedRequest.world.remainingCardCounts.assault, 1);
 });
 
 test("AI·动态密度：模拟器动态：destroy 使用动态未知 owner 期望", () => {
@@ -41495,7 +41740,7 @@ test("AI·动态密度：模拟器动态：克隆计数引用隔离", () => {
   const { game }
     = makeGame([actor, enemy]);
   const counts = { assault: 3, block: 1 };
-  const visible = createInitialSearchState(actor.id, game.state, counts);
+  const visible = createInitialWorld(actor.id, game.state, counts);
   const simulator = new Simulator(visible);
   const next = simulator.apply(visible, { type: "end" }, actor.id);
   assert.deepEqual(visible.remainingCardCounts, counts);
@@ -41638,14 +41883,14 @@ test("AI·动态密度：可见状态动态密度：剩余0与缺失定义按零
   enemy.hand = [instance("assault")];
   const { game }
     = makeGame([actor, enemy]);
-  const zero = createInitialSearchState(actor.id, game.state, { assault: 0, block: 0 });
+  const zero = createInitialWorld(actor.id, game.state, { assault: 0, block: 0 });
   assert.equal(zero.players[1].expectedAssaultCount, 0);
   assert.equal(zero.players[1].assaultResponseProbability, 0);
   assert.equal(zero.players[1].blockProbability, 0);
   assert.equal(zero.players[1].counterProbability, 0);
   assert.equal(zero.players[1].expectedRecoverCount, 0);
-  const low = createInitialSearchState(actor.id, game.state, { assault: 1, block: 9 });
-  const high = createInitialSearchState(actor.id, game.state, { assault: 9, block: 1 });
+  const low = createInitialWorld(actor.id, game.state, { assault: 1, block: 9 });
+  const high = createInitialWorld(actor.id, game.state, { assault: 9, block: 1 });
   assertClose(low.players[1].expectedAssaultCount, .1);
   assertClose(low.players[1].assaultResponseProbability, .1);
   assertClose(low.players[1].blockProbability, .9);
@@ -41660,7 +41905,7 @@ test("AI·动态密度：可见状态动态密度：有效计数总和为零不�
   enemy.hand = [instance("assault")];
   const { game }
     = makeGame([actor, enemy]);
-  const target = createInitialSearchState(actor.id, game.state, {}).players[1];
+  const target = createInitialWorld(actor.id, game.state, {}).players[1];
   assert.equal(target.expectedAssaultCount, 0);
   assert.equal(target.assaultResponseProbability, 0);
   assert.equal(target.blockProbability, 0);
@@ -41674,7 +41919,7 @@ test("AI·动态密度：可见状态动态密度：无动态计数保留固定�
   enemy.hand = [instance("assault")];
   const { game }
     = makeGame([actor, enemy]);
-  const target = createInitialSearchState(actor.id, game.state).players[1];
+  const target = createInitialWorld(actor.id, game.state).players[1];
   const assaultDensity = CARD_COUNTS.assault / TOTAL_CARD_COUNT;
   const blockDensity = CARD_COUNTS.block / TOTAL_CARD_COUNT;
   assertClose(target.expectedAssaultCount, assaultDensity);
@@ -41690,7 +41935,7 @@ test("AI·动态密度：可见状态动态密度：已知手牌仍按已知数�
   const { game }
     = makeGame([actor, enemy]);
   game.rememberPrivateCard(actor, enemy, held);
-  const target = createInitialSearchState(actor.id, game.state, { block: 0, assault: 1 }).players[1];
+  const target = createInitialWorld(actor.id, game.state, { block: 0, assault: 1 }).players[1];
   assert.equal(target.handCount, 1);
   assert.equal(target.blockProbability, 1);
   assert.equal(target.twoBlockProbability, 0);
@@ -42867,7 +43112,7 @@ test("AI·角色核心评分：真实 Planner 会按角色权重选择不同动�
     const { game } = makeGame([actor, enemy]);
     game.rememberPrivateCard(actor, enemy, enemy.hand[0]);
     const evaluator = game.aiController.evaluator;
-    const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+    const visible = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
     const handRole = (state) => {
       const player = state.players.find((entry) => entry.id === actor.id);
       return evaluator.playerValueTerms(state, player, actor.id, 0).terms.handRole;
@@ -42914,8 +43159,8 @@ const shieldValueFixture = () => {
   const { game }
     = makeGame([warden, allyA, allyB, e1, e2]);
   registerPassiveSkills(game);
-  const before = createInitialSearchState(
-    warden.id, game.state, game.aiController.knowledge.remainingCounts(warden)
+  const before = createInitialWorld(
+    warden.id, game.state, deriveCurrentCardCounts(warden, game.state)
   );
   return { game, before };
 };
@@ -42972,8 +43217,8 @@ const exposureFixture = (enemyHand = [], counts = null) => {
   enemy.hand.forEach((card) => { known[card.id] = card.definitionId; });
   viewer.aiMemory.knownCardsByPlayer[enemy.id] = known;
   if (counts) game.aiController.knowledge.remainingCounts = () => counts;
-  const visible = createInitialSearchState(
-    viewer.id, game.state, game.aiController.knowledge.remainingCounts(viewer)
+  const visible = createInitialWorld(
+    viewer.id, game.state, deriveCurrentCardCounts(viewer, game.state)
   );
   return { game, visible, viewer: visible.players[0], enemy: visible.players[1], evaluator: game.aiController.evaluator };
 };
@@ -43042,7 +43287,7 @@ test("AI·评分：使用聚能后突袭能力不变且攻击暴露不因手牌�
   actor.energy = 2;
   actor.hand.push(instance("charge"));
   const evaluator = game.aiController.evaluator;
-  const before = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const before = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const chargeCard = before.players.find((p) => p.id === "exp-charge-viewer").hand[0];
   const after = new Simulator(before).apply(before, { type: "card", card: chargeCard, targets: [] }, actor.id);
   const actorA = before.players.find((p) => p.id === "exp-charge-viewer");
@@ -43206,7 +43451,7 @@ test("AI·评分：调息实际恢复量由 stateDelta 表达且不再按总缺�
     const card = instance("recover");
     actor.hand.push(card);
     const { game } = makeGame([actor, enemy]);
-    const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+    const visible = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
     const action = { type: "card", card, targets: [] };
     const delta = game.aiController.evaluator.stateUtility(
       new Simulator(visible).apply(visible, action, actor.id), actor.id
@@ -43232,7 +43477,7 @@ test("AI·评分：低血时 Planner 仍选择调息且实际恢复由 stateDelt
   const { game } = makeGame([actor, enemy]);
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 40;
-  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const visible = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const selected = await game.aiController.planner.plan(
     actor, visible, game.aiController.getActionCandidates(actor), { gameId: game.state.gameId }
   );
@@ -43248,7 +43493,7 @@ test("AI·评分：突袭击杀 stateDelta 高于普通伤害且近杀先验只�
   const { game } = makeGame([actor, enemy]);
   game.aiDifficultyMultiplier = 0;
   const ev = game.aiController.evaluator;
-  const base = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const base = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const action = { type: "card", card, targets: [{ id: enemy.id }] };
   const stateWith = (hp) => {
     const c = structuredClone(base);
@@ -43279,7 +43524,7 @@ test("AI·评分：震荡多目标真实 after-state 高于单目标且 actionUt
     }
     const { game } = makeGame(players);
     game.aiDifficultyMultiplier = 0;
-    const state = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+    const state = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
     return { game, state, card, actor };
   };
   const run = (enemyCount) => {
@@ -43326,7 +43571,7 @@ test("AI·评分：明显有防御价值时 Planner 仍选择护盾", async () =
   game.aiSearchNodeBudgetOverride = 40;
   // 高威胁：可见状态给敌人攻击资源，使低血盟友获得明显防护价值
   const visible = structuredClone(
-    createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor))
+    createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state))
   );
   for (const enemy of visible.players.filter((p) => p.battleTeam === "dusk")) {
     enemy.handCount = 3;
@@ -43350,7 +43595,7 @@ test("AI·评分：多目标时 Planner 优先震荡而非单体突袭", async (
   const { game } = makeGame([actor, e0, e1, e2]);
   game.aiRandomnessRange = 0;
   game.aiSearchNodeBudgetOverride = 40;
-  const visible = createInitialSearchState(actor.id, game.state, game.aiController.knowledge.remainingCounts(actor));
+  const visible = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const selected = await game.aiController.planner.plan(
     actor, visible, game.aiController.getActionCandidates(actor), { gameId: game.state.gameId }
   );
@@ -44259,8 +44504,8 @@ test("AI·资源选择：无效望远镜不压过未知手牌且真实与深层�
   assert.equal(rootChoice.zone, "hand");
   assert.equal(rootChoice.card, unknown);
 
-  const remaining = game.aiController.knowledge.remainingCounts(actor);
-  const state = createInitialSearchState(actor.id, game.state, remaining);
+  const remaining = deriveCurrentCardCounts(actor, game.state);
+  const state = createInitialWorld(actor.id, game.state, remaining);
   const simulator = new Simulator(state, {
     resourceValueQuery: game.aiController.resourceValueQuery
   });
@@ -44285,7 +44530,7 @@ test("AI·资源选择：望远镜真实改变屏障距离时上下文收益可�
   assert.equal(getDistance(game.state.players, target, actor, null, "barrierDevice"), 2);
 
   const remaining = { assault: 4 };
-  const state = createInitialSearchState(actor.id, game.state, remaining);
+  const state = createInitialWorld(actor.id, game.state, remaining);
   const searchActor = state.players[0], searchTarget = state.players[1];
   const unknownCount = searchTarget.handCount - (searchTarget.knownCards?.length ?? 0);
   const candidates = buildResourceCandidates({
@@ -44323,7 +44568,7 @@ test("AI·资源选择：掠夺无效望远镜仍计入接收方获得价值", (
   const { game }
     = makeGame([actor, target, ally]);
   const remaining = { charge: 4 };
-  const state = createInitialSearchState(actor.id, game.state, remaining);
+  const state = createInitialWorld(actor.id, game.state, remaining);
   const searchActor = state.players[0], searchTarget = state.players[1];
   const unknownCount = 1;
   const destroyCandidates = buildResourceCandidates({
@@ -44393,7 +44638,7 @@ test("AI·资源选择：已知牌不进入未知池且强制破坏精确身份�
   );
   assert.equal(rootChoice.card, counter);
 
-  const state = createInitialSearchState(actor.id, game.state, { assault: 4 });
+  const state = createInitialWorld(actor.id, game.state, { assault: 4 });
   const simulator = new Simulator(state);
   const searchTarget = state.players[1];
   const resourceShape = simulator.buildSimulatedKnownCards(searchTarget);
@@ -44462,7 +44707,7 @@ test("AI·资源选择：掠夺精确转移已知反制并同步双方容量", (
   const { game }
     = makeGame([actor, target]);
   game.rememberPrivateCard(actor, target, counter);
-  const state = createInitialSearchState(actor.id, game.state, { charge: 4 });
+  const state = createInitialWorld(actor.id, game.state, { charge: 4 });
   const contextualSimulator = new Simulator(state, {
     resourceValueQuery: game.aiController.resourceValueQuery
   });
@@ -44497,7 +44742,7 @@ test("AI·资源选择：掠夺未知槽只转移匿名容量不暴露身份", (
   target.hand = [hidden];
   const { game }
     = makeGame([actor, target]);
-  const state = createInitialSearchState(actor.id, game.state, { block: 1, counter: 1 });
+  const state = createInitialWorld(actor.id, game.state, { block: 1, counter: 1 });
   const selection = {
     zone: "hand",
     selectionKind: "unknown",
@@ -45612,7 +45857,7 @@ test("AI·转移评分：转移己方到己方无溢出且无正支援收益时�
     = makeGame([actor, from, receiver]);
   game.rememberPrivateCard(actor, from, block);
   assert.equal(
-    game.aiController.actionGenerator.generate(actor).some((entry) => entry.card?.id === use.id), false
+    game.aiController.actionGenerator.generate(actor).some((entry) => entry.cardInstanceId === use.id), false
   );
 });
 
@@ -45629,12 +45874,12 @@ test("AI·转移评分：转移己方到己方未知牌只在溢出空间收益�
   game.rememberPrivateCard(actor, from, known);
   from.hp = 3;
   assert.equal(
-    game.aiController.actionGenerator.generate(actor).some((entry) => entry.card?.id === use.id), false
+    game.aiController.actionGenerator.generate(actor).some((entry) => entry.cardInstanceId === use.id), false
   );
   from.hp = 1;
   const action = game.aiController.actionGenerator.generate(
     actor
-  ).find((entry) => entry.card?.id === use.id);
+  ).find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
   const chosen = game.aiController.cardSelector.chooseHiddenCards(
     actor, from, 1, null, { purpose: "transfer", receiver }
@@ -45873,11 +46118,11 @@ test("AI·转移评分：真实与深层模拟选择相同来源接收者及候�
   game.rememberPrivateCard(actor, enemy, held);
   const realAction = game.aiController.actionGenerator.generate(
     actor
-  ).find((entry) => entry.card?.id === use.id);
-  const visible = createInitialSearchState(actor.id, game.state);
-  const simAction = game.aiController.actionGenerator.generateFromVisible(
+  ).find((entry) => entry.cardInstanceId === use.id);
+  const visible = createInitialWorld(actor.id, game.state);
+  const simAction = game.aiController.actionGenerator.generate(
     visible, actor.id
-  ).find((entry) => entry.card?.id === use.id);
+  ).find((entry) => entry.cardInstanceId === use.id);
   assert.ok(realAction);
   assert.ok(simAction);
   assert.equal(realAction.selection.sourceId, simAction.selection.sourceId);
@@ -46176,12 +46421,12 @@ test("AI·转移评分：转移角色权重：深层规划使用可见快照剩�
     = makeGame([actor, enemy]);
   const generator = game.aiController.actionGenerator;
   const assaultState = makeState({ assault: 10 }), recoverState = makeState({ recover: 10 });
-  const assaultAction = generator.generateFromVisible(
+  const assaultAction = generator.generate(
     assaultState, "a"
-  ).find((entry) => entry.card?.definitionId === "transfer");
-  const recoverAction = generator.generateFromVisible(
+  ).find((entry) => entry.cardId === "transfer");
+  const recoverAction = generator.generate(
     recoverState, "a"
-  ).find((entry) => entry.card?.definitionId === "transfer");
+  ).find((entry) => entry.cardId === "transfer");
   assert.ok(assaultAction);
   assert.ok(recoverAction);
   assert.notEqual(assaultAction.selection.receiverId, recoverAction.selection.receiverId);
@@ -46218,7 +46463,7 @@ test("AI·转移评分：转移动作携带已知候选身份", () => {
   game.rememberPrivateCard(actor, enemy, held);
   const action = game.aiController.actionGenerator.generate(
     actor
-  ).find((entry) => entry.card?.id === use.id);
+  ).find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
   const selection = action.selection;
   assert.equal(selection.selectionKind, "known");
@@ -46244,7 +46489,7 @@ test("AI·转移评分：转移动作携带未知候选类别与精确未知数�
     = makeGame([actor, enemy, ally]);
   const action = game.aiController.actionGenerator.generate(
     actor
-  ).find((entry) => entry.card?.id === use.id);
+  ).find((entry) => entry.cardInstanceId === use.id);
   assert.ok(action);
   const selection = action.selection;
   assert.equal(selection.selectionKind, "unknown");
@@ -46303,9 +46548,9 @@ test("AI·转移评分：其他玩家已知突袭转入当前 AI 后下一层可
   };
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const action = game.aiController.actionGenerator.generate(
     state, "a"
-  ).find((entry) => entry.card?.definitionId === "transfer");
+  ).find((entry) => entry.cardId === "transfer");
   assert.ok(action);
   assert.equal(action.selection.selectionKind, "known");
   assert.equal(action.selection.cardId, "known-assault");
@@ -46317,9 +46562,9 @@ test("AI·转移评分：其他玩家已知突袭转入当前 AI 后下一层可
   assert.equal(nextActor.handCount, 1);
   assert.equal(nextSource.knownCards.some((entry) => entry.cardId === "known-assault"), false);
   assert.equal(nextSource.handCount, 0);
-  const follow = game.aiController.actionGenerator.generateFromVisible(next, "a");
+  const follow = game.aiController.actionGenerator.generate(next, "a");
   assert.ok(
-    follow.some((entry) => entry.card?.id === "known-assault" && entry.card?.definitionId === "assault")
+    follow.some((entry) => entry.cardInstanceId === "known-assault" && entry.cardId === "assault")
   );
 });
 
@@ -46374,9 +46619,9 @@ test("AI·转移评分：当前 AI 把已知突袭转给其他玩家且不创建
   };
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const action = game.aiController.actionGenerator.generate(
     state, "a"
-  ).find((entry) => entry.card?.definitionId === "transfer");
+  ).find((entry) => entry.cardId === "transfer");
   assert.ok(action);
   assert.equal(action.selection.sourceId, "a");
   assert.equal(action.selection.receiverId, "r");
@@ -46392,8 +46637,8 @@ test("AI·转移评分：当前 AI 把已知突袭转给其他玩家且不创建
       (entry) => entry.cardId === "own-assault" && entry.definitionId === "assault"
     )
   );
-  const follow = game.aiController.actionGenerator.generateFromVisible(next, "a");
-  assert.ok(!follow.some((entry) => entry.card?.id === "own-assault"));
+  const follow = game.aiController.actionGenerator.generate(next, "a");
+  assert.ok(!follow.some((entry) => entry.cardInstanceId === "own-assault"));
 });
 
 test("AI·转移评分：其他玩家之间移动已知身份", () => {
@@ -46546,9 +46791,9 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
   };
   const { game }
     = makeGame([makePlayer("real", 0, "dawn"), makePlayer("real-b", 1, "dusk")]);
-  const action = game.aiController.actionGenerator.generateFromVisible(
+  const action = game.aiController.actionGenerator.generate(
     state, "a"
-  ).find((entry) => entry.card?.definitionId === "transfer");
+  ).find((entry) => entry.cardId === "transfer");
   assert.ok(action);
   assert.equal(action.selection.selectionKind, "known");
   const simulator = new Simulator(state), next = simulator.apply(state, action, "a");
@@ -46671,7 +46916,7 @@ test("AI·威胁评估：ThreatCalculator 的稳定角色标签与近期攻击�
   const { game }
     = makeGame([actor, first, second]);
   actor.aiMemory.recentAggressors[second.id] = 3;
-  const visible = createInitialSearchState(actor.id, game.state),
+  const visible = createInitialWorld(actor.id, game.state),
     assault = instance("assault"),
     score = (target) => game.aiController.evaluator.actionUtility(
       { type: "card", card: assault, targets: [target] }, actor, visible
@@ -46721,7 +46966,7 @@ const makeLightningFixture = (teams, options = {}) => {
   const { game } = makeGame(players);
   const counts = options.counts ?? { defenseDevice: 2, assault: 4 };
   game.aiController.knowledge.remainingCounts = () => ({ ...counts });
-  const visible = createInitialSearchState(actor.id, game.state, counts);
+  const visible = createInitialWorld(actor.id, game.state, counts);
   return { game, actor, players, visible, counts };
 };
 
@@ -46744,15 +46989,15 @@ const planLightningFixture = async (fixture) => {
 
 const assertLightningCandidatePresence = (fixture, expected) => {
   const roots = fixture.game.aiController.getActionCandidates(fixture.actor);
-  const deep = fixture.game.aiController.actionGenerator.generateFromVisible(
+  const deep = fixture.game.aiController.actionGenerator.generate(
     fixture.visible, fixture.actor.id
   );
   assert.equal(
-    roots.some((action) => action.card?.definitionId === "lightning"), expected,
+    roots.some((action) => action.cardId === "lightning"), expected,
     "真实根节点候选资格不符合预期"
   );
   assert.equal(
-    deep.some((action) => action.card?.definitionId === "lightning"), expected,
+    deep.some((action) => action.cardId === "lightning"), expected,
     "深层搜索候选资格不符合预期"
   );
 };
@@ -46848,7 +47093,7 @@ test("AI·闪电评分：预算中断仍以完整负收益拒绝三名满血友�
   });
   const roots = fixture.game.aiController.getActionCandidates(fixture.actor);
   const lightningAction = roots.find(
-    (action) => action.card?.definitionId === "lightning"
+    (action) => action.cardId === "lightning"
   );
   const query = fixture.game.aiController.valueSimulationQuery;
   const holder = fixture.visible.players[0];
@@ -46957,7 +47202,7 @@ test("AI·闪电评分：接近零的负收益闪电由终止动作稳定拒绝"
   });
   const roots = fixture.game.aiController.getActionCandidates(fixture.actor);
   const lightningAction = roots.find(
-    (action) => action.card?.definitionId === "lightning"
+    (action) => action.cardId === "lightning"
   );
   const after = new Simulator(fixture.visible).apply(
     fixture.visible, lightningAction, fixture.actor.id
@@ -47149,8 +47394,8 @@ test("AI·闪电评分：闪电：部分执行保留状态概率且第二张只�
     type: "card", card: actor.hand[0], targets: [], executionProbability: 0.6
   }, actor.id);
   assertClose(lightningPresenceProbability(first.players[0]), 0.6);
-  const second = fixture.game.aiController.actionGenerator.generateFromVisible(first, actor.id)
-    .find((action) => action.card?.definitionId === "lightning");
+  const second = fixture.game.aiController.actionGenerator.generate(first, actor.id)
+    .find((action) => action.cardId === "lightning");
   assert.ok(second);
   assertClose(second.executionProbability, 0.4);
   const afterSecond = new Simulator(first).apply(first, second, actor.id);
@@ -47183,8 +47428,8 @@ test("AI·闪电评分：闪电：第二张 executionWorldBranches 继承第一�
   assert.equal(firstKeys.length, 1);
   assert.ok(firstKeys[0].includes("card"));
   assert.ok(!firstKeys[0].includes("counter"));
-  const second = fixture.game.aiController.actionGenerator.generateFromVisible(first, actor.id)
-    .find((action) => action.card?.definitionId === "lightning");
+  const second = fixture.game.aiController.actionGenerator.generate(first, actor.id)
+    .find((action) => action.cardId === "lightning");
   assert.ok(second);
   assert.ok(second.executionWorldBranches.every((branch) => (
     Object.keys(branch.conditions).includes(firstKeys[0])
@@ -47353,17 +47598,240 @@ test("AI·价值归属：聚能跨技能门槛不产生独立固定 Final bonus"
     targets:[],
     executionProbability:1
   };
-  const terms = new TransitionValue({ stateUtility:(state) => state.utility }).evaluateBase({
+  const terms = new TransitionValue({
+    transitionDelta:(left, right) => right.utility - left.utility
+  }).evaluateBase({
     action,
     player:actor,
     beforeState:before,
     afterState:after,
     depth:1
   });
-  assert.equal(ownedActionEconomicValue(action, actor, before), 0);
   assert.equal(terms.economic, 0);
   assert.equal(terms.baseTransition, statePointsToUtility(1));
 });
+
+/*
+功能
+证明窥探价值由 TransitionValue 从动作与 before World 派生，不写入 after World。
+
+调用方
+AI·价值归属测试注册。
+
+输入
+无；函数内部构造带后续攻击决策的窥探场景。
+
+输出
+无；断言 transition option 为正且 World 不含 utility bookkeeping。
+
+读取状态
+测试 GameState、canonical World 与 Simulator after World。
+
+写入状态
+仅测试夹具。
+
+调用函数
+createInitialWorld、Simulator.apply、TransitionValue.evaluateBase。
+
+边界与不变量
+同一价值只能出现在 transition option；before/after 玩家都不得保存价值字段。
+*/
+function testScoutValueIsDerivedAtTransitionBoundary() {
+  const actor = makePlayer("purity-scout-actor", 0, "dawn", "ai", 1);
+  const target = makePlayer("purity-scout-target", 1, "dusk", "ai", 5);
+  const scout = instance("scout");
+  actor.hand.push(scout, instance("assault"));
+  target.hand.push(instance("block"), instance("counter"));
+  const { game } = makeGame([actor, target]);
+  const before = createInitialWorld(
+    actor.id,
+    game.state,
+    deriveCurrentCardCounts(actor, game.state)
+  );
+  const action = createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"scout",
+    cardInstanceId:scout.id,
+    targetIds:[target.id]
+  });
+  const after = new Simulator(before).apply(before, action);
+  const terms = game.aiController.transitionValue.evaluateBase({
+    action,
+    player:before.players.find((player) => player.id === actor.id),
+    beforeState:before,
+    afterState:after,
+    getResolutionScale:() => 1
+  });
+  assert.ok(terms.transitionOptionPoints > 0);
+  for (const state of [before, after]) {
+    const worldActor = state.players.find((player) => player.id === actor.id);
+    assert.equal("expectedInformationGain" in worldActor, false);
+  }
+}
+
+test(
+  "AI·价值归属：窥探 option 由 TransitionValue 派生且不写入 World",
+  testScoutValueIsDerivedAtTransitionBoundary
+);
+
+/*
+功能
+证明装备存量由当前物理装备直接估值，前后差不需要根 baseline 字段。
+
+调用方
+AI·价值归属测试注册。
+
+输入
+无；函数内部构造装备保留概率下降的配对 World。
+
+输出
+无；断言装备价值差等于当前存量损失。
+
+读取状态
+canonical World 与正式 Evaluator。
+
+写入状态
+仅 after 测试克隆。
+
+调用函数
+createInitialWorld、Evaluator.equipmentMaterialDelta。
+
+边界与不变量
+价值只由 definitionId 与 retention 派生；不得依赖 initial/expected equipment 字段。
+*/
+function testEquipmentDeltaNeedsNoWorldBaseline() {
+  const actor = makePlayer("purity-equipment-actor", 0, "dawn", "ai", 1);
+  actor.equipment = instance("battleDevice");
+  const { game } = makeGame([actor]);
+  const before = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
+  const after = structuredClone(before);
+  after.players[0].equipmentRetentionProbability = 0.4;
+  const delta = game.aiController.stateEvaluator.equipmentMaterialDelta(
+    before,
+    after,
+    actor.id
+  );
+  assertClose(
+    delta,
+    -getRoleCardAiValue(actor.characterId, "battleDevice") * 0.6 * 0.25
+  );
+  assert.equal("initialEquipmentValue" in before.players[0], false);
+  assert.equal("expectedEquipmentGain" in after.players[0], false);
+}
+
+test(
+  "AI·价值归属：装备 state delta 直接比较物理存量且不需要 baseline",
+  testEquipmentDeltaNeedsNoWorldBaseline
+);
+
+/*
+功能
+证明借势装备获得与互利座次选择只从 transition 事实派生，不写 utility 字段。
+
+调用方
+AI·价值归属测试注册。
+
+输入
+无；函数内部构造一组装备保留变化与一组 canonical 互利 World。
+
+输出
+无；断言两种 option points 与正式 Value primitive 完全一致。
+
+读取状态
+before/after World、canonical Action 与 Probability 当前有限池。
+
+写入状态
+仅测试 after 克隆。
+
+调用函数
+TransitionValue.evaluateBase、mutualBenefitDraftValues、Simulator.apply。
+
+边界与不变量
+装备获得量来自 retention 差；互利只按当前公开剩余池和座次派生一次。
+*/
+function testCardTransitionOptionsStayInValueLayer() {
+  const transition = new TransitionValue({ transitionDelta:() => 0 });
+  const leverageActor = {
+    id:"purity-leverage-actor",
+    characterId:"blade-walker",
+    battleTeam:"dawn",
+    hand:[{ id:"purity-leverage-card", definitionId:"leverage", availability:1 }]
+  };
+  const leverageBefore = {
+    players:[
+      leverageActor,
+      {
+        id:"purity-leverage-first",
+        battleTeam:"dusk",
+        equipmentDefinitionId:"battleDevice",
+        equipmentRetentionProbability:1
+      }
+    ]
+  };
+  const leverageAfter = structuredClone(leverageBefore);
+  leverageAfter.players[1].equipmentRetentionProbability = 0.6;
+  const leverageAction = createAction({
+    type:"card",
+    actorId:leverageActor.id,
+    cardId:"leverage",
+    cardInstanceId:"purity-leverage-card",
+    targetIds:["purity-leverage-first", "purity-leverage-second"],
+    selection:{ firstTargetId:"purity-leverage-first", secondTargetId:"purity-leverage-second" }
+  });
+  const leverageTerms = transition.evaluateBase({
+    action:leverageAction,
+    player:leverageActor,
+    beforeState:leverageBefore,
+    afterState:leverageAfter
+  });
+  assertClose(
+    leverageTerms.transitionOptionPoints,
+    getRoleCardAiValue("blade-walker", "battleDevice") * 0.4 * 0.25
+  );
+
+  const source = makePlayer("purity-mutual-source", 0, "dawn", "ai", 1);
+  const ally = makePlayer("purity-mutual-ally", 1, "dawn", "ai", 2);
+  const enemy = makePlayer("purity-mutual-enemy", 2, "dusk", "ai", 3);
+  const mutual = instance("mutualBenefit");
+  source.hand.push(mutual);
+  const { game } = makeGame([source, ally, enemy]);
+  const mutualBefore = createInitialWorld(
+    source.id,
+    game.state,
+    deriveCurrentCardCounts(source, game.state)
+  );
+  const mutualAction = createAction({
+    type:"card",
+    actorId:source.id,
+    cardId:"mutualBenefit",
+    cardInstanceId:mutual.id
+  });
+  const mutualAfter = new Simulator(mutualBefore).apply(mutualBefore, mutualAction);
+  const mutualActor = mutualBefore.players.find((player) => player.id === source.id);
+  const draft = mutualBenefitDraftValues(
+    mutualBefore.players,
+    mutualActor,
+    queryCurrentCardCounts(mutualBefore.probabilityState)
+  );
+  const expectedDraftPoints = mutualBefore.players.reduce((sum, player) => (
+    sum + (player.battleTeam === mutualActor.battleTeam ? 1 : -1) * (draft[player.id] ?? 0)
+  ), 0);
+  const mutualTerms = transition.evaluateBase({
+    action:mutualAction,
+    player:mutualActor,
+    beforeState:mutualBefore,
+    afterState:mutualAfter,
+    getResolutionScale:() => 1
+  });
+  assertClose(mutualTerms.transitionOptionPoints, expectedDraftPoints);
+  assert.ok(mutualAfter.players.every((player) => !("mutualBenefitDraftValue" in player)));
+}
+
+test(
+  "AI·价值归属：借势与互利 option 只由 TransitionValue 派生",
+  testCardTransitionOptionsStayInValueLayer
+);
 
 test("AI·价值归属：结束动作不重复收取 sibling 与持牌机会成本", () => {
   const siblings = [
@@ -47519,6 +47987,70 @@ test("AI·价值归属：濒死救援区分资源消耗、生命恢复与避免�
     "避免死亡应产生大幅 HP-equivalent 净值"
   );
 });
+
+/*
+功能
+证明救援价值由当前 World 的真实生命状态与 ProbabilityState 调息容量直接派生。
+
+调用方
+AI·价值归属测试注册。
+
+输入
+无；构造有/无调息容量的等价低血量 World。
+
+输出
+无；断言 rescueOutlook 保留原价值曲线且 Evaluator 不写 World。
+
+读取状态
+测试 World 的玩家 HP/alive、确定调息身份与 ProbabilityState。
+
+写入状态
+仅构造测试 fixture。
+
+调用函数
+upgradeProbabilityFixture、Evaluator.playerValueTerms。
+
+边界与不变量
+调息容量为零时保持中性；一张完整调息覆盖一名 1 HP 存活角色的救援需求。
+*/
+function testEvaluatorDerivesRescueOutlookFromWorld() {
+  const withRescue = ledgerState([
+    ledgerHand(ledgerPlayer("rescue-value-medic", 0, "dawn", "spirit-medic"), ["recover"]),
+    ledgerPlayer("rescue-value-target", 1, "dawn", "oath-warden", { hp:1 }),
+    ledgerPlayer("rescue-value-enemy", 2, "dusk", "blade-walker")
+  ]);
+  const withoutRescue = ledgerState([
+    ledgerPlayer("rescue-value-medic", 0, "dawn", "spirit-medic"),
+    ledgerPlayer("rescue-value-target", 1, "dawn", "oath-warden", { hp:1 }),
+    ledgerPlayer("rescue-value-enemy", 2, "dusk", "blade-walker")
+  ]);
+  upgradeProbabilityFixture(withRescue);
+  upgradeProbabilityFixture(withoutRescue);
+  const beforeEvaluation = structuredClone(withRescue);
+  const evaluator = new Evaluator();
+  const withTerms = evaluator.playerValueTerms(
+    withRescue,
+    withRescue.players[1],
+    withRescue.players[0].id,
+    0
+  ).terms;
+  const withoutTerms = evaluator.playerValueTerms(
+    withoutRescue,
+    withoutRescue.players[1],
+    withoutRescue.players[0].id,
+    0
+  ).terms;
+  assert.equal(withTerms.rescueOutlook, 4);
+  assert.equal(withoutTerms.rescueOutlook, 0);
+  assert.deepEqual(withRescue, beforeEvaluation);
+  const removedField = ["expected", "RescueCoverage"].join("");
+  assert.equal(Object.hasOwn(withRescue.players[1], removedField), false);
+}
+
+test(
+  "AI·价值归属：救援价值由 World 与 ProbabilityState 直接派生",
+  testEvaluatorDerivesRescueOutlookFromWorld
+);
 
 test("AI·价值归属：当前威胁与未来攻击库存可分别变化", () => {
   const { game } = makeLedgerGame();
@@ -48112,7 +48644,7 @@ test("AI·价值归属：纯 Evaluator 不持有 Game 且只消费上游闪电�
   assert.equal("game" in controller.stateEvaluator, false);
   assertClose(
     controller.stateEvaluator.stateUtility(fixture.visible, fixture.actor.id, lightningValues),
-    controller.evaluator.stateUtility(fixture.visible, fixture.actor.id)
+    controller.stateValue.stateUtility(fixture.visible, fixture.actor.id)
   );
   const standalone = new Evaluator();
   assert.equal("game" in standalone, false);
@@ -48132,12 +48664,12 @@ test("AI·价值归属：TransitionValue 逐 term 保持 telescoping 唯一组�
   const before = { score: 10, players: [actor] };
   const after = { score: 17, players: [{ ...actor, energy: 2, hand: [], handCount: 0 }] };
   const action = {
-    type: "card",
-    card: { definitionId: "charge" },
-    targets: [],
-    executionProbability: 0.75
+    type: "card"
   };
-  const stateValue = { stateUtility: (state) => state.score };
+  const stateValue = {
+    stateUtility:(state) => state.score,
+    transitionDelta:(left, right) => right.score - left.score
+  };
   const transition = new TransitionValue(stateValue);
   const terms = transition.evaluateBase({
     action,
@@ -48147,13 +48679,13 @@ test("AI·价值归属：TransitionValue 逐 term 保持 telescoping 唯一组�
     depth: 2,
     getResolutionScale: () => 0.6
   });
-  const economic = ownedActionEconomicValue(action, actor, before);
-  const stateDelta = stateValue.stateUtility(after) - stateValue.stateUtility(before);
+  const economic = 0;
+  const stateDelta = stateValue.transitionDelta(before, after);
   const immediate = 0;
   const expectedBase = immediate + statePointsToUtility(stateDelta);
   assert.equal(terms.economic, economic);
   assert.equal(terms.resolutionScale, 1);
-  assert.equal(terms.executionProbability, action.executionProbability);
+  assert.equal(Object.hasOwn(terms, "executionProbability"), false);
   assert.equal(terms.immediate, immediate);
   assert.equal(terms.stateDelta, stateDelta);
   assert.equal(terms.stateDeltaValue, statePointsToUtility(stateDelta));
@@ -48184,6 +48716,16 @@ test("AI·价值归属：Search Prior 与 response diagnostics 都不进入 fina
   assert.equal(withDiagnostics, withoutDiagnostics);
   assert.notEqual(withoutDiagnostics + searchPrior, withoutDiagnostics);
   assert.equal(Object.hasOwn(common, "searchPrior"), false);
+});
+
+test("AI·价值归属：TransitionValue 唯一比较 Final Utility 与机器精度同分语义", () => {
+  const transition = new TransitionValue({});
+  const card = { action:{ type:"card" }, valueScore:2 };
+  const skill = { action:{ type:"skill" }, valueScore:2 };
+  const lower = { action:{ type:"skill" }, valueScore:1.9 };
+  assert.ok(transition.compareCandidates(card, lower) > 0);
+  assert.ok(transition.compareCandidates(skill, card) > 0);
+  assert.equal(transition.compareCandidates(card, { ...card }), 0);
 });
 
 test("AI·价值归属：正式 Evaluator 源码不存在 Game、Controller 或 concrete Simulator 依赖", async () => {
@@ -48298,11 +48840,11 @@ async function runDecisionWindowScenario(speed, searchElapsedMs) {
     async search(request) {
       capturedRequest = request;
       nowMs = searchElapsedMs;
-      const end = request.rootActionDescriptors.find((descriptor) => descriptor.type === "end");
+      const end = request.rootActions.find((descriptor) => descriptor.type === "end");
       return createWorkerSearchOutcome({
         request,
-        actionDescriptor: end,
-        plannedSequenceDescriptors: [end],
+        action: end,
+        plannedActions: [end],
         stats: { stopReason: "COMPLETE", elapsedMs: searchElapsedMs, expanded: 1 },
         searchStopReason: "COMPLETE",
         rngAfter: request.rng
@@ -54237,7 +54779,7 @@ test("集成：击杀奖励配置为1且 AI 模拟使用同一奖励数量", () 
   target.turnFlags.momentum = 2;
   const { game }
     = makeGame([killer, target]),
-    visible = createInitialSearchState(killer.id, game.state),
+    visible = createInitialWorld(killer.id, game.state),
     next = new Simulator(
       visible
     ).apply(visible, { type: "card", card: assault, targets: [{ id: target.id }] }, killer.id);

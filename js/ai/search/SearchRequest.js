@@ -9,10 +9,10 @@ AIController 与未来 Worker boundary。
 Planner/SearchPolicy/SearchBudget 通过显式拆包消费。
 
 状态边界
-只保存冻结普通值；不写 GameState 或 SearchState。
+只保存冻结普通值；不写 GameState 或 World。
 
 信息边界
-searchState 必须已经是合法 Visible/Knowledge/Belief 投影；不得携带敌方真实 hand definition。
+searchState 必须已经是合法 Fact/Probability 投影；不得携带敌方真实 hand definition。
 
 架构约束
 不得 import Game/Application/Domain transitions；不得把 runtime capability 塞进本契约。
@@ -57,7 +57,7 @@ function freezeValue(value) {
 AIController.selectAction 与 SearchRequest 契约测试。
 
 输入
-requestId、gameId、stateVersion、actorId、phase、currentRound、searchState、searchConfig、rng 与 rootActionDescriptors。
+requestId、gameId、stateVersion、actorId、phase、currentRound、searchState、searchConfig、rng 与 rootActions。
 
 输出
 冻结 data-only SearchRequest。
@@ -72,7 +72,7 @@ requestId、gameId、stateVersion、actorId、phase、currentRound、searchState
 freezeValue、Object.freeze。
 
 边界与不变量
-不接受函数；rootActionDescriptors 只能是 ActionDescriptor data-only 投影；不保存运行时实体。
+不接受函数；rootActions 只能是 Action data-only 投影；不保存运行时实体。
 */
 export function createSearchRequest({
   requestId,
@@ -81,24 +81,22 @@ export function createSearchRequest({
   actorId,
   phase,
   currentRound,
-  searchState,
+  world,
   searchConfig,
   rng,
-  rootActionDescriptors,
-  rootSearchActions
+  rootActions
 }) {
   if (typeof requestId !== "string" || !requestId) throw new TypeError("SearchRequest 需要 requestId");
   if (typeof gameId !== "string" || !gameId) throw new TypeError("SearchRequest 需要 gameId");
   if (!Number.isInteger(stateVersion) || stateVersion < 0) throw new TypeError("SearchRequest 需要非负整数 stateVersion");
   if (typeof actorId !== "string" || !actorId) throw new TypeError("SearchRequest 需要 actorId");
-  if (!searchState || typeof searchState !== "object") throw new TypeError("SearchRequest 需要 searchState");
+  if (!world || typeof world !== "object") throw new TypeError("SearchRequest 需要 world");
   if (!searchConfig || typeof searchConfig !== "object") throw new TypeError("SearchRequest 需要 searchConfig");
   if (!rng || typeof rng !== "object" || typeof rng.seed !== "number"
     || typeof rng.state !== "number" || rng.algorithm !== "lcg") {
     throw new TypeError("SearchRequest 需要 lcg rng continuation（seed/state/draws）");
   }
-  if (!Array.isArray(rootActionDescriptors)) throw new TypeError("SearchRequest 需要 rootActionDescriptors");
-  if (!Array.isArray(rootSearchActions)) throw new TypeError("SearchRequest 需要 rootSearchActions");
+  if (!Array.isArray(rootActions)) throw new TypeError("SearchRequest 需要 rootActions");
   return Object.freeze({
     requestId,
     gameId,
@@ -106,11 +104,10 @@ export function createSearchRequest({
     actorId,
     phase,
     currentRound,
-    searchState:freezeValue(searchState),
+    world:freezeValue(world),
     searchConfig:freezeValue(searchConfig),
     rng:freezeValue(rng),
-    rootActionDescriptors:Object.freeze(rootActionDescriptors.map(freezeValue)),
-    rootSearchActions:Object.freeze(rootSearchActions.map(freezeValue))
+    rootActions:Object.freeze(rootActions.map(freezeValue))
   });
 }
 

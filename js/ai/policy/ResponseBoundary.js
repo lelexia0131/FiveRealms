@@ -12,15 +12,15 @@ policy/ResponsePolicy、ValueSimulationQuery、状态组合与既有 Domain/Valu
 只读当前 GameState；状态投影和模拟查询均在 Policy 外完成，绝不修改真实状态。
 
 信息边界
-只向 Policy 提供公开玩家视图、响应者自己的牌定义、合法记忆、Belief 与纯数值查询结果。
+只向 Policy 提供 Fact、响应者自己的牌定义与惰性 Probability 查询结果。
 
 架构约束
 本文件是唯一响应执行边界；不得保留第二份响应阈值、分数或选择公式。
 */
 import { AI_RUNTIME_POLICY } from "./AiRuntimePolicy.js";
 import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
-import { createInitialSearchState } from "../state/StateContracts.js";
-import { ValueSimulationQuery } from "../simulation/ValueSimulationQuery.js";
+import { createInitialWorld } from "../state/StateContracts.js";
+import { probabilityFromCurrentCounts } from "../state/Probability.js";
 import {
   hasLightning,
   nextLightningReceiverId
@@ -100,7 +100,7 @@ export class ResponseBoundary {
   AIController 组合根（统一组装依赖的位置） 与直接测试。
 
   输入
-  runtime capabilities、Evaluator、Knowledge 及可选正式依赖。
+  runtime capabilities 与显式正式依赖。
 
   输出
   建立稳定的 shouldRespond 执行边界。
@@ -112,13 +112,13 @@ export class ResponseBoundary {
   写实例依赖字段。
 
   调用函数
-  ResponsePolicy、ValueSimulationQuery 构造函数。
+  无。
 
   边界与不变量
-  生产装配由 Controller 注入正式实例；未注入时构造同一依赖，保证边界可独立测试。
+  生产装配必须注入正式实例；边界不得构造或兼容聚合 Value façade。
   */
-  constructor(runtime, evaluator, knowledge, dependencies = {}) {
-    for (const name of ["getState", "getDyingRescueOrder", "isSmallTeam"]) {
+  constructor(runtime, dependencies = {}) {
+    for (const name of ["getState", "getDyingRescueOrder", "isSmallTeam", "remainingCounts"]) {
       if (typeof runtime?.[name] !== "function") {
         throw new TypeError(`ResponseBoundary 缺少依赖：${name}`);
       }
@@ -127,14 +127,28 @@ export class ResponseBoundary {
     this.getDyingRescueOrder = runtime.getDyingRescueOrder;
     this.isSmallTeam = runtime.isSmallTeam;
     this.forceAiRescueHuman = runtime.forceAiRescueHuman;
-    this.evaluator = evaluator;
-    this.knowledge = knowledge;
+    this.remainingCounts = runtime.remainingCounts;
+    if (typeof dependencies.actionGenerator?.createRootResolutionAction !== "function") {
+      throw new TypeError("ResponseBoundary 缺少依赖：actionGenerator");
+    }
+    if (typeof dependencies.searchPrior?.threatPriority !== "function") {
+      throw new TypeError("ResponseBoundary 缺少依赖：searchPrior");
+    }
+    if (typeof dependencies.simulationQuery?.lightningTeamBurden !== "function"
+      || typeof dependencies.simulationQuery?.lightningTransferredBurden !== "function") {
+      throw new TypeError("ResponseBoundary 缺少依赖：simulationQuery");
+    }
+    if (typeof dependencies.stateValue?.stateUtility !== "function"
+      || typeof dependencies.stateValue?.transitionDelta !== "function") {
+      throw new TypeError("ResponseBoundary 缺少依赖：stateValue");
+    }
+    this.actionGenerator = dependencies.actionGenerator;
+    this.searchPrior = dependencies.searchPrior;
     this.responsePolicy = dependencies.responsePolicy ?? new ResponsePolicy({
       assessGlobalBenefit
     });
-    this.simulationQuery = dependencies.simulationQuery
-      ?? new ValueSimulationQuery(evaluator);
-    this.stateValue = dependencies.stateValue ?? evaluator;
+    this.simulationQuery = dependencies.simulationQuery;
+    this.stateValue = dependencies.stateValue;
   }
 
   /*
@@ -151,13 +165,13 @@ export class ResponseBoundary {
   不含 Game/Simulator 引用且只暴露合法信息的 DecisionContext。
 
   读取状态
-  当前 GameState、Knowledge、TeamRules、DyingWorkflow 与显式 Value/Domain query。
+  当前 GameState、Fact、TeamRules、DyingWorkflow 与显式 Value/Domain query。
 
   写入状态
   只有被调用的未知位置/状态查询可能写 query 私有缓存；真实状态不变。
 
   调用函数
-  responsePlayerView、createInitialSearchState、ValueSimulationQuery 与既有 Domain/Value 辅助函数。
+  responsePlayerView、createInitialWorld、ValueSimulationQuery 与既有 Domain/Value 辅助函数。
 
   边界与不变量
   所有昂贵查询惰性执行且每个响应分支至多一次；状态反制只为同阵营 holder 进入价值比较。
@@ -179,7 +193,7 @@ export class ResponseBoundary {
     let remainingCardCounts;
     /*
     功能
-    在一次响应决策内惰性读取并复用同一份 Belief remaining counts。
+    在一次响应决策内惰性读取并复用同一份 Probability remaining counts。
 
     调用方
     buildDecisionContext 的状态、guardian 与 dynamic query 闭包。
@@ -188,23 +202,23 @@ export class ResponseBoundary {
     无；闭包捕获当前 responder。
 
     输出
-    Knowledge 返回的剩余牌计数。
+    Fact 返回的当前确定牌池计数。
 
     读取状态
-    Knowledge 与观察者合法信息。
+    Fact 与观察者合法信息。
 
     写入状态
     只写本次 DecisionContext 构造的局部缓存。
 
     调用函数
-    Knowledge.remainingCounts。
+    注入的 remainingCounts 当前 Fact 查询。
 
     边界与不变量
     同一响应窗口最多计算一次，不跨决策复用或暴露真实未知牌。
     */
     const getRemainingCardCounts = () => {
       if (remainingCardCounts === undefined) {
-        remainingCardCounts = this.knowledge.remainingCounts(responder);
+        remainingCardCounts = this.remainingCounts(responder);
       }
       return remainingCardCounts;
     };
@@ -226,7 +240,7 @@ export class ResponseBoundary {
         .map((card) => card.definitionId),
       knownCardsByPlayer: responder.aiMemory.knownCardsByPlayer,
       recoverDensity: type === "dyingRescue"
-        ? this.knowledge.probability(responder, "recover")
+        ? probabilityFromCurrentCounts(getRemainingCardCounts(), "recover")
         : 0,
       remainingCardCounts: needsRemainingCounts ? remainingCardCounts : null,
       isSmallTeam: this.isSmallTeam(responder),
@@ -234,11 +248,11 @@ export class ResponseBoundary {
       leverageMetrics: () => {
         const target = rawContext.target ?? responder;
         const enemyTarget = target.battleTeam !== responder.battleTeam;
-        const visible = createInitialSearchState(responder.id, this.getState());
+        const visible = createInitialWorld(responder.id, this.getState());
         const visibleResponder = visible.players.find((player) => player.id === responder.id);
         const visibleTarget = visible.players.find((player) => player.id === target.id);
         const threat = enemyTarget && visibleResponder && visibleTarget
-          ? this.evaluator.threatPriority(
+          ? this.searchPrior.threatPriority(
               visibleResponder,
               visibleTarget,
               responder.aiMemory,
@@ -247,13 +261,16 @@ export class ResponseBoundary {
           : 0;
         const blockRisk = Math.min(
           .85,
-          (target.hand?.length ?? 0) * this.knowledge.probability(responder, "block")
+          (target.hand?.length ?? 0) * probabilityFromCurrentCounts(
+            getRemainingCardCounts(),
+            "block"
+          )
         );
         return { threat, blockRisk };
       },
       guardianAidValues: () => {
         const target = rawContext.target;
-        const visible = createInitialSearchState(
+        const visible = createInitialWorld(
           responder.id,
           this.getState(),
           getRemainingCardCounts()
@@ -275,7 +292,7 @@ export class ResponseBoundary {
         if (!holder || !hasLightning(holder) || holder.battleTeam !== responder.battleTeam) {
           return { valid: false, noCounterBurden: 0, withCounterBurden: 0 };
         }
-        const state = createInitialSearchState(
+        const state = createInitialWorld(
           responder.id,
           this.getState(),
           getRemainingCardCounts()
@@ -285,13 +302,13 @@ export class ResponseBoundary {
         const visibleReceiver = state.players.find((player) => player.id === receiverId);
         return {
           valid: true,
-          noCounterBurden: this.evaluator.lightningTeamBurden(
+          noCounterBurden: this.simulationQuery.lightningTeamBurden(
             state,
             visibleHolder,
             responder.id
           ),
           withCounterBurden: visibleReceiver
-            ? this.evaluator.lightningTransferredBurden(
+            ? this.simulationQuery.lightningTransferredBurden(
                 state,
                 visibleHolder,
                 visibleReceiver,
@@ -308,9 +325,18 @@ export class ResponseBoundary {
           return { valid: false, preventedBurden: 0 };
         }
         const skipProbability = 1 - tacticJudgmentProbability(getRemainingCardCounts());
+        const world = createInitialWorld(
+          responder.id,
+          this.getState(),
+          getRemainingCardCounts()
+        );
+        const probabilityHolder = world.players.find((player) => player.id === holder.id);
         return {
           valid: true,
-          preventedBurden: skipProbability * turnOpportunityValue(holder)
+          preventedBurden:skipProbability * turnOpportunityValue(
+            probabilityHolder,
+            world
+          )
         };
       },
       dynamicRootFlipGain: () => {
@@ -320,19 +346,24 @@ export class ResponseBoundary {
           ?? rawContext.rootSource?.id
           ?? rawContext.source?.id
           ?? null;
-        const visible = createInitialSearchState(
+        const visible = createInitialWorld(
           responder.id,
           this.getState(),
           getRemainingCardCounts()
         );
+        const rootAction = this.actionGenerator.createRootResolutionAction(
+          visible,
+          rootCard,
+          rootSourceId,
+          Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
+          { publicTransferContext:rawContext.publicTransferContext ?? null }
+        );
+        if (!rootAction) return null;
         return this.simulationQuery.dynamicRootFlipGain(
           visible,
           responder.id,
-          rootCard,
-          rootSourceId,
+          rootAction,
           rawContext.counterDepth ?? 0,
-          Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
-          { publicTransferContext: rawContext.publicTransferContext ?? null },
           this.stateValue
         );
       }
@@ -459,7 +490,7 @@ export class ResponseBoundary {
   是否使用护援。
 
   读取状态
-  当前 GameState、Knowledge 与窄 simulation query。
+  当前 GameState、Fact 与窄 simulation query。
 
   写入状态
   无。
@@ -488,7 +519,7 @@ export class ResponseBoundary {
   是否反制。
 
   读取状态
-  当前状态、Belief、Lightning Domain 与 Value query。
+  当前状态、Probability、Lightning Domain 与 Value query。
 
   写入状态
   无。
@@ -517,7 +548,7 @@ export class ResponseBoundary {
   是否反制。
 
   读取状态
-  当前状态、Belief 与 Seal Domain/Policy query。
+  当前状态、Probability 与 Seal Domain/Policy query。
 
   写入状态
   无。

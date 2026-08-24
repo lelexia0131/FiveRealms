@@ -12,7 +12,7 @@ Evaluator、FrontierValue、Simulator 与响应策略。
 只读传入的可见玩家和动作；不读取 Game，也不写任何状态。
 
 信息边界
-只使用公开或已过滤的 SearchState 字段和显式规则能力。
+只使用公开或已过滤的 World 字段和显式规则能力。
 
 架构约束
 不得收纳搜索先验或无状态依据的 final flow；已进入 after-state 的价值不得再次成为 economic term。
@@ -50,38 +50,6 @@ Search Prior 若消费它，只能作为不进入 final 的 beam heuristic 输�
 */
 export function statePointsToUtility(points) {
   return (Number(points) || 0) / HP_VALUE;
-}
-
-/*
-功能
-返回当前 transition 中 after-state 无法表达的动作流量。
-
-调用方
-TransitionValue 与正式边界。
-
-输入
-候选动作、真实 actor 执行视图与过滤后的 before state。
-
-输出
-当前没有额外 final flow，因此返回零 HP-equivalent utility。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-结束动作的弃牌已在 after-state，聚能与技能可用性由能量存量和后续 transition 表达；不得重复奖励。
-*/
-export function actionEconomicValue(action, player, visible) {
-  void action;
-  void player;
-  void visible;
-  return 0;
 }
 
 /*

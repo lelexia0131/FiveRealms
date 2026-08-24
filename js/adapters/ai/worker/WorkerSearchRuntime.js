@@ -6,10 +6,10 @@
 Dedicated Worker entry、headless local executor 与测试。
 
 下游
-SearchEngineFactory、RootSearchAction、Planner、ActionDescriptor 与 WorkerSearchOutcome。
+SearchEngineFactory、Planner 与 WorkerSearchOutcome。
 
 状态边界
-只写 Worker 本地 SearchState/RNG/Planner 诊断；不写 GameState 或 Main Thread 状态。
+只写 Worker 本地 World/RNG/Planner 诊断；不写 GameState 或 Main Thread 状态。
 
 信息边界
 只消费 SearchRequest；不读取 Game/Application/UI/DOM/真实 hidden entities。
@@ -17,8 +17,6 @@ SearchEngineFactory、RootSearchAction、Planner、ActionDescriptor 与 WorkerSe
 架构约束
 不得 import composition、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
 */
-import { describeAction } from "../../../ai/search/ActionDescriptor.js";
-import { rehydrateRootSearchAction } from "../../../ai/search/RootSearchAction.js";
 import { SearchRng } from "../../../ai/search/SearchRng.js";
 import { createSearchEngine } from "./SearchEngineFactory.js";
 import { createWorkerSearchOutcome } from "../../../ai/search/WorkerSearchOutcome.js";
@@ -44,7 +42,7 @@ request.searchState/searchConfig/rng/rootSearchActions。
 Worker 本地 rng/planner/simulator 状态。
 
 调用函数
-SearchRng.restore、rehydrateRootSearchAction、createSearchEngine、Planner.plan、describeAction、createWorkerSearchOutcome。
+SearchRng.restore、consume canonical root Action、createSearchEngine、Planner.plan、describeAction、createWorkerSearchOutcome。
 
 边界与不变量
 rngAfter 必须存在；cancelled/error 不返回可执行 descriptor；root action rehydrate 失败只产生 workerError。
@@ -54,15 +52,13 @@ export async function runSearchRequest(request, runtimeControl = {}) {
   const workerStartedAt = globalThis.performance?.now?.() ?? Date.now();
   try {
     rng = SearchRng.restore(request.rng);
-    const actor = request.searchState.players.find((player) => player.id === request.actorId) ?? null;
-    if (!actor) throw new Error(`Worker SearchState 缺少 actor：${request.actorId}`);
-    const rootActions = request.rootSearchActions.map(
-      (record) => rehydrateRootSearchAction(record, request.searchState, actor)
-    );
+    const actor = request.world.players.find((player) => player.id === request.actorId) ?? null;
+    if (!actor) throw new Error(`Worker World 缺少 actor：${request.actorId}`);
+    const rootActions = request.rootActions;
     const engine = createSearchEngine(request, rng, runtimeControl);
     const action = await engine.planner.plan(
       actor,
-      request.searchState,
+      request.world,
       rootActions,
       {
         gameId:request.gameId,
@@ -73,8 +69,8 @@ export async function runSearchRequest(request, runtimeControl = {}) {
     const workerFinishedAt = globalThis.performance?.now?.() ?? Date.now();
     return createWorkerSearchOutcome({
       request,
-      actionDescriptor:cancelled ? null : describeAction(action),
-      plannedSequenceDescriptors:cancelled ? [] : engine.planner.lastPlannedSequence,
+      action:cancelled ? null : action,
+      plannedActions:cancelled ? [] : engine.planner.lastPlannedSequence,
       stats:{
         ...engine.planner.lastSearchStats,
         workerSearchMs:Math.max(0, workerFinishedAt - workerStartedAt),
@@ -87,8 +83,8 @@ export async function runSearchRequest(request, runtimeControl = {}) {
   } catch (error) {
     return createWorkerSearchOutcome({
       request,
-      actionDescriptor:null,
-      plannedSequenceDescriptors:[],
+      action:null,
+      plannedActions:[],
       stats:null,
       searchStopReason:null,
       rngAfter:rng ? rng.snapshot() : null,

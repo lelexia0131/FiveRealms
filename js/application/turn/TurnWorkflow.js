@@ -15,7 +15,7 @@ Domain TeamRules/TurnRules/transitions、Application Action/Combat/Response 能�
 不读取 concrete UI/AI/DOM；controllerType 仅用于 human/AI play-phase 参与者策略。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、Planner、AI World 或 concrete adapters。
 */
 import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js";
 import {
@@ -26,6 +26,8 @@ import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js";
 import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js";
 import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../domain/state/transitions/MatchStateTransitions.js";
 import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",
@@ -321,9 +323,10 @@ export function createTurnWorkflow(dependencies) {
             });
           } catch (error) {
             runtime.diagnostics.reportWorkflowError("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
-            action = { type: "end" };
+            action = null;
           }
           if (!runtime.isSessionValid(gameId)) return;
+          if (!action) break;
           if (!runtime.getAiReplanAfterEveryAction()) queuedPlan = runtime.getPlannedSequence().slice(1);
         }
         const decisionElapsedMs = Math.max(0, runtime.now() - decisionStartedAt);
@@ -339,8 +342,25 @@ export function createTurnWorkflow(dependencies) {
           if (!runtime.isSessionValid(gameId)) return;
           break;
         }
-        const actionName = action.type === "card" ? `准备使用「${action.card.name}」` : `准备发动「${action.skill.name}」`;
-        const targetLabel = runtime.getActionTargetLabel(player, action.type === "card" ? action.card : action.skill, action.targets, action.selection);
+        const definition = action.type === "card"
+          ? CARD_DEFINITIONS[action.cardId]
+          : ACTIVE_SKILL_DEFINITIONS[action.skillId];
+        const targets = (action.targetIds ?? [])
+          .map((id) => runtime.getState().players.find((entry) => entry.id === id))
+          .filter(Boolean);
+        if (!definition || targets.length !== (action.targetIds?.length ?? 0)) {
+          queuedPlan = [];
+          continue;
+        }
+        const actionName = action.type === "card"
+          ? `准备使用「${definition.name}」`
+          : `准备发动「${definition.name}」`;
+        const targetLabel = runtime.getActionTargetLabel(
+          player,
+          definition,
+          targets,
+          action.selection
+        );
         const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
         runtime.presentation.showThinking({ playerId: player.id, message: actionDescription });
         if (!(await runtime.delay(decisionWindow
@@ -350,8 +370,14 @@ export function createTurnWorkflow(dependencies) {
         runtime.presentation.clearThinking();
         let executed = false;
         try {
-          if (action.type === "card") executed = await runtime.playCard(player, action.card, action.targets, action.selection ?? null);
-          else if (action.type === "skill") executed = await runtime.useActiveSkill(player, action.skill.id, action.targets);
+          if (action.type === "card") {
+            const card = player.hand.find((entry) => entry.id === action.cardInstanceId) ?? null;
+            executed = card
+              ? await runtime.playCard(player, card, targets, action.selection ?? null)
+              : false;
+          } else if (action.type === "skill") {
+            executed = await runtime.useActiveSkill(player, action.skillId, targets);
+          }
         } catch (error) {
           runtime.diagnostics.reportWorkflowError("AI", `${player.name}执行行动失败，安全结束出牌阶段`, error);
           queuedPlan = [];

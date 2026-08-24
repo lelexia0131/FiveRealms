@@ -12,7 +12,7 @@ Domain DistanceRules、RuleProjection。
 只读 players 的公开座位、存活、装备定义与装备保留概率，不写状态。
 
 信息边界
-装备存在概率是 AI SearchState/Belief 字段；缺失时按确定性存在处理，不读取隐藏手牌。
+装备存在概率是 AI World/Belief 字段；缺失时按确定性存在处理，不读取隐藏手牌。
 
 架构约束
 不得把本模块当成规则 authority；不得复制基础距离、望远镜或屏障公式。
@@ -28,7 +28,7 @@ import { projectRulePlayers } from "./RuleProjection.js";
 距离概率分支枚举。
 
 输入
-真实 Player 或 SearchState 玩家。
+真实 Player 或 World 玩家。
 
 输出
 装备定义 ID 或 null。

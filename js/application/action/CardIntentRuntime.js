@@ -158,7 +158,9 @@ export function createCardIntentRuntime(dependencies) {
     if (!runtime.getLeverageFirstTargets(source).includes(firstTarget)) return null;
     if (!runtime.getAssaultTargetCandidates(firstTarget).includes(secondTarget)) return null;
     const equipmentCard = firstTarget.equipment;
-    if (!equipmentCard?.id || equipmentCard.id !== selection.equipmentCardId) return null;
+    if (!equipmentCard?.id
+      || equipmentCard.definitionId !== selection.equipmentDefinitionId
+      || (selection.equipmentCardId && equipmentCard.id !== selection.equipmentCardId)) return null;
     return Object.freeze({ firstTarget, secondTarget, equipmentCard, equipmentCardId: equipmentCard.id });
   }
 

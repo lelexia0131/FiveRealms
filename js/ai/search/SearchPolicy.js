@@ -9,7 +9,7 @@ Planner 与搜索策略测试。
 游戏搜索配置与注入的随机能力。
 
 状态边界
-不读取或修改 SearchState，只处理候选数值与停止原因。
+不读取或修改 World，只处理候选数值与停止原因。
 
 信息边界
 不读取卡牌、技能、玩家或隐藏信息。
@@ -49,11 +49,13 @@ export class SearchPolicy {
   constructor({
     random,
     getRandomnessRange,
+    compareCandidates,
     config = null
   } = {}) {
     const capabilities = {
       random,
-      getRandomnessRange
+      getRandomnessRange,
+      compareCandidates
     };
     for (const [name, capability] of Object.entries(capabilities)) {
       if (typeof capability !== "function") {
@@ -84,7 +86,7 @@ export class SearchPolicy {
   无。
 
   调用函数
-  无。
+  TransitionValue.compareCandidates。
 
   边界与不变量
   只暴露现有值，不修改阈值或搜索参数。
@@ -229,24 +231,13 @@ export class SearchPolicy {
   无。
 
   边界与不变量
-  真实 valueScore 优先；只有差值处于 IEEE machine precision 内时，skill-root 才优先于
-  card-root，以稳定保留不消耗手牌身份的等价执行顺序；同类型保持原顺序。该 Policy
-  不修改或重新解释 Final Utility，也不依赖任何具体技能或卡牌。
+  Final Utility 与机器精度同分语义完全由注入的 TransitionValue comparator 决定；
+  SearchPolicy 只遍历候选并保持完全等价项的原顺序。
   */
   bestByValue(candidates) {
     return candidates.reduce((best, node) => {
       if (!best) return node;
-      const difference = node.valueScore - best.valueScore;
-      const tolerance = Number.EPSILON * Math.max(
-        1,
-        Math.abs(node.valueScore),
-        Math.abs(best.valueScore)
-      );
-      if (difference > tolerance) return node;
-      if (Math.abs(difference) <= tolerance
-        && node.action?.type === "skill"
-        && best.action?.type === "card") return node;
-      return best;
+      return this.compareCandidates(node, best) > 0 ? node : best;
     }, null);
   }
 
@@ -270,13 +261,13 @@ export class SearchPolicy {
   原地排序候选束。
 
   调用函数
-  无。
+  TransitionValue.compareCandidates。
 
   边界与不变量
   最终排序不读取 pruneScore。
   */
   orderFinal(beam) {
-    beam.sort((a,b) => b.valueScore - a.valueScore);
+    beam.sort((left, right) => this.compareCandidates(right, left));
     return beam;
   }
 

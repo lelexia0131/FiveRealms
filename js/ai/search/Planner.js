@@ -1,6 +1,6 @@
 /*
 模块职责
-在 SearchState 上编排 beam search（束搜索：每层只保留固定数量候选）并返回最佳根动作与稳定计划序列。
+在 World 上编排 beam search（束搜索：每层只保留固定数量候选）并返回最佳根动作与稳定计划序列。
 
 上游
 AIController 组合根与搜索回归测试。
@@ -9,7 +9,7 @@ AIController 组合根与搜索回归测试。
 注入的 PatternMatcher、Simulator/SearchBudget 工厂、CandidateMaterializer、SearchPolicy 与动作生成/让步能力。
 
 状态边界
-只读输入 SearchState，所有分支写入由 simulatorFactory 创建的独立 Simulator 承担。
+只读输入 World，所有分支写入由 simulatorFactory 创建的独立 Simulator 承担。
 
 信息边界
 Planner 不读取 GameState 或领域隐藏事实；合法候选与全部数值项来自显式注入的能力和唯一归属者。
@@ -28,7 +28,7 @@ export class Planner {
 
   输入
   CandidateMaterializer、PatternMatcher、SearchPolicy、Simulator/SearchBudget factory、候选去重、
-  深层生成与可取消让步能力。
+  深层生成、单候选惰性执行概率查询与可取消让步能力。
 
   输出
   可执行 plan 的 Planner。
@@ -52,7 +52,7 @@ export class Planner {
     simulatorFactory,
     searchBudgetFactory,
     deduplicateActions,
-    generateFromVisible,
+    generateActions,
     yieldControl
   } = {}) {
     const services = { candidateMaterializer, patternMatcher, searchPolicy };
@@ -60,7 +60,7 @@ export class Planner {
       simulatorFactory,
       searchBudgetFactory,
       deduplicateActions,
-      generateFromVisible,
+      generateActions,
       yieldControl
     };
     for (const [name, service] of Object.entries(services)) {
@@ -100,7 +100,7 @@ export class Planner {
   SearchBudget.beginPreparation/finishPreparation/isCurrentWorkInterruption、prepare。
 
   边界与不变量
-  只有完整 candidate 才标记 completed；任何 partial SearchState/world 都随异常栈回退且不得进入 best-seen。
+  只有完整 candidate 才标记 completed；任何 partial World/world 都随异常栈回退且不得进入 best-seen。
   */
   prepareCandidate(budget, depth, prepare) {
     budget.beginPreparation(depth);
@@ -176,13 +176,13 @@ export class Planner {
   root node 构造与 buildChildNode。
 
   输入
-  尚在匹配的 proposals、当前动作、零基 step 索引、此前已完成的 Pattern IDs 与动作生成时的 SearchState。
+  尚在匹配的 proposals、当前动作、零基 step 索引、此前已完成的 Pattern IDs 与动作生成时的 World。
 
   输出
   仍可继续的 proposals、本步新完成 proposals 和继承后的完成 Pattern IDs。
 
   读取状态
-  PatternMatcher 的 exact/selector step contract 与只读 SearchState assertions。
+  PatternMatcher 的 exact/selector step contract 与只读 World assertions。
 
   写入状态
   无。
@@ -226,7 +226,7 @@ export class Planner {
   plan 的 root scheduling 阶段。
 
   输入
-  已去重合法 roots、行动者、根 SearchState 与有界 proposals。
+  已去重合法 roots、行动者、根 World 与有界 proposals。
 
   输出
   最多提升一个最高优先级 guided root，其余 roots 保持现有 SearchPrior 顺序。
@@ -467,7 +467,7 @@ export class Planner {
   SearchBudget 工作计数、搜索上下文诊断与 workDiagnostics 深度/分支/Pattern 中断计数。
 
   调用函数
-  generateFromVisible、scheduleChildActions、prepareCandidate、Simulator.apply、
+  generateActions、scheduleChildActions、prepareCandidate、Simulator.apply、
   CandidateMaterializer.materialize/finalizeSiblings、yieldControl。
 
   边界与不变量
@@ -492,7 +492,7 @@ export class Planner {
     workDiagnostics
   }) {
     const followActions = resumeExpansion?.actions ?? this.scheduleChildActions(
-      this.generateFromVisible(parentState, player.id, budget),
+      this.generateActions(parentState, player.id, budget),
       player,
       parentState,
       activePatternProposals,
@@ -540,7 +540,7 @@ export class Planner {
       this.candidateMaterializer.observeCandidate(action, context);
       const prepared = this.prepareCandidate(budget, depth, () => {
         budget.observeSimulation();
-        const state = simulator.apply(parentState, action, player.id);
+        const state = simulator.apply(parentState, action);
         const candidate = this.candidateMaterializer.materialize({
           action,
           beforeState:parentState,
@@ -699,10 +699,6 @@ export class Planner {
       stateUtilityCalls:budgetStats.stateUtilityCalls,
       actionGenerationPhysicalCandidates:budgetStats.actionGenerationPhysicalCandidates,
       actionGenerationUniqueCandidates:budgetStats.actionGenerationUniqueCandidates,
-      actionGenerationPreparedCandidates:budgetStats.actionGenerationPreparedCandidates,
-      probabilityPreparations:budgetStats.probabilityPreparations,
-      conditionBranches:budgetStats.conditionBranches,
-      executionWorldBranches:budgetStats.executionWorldBranches,
       yieldCount:budgetStats.yieldCount,
       rootSafetyExpandedNodes:budgetStats.rootSafetyExpandedNodes,
       rootSafetySimulationCalls:budgetStats.rootSafetySimulationCalls,
@@ -749,7 +745,7 @@ export class Planner {
     };
     return choice?.action
       ?? (provisionalFallbackUsed ? provisionalRootFallback : null)
-      ?? { type:"end" };
+      ?? null;
   }
 
   /*
@@ -760,20 +756,20 @@ export class Planner {
   AIController.selectAction 与搜索回归测试。
 
   输入
-  行动者、根 SearchState、根候选动作与可选会话/诊断上下文。
+  行动者、根 World、根候选动作与可选会话/诊断上下文。
 
   输出
   当前最佳完整根动作；TIME/NODE 零完整 root 时返回不受 Pattern promotion 影响的合法 provisional root，取消时安全终止。
 
   读取状态
-  SearchState、PatternMatcher proposal、显式搜索归属模块、动作生成、预算与会话能力。
+  World、PatternMatcher proposal、显式搜索归属模块、动作生成、预算与会话能力。
 
   写入状态
   lastSearchStats、lastPlannedSequence 与注入能力的既有随机/让步序列。
 
   调用函数
   PatternMatcher.match、simulatorFactory、searchBudgetFactory、CandidateMaterializer root scheduling/materialization、
-  SearchPolicy、generateFromVisible、yieldControl。
+  SearchPolicy、generate、yieldControl。
 
   边界与不变量
   root 在昂贵物化前按 SearchPrior 廉价分数和稳定语义键排序，不得依赖 card instance ID 或 hand index；
@@ -827,7 +823,7 @@ export class Planner {
     const provisionalRootFallback = terminalForcesDiscard
       ? ordinaryNonTerminalFallback ?? rootTerminalAction
       : rootTerminalAction ?? ordinaryNonTerminalFallback
-      ?? { type:"end" };
+      ?? null;
     const context = this.candidateMaterializer.createContext(
       player,
       visibleState,
@@ -912,7 +908,7 @@ export class Planner {
       budget.observeRootCandidateStarted?.();
       const prepared = this.prepareCandidate(budget, 1, () => {
         budget.observeSimulation();
-        const state = simulator.apply(visibleState, action, player.id);
+        const state = simulator.apply(visibleState, action);
         const candidate = this.candidateMaterializer.materialize({
           action,
           beforeState:visibleState,
@@ -1023,19 +1019,19 @@ export class Planner {
     ));
     const unmaterializedRootTerminal = rootTerminalAction
       && !initiallyMaterializedRootActions.has(rootTerminalAction);
-    const bestMaterializedNonTerminalRoot = rootCandidates
-      .filter((candidate) => !this.candidateMaterializer.findTerminalAction([candidate.action]))
-      .reduce((best, candidate) => (
-        !best || candidate.transitionValue > best.transitionValue ? candidate : best
-      ), null);
+    const materializedNonTerminalRoots = rootCandidates
+      .filter((candidate) => !this.candidateMaterializer.findTerminalAction([candidate.action]));
+    const bestMaterializedNonTerminal = this.searchPolicy.bestByValue(
+      materializedNonTerminalRoots
+    );
     const remainingRootSafetyCount = unmaterializedNonTerminalRoots.length
       + (unmaterializedRootTerminal ? 1 : 0);
     const rootSafetyNeeded = (
       unmaterializedNonTerminalRoots.length > 0
-        && !(bestMaterializedNonTerminalRoot?.transitionValue >= 0)
+        && !(bestMaterializedNonTerminal?.transitionValue >= 0)
     ) || (
       unmaterializedRootTerminal
-        && bestMaterializedNonTerminalRoot?.transitionValue < 0
+        && bestMaterializedNonTerminal?.transitionValue < 0
     );
     const rootSafetyCompletionGranted = rootSafetyNeeded
       && remainingRootSafetyCount > 0
@@ -1055,7 +1051,7 @@ export class Planner {
         budget.observeRootCandidateStarted?.();
         const prepared = this.prepareCandidate(budget, 1, () => {
           budget.observeSimulation();
-          const state = simulator.apply(visibleState, action, player.id);
+          const state = simulator.apply(visibleState, action);
           const candidate = this.candidateMaterializer.materialize({
             action,
             beforeState:visibleState,
@@ -1312,8 +1308,7 @@ export class Planner {
           budget.observeSimulation();
           const state = simulator.apply(
             visibleState,
-            rootTerminalAction,
-            player.id
+            rootTerminalAction
           );
           const candidate = this.candidateMaterializer.terminalFallback({
             action:rootTerminalAction,
@@ -1362,7 +1357,10 @@ export class Planner {
           frontierResidual:fallback.frontierResidual
         };
       }
-      if (terminalChoice && (!choice || terminalChoice.valueScore > choice.valueScore)) {
+      const bestFinalChoice = terminalChoice
+        ? this.searchPolicy.bestByValue([choice, terminalChoice].filter(Boolean))
+        : choice;
+      if (terminalChoice && bestFinalChoice === terminalChoice && choice !== terminalChoice) {
         workDiagnostics.incumbentUpdateCount += 1;
         workDiagnostics.firstCompletedIncumbentAtWorkCount ??= budget.simulationCalls;
         workDiagnostics.finalIncumbentAtWorkCount = budget.simulationCalls;

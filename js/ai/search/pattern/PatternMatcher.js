@@ -6,10 +6,10 @@
 AI 组合根与 Planner。
 
 下游
-ActionDescriptor 与 ProductionPatterns registry。
+canonical Action intent 与 ProductionPatterns registry。
 
 状态边界
-只读传入的 SearchState、合法根动作与搜索结构，不创建或修改搜索状态。
+只读传入的 World、合法根动作与搜索结构，不创建或修改搜索状态。
 
 信息边界
 只消费调用方显式提供的可见搜索上下文，不读取隐藏信息或运行时实体容器。
@@ -19,6 +19,7 @@ Pattern provides tactical search-order knowledge, not tactical value；不得调
 TransitionValue 或 SearchBudget internals，也不得判断合法性、修改候选 value 或建立独立搜索树。
 */
 import { PRODUCTION_TACTICAL_PATTERNS } from "./ProductionPatterns.js";
+import { actionIntentKey } from "../Action.js";
 
 /*
 功能
@@ -97,7 +98,7 @@ function normalizeSelector(selector = {}) {
 PatternMatcher.match。
 
 输入
-definition step 与 ActionDescriptor owner。
+definition step 与 Action owner。
 
 输出
 包含 kind、descriptor/selector、stateAssertions、stepKey 与 identity 的记录。
@@ -109,12 +110,12 @@ step 已声明的动作语义与状态断言。
 无。
 
 调用函数
-ActionDescriptor.semantic/schedulingKeyFromDescriptor、normalizeSelector。
+Action.semantic/schedulingKeyFromDescriptor、normalizeSelector。
 
 边界与不变量
 identity 只表示动作匹配语义，刻意排除状态断言，使通用/特化 Pattern 的同一 sequence 可以去重。
 */
-function normalizePatternStep(step, actionDescriptor) {
+function normalizePatternStep(step) {
   const stateAssertions = Object.freeze((step?.stateAssertions ?? []).map(
     (assertion) => Object.freeze({ ...assertion })
   ));
@@ -129,8 +130,16 @@ function normalizePatternStep(step, actionDescriptor) {
       identity:JSON.stringify({ selector })
     });
   }
-  const descriptor = actionDescriptor.semantic(step?.descriptor ?? step);
-  const stepKey = actionDescriptor.schedulingKeyFromDescriptor(descriptor);
+  const source = step?.descriptor ?? step;
+  const descriptor = Object.freeze({
+    type:source?.type ?? null,
+    cardId:source?.cardId ?? source?.definitionId ?? source?.skillId ?? null,
+    targetIds:Object.freeze(Array.isArray(source?.targetIds)
+      ? [...source.targetIds]
+      : source?.targetId == null ? [] : [source.targetId]),
+    selection:source?.selection ?? null
+  });
+  const stepKey = actionIntentKey(descriptor);
   return Object.freeze({
     kind:"exact",
     descriptor:Object.freeze(descriptor),
@@ -149,7 +158,7 @@ function normalizePatternStep(step, actionDescriptor) {
 PatternMatcher.matchesStep。
 
 输入
-规范 selector 与 ActionDescriptor semantic action。
+规范 selector 与 Action semantic action。
 
 输出
 是否匹配。
@@ -185,13 +194,13 @@ function selectorMatches(selector, descriptor) {
 PatternMatcher.matchesStep。
 
 输入
-状态断言与当前 post-prefix SearchState。
+状态断言与当前 post-prefix World。
 
 输出
 全部断言是否成立。
 
 读取状态
-SearchState.players 中指定玩家的单层字段。
+World.players 中指定玩家的单层字段。
 
 写入状态
 无。
@@ -221,13 +230,13 @@ export class PatternMatcher {
 
   /*
   功能
-  创建使用 ActionDescriptor 语义身份与静态 definitions 的 PatternMatcher。
+  创建使用 canonical Action 语义身份与静态 definitions 的 PatternMatcher。
 
   调用方
   AIController、Worker SearchEngineFactory 与 focused tests。
 
   输入
-  ActionDescriptor owner；可选的测试 definitions。
+  可选的测试 definitions。
 
   输出
   可生成搜索顺序 proposal 的 matcher。
@@ -244,12 +253,7 @@ export class PatternMatcher {
   边界与不变量
   production definitions 来自唯一 registry；测试注入不得改变静态 production 列表。
   */
-  constructor({ actionDescriptor, definitions = PatternMatcher.definitions } = {}) {
-    if (typeof actionDescriptor?.semantic !== "function"
-      || typeof actionDescriptor?.schedulingKeyFromDescriptor !== "function") {
-      throw new TypeError("PatternMatcher 缺少依赖：actionDescriptor");
-    }
-    this.actionDescriptor = actionDescriptor;
+  constructor({ definitions = PatternMatcher.definitions } = {}) {
     this.definitions = Object.freeze([...(definitions ?? [])]);
   }
 
@@ -261,19 +265,19 @@ export class PatternMatcher {
   Planner root/child scheduling、Pattern prefix 推进与 focused tests。
 
   输入
-  proposal、零基 step index、真实 action 与该 action 生成时的 SearchState。
+  proposal、零基 step index、真实 action 与该 action 生成时的 World。
 
   输出
   是否同时满足动作语义与只读状态断言。
 
   读取状态
-  proposal.stepMatchers、ActionDescriptor 与 SearchState 断言字段。
+  proposal.stepMatchers、Action 与 World 断言字段。
 
   写入状态
   无。
 
   调用函数
-  ActionDescriptor semantic/schedulingKeyFromDescriptor、selectorMatches、stateAssertionsMatch。
+  Action semantic/schedulingKeyFromDescriptor、selectorMatches、stateAssertionsMatch。
 
   边界与不变量
   action 必须由调用方 legalActions 提供；本方法不生成、执行或评分动作，断言失败时 fail closed。
@@ -281,9 +285,8 @@ export class PatternMatcher {
   matchesStep(proposal, stepIndex, action, state) {
     const matcher = proposal?.stepMatchers?.[stepIndex];
     if (!matcher || !stateAssertionsMatch(matcher.stateAssertions, state)) return false;
-    const descriptor = this.actionDescriptor.semantic(action);
-    if (matcher.kind === "selector") return selectorMatches(matcher.selector, descriptor);
-    return matcher.stepKey === this.actionDescriptor.schedulingKeyFromDescriptor(descriptor);
+    if (matcher.kind === "selector") return selectorMatches(matcher.selector, action);
+    return matcher.stepKey === actionIntentKey(action);
   }
 
   /*
@@ -294,19 +297,19 @@ export class PatternMatcher {
   Planner.plan，在任何 Pattern-guided materialization 前。
 
   输入
-  玩家、当前 SearchState、已去重合法根动作与现有 search structure。
+  玩家、当前 World、已去重合法根动作与现有 search structure。
 
   输出
   匹配数、按 exploration priority 排序的 proposals，以及固定为空的 deferredRootKeys。
 
   读取状态
-  注入 definitions 与 ActionDescriptor。
+  注入 definitions 与 Action。
 
   写入状态
   无。
 
   调用函数
-  definition.match/buildSequences、ActionDescriptor.semantic/schedulingKeyFromDescriptor。
+  definition.match/buildSequences、Action.semantic/schedulingKeyFromDescriptor。
 
   边界与不变量
   proposal 数量受 beamWidth 限制，完整 steps 不得超过 structure.depth；只生成正向探索顺序，
@@ -327,10 +330,8 @@ export class PatternMatcher {
       state,
       legalActions:Object.freeze([...(legalActions ?? [])]),
       structure:Object.freeze({ ...structure }),
-      describeAction:(action) => this.actionDescriptor.semantic(action),
-      semanticKey:(actionOrDescriptor) => (
-        this.actionDescriptor.schedulingKeyFromDescriptor(actionOrDescriptor)
-      )
+      describeAction:(action) => action,
+      semanticKey:(action) => actionIntentKey(action)
     });
     let matchedPatternCount = 0;
     const proposalsByKey = new Map();
@@ -343,7 +344,7 @@ export class PatternMatcher {
           || sequence.steps.length === 0
           || sequence.steps.length > depth) continue;
         const stepMatchers = sequence.steps.map(
-          (step) => normalizePatternStep(step, this.actionDescriptor)
+          (step) => normalizePatternStep(step)
         );
         const steps = stepMatchers.map((matcher) => matcher.kind === "exact"
           ? matcher.descriptor

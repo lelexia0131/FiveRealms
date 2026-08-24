@@ -9,7 +9,7 @@ CandidateMaterializer。
 Economics 的资源尺度、CardValue 与 ResourceSelectionPolicy。
 
 状态边界
-只读行动者自己的 before/after SearchState 手牌身份，并更新候选的显式数值字段。
+只读行动者自己的 before/after World 手牌身份，并更新候选的显式数值字段。
 
 信息边界
 只理解行动者自己的可见手牌、动作终止类型和候选 base transition；不读取敌方隐藏牌。
@@ -66,7 +66,7 @@ export class SiblingTransitionTerms {
   CandidateMaterializer.materialize 的终止候选路径。
 
   输入
-  before/after SearchState、行动者 ID 与 Simulator 生成的正式弃牌上下文。
+  before/after World、行动者 ID 与 Simulator 生成的正式弃牌上下文。
 
   输出
   每个被弃可见实体的 cardId、definitionId、丢失概率与诊断保留价值。

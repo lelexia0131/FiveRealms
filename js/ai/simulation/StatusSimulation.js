@@ -1,6 +1,6 @@
 /*
 模块职责
-镜像延迟状态、雷达判定和角色被动状态钩子的 SearchState 生命周期。
+镜像延迟状态、雷达判定和角色被动状态钩子的 World 生命周期。
 
 上游
 Simulator 正式模拟门面、CardEffectSimulation 与 CombatSimulation。
@@ -9,7 +9,7 @@ Simulator 正式模拟门面、CardEffectSimulation 与 CombatSimulation。
 Lightning/Seal/Radar domain models、角色/卡牌配置与 Probability。
 
 状态边界
-只修改 Simulator 门面提供的独立 SearchState 副本。
+只修改 Simulator 门面提供的独立 World 副本。
 
 信息边界
 只消费过滤状态和显式概率分支，不读取未来判定实体牌。
@@ -29,16 +29,13 @@ import { hasPassiveSkill } from "../state/RuleProjection.js";
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
+  clampProbability,
   expectedBranchValue,
+  independentUnionProbability,
   probabilityEventPartition,
+  queryCurrentCardCounts,
   totalBranchProbability
 } from "../state/Probability.js";
-import { projectHiddenSummaries } from "../state/HiddenPool.js";
-import {
-  clampProbability,
-  remainingCardDensity,
-  unionProbability
-} from "./SimulationSupport.js";
 
 /*
 功能
@@ -74,7 +71,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   Simulator 构造/clone 与 simulateCategoryUse：补齐刀客概率状态。
 
   输入
-  独立 SearchState。
+  独立 World。
 
   输出
   无返回值；刀客的势能和类别使用分支已存在并同步。
@@ -94,31 +91,14 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   initializeMomentumBranches(state) {
     for (const player of state?.players ?? []) {
       if (!hasPassiveSkill(player, "momentum")) continue;
-      if (!Array.isArray(player.momentumBranches) || !player.momentumBranches.length) {
-        player.momentumBranches = [{
-          probability: 1,
-          conditions: {},
-          amount: Math.max(0, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(player.momentum) || 0))
-        }];
-      }
       this.syncMomentumSummary(player);
-      player.categoryUsedStateBranchesByCategory ??= {};
       player.categoryUsedProbabilities ??= {};
       player.categoriesUsed ??= [];
       for (const category of ["basic", "tactic", "equipment"]) {
-        if (!Array.isArray(player.categoryUsedStateBranchesByCategory[category])
-          || !player.categoryUsedStateBranchesByCategory[category].length) {
-          const usedProbability = clampProbability(player.categoryUsedProbabilities[category]
-            ?? (player.categoriesUsed.includes(category) ? 1 : 0));
-          player.categoryUsedStateBranchesByCategory[category] = usedProbability <= PROBABILITY_EPSILON
-            ? [{ probability: 1, conditions: {}, used: false }]
-            : usedProbability >= 1 - PROBABILITY_EPSILON
-              ? [{ probability: 1, conditions: {}, used: true }]
-              : [
-                { probability: usedProbability, conditions: {}, used: true },
-                { probability: 1 - usedProbability, conditions: {}, used: false }
-              ];
-        }
+        player.categoryUsedProbabilities[category] = clampProbability(
+          player.categoryUsedProbabilities[category]
+            ?? (player.categoriesUsed.includes(category) ? 1 : 0)
+        );
         this.syncCategoryUsedSummary(player, category);
       }
     }
@@ -150,20 +130,11 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   势能量不得为负；摘要必须由完整分支投影，不能另行累加。
   */
   syncMomentumSummary(player) {
-    player.momentumBranches = this.projectProbabilityWork(
-      this.getValueBranchesWork(
-        player,
-        "momentum",
-        player.momentum,
-        "StatusSimulation.syncMomentumSummary:current"
-      ),
-      (branch) => ({
-        amount: Math.max(0, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(branch.amount) || 0))
-      }),
-      "StatusSimulation.syncMomentumSummary:project"
+    player.momentum = Math.max(
+      0,
+      Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, Number(player.momentum) || 0)
     );
-    player.momentum = expectedBranchValue(player.momentumBranches);
-    return player.momentumBranches;
+    return [{ probability:1, conditions:{}, amount:player.momentum }];
   }
 
   /*
@@ -192,17 +163,25 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   只有概率一的类别才进入确定列表；不同类别的条件身份不得互相覆盖。
   */
   syncCategoryUsedSummary(player, category) {
-    const branches = this.mergeProbabilityWork(
-      player.categoryUsedStateBranchesByCategory?.[category] ?? [],
-      "StatusSimulation.syncCategoryUsedSummary"
+    const probability = clampProbability(
+      player.categoryUsedProbabilities?.[category]
+        ?? (player.categoriesUsed?.includes(category) ? 1 : 0)
     );
-    player.categoryUsedStateBranchesByCategory[category] = branches;
-    const probability = totalBranchProbability(branches.filter((branch) => branch.used));
+    player.categoryUsedProbabilities ??= {};
     player.categoryUsedProbabilities[category] = probability;
     const index = player.categoriesUsed.indexOf(category);
     if (probability >= 1 - PROBABILITY_EPSILON && index < 0) player.categoriesUsed.push(category);
     else if (probability < 1 - PROBABILITY_EPSILON && index >= 0) player.categoriesUsed.splice(index, 1);
-    return branches;
+    if (probability <= PROBABILITY_EPSILON) {
+      return [{ probability:1, conditions:{}, used:false }];
+    }
+    if (probability >= 1 - PROBABILITY_EPSILON) {
+      return [{ probability:1, conditions:{}, used:true }];
+    }
+    return [
+      { probability, conditions:{}, used:true },
+      { probability:1 - probability, conditions:{}, used:false }
+    ];
   }
 
   /*
@@ -213,7 +192,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   CardEffectSimulation 与 CombatSimulation：在牌实际使用后推进刀客势能。
 
   输入
-  SearchState、行动者、卡牌类别、使用世界与可选生命伤害世界。
+  World、行动者、卡牌类别、使用世界与可选生命伤害世界。
 
   输出
   无返回值；类别使用和势能分支已推进。
@@ -225,7 +204,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   类别已用分支、类别概率、categoriesUsed、momentumBranches 与 momentum。
 
   调用函数
-  initializeMomentumBranches、getEventWorlds、joinProbabilityStateBranches、syncMomentumSummary、syncCategoryUsedSummary。
+  initializeMomentumBranches、getEventWorlds、intersectProbabilityStateBranches、syncMomentumSummary、syncCategoryUsedSummary。
 
   边界与不变量
   同类首次且造成生命伤害才增加势能，重复类别在相交世界清空；条件质量必须守恒。
@@ -252,7 +231,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       conditions: branch.conditions,
       categoryUsed: Boolean(branch.used)
     }));
-    const joined = this.joinProbabilityWork(
+    const joined = this.intersectProbabilityWork(
       [momentumState, categoryState, useWorlds.map((branch) => ({
         probability: branch.probability,
         conditions: branch.conditions,
@@ -268,7 +247,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     const firstUseProbability = totalBranchProbability(
       joined.filter((branch) => branch.cardUsed && !branch.categoryUsed)
     );
-    player.momentumBranches = this.projectProbabilityWork(joined, (branch) => {
+    const momentumOutcomes = this.projectProbabilityWork(joined, (branch) => {
       if (!branch.cardUsed) return { amount: branch.momentumAmount };
       const retained = branch.lifeDamage ? 0 : branch.momentumAmount;
       return {
@@ -276,10 +255,14 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
           retained + (!branch.categoryUsed ? PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain : 0))
       };
     }, "StatusSimulation.simulateCategoryUse:momentum");
-    player.categoryUsedStateBranchesByCategory[category] = this.projectProbabilityWork(
+    const categoryOutcomes = this.projectProbabilityWork(
       joined,
       (branch) => ({ used: Boolean(branch.categoryUsed || branch.cardUsed) }),
       "StatusSimulation.simulateCategoryUse:category"
+    );
+    player.momentum = expectedBranchValue(momentumOutcomes);
+    player.categoryUsedProbabilities[category] = totalBranchProbability(
+      categoryOutcomes.filter((branch) => branch.used)
     );
     this.syncMomentumSummary(player);
     this.syncCategoryUsedSummary(player, category);
@@ -294,7 +277,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   CardEffectSimulation.applyCardEffect。
   
   输入
-  SearchState、行动者、已使用卡牌与生效概率。
+  World、行动者、已使用卡牌与生效概率。
   
   输出
   返回本次新增触发概率；成功世界中的摸牌状态已推进。
@@ -317,7 +300,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       actor.gambleTriggeredProbability
       ?? (actor.gambleTriggered ? 1 : 0)
     );
-    const newProbability = unionProbability(oldProbability, useProbability);
+    const newProbability = independentUnionProbability(oldProbability, useProbability);
     const triggerProbability = Math.max(0, newProbability - oldProbability);
     actor.gambleTriggeredProbability = newProbability;
     actor.gambleTriggered = newProbability >= 1 - PROBABILITY_EPSILON;
@@ -353,7 +336,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   CardEffectSimulation、CombatSimulation 与 SkillEffectSimulation：在有效目标世界结算协同收益。
 
   输入
-  SearchState、来源、有效目标列表与结算概率。
+  World、来源、有效目标列表与结算概率。
 
   输出
   无返回值；团队目标资源与协同触发摘要已更新。
@@ -376,7 +359,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       && target.battleTeam === actor.battleTeam)) return 0;
     const oldProbability = clampProbability(actor.coordinationTriggeredProbability
       ?? (actor.coordinationTriggered ? 1 : 0));
-    const newProbability = unionProbability(oldProbability, resolutionProbability);
+    const newProbability = independentUnionProbability(oldProbability, resolutionProbability);
     const triggerProbability = Math.max(0, newProbability - oldProbability);
     actor.coordinationTriggeredProbability = newProbability;
     actor.coordinationTriggered = newProbability >= 1 - PROBABILITY_EPSILON;
@@ -397,7 +380,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   CombatSimulation.simulateAssault：在突袭执行世界写入追猎标记。
 
   输入
-  SearchState、攻击来源、目标与突袭事件世界。
+  World、攻击来源、目标与突袭事件世界。
 
   输出
   无返回值；目标的来源绑定标记分支已推进。
@@ -409,7 +392,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   huntMarkStateBranchesBySource、huntMarkProbabilities、huntMarkProbability、huntMarkSourceId 与 statuses。
 
   调用函数
-  joinProbabilityStateBranches、projectProbabilityStateBranches、totalBranchProbability。
+  intersectProbabilityStateBranches、projectProbabilityStateBranches、totalBranchProbability。
 
   边界与不变量
   不同来源的标记分别记账；确定摘要只能来自概率一世界，未命中世界保持原标记。
@@ -431,13 +414,12 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       ? eventWorlds
       : this.gateEventWorlds(state, eventWorlds,
         remainingUses / this.eventProbability(eventWorlds), `tracking-limit:${source.id}:${target.id}`);
-    const existingBranches = target.huntMarkStateBranchesBySource?.[source.id]
-      ?? probabilityEventPartition(
-        this.nextProbabilityEventKey(state, `hunt-mark-existing:${source.id}:${target.id}`),
-        oldProbability,
-        "marked"
-      );
-    const joined = this.joinProbabilityWork(
+    const existingBranches = probabilityEventPartition(
+      this.currentProbabilityEventKey(state, `hunt-mark-existing:${source.id}:${target.id}`),
+      oldProbability,
+      "marked"
+    );
+    const joined = this.intersectProbabilityWork(
       [existingBranches, limitedEventWorlds],
       "StatusSimulation.simulateTracking:join"
     );
@@ -446,8 +428,6 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     }), "StatusSimulation.simulateTracking:project");
     const markProbability = totalBranchProbability(markState.filter((branch) => branch.marked));
     const gainedProbability = Math.max(0, markProbability - oldProbability);
-    target.huntMarkStateBranchesBySource ??= {};
-    target.huntMarkStateBranchesBySource[source.id] = markState;
     target.huntMarkProbabilities[source.id] = markProbability;
     target.huntMarkProbability = Math.max(0, ...Object.values(target.huntMarkProbabilities).map(clampProbability));
     source.trackingUses += gainedProbability;
@@ -466,7 +446,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   CombatSimulation.applyDamage：生命伤害落地后按权威顺序触发角色被动。
 
   输入
-  SearchState、可空来源、目标、生命伤害概率/分支与伤害上下文。
+  World、可空来源、目标、生命伤害概率/分支与伤害上下文。
 
   输出
   无返回值；所有与生命伤害相关的被动状态已推进。
@@ -490,20 +470,19 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
       && target.battleTeam !== source.battleTeam) {
       damageContext.emberTriggeredProbabilities ??= {};
       const oldProbability = clampProbability(damageContext.emberTriggeredProbabilities[source.id]);
-      const newProbability = unionProbability(oldProbability, chance);
+      const newProbability = independentUnionProbability(oldProbability, chance);
       damageContext.emberTriggeredProbabilities[source.id] = newProbability;
       damageContext.emberBaseEnergyBranches ??= {};
-      damageContext.emberBaseEnergyBranches[source.id] ??= this.getValueBranchesWork(
-        source,
-        "energy",
-        source.energy,
-        "StatusSimulation.simulateAfterLifeDamage:ember-base-energy"
-      );
+      damageContext.emberBaseEnergyBranches[source.id] ??= [{
+        probability:1,
+        conditions:{},
+        amount:Number(source.energy) || 0
+      }];
       if (newProbability > oldProbability + PROBABILITY_EPSILON) {
         const triggerWorlds = oldProbability <= PROBABILITY_EPSILON && lifeDamageBranches
           ? lifeDamageBranches
           : probabilityEventPartition(
-            this.nextProbabilityEventKey(state, `ember-resolution:${source.id}`),
+            this.currentProbabilityEventKey(state, `ember-resolution:${source.id}`),
             newProbability,
             "occurs"
           );
@@ -512,167 +491,60 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
           conditions: branch.conditions,
           baseEnergyAmount: branch.amount
         }));
-        const joined = this.joinProbabilityWork(
+        const joined = this.intersectProbabilityWork(
           [baseEnergy, triggerWorlds],
           "StatusSimulation.simulateAfterLifeDamage:ember-join"
         );
-        source.energyBranches = this.projectProbabilityWork(joined, (branch) => ({
+        const energyOutcomes = this.projectProbabilityWork(joined, (branch) => ({
           amount: Math.max(0, Math.min(source.maxEnergy ?? Infinity,
             branch.baseEnergyAmount + (branch.occurs
               ? PASSIVE_SKILL_DEFINITIONS.ember.energyGain
               : 0)))
         }), "StatusSimulation.simulateAfterLifeDamage:ember-project");
-        source.energy = expectedBranchValue(source.energyBranches);
+        source.energy = expectedBranchValue(energyOutcomes);
       }
     }
   }
 
   /*
   功能
-  把私密查看获得的未知手牌身份按合法先验写入目标的 knownCards 概率条目。
+  记录私密查看已发生，但把未观测前的身份结果立即边缘化回当前 Probability。
 
   调用方
   CardEffectSimulation 的窥探结算与 simulateSpyGapAfterLifeDamage：推进私密信息状态。
 
   输入
-  SearchState、观察者、被观察者、期望揭示数量与触发条件世界。
+  World、观察者、被观察者、期望揭示数量与触发条件世界。
 
   输出
-  无返回值；目标的已知牌、剩余牌计数与卡牌摘要已按揭示世界推进。
+  实际发生的期望查看槽数。
 
   读取状态
-  目标 handCount/knownCards、当前 remainingCardCounts 与合法卡牌定义。
+  目标 handCount/knownCards 与当前触发质量。
 
   写入状态
-  目标 knownCards 概率身份、remainingCardCounts 和 recover/assault 摘要；不改手牌数量或格挡/反制总量。
+  无；具体观察结果只在实际需要的信息反事实查询中惰性采样。
 
   调用函数
-  cardAvailability、gateEventWorlds、nextSimulatedCardId、remainingCardDensity、availableBranchesFromState、syncCardEstimates。
+  cardAvailability、eventProbability。
 
   边界与不变量
-  私密查看只观察已在目标手牌中的槽位，不得改变 handCount 或凭空重抽格挡/反制容量；
-  每次查看使用独立身份组，已确定身份不会在后续查看中重复产生揭示质量。
+  观察前对所有互斥身份求期望后，边际牌池必须等于观察前当前状态；
+  禁止持久保存 operation×definition identity worlds，信息选择价值由惰性反事实查询拥有。
   */
   recordSimulatedPrivatePeek(state, source, target, revealCount, triggerWorlds) {
-    if (!target?.alive || !Array.isArray(state?.players)) return;
-    target.knownCards ??= [];
+    if (!target?.alive || !Array.isArray(state?.players)) return 0;
     const triggerProbability = this.eventProbability(triggerWorlds);
-    if (triggerProbability <= PROBABILITY_EPSILON) return;
-    const peekKey = this.nextProbabilityEventKey(
-      state,
-      `private-peek:${source.id}:${target.id}`
-    );
-    const knownOccupancy = target.knownCards.reduce(
+    if (triggerProbability <= PROBABILITY_EPSILON) return 0;
+    const knownOccupancy = (target.knownCards ?? []).reduce(
       (sum, entry) => sum + this.cardAvailability(entry),
       0
     );
-    let revealMass = Math.min(
+    const revealSlots = Math.min(
       Math.max(0, Number(revealCount) || 0),
       Math.max(0, (Number(target.handCount) || 0) - knownOccupancy)
     );
-    const maxPositions = Math.ceil(Math.max(0, revealMass));
-    for (let position = 0; position < maxPositions && revealMass > PROBABILITY_EPSILON; position += 1) {
-      const positionProbability = Math.min(1, revealMass);
-      const revealWorlds = this.gateEventWorlds(
-        state,
-        triggerWorlds,
-        positionProbability,
-        `private-peek-reveal:${peekKey}:${position}`
-      );
-      const revealProbability = this.eventProbability(revealWorlds);
-      if (revealProbability <= PROBABILITY_EPSILON) break;
-      // 同一观察槽位的各牌身份必须共享一个条件键，保证候选互斥；
-      // 否则 Probability 会把 26 个身份误当成独立牌反复叉乘。
-      const identityKey = `private-peek-identity:${peekKey}:${position}`;
-      const identityBranches = [];
-      for (let branchIndex = 0; branchIndex < revealWorlds.length; branchIndex += 1) {
-        if (branchIndex % 32 === 0) this.checkpointSearchWork();
-        const branch = revealWorlds[branchIndex];
-        if (!branch.occurs) {
-          identityBranches.push({
-            probability: branch.probability,
-            conditions: { ...branch.conditions, [identityKey]: "none" },
-            observedDefinitionId: null
-          });
-          continue;
-        }
-        for (const definitionId of Object.keys(DOMAIN_CARD_DEFINITIONS)) {
-          const probability = branch.probability
-            * remainingCardDensity(state?.remainingCardCounts ?? null, definitionId);
-          if (probability <= PROBABILITY_EPSILON) continue;
-          identityBranches.push({
-            probability,
-            conditions: { ...branch.conditions, [identityKey]: definitionId },
-            observedDefinitionId: definitionId
-          });
-        }
-      }
-      const identityPartition = this.mergeProbabilityWork(
-        identityBranches,
-        "StatusSimulation.simulateSpyGapAfterLifeDamage:identity"
-      );
-      const slotKey = `${identityKey}:slot`;
-      target.identitySlotStates ??= {};
-      target.identitySlotStates[identityKey] = this.projectProbabilityWork(
-        identityPartition,
-        (branch) => {
-          const conditions = { ...branch.conditions, [slotKey]: branch.observedDefinitionId ? "yes" : "no" };
-          delete conditions[identityKey];
-          return {
-            probability: branch.probability,
-            conditions,
-            slotAvailable: branch.observedDefinitionId !== null,
-            definitionId: branch.observedDefinitionId
-          };
-        },
-        "StatusSimulation.simulateSpyGapAfterLifeDamage:slot"
-      );
-      for (const definitionId of Object.keys(DOMAIN_CARD_DEFINITIONS)) {
-        const matchingIdentityBranches = [];
-        for (let branchIndex = 0; branchIndex < identityPartition.length; branchIndex += 1) {
-          if (branchIndex % 32 === 0) this.checkpointSearchWork();
-          const branch = identityPartition[branchIndex];
-          if (branch.observedDefinitionId !== definitionId) continue;
-          matchingIdentityBranches.push({
-            probability: branch.probability,
-            conditions: branch.conditions,
-            occurs: true
-          });
-        }
-        const identityWorlds = this.mergeProbabilityWork(
-          matchingIdentityBranches,
-          "StatusSimulation.simulateSpyGapAfterLifeDamage:definition"
-        );
-        const identityProbability = this.eventProbability(identityWorlds);
-        if (identityProbability <= PROBABILITY_EPSILON) continue;
-        const slotKey = `${identityKey}:slot`;
-        const entry = {
-          cardId: this.nextSimulatedCardId(state, definitionId),
-          definitionId,
-          availabilityBranches: availableBranchesFromState(
-            this.projectProbabilityWork(identityWorlds, (branch) => ({
-              available: Boolean(branch.occurs)
-            }), "StatusSimulation.simulateSpyGapAfterLifeDamage:availability")
-          ).map((branch) => ({
-            ...branch,
-            conditions: {
-              ...branch.conditions,
-              [slotKey]: definitionId === "block" || definitionId === "counter" ? "no" : "yes"
-            }
-          }))
-        };
-        entry.identityGroupKey = identityKey;
-        target.knownCards.push(entry);
-        if (state.remainingCardCounts && Number.isFinite(state.remainingCardCounts[definitionId])) {
-          state.remainingCardCounts[definitionId] = Math.max(
-            0,
-            (state.remainingCardCounts[definitionId] ?? 0) - identityProbability
-          );
-        }
-      }
-      revealMass -= positionProbability;
-    }
-    projectHiddenSummaries(state);
+    return revealSlots * triggerProbability;
   }
 
   /*
@@ -683,7 +555,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   CombatSimulation.applyDamage：在生命伤害与濒死结果落地后触发。
 
   输入
-  SearchState、伤害来源、受伤目标与生命伤害概率。
+  World、伤害来源、受伤目标与生命伤害概率。
 
   输出
   无返回值；满足触发条件时推进窥隙额度与目标私密信息。
@@ -708,12 +580,12 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     const oldTriggeredProbability = clampProbability(source.spyGapTriggeredProbability
       ?? (source.spyGapTriggered ? 1 : 0));
     const triggerProbability = (1 - oldTriggeredProbability) * chance;
-    source.spyGapTriggeredProbability = unionProbability(oldTriggeredProbability, chance);
+    source.spyGapTriggeredProbability = independentUnionProbability(oldTriggeredProbability, chance);
     source.spyGapTriggered = source.spyGapTriggeredProbability >= 1 - Number.EPSILON;
     if (triggerProbability <= PROBABILITY_EPSILON) return;
     source.lastSpyGapTargetId = target.id;
     const triggerWorlds = probabilityEventPartition(
-      this.nextProbabilityEventKey(state, `spy-gap:${source.id}:${target.id}`),
+      this.currentProbabilityEventKey(state, `spy-gap:${source.id}:${target.id}`),
       triggerProbability,
       "occurs"
     );
@@ -731,7 +603,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   CombatSimulation.applyDamage。
 
   输入
-  SearchState、格挡需求数量、可选统一概率覆盖与可选逐需求概率覆盖。
+  World、格挡需求数量、可选统一概率覆盖与可选逐需求概率覆盖。
 
   输出
   互斥且概率守恒的 `{ radarOutcomes, waivedBlockSlots }` 条件分支。
@@ -743,7 +615,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   仅为联合判定分配一个条件键。
 
   调用函数
-  buildRadarJudgmentSequenceProbabilities、interpretDefenseJudgment、nextProbabilityEventKey。
+  buildRadarJudgmentSequenceProbabilities、interpretDefenseJudgment、currentProbabilityEventKey。
 
   边界与不变量
   outcomes 顺序与真实判定调用顺序一致；每个战术结果只免除一个格挡需求。
@@ -755,12 +627,12 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     overrideProbabilitiesByRequirement = null
   ) {
     const sequence = buildRadarJudgmentSequenceProbabilities(
-      state?.remainingCardCounts ?? null,
+      queryCurrentCardCounts(state.probabilityState),
       requirementCount,
       overrideProbabilitiesByRequirement,
       overrideProbabilities
     );
-    const key = this.nextProbabilityEventKey(state, "radar-outcome-sequence");
+    const key = this.currentProbabilityEventKey(state, "radar-outcome-sequence");
     return sequence.map((branch, index) => ({
       probability:branch.probability,
       conditions:{ [key]:`v${index}` },
@@ -779,7 +651,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   ValueSimulationQuery：推进一枚闪电在指定持有者命中的模拟世界。
 
   输入
-  独立 SearchState 与命中目标 ID。
+  独立 World 与命中目标 ID。
 
   输出
   无返回值；闪电伤害和状态移除已结算。
@@ -807,7 +679,6 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     } else if (target.statuses) {
       delete target.statuses.lightning;
     }
-    target.lightningStatusStateBranches = [{ probability: 1, conditions: {}, present: false }];
     target.lightningStatusProbability = 0;
     this.applyDamage(next, null, target, DOMAIN_CARD_DEFINITIONS.lightning.hitDamage, { canBlock: false });
     return next;
@@ -821,7 +692,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   CombatSimulation.resolveFatal 与追猎消费路径：让失效来源不再保留标记。
 
   输入
-  SearchState 与标记来源 ID。
+  World 与标记来源 ID。
 
   输出
   无返回值；所有玩家上该来源的追猎标记已清除。
@@ -841,7 +712,6 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   clearHuntMarksBySource(state, sourceId) {
     for (const player of state.players ?? []) {
       if (player.huntMarkProbabilities) delete player.huntMarkProbabilities[sourceId];
-      if (player.huntMarkStateBranchesBySource) delete player.huntMarkStateBranchesBySource[sourceId];
       const probabilities = Object.values(player.huntMarkProbabilities ?? {}).map(clampProbability);
       player.huntMarkProbability = probabilities.length ? Math.max(...probabilities) : 0;
       if (player.huntMarkSourceId === sourceId) player.huntMarkSourceId = null;
@@ -859,7 +729,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   CardEffectSimulation.applyCardEffect：在延迟牌已通过反制门控后写入状态。
 
   输入
-  SearchState、行动者、目标、statusId 与条件生效世界。
+  World、行动者、目标、statusId 与条件生效世界。
 
   输出
   无返回值；目标延迟状态分支和确定摘要已推进。
@@ -871,7 +741,7 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
   对应 status 状态分支、存在概率与 statuses。
 
   调用函数
-  joinProbabilityStateBranches、projectProbabilityStateBranches、totalBranchProbability。
+  intersectProbabilityStateBranches、projectProbabilityStateBranches、totalBranchProbability。
 
   边界与不变量
   闪电/封印状态只按同一效果世界加入；概率小于一时不得误写为确定状态。
@@ -880,15 +750,9 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     const holder = statusId === "lightning" ? actor : target;
     if (!holder?.alive || (statusId === "sealed" && holder.battleTeam === actor.battleTeam)) return;
     const oldBranches = statusId === "lightning"
-      ? getLightningStatusStateBranches(holder, (branches) => this.mergeProbabilityWork(
-          branches,
-          `StatusSimulation.applyDelayedStatusCard:${statusId}:existing`
-        ))
-      : getSealStatusStateBranches(holder, (branches) => this.mergeProbabilityWork(
-          branches,
-          `StatusSimulation.applyDelayedStatusCard:${statusId}:existing`
-        ));
-    const joined = this.joinProbabilityWork(
+      ? getLightningStatusStateBranches(holder)
+      : getSealStatusStateBranches(holder);
+    const joined = this.intersectProbabilityWork(
       [oldBranches, effectEventWorlds],
       `StatusSimulation.applyDelayedStatusCard:${statusId}:join`
     );
@@ -897,10 +761,8 @@ export const withStatusSimulation = (Base) => class StatusSimulation extends Bas
     }), `StatusSimulation.applyDelayedStatusCard:${statusId}:project`);
     const probability = totalBranchProbability(projected.filter((branch) => branch.present));
     if (statusId === "lightning") {
-      holder.lightningStatusStateBranches = projected;
       holder.lightningStatusProbability = probability;
     } else {
-      holder.sealedStatusStateBranches = projected;
       holder.sealedStatusProbability = probability;
     }
     holder.statuses ??= [];

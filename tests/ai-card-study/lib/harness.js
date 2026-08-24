@@ -5,7 +5,7 @@ import { CARD_DEFINITIONS } from "../../../js/domain/definitions/cards/CardDefin
 import { CHARACTER_DEFINITIONS } from "../../../js/domain/definitions/characters/CharacterDefinitions.js";
 import { ActionLegality } from "../../../js/application/action/ActionLegality.js";
 import { inAttackRange } from "../../../js/ai/state/DistanceProbabilityBranches.js";
-import { createInitialSearchState } from "../../../js/ai/state/StateContracts.js";
+import { createInitialWorld } from "../../../js/ai/state/StateContracts.js";
 import { TrackedRng } from "./rng.js";
 import { createHeadlessUi } from "./ui.js";
 
@@ -510,7 +510,7 @@ export function installBestOtherFirstAction(game, definitionId) {
         player.bumpHandVersion(TEST_VERSION_STATE);
         try {
           const remainingCardCounts = controller.knowledge.remainingCounts(player);
-          const visible = createInitialSearchState(player.id, controller.game.state, remainingCardCounts);
+          const visible = createInitialWorld(player.id, controller.game.state, remainingCardCounts);
           const rootActions = controller.getActionCandidates(player);
           return controller.planner.plan(player, visible, rootActions, options);
         } finally {

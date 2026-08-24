@@ -1,21 +1,21 @@
 /*
 模块职责
-生成真实根局面与 SearchState 深层节点的 AI 候选动作。
+从 canonical World 枚举合法目标与选择，并创建 canonical Action。
 
 上游
-AIController 与 Planner 注入能力。
+AIController 与 Planner。
 
 下游
 Domain Card/Skill/Status Rules、Domain Definitions、AI RuleProjection、领域概率与策略评分模块。
 
 状态边界
-根生成只读 GameState，深层生成只读 SearchState，不执行或结算动作。
+只读 World，不执行或结算动作。
 
 信息边界
-深层动作只使用 SearchState 的合法可见、记忆与 Belief 字段。
+候选只使用 World 的确定事实、合法记忆与 Probability bounded query。
 
 架构约束
-不得依赖 AIController；转移资源选择必须由构造时注入的窄能力提供。
+不得依赖 AIController；不得组合概率分支、构造执行世界或模拟 transition。
 */
 import {
   canPlayCard,
@@ -32,35 +32,25 @@ import {
   getSkillCost,
   getSkillTargetIds
 } from "../../domain/rules/skill/SkillRules.js";
-import { getActiveSkillUseCount } from "../../domain/rules/turn/TurnRules.js";
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
-import { getLightningStatusStateBranches } from "../domain/LightningModel.js";
-import { getSealStatusStateBranches } from "../domain/SealModel.js";
+import { lightningPresenceProbability } from "../domain/LightningModel.js";
+import { sealPresenceProbability } from "../domain/SealModel.js";
 import {
   projectAttackUsage,
   projectRulePlayer,
   projectRulePlayers,
   projectTransferRulePlayers
 } from "../state/RuleProjection.js";
-import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js";
-import { ActionCandidatePolicy } from "../policy/ActionCandidatePolicy.js";
 import {
-  buildTransferCandidates,
-  chooseBestPositiveTransfer
-} from "../policy/TransferPolicy.js";
-import { searchSemanticKey } from "./ActionDescriptor.js";
+  getRangeConditionBranches,
+  getRangeLegalityProbability
+} from "../state/DistanceProbabilityBranches.js";
+import { actionSearchKey, createAction } from "./Action.js";
 import {
   PROBABILITY_EPSILON,
-  availableBranchesFromState,
-  binaryConditionPartition,
-  getAvailabilityStateBranches,
-  getValueBranches,
-  huntMarkConditionKey,
-  joinProbabilityStateBranchesCooperatively,
-  mergeProbabilityBranchesCooperatively,
-  projectProbabilityStateBranchesCooperatively,
-  totalBranchProbability
+  expectedAnonymousSlots,
+  queryAnonymousSlotDistribution
 } from "../state/Probability.js";
 
 /*
@@ -68,7 +58,7 @@ import {
 在候选生成 owner 内合并仅使用牌实体 ID 不同的搜索等价动作。
 
 调用方
-WorkerSearchRuntime 根候选恢复与 generateFromVisible 深层候选生成。
+WorkerSearchRuntime 根候选恢复与 generate 深层候选生成。
 
 输入
 保持稳定枚举顺序的动作数组。
@@ -83,7 +73,7 @@ WorkerSearchRuntime 根候选恢复与 generateFromVisible 深层候选生成。
 无。
 
 调用函数
-ActionDescriptor.searchSemanticKey。
+Action.actionSearchKey。
 
 边界与不变量
 不修改原动作；真正依赖实体身份、availability、selection 或条件世界的动作不得合并，
@@ -93,7 +83,7 @@ export function deduplicateSearchEquivalentActions(actions) {
   const seen = new Set();
   const unique = [];
   for (const action of actions ?? []) {
-    const key = searchSemanticKey(action);
+    const key = actionSearchKey(action);
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(action);
@@ -104,13 +94,13 @@ export function deduplicateSearchEquivalentActions(actions) {
 export class ActionGenerator {
   /*
   功能
-  创建动作生成器并绑定真实规则边界与转移选择能力。
+  创建唯一合法动作生成器。
 
   调用方
   AIController 组合根与直接独立性测试。
 
   输入
-  getRootContext 窄能力与包含 chooseTransferCombination 的依赖对象。
+  无。
 
   输出
   可生成根与深层动作的 ActionGenerator；缺少依赖时立即抛错。
@@ -119,36 +109,112 @@ export class ActionGenerator {
   无。
 
   写入状态
-  实例 getRootContext 与转移选择能力。
+  无。
 
   调用函数
   无。
 
   边界与不变量
-  只保存具体能力，不接收或查找 AIController。
+  不接收 Game、Controller、选择 adapter 或其他动作 producer。
   */
-  constructor({
-    getRootContext = null,
-    chooseTransferCombination = null,
-    actionCandidatePolicy
-  } = {}) {
-    if (getRootContext === null && chooseTransferCombination === null) {
-      // Worker-safe deep-only construction；root generate() 会在调用时 fail fast。
-    } else {
-      if (typeof getRootContext !== "function") {
-        throw new TypeError("ActionGenerator 缺少依赖：getRootContext");
+  constructor() {}
+
+  /*
+  功能
+  创建取消、拒绝或无候选路径共同使用的 canonical END Action。
+
+  调用方
+  generate 与 AIController 的安全终止路径。
+
+  输入
+  当前行动者 ID。
+
+  输出
+  完整且不可变的 END Action。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  createAction。
+
+  边界与不变量
+  END 仍由唯一 Generator 创建；调用方不得自行制造另一种终止动作结构。
+  */
+  createEndAction(actorId) {
+    return createAction({ type:"end", actorId });
+  }
+
+  /*
+  功能
+  把已经通过真实规则入口的 root 战术投影为响应反事实直接消费的 canonical Action。
+
+  调用方
+  ResponseBoundary 的 dynamic root flip 查询。
+
+  输入
+  当前 World、root 卡牌公开身份、来源 ID、原始目标 ID 与公开选择上下文。
+
+  输出
+  target、selection 与重放 execution semantics 完整的 card Action；输入无效时返回 null。
+
+  读取状态
+  World 当前存活玩家、root 卡牌公开定义与公开选择上下文。
+
+  写入状态
+  无。
+
+  调用函数
+  createAction。
+
+  边界与不变量
+  该 root 已由真实 ActionWorkflow 完成合法性校验且卡牌成本已经沉没；这里只创建一次
+  配对反事实所需的同一动作语义，不重新枚举 legality，也不读取转移的隐藏牌身份。
+  */
+  createRootResolutionAction(state, rootCard, rootSourceId, rootTargetIds, options = {}) {
+    if (!rootCard?.definitionId || !rootSourceId) return null;
+    const targetIds = (rootTargetIds ?? []).filter((targetId) => (
+      state.players.some((player) => player.id === targetId && player.alive)
+    ));
+    let selection = null;
+    if (rootCard.definitionId === "transfer") {
+      const planned = options.selection ?? null;
+      if (planned?.sourceId && planned?.receiverId) {
+        selection = {
+          sourceId:planned.sourceId,
+          receiverId:planned.receiverId,
+          zone:planned.zone ?? "hand",
+          selectionKind:planned.selectionKind ?? null,
+          cardId:planned.cardId ?? null,
+          definitionId:planned.definitionId ?? null
+        };
+      } else {
+        const context = options.publicTransferContext ?? null;
+        if (!context?.fromPlayerId || !context?.receiverPlayerId) return null;
+        selection = {
+          sourceId:context.fromPlayerId,
+          receiverId:context.receiverPlayerId,
+          zone:context.zone ?? "hand"
+        };
       }
-      if (typeof chooseTransferCombination !== "function") {
-        throw new TypeError("ActionGenerator 缺少依赖：chooseTransferCombination");
-      }
+    } else if (rootCard.definitionId === "leverage") {
+      selection = {
+        firstTargetId:targetIds[0] ?? null,
+        secondTargetId:targetIds[1] ?? null
+      };
     }
-    const resolvedActionCandidatePolicy = actionCandidatePolicy ?? new ActionCandidatePolicy();
-    if (typeof resolvedActionCandidatePolicy.isLightningStrategicallyForbidden !== "function") {
-      throw new TypeError("ActionGenerator 缺少依赖：actionCandidatePolicy");
-    }
-    this.getRootContext = getRootContext;
-    this.chooseTransferCombination = chooseTransferCombination;
-    this.actionCandidatePolicy = resolvedActionCandidatePolicy;
+    return createAction({
+      type:"card",
+      actorId:rootSourceId,
+      cardId:rootCard.definitionId,
+      cardInstanceId:rootCard.id ?? rootCard.definitionId,
+      targetIds,
+      selection,
+      execution:{ restoreActorHand:true, ignoreCounter:true }
+    });
   }
 
   /*
@@ -156,7 +222,7 @@ export class ActionGenerator {
   把玩家实体解析为 Domain CardRules 目标 ID 对应的原玩家对象。
 
   调用方
-  generate 与 generateFromVisible 的根/深层动作枚举。
+  generate 与 generate 的根/深层动作枚举。
 
   输入
   原玩家数组、规则目标 ID 数组。
@@ -185,7 +251,7 @@ export class ActionGenerator {
   把玩家数组投影为 Domain Card/Skill Rule canonical facts。
 
   调用方
-  generate 与 generateFromVisible。
+  generate 与 generate。
 
   输入
   原玩家数组。
@@ -214,7 +280,7 @@ export class ActionGenerator {
   计算排除当前转移牌后的 Domain transfer source facts。
 
   调用方
-  generate 与 generateFromVisible 的 transfer legality。
+  generate 与 generate 的 transfer legality。
 
   输入
   原玩家数组与要排除的卡牌 ID 集合。
@@ -243,7 +309,7 @@ export class ActionGenerator {
   从 Domain CardRules 取得卡牌合法目标实体。
 
   调用方
-  generate 与 generateFromVisible。
+  generate 与 generate。
 
   输入
   原玩家数组、source 与 card。
@@ -274,7 +340,7 @@ export class ActionGenerator {
   从 Domain CardRules 取得借势第二目标实体。
 
   调用方
-  generate 与 generateFromVisible。
+  generate 与 generate。
 
   输入
   原玩家数组与 source。
@@ -305,7 +371,7 @@ export class ActionGenerator {
   从 Domain CardRules 取得借势第一目标实体。
 
   调用方
-  generate 与 generateFromVisible。
+  generate 与 generate。
 
   输入
   原玩家数组与 source。
@@ -336,7 +402,7 @@ export class ActionGenerator {
   从 Domain CardRules 取得可转移来源实体。
 
   调用方
-  generate 与 generateFromVisible 的转移枚举。
+  generate 与 generate 的转移枚举。
 
   输入
   原玩家数组、source、card 与排除 ID。
@@ -368,7 +434,7 @@ export class ActionGenerator {
   从 Domain CardRules 取得转移接收者实体。
 
   调用方
-  generate 与 generateFromVisible 的转移枚举。
+  generate 与 generate 的转移枚举。
 
   输入
   原玩家数组、source、from 与 card。
@@ -401,7 +467,7 @@ export class ActionGenerator {
   从 Domain SkillRules 取得技能目标实体。
 
   调用方
-  generate 与 generateFromVisible。
+  generate 与 generate。
 
   输入
   原玩家数组、source 与 skill。
@@ -429,13 +495,13 @@ export class ActionGenerator {
 
   /*
   功能
-  判断 SearchState 的任一概率装备世界是否满足 Domain 请求的距离约束。
+  判断 World 的任一概率装备世界是否满足 Domain 请求的距离约束。
 
   调用方
-  generateFromVisible 的 Domain target rule 注入边界。
+  generate 的 Domain target rule 注入边界。
 
   输入
-  SearchState、source、target 与 Domain 提供的 range。
+  World、source、target 与 Domain 提供的 range。
 
   输出
   布尔值。
@@ -461,242 +527,196 @@ export class ActionGenerator {
 
   /*
   功能
-  按 Domain SkillRules 判断当前真实技能是否可发动。
+  枚举一名 World 玩家当前所有合法手牌选择语义。
 
   调用方
-  generate 根枚举。
+  transfer、scout、plunder 与 destroy selection expansion。
 
   输入
-  root context、source 与 Domain skill definition。
+  World、资源拥有者与可选排除实体 ID。
 
   输出
-  { ok, reason }。
+  每个合法已知实体一个 known 选择，匿名有限池容量存在时一个 unknown 选择。
 
   读取状态
-  root context 的 phase/currentPlayer 与 source usage/energy。
+  自己的 hand、合法 knownCards、实体 availability 与 ProbabilityState 匿名桶。
 
   写入状态
   无。
 
   调用函数
-  canUseSkillBase、getSkillCost、getActiveSkillUseCount。
+  expectedAnonymousSlots。
 
   边界与不变量
-  基础费用与次数公式只由 Domain SkillRules 解释；额外目标非空检查保留 registry 行为。
+  unknown 是完整的匿名位置语义，不携带隐藏 definitionId；执行边界只能解析该位置，不能重新评分。
   */
-  canUseSkillFromRule(rootContext, source, skill) {
-    if (!skill?.id) return { ok:false, reason:"" };
-    const players = rootContext?.state?.players ?? [];
-    const used = getActiveSkillUseCount(source.turnFlags, skill.id);
-    const decision = canUseSkillBase({
-      players,
-      sourceId: source.id,
-      currentPlayerId: rootContext?.currentPlayer?.id ?? rootContext?.state?.currentPlayerId ?? null,
-      phase: rootContext?.state?.phase ?? rootContext?.phase ?? "idle",
-      skill,
-      used,
-      limitPerTurn: skill.limitPerTurn ?? 1,
-      energy: source.energy,
-      minimumEnergy: getSkillCost(skill, source, players)
-    });
-    if (!decision.ok) return decision;
-    if (["barrier", "resonance", "symbiosis", "stealSkill", "hunt"].includes(skill.id)
-      && !this.getSkillTargetsFromRule(players, source, skill).length) {
-      const reasons = {
-        barrier:"没有存活队友",
-        resonance:"没有存活队友",
-        symbiosis:"自己和队友都未受伤",
-        stealSkill:"距离2内没有持有手牌或装备的敌人",
-        hunt:"没有猎印目标"
-      };
-      return { ok:false, reason:reasons[skill.id] };
-    }
-    return decision;
-  }
-
-  /*
-  功能
-  从 Domain CardRules 提供的深层合法 source/receiver 集合选择转移计划。
-
-  调用方
-  generateFromVisible。
-
-  输入
-  过滤 SearchState、行动者、转移牌与 Belief remaining counts。
-
-  输出
-  TransferPolicy 选择描述或 null。
-
-  读取状态
-  Domain CardRules 合法集合、SearchState 公开/合法信息与 Belief。
-
-  写入状态
-  无。
-
-  调用函数
-  Domain CardRules.getTransferSourceIds/getTransferReceiverIds、TransferPolicy.choose。
-
-  边界与不变量
-  Generator 只提供合法集合；正收益过滤和 tie-break 属正式 Policy，真实实体移动不在此发生。
-  */
-  chooseVisibleTransferPlan(state, actor, card, remainingCardCounts = null, isRangeLegal = null) {
-    const players = state?.players ?? [];
-    const excludedCardIds = card.id ? new Set([card.id]) : null;
-    const sources = this.getTransferSourcesFromRule(players, actor, card, excludedCardIds, isRangeLegal);
-    return chooseBestPositiveTransfer(buildTransferCandidates({
-      actor,
-      sources,
-      excludedCardIds,
-      remainingCardCounts,
-      getReceivers:(from) => this.getTransferReceiversFromRule(players, actor, from, card, isRangeLegal)
+  getHandSelections(state, owner, excludedCardIds = null) {
+    const resources = Array.isArray(owner?.hand) ? owner.hand : (owner?.knownCards ?? []);
+    const selections = resources.filter((entry) => (
+      !excludedCardIds?.has(entry.id ?? entry.cardId)
+      && Number(entry.availability ?? 1) > PROBABILITY_EPSILON
+    )).map((entry) => ({
+      zone:"hand",
+      selectionKind:"known",
+      cardId:entry.id ?? entry.cardId,
+      definitionId:entry.definitionId,
+      availableUnknownCount:0
     }));
+    const anonymousCount = expectedAnonymousSlots(state.probabilityState, owner.id);
+    if (anonymousCount > PROBABILITY_EPSILON) selections.push({
+      zone:"hand",
+      selectionKind:"unknown",
+      cardId:null,
+      definitionId:null,
+      knownCardIds:selections.map((entry) => entry.cardId),
+      availableUnknownCount:anonymousCount
+    });
+    return selections;
   }
 
   /*
   功能
-  从当前真实局面枚举 Domain Rules 允许的动作，再应用 AI 专属候选策略形成 Planner 根候选。
+  枚举破坏或掠夺目标的完整区域选择空间。
 
   调用方
-  AIController.getActionCandidates 与直接动作生成测试。
+  generate 的 plunder/destroy 分支。
 
   输入
-  当前行动 Player。
+  World 与资源拥有者。
 
   输出
-  包含卡牌、技能和结束阶段的 Planner 候选数组；它不等同于完整游戏合法动作集。
+  全部合法手牌选择，加上存在概率大于零的公开装备选择。
 
   读取状态
-  当前 GameState、Domain Rules 权威、角色技能与转移选择策略。
+  getHandSelections 与装备当前字段。
 
   写入状态
   无。
 
   调用函数
-  Domain CardRules/SkillRules 合法性与目标入口、chooseTransferCombination。
+  getHandSelections。
 
   边界与不变量
-  Domain CardRules/SkillRules 独占确定性合法性，ActionCandidatePolicy 仅收窄 AI 会考虑的集合；保持既有枚举顺序与候选集合，转移只记录选择描述，不移动实体牌。
+  区域和实体身份都在 Action 创建前确定；不按策略价值过滤。
   */
-  generate(player, rootContext = null) {
-    if (typeof this.getRootContext !== "function") {
-      throw new Error("Worker deep-only ActionGenerator 不提供 root generate");
-    }
-    const context = rootContext ?? this.getRootContext();
-    const players = context.state.players;
-    const actions = [];
-    for (const card of player.hand) {
-      const transferSourceIds = card.definitionId === "transfer"
-        ? this.getTransferSourcesFromRule(players, player, card, new Set([card.id]))
-          .map((from) => from.id)
-        : null;
-      const cardLegality = canPlayCard({
-        players: this.projectPlayers(players),
-        sourceId: player.id,
-        currentPlayerId: context.currentPlayer?.id ?? context.state?.currentPlayerId ?? null,
-        phase: context.state?.phase ?? context.phase ?? "idle",
-        card,
-        inHand: Boolean(player.hand.includes(card) || player.hand.some((entry) => entry?.id === card?.id)),
-        assaultUsage: projectAttackUsage(player),
-        recoverUsed: player.turnFlags?.recoverUsed ?? player.recoverUsed ?? 0,
-        recoverLimit: player.turnFlags?.recoverLimit ?? player.recoverLimit ?? null,
-        transferSourceIds
+  getResourceSelections(state, owner) {
+    const selections = this.getHandSelections(state, owner);
+    if (owner?.equipmentDefinitionId
+      && Number(owner.equipmentRetentionProbability ?? 1) > PROBABILITY_EPSILON) {
+      selections.push({
+        zone:"equipment",
+        selectionKind:"equipment",
+        cardId:null,
+        definitionId:owner.equipmentDefinitionId,
+        availableUnknownCount:0
       });
-      if (!cardLegality.ok) continue;
-      if (card.definitionId === "lightning"
-        && this.actionCandidatePolicy.isLightningStrategicallyForbidden(
-          players,
-          player
-        )) continue;
-      if (card.definitionId === "lightning" && hasStatus(projectRulePlayer(player), "lightning")) continue;
-      const targets = this.getCardTargetsFromRule(players, player, card);
-      if (card.definitionId === "leverage") {
-        for (const firstTarget of this.getLeverageFirstTargetsFromRule(players, player)) {
-          for (const secondTarget of this.getAssaultTargetsFromRule(players, firstTarget)) {
-            actions.push({
-              type:"card",
-              card,
-              targets:[firstTarget, secondTarget],
-              selection:{
-                firstTargetId:firstTarget.id,
-                equipmentCardId:firstTarget.equipment.id,
-                secondTargetId:secondTarget.id
-              }
-            });
-          }
-        }
-        continue;
-      }
-      if (card.definitionId === "transfer") {
-        const sources = this.getTransferSourcesFromRule(players, player, card, new Set([card.id]))
-          .filter((from) => this.getTransferReceiversFromRule(players, player, from, card).length);
-        const selection = this.chooseTransferCombination(player, card, sources, null, new Set([card.id]));
-        if (selection) actions.push({ type:"card", card, targets:[], selection });
-        continue;
-      }
-      if (["singleEnemy", "singleEnemyInRange", "singleUnsealedEnemy", "singleAlly", "otherWithCards", "otherWithCardsOrEquipment"].includes(card.targetType)) {
-        const aiTargets = this.actionCandidatePolicy.filterCardTargets(card, player, targets);
-        for (const target of aiTargets) actions.push({ type:"card", card, targets:[target] });
-      } else actions.push({ type:"card", card, targets:card.targetType === "allEnemies" || card.targetType === "allLiving" ? targets : [] });
     }
-    const skill = ACTIVE_SKILL_DEFINITIONS[player.character?.activeSkillIds?.[0] ?? ""] ?? null;
-    if (skill
-      && this.canUseSkillFromRule(context, player, skill).ok
-      && (skill.id !== "breakArmy"
-        || this.actionCandidatePolicy.canBenefitFromBreakArmy(player))
-      && !(skill.id === "allIn" && this.actionCandidatePolicy.isZeroBenefitAllIn(player))) {
-      const targets = this.getSkillTargetsFromRule(players, player, skill);
-      const energyCost = getSkillCost(skill, player, players);
-      if (skill.targetType === "none" || skill.targetType === "allEnemies") {
-        actions.push({ type:"skill", skill, targets, energyCost });
-      } else {
-        for (const target of targets) actions.push({ type:"skill", skill, targets:[target], energyCost });
-      }
-    }
-    actions.push({ type:"end" });
-    return actions;
+    return selections;
   }
 
   /*
   功能
-  从过滤 SearchState 重新生成深层 AI 候选动作。
+  枚举窥探至多两张手牌的已知实体与匿名位置组合。
 
   调用方
-  Planner 注入的 generateFromVisible 能力。
+  generate 的 scout 分支。
 
   输入
-  SearchState、当前行动者 ID 与可选 SearchBudget 诊断能力。
+  World 与被查看玩家。
 
   输出
-  带执行概率分支的 AI policy candidate action 数组。
+  每个一至两张合法组合的 selection。
 
   读取状态
-  过滤玩家、Belief、Domain Rules 共享纯规则、正式 Policy 与概率代数。
+  getHandSelections。
 
   写入状态
   无。
 
   调用函数
-  Domain Card/Skill Rules、ActionCandidatePolicy、TransferPolicy、deduplicateSearchEquivalentActions、attachProbabilityBranches。
+  getHandSelections。
 
   边界与不变量
-  动态距离只使用实时 alive ring；Policy 过滤不改变 Domain authority 的合法性定义；
-  identity、availability、selection 与条件世界可能在 preparation 后才完整，必须保留逐实体准备和原有 post-preparation dedup；
-  TIME 可在单个 preparation 的安全概率边界 cooperative abort；当前未完成动作整体作废，
-  已完整 preparation 的动作继续保留，且不改变 NODE 的完整候选语义。
+  已知实体不重复，匿名数量不超过当前有限池容量；不读取匿名牌身份。
   */
-  generateFromVisible(state, playerId, searchBudget = null) {
+  getScoutSelections(state, owner) {
+    const hand = this.getHandSelections(state, owner);
+    const known = hand.filter((entry) => entry.selectionKind === "known");
+    const anonymous = hand.find((entry) => entry.selectionKind === "unknown") ?? null;
+    const selections = [];
+    for (let first = 0; first < known.length; first += 1) {
+      selections.push({
+        selectionKind:"peek",
+        cardIds:[known[first].cardId],
+        unknownCount:0
+      });
+      for (let second = first + 1; second < known.length; second += 1) {
+        selections.push({
+          selectionKind:"peek",
+          cardIds:[known[first].cardId, known[second].cardId],
+          unknownCount:0
+        });
+      }
+      if (anonymous) selections.push({
+        selectionKind:"peek",
+        cardIds:[known[first].cardId],
+        unknownCount:1,
+        knownCardIds:known.map((entry) => entry.cardId)
+      });
+    }
+    const anonymousMaximum = Math.min(
+      2,
+      Math.ceil(Number(anonymous?.availableUnknownCount) || 0)
+    );
+    for (let count = 1; count <= anonymousMaximum; count += 1) selections.push({
+      selectionKind:"peek",
+      cardIds:[],
+      unknownCount:count,
+      knownCardIds:known.map((entry) => entry.cardId)
+    });
+    return selections;
+  }
+
+  /*
+  功能
+  从 canonical World 枚举完整合法 Action。
+
+  调用方
+  AIController 根候选与 Planner 深层展开。
+
+  输入
+  World、当前行动者 ID 与可选 SearchBudget 诊断能力。
+
+  输出
+  target 与 selection 已完整的 canonical Action 数组。
+
+  读取状态
+  World 确定字段、Probability bounded query 与 Domain Rules。
+
+  写入状态
+  无。
+
+  调用函数
+  Domain Card/Skill Rules、createCompleteAction、deduplicateSearchEquivalentActions。
+
+  边界与不变量
+  动态距离只使用实时 alive ring；
+  Generator 是唯一合法性与动作补全 owner；返回后 Planner/Simulator 不得补 target 或 selection，
+  transition 的概率资源消费仍由 Simulator owner 处理。
+  */
+  generate(state, playerId, searchBudget = null) {
     if (state.playPhaseEnded) return [];
     const actor = state.players.find((player) => player.id === playerId && player.alive);
-    if (!actor) return [{ type:"end" }];
+    if (!actor) return [];
     const alive = state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
-    // 深层规则输入是 SearchState canonical projection，Domain Rules 只接收 data-only facts。
+    // Domain Rules 只接收 canonical data facts；Generator 保留原规则枚举顺序。
     const enemies = alive.filter((player) => player.battleTeam !== actor.battleTeam);
     /*
     功能
-    把当前 SearchState 绑定成 Domain target rules 所需的概率距离 predicate。
+    把当前 World 绑定成 Domain target rules 所需的概率距离 predicate。
 
     调用方
-    generateFromVisible 内的 card/skill/transfer/leverage target enumeration。
+    generate 内的 card/skill/transfer/leverage target enumeration。
 
     输入
     Domain 投影的 source、target 与 range。
@@ -705,7 +725,7 @@ export class ActionGenerator {
     布尔值。
 
     读取状态
-    当前 generateFromVisible 的 state。
+    当前 generate 的 World。
 
     写入状态
     无。
@@ -714,7 +734,7 @@ export class ActionGenerator {
     hasPossibleRangeWorld。
 
     边界与不变量
-    只回答候选存在性；精确 execution probability 仍由 attachProbabilityBranches 计算。
+    只回答候选存在性；不为候选构造执行世界。
     */
     const isRangeLegal = (source, target, range) => this.hasPossibleRangeWorld(
       state, source, target, range
@@ -724,25 +744,59 @@ export class ActionGenerator {
       const definition = CARD_DEFINITIONS[held.definitionId];
       if (!definition || definition.usageMode === "response") continue;
       const card = { ...definition, ...held, id:held.id };
-      if (card.definitionId === "lightning"
-        && this.actionCandidatePolicy.isLightningStrategicallyForbidden(
-          state.players,
-          actor
-        )) continue;
+      const transferSourceIds = card.definitionId === "transfer"
+        ? this.getTransferSourcesFromRule(state.players, actor, card, new Set([card.id]), isRangeLegal)
+          .map((source) => source.id)
+        : null;
+      const legality = canPlayCard({
+        players:this.projectPlayers(state.players),
+        sourceId:actor.id,
+        currentPlayerId:actor.id,
+        phase:state.phase,
+        card,
+        inHand:true,
+        assaultUsage:projectAttackUsage(actor),
+        recoverUsed:actor.recoverUsed ?? 0,
+        recoverLimit:actor.recoverLimit ?? null,
+        transferSourceIds,
+        isRangeLegal
+      });
+      if (!legality.ok) continue;
       if (card.definitionId === "lightning" && hasStatus(projectRulePlayer(actor), "lightning")) continue;
       if (card.definitionId === "assault") {
         for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
-          actions.push({ type:"card", card, targets:[target] });
+          const action = this.createCompleteAction(
+            state, actor, "card", card, [target], null, null, searchBudget
+          );
+          if (action) actions.push(action);
         }
         continue;
       }
       if (card.definitionId === "recover" && (actor.hp >= actor.maxHp || (actor.recoverLimit !== null && actor.recoverUsed >= actor.recoverLimit))) continue;
       if (card.definitionId === "charge" && actor.energy >= actor.maxEnergy) continue;
       if (card.definitionId === "transfer") {
-        const selection = this.chooseVisibleTransferPlan(
-          state, actor, card, state.remainingCardCounts ?? null, isRangeLegal
-        );
-        if (selection) actions.push({ type:"card", card, targets:[], selection });
+        const excludedCardIds = card.id ? new Set([card.id]) : null;
+        for (const source of this.getTransferSourcesFromRule(
+          state.players, actor, card, excludedCardIds, isRangeLegal
+        )) {
+          for (const receiver of this.getTransferReceiversFromRule(
+            state.players, actor, source, card, isRangeLegal
+          )) {
+            for (const resource of this.getHandSelections(state, source, excludedCardIds)) {
+              const action = this.createCompleteAction(
+                state,
+                actor,
+                "card",
+                card,
+                [],
+                { sourceId:source.id, receiverId:receiver.id, ...resource },
+                null,
+                searchBudget
+              );
+              if (action) actions.push(action);
+            }
+          }
+        }
         continue;
       }
       if (card.definitionId === "leverage") {
@@ -751,43 +805,84 @@ export class ActionGenerator {
         ).filter((firstTarget) => (firstTarget.equipmentRetentionProbability ?? 1) > PROBABILITY_EPSILON);
         for (const firstTarget of firstTargets) {
           for (const secondTarget of this.getAssaultTargetsFromRule(state.players, firstTarget, isRangeLegal)) {
-            actions.push({
-              type:"card",
+            const action = this.createCompleteAction(
+              state,
+              actor,
+              "card",
               card,
-              targets:[firstTarget, secondTarget],
-              selection:{
+              [firstTarget, secondTarget],
+              {
                 firstTargetId:firstTarget.id,
                 equipmentCardId:null,
                 equipmentDefinitionId:firstTarget.equipmentDefinitionId,
                 secondTargetId:secondTarget.id
-              }
-            });
+              },
+              null,
+              searchBudget
+            );
+            if (action) actions.push(action);
           }
         }
         continue;
       }
-      if (["singleEnemy","singleUnsealedEnemy"].includes(card.targetType)) {
+      if (card.definitionId === "scout") {
         for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
-          actions.push({ type:"card", card, targets:[target] });
+          for (const selection of this.getScoutSelections(state, target)) {
+            const action = this.createCompleteAction(
+              state, actor, "card", card, [target], selection, null, searchBudget
+            );
+            if (action) actions.push(action);
+          }
         }
-      } else if (card.targetType === "singleAlly") for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) actions.push({ type:"card", card, targets:[target] });
-      else if (card.targetType === "otherWithCards") for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) actions.push({ type:"card", card, targets:[target] });
+      } else if (["singleEnemy","singleUnsealedEnemy"].includes(card.targetType)) {
+        for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
+          const action = this.createCompleteAction(
+            state, actor, "card", card, [target], null, null, searchBudget
+          );
+          if (action) actions.push(action);
+        }
+      } else if (card.targetType === "singleAlly" || card.targetType === "otherWithCards") {
+        for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
+          const action = this.createCompleteAction(
+            state, actor, "card", card, [target], null, null, searchBudget
+          );
+          if (action) actions.push(action);
+        }
+      }
       else if (card.targetType === "otherWithCardsOrEquipment") {
         const targets = this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal);
-        for (const target of this.actionCandidatePolicy.filterCardTargets(
-          card,
-          actor,
-          targets
-        )) actions.push({ type:"card", card, targets:[target] });
+        for (const target of targets) {
+          for (const selection of this.getResourceSelections(state, target)) {
+            const action = this.createCompleteAction(
+              state, actor, "card", card, [target], selection, null, searchBudget
+            );
+            if (action) actions.push(action);
+          }
+        }
+      } else {
+        const targets = ["allEnemies","allLiving"].includes(card.targetType)
+          ? (card.targetType === "allEnemies" ? enemies : alive)
+          : [];
+        const action = this.createCompleteAction(
+          state, actor, "card", card, targets, null, null, searchBudget
+        );
+        if (action) actions.push(action);
       }
-      else actions.push({ type:"card", card, targets:["allEnemies","allLiving"].includes(card.targetType) ? (card.targetType === "allEnemies" ? enemies : alive) : [] });
     }
     const skill = ACTIVE_SKILL_DEFINITIONS[actor.activeSkillId] ?? null;
-    if (skill
-      && (skill.id !== "breakArmy"
-        || this.actionCandidatePolicy.canBenefitFromBreakArmy(actor))
-      && !(skill.id === "allIn" && this.actionCandidatePolicy.isZeroBenefitAllIn(actor))) {
-            let targets = [];
+    const skillLegality = skill ? canUseSkillBase({
+      players:this.projectPlayers(state.players),
+      sourceId:actor.id,
+      currentPlayerId:actor.id,
+      phase:state.phase,
+      skill,
+      used:actor.activeSkillUses ?? 0,
+      limitPerTurn:actor.activeSkillLimit ?? skill.limitPerTurn ?? 1,
+      energy:actor.energy,
+      minimumEnergy:getSkillCost(skill, actor, state.players)
+    }) : { ok:false };
+    if (skill && skillLegality.ok) {
+      let targets = [];
       if (skill.id === "barrier") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
       else if (skill.id === "resonance") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
       else if (skill.id === "symbiosis") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
@@ -795,60 +890,115 @@ export class ActionGenerator {
       else if (skill.id === "hunt") {
         const ruleTargets = new Set(this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal)
           .map((target) => target.id));
-        targets = enemies.filter((player) => {
-          if (ruleTargets.has(player.id)) return true;
-          const markBranches = player.huntMarkStateBranchesBySource?.[actor.id];
-          if (Array.isArray(markBranches)) {
-            return totalBranchProbability(markBranches.filter((branch) => branch.marked)) > PROBABILITY_EPSILON;
-          }
-          return Math.max(0, Math.min(1, Number(
-            player.huntMarkProbabilities?.[actor.id] ?? (player.huntMarkSourceId === actor.id ? 1 : 0)
-          ) || 0)) > 0;
-        });
+        targets = enemies.filter((player) => ruleTargets.has(player.id)
+          || player.huntMarkSourceId === actor.id);
       }
-      if (["none","allEnemies"].includes(skill.targetType)) actions.push({ type:"skill", skill, targets:skill.targetType === "allEnemies" ? enemies : [] });
-      else for (const target of targets) actions.push({ type:"skill", skill, targets:[target] });
-    }
-    actions.push({ type:"end" });
-    const preparedActions = [];
-    for (const action of actions) {
-      if (searchBudget?.shouldAbortCurrentWork?.()) break;
-      let prepared = null;
-      try {
-        prepared = this.attachProbabilityBranches(state, actor, action, searchBudget);
-      } catch (error) {
-        if (searchBudget?.isCurrentWorkInterruption?.(error)) break;
-        throw error;
+      if (["none","allEnemies"].includes(skill.targetType)) {
+        const action = this.createCompleteAction(
+          state,
+          actor,
+          "skill",
+          skill,
+          skill.targetType === "allEnemies" ? enemies : [],
+          null,
+          getSkillCost(skill, actor, state.players),
+          searchBudget
+        );
+        if (action) actions.push(action);
+      } else {
+        for (const target of targets) {
+          const action = this.createCompleteAction(
+            state,
+            actor,
+            "skill",
+            skill,
+            [target],
+            null,
+            getSkillCost(skill, actor, state.players),
+            searchBudget
+          );
+          if (action) actions.push(action);
+        }
       }
-      if (!prepared) continue;
-      preparedActions.push(prepared);
-      searchBudget?.observeActionGeneration?.({
-        preparedCandidates:1,
-        probabilityPreparations:action.type === "end" ? 0 : 1,
-        conditionBranches:prepared.conditionBranches?.length ?? 0,
-        executionWorldBranches:prepared.executionWorldBranches?.length ?? 0
-      });
     }
-    const uniquePreparedActions = deduplicateSearchEquivalentActions(preparedActions);
+    actions.push(this.createEndAction(actor.id));
+    const uniqueActions = deduplicateSearchEquivalentActions(actions);
     searchBudget?.observeActionGeneration?.({
       physicalCandidates:actions.length,
-      uniqueCandidates:uniquePreparedActions.length
+      uniqueCandidates:uniqueActions.length
     });
-    return uniquePreparedActions;
+    return uniqueActions;
   }
 
   /*
   功能
-  把距离、延迟状态和选择约束投影为动作是否匹配的互斥条件分区。
+  判断完整 selection 在当前 World 中是否至少存在一个可用世界。
 
   调用方
-  attachProbabilityBranches。
+  createCompleteAction。
 
   输入
-  过滤 SearchState、行动者与候选动作。
+  World、selection 与目标 ID。
 
   输出
-  带 probability、conditions 与 matches 的条件分支。
+  可能存在返回 true，否则返回 false。
+
+  读取状态
+  selection 指定资源、资源 availability、ProbabilityState 匿名桶与装备保留概率。
+
+  写入状态
+  无。
+
+  调用函数
+  queryAnonymousSlotDistribution。
+
+  边界与不变量
+  只验证 Generator 已展开的一个完整 selection；不得组合资源分支、改选、评分或制造替代 selection。
+  */
+  isSelectionPossible(state, selection, targetIds) {
+    if (!selection) return true;
+    const ownerId = selection.sourceId ?? targetIds?.[0] ?? null;
+    const owner = state.players.find((player) => player.id === ownerId) ?? null;
+    if (!owner) return false;
+    const selectedCardIds = [
+      ...(selection.cardId ? [selection.cardId] : []),
+      ...(Array.isArray(selection.cardIds) ? selection.cardIds : [])
+    ];
+    const resources = [
+      ...(Array.isArray(owner.hand) ? owner.hand : []),
+      ...(Array.isArray(owner.knownCards) ? owner.knownCards : [])
+    ];
+    const knownPossible = selectedCardIds.every((selectedCardId) => resources.some((entry) => (
+      (entry.id ?? entry.cardId) === selectedCardId
+      && Number(entry.availability ?? 1) > PROBABILITY_EPSILON
+    )));
+    if (!knownPossible) return false;
+    const anonymousCount = selection.selectionKind === "unknown"
+      ? 1
+      : Math.max(0, Math.floor(Number(selection.unknownCount) || 0));
+    if (anonymousCount > 0 && !queryAnonymousSlotDistribution(
+      state.probabilityState,
+      owner.id
+    ).some((branch) => (
+      branch.count >= anonymousCount && branch.probability > PROBABILITY_EPSILON
+    ))) return false;
+    if (selection.zone === "equipment") return owner.equipmentDefinitionId === selection.definitionId
+      && Number(owner.equipmentRetentionProbability ?? 1) > PROBABILITY_EPSILON;
+    return true;
+  }
+
+  /*
+  功能
+  判断距离或延迟状态约束是否至少允许一个动作世界。
+
+  调用方
+  createCompleteAction。
+
+  输入
+  World、行动者、动作类型、卡牌或技能定义、目标实体与 selection。
+
+  输出
+  可能执行返回 true，否则返回 false。
 
   读取状态
   攻击距离、猎印、封印、闪电和转移/借势公开条件。
@@ -857,66 +1007,50 @@ export class ActionGenerator {
   无。
 
   调用函数
-  DistanceProbabilityBranches、LightningModel、SealModel、binaryConditionPartition。
+  DistanceProbabilityBranches、LightningModel、SealModel 的 bounded query。
 
   边界与不变量
-  这里只投影既有条件世界，不重新判断 Policy 价值或执行真实规则。
+  这里只判断候选存在性，不组合条件世界、不重新判断 Policy 价值或模拟执行。
   */
-  getActionConditionPartition(state, actor, action) {
-    if (action.type === "skill") {
-      if (action.skill.id === "hunt") {
-        const target = action.targets?.[0];
-        const markBranches = target?.huntMarkStateBranchesBySource?.[actor.id];
-        if (Array.isArray(markBranches) && markBranches.length) {
-          return markBranches.map((branch) => ({
-            probability:branch.probability,
-            conditions:branch.conditions,
-            matches:Boolean(branch.marked)
-          }));
-        }
-        const markProbability = Math.max(0, Math.min(1, Number(
-          target?.huntMarkProbabilities?.[actor.id] ?? (target?.huntMarkSourceId === actor.id ? 1 : 0)
-        ) || 0));
-        return binaryConditionPartition(huntMarkConditionKey(actor.id, target?.id), markProbability);
+  isActionConditionPossible(state, actor, type, definition, targets, selection) {
+    if (type === "skill") {
+      if (definition.id === "hunt") {
+        const target = targets?.[0];
+        const markProbability = target?.huntMarkProbabilities?.[actor.id]
+          ?? (target?.huntMarkSourceId === actor.id ? 1 : 0);
+        return markProbability > PROBABILITY_EPSILON;
       }
-      if (action.skill.rangeRule === "attack" || action.skill.rangeRule === "fixed") {
-        const target = action.targets?.[0];
-        return getRangeConditionBranches({ state }, {
-          source:actor,
+      if (definition.rangeRule === "attack" || definition.rangeRule === "fixed") {
+        const target = targets?.[0];
+        return getRangeLegalityProbability(
+          { state },
+          actor,
           target,
-          range:action.skill.rangeRule === "attack" ? actor.attackRange : action.skill.range
-        });
+          definition.rangeRule === "attack" ? actor.attackRange : definition.range
+        ) > PROBABILITY_EPSILON;
       }
-      return [{ probability:1, conditions:{}, matches:true }];
+      return true;
     }
 
-    const card = action.card;
+    const card = definition;
     if (card.definitionId === "lightning") {
-      return getLightningStatusStateBranches(actor).map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        matches:!branch.present
-      }));
+      return lightningPresenceProbability(actor) < 1 - PROBABILITY_EPSILON;
     }
     if (card.definitionId === "seal") {
-      const target = state.players.find((player) => player.id === action.targets?.[0]?.id);
-      return getSealStatusStateBranches(target).map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        matches:!branch.present
-      }));
+      const target = state.players.find((player) => player.id === targets?.[0]?.id);
+      return sealPresenceProbability(target) < 1 - PROBABILITY_EPSILON;
     }
     if (card.definitionId === "transfer") {
-      const source = state.players.find((player) => player.id === action.selection?.sourceId);
-      const receiver = state.players.find((player) => player.id === action.selection?.receiverId);
+      const source = state.players.find((player) => player.id === selection?.sourceId);
+      const receiver = state.players.find((player) => player.id === selection?.receiverId);
       return getRangeConditionBranches({ state }, [
         { source:actor, target:source, range:card.effectRange },
         { source:actor, target:receiver, range:card.effectRange }
-      ]);
+      ]).some((branch) => branch.matches && branch.probability > PROBABILITY_EPSILON);
     }
     if (card.definitionId === "leverage") {
-      const first = state.players.find((player) => player.id === action.selection?.firstTargetId);
-      const second = state.players.find((player) => player.id === action.selection?.secondTargetId);
+      const first = state.players.find((player) => player.id === selection?.firstTargetId);
+      const second = state.players.find((player) => player.id === selection?.secondTargetId);
       return getRangeConditionBranches({ state }, {
         source:first,
         target:second,
@@ -924,350 +1058,88 @@ export class ActionGenerator {
       }, {
         equipmentRequirements:[{
           player:first,
-          definitionId:action.selection?.equipmentDefinitionId,
+          definitionId:selection?.equipmentDefinitionId,
           present:true
         }]
-      });
+      }).some((branch) => branch.matches && branch.probability > PROBABILITY_EPSILON);
     }
-    const target = action.targets?.[0];
+    const target = targets?.[0];
     if (card.definitionId === "assault" && target) {
-      return getRangeConditionBranches({ state }, {
-        source:actor,
-        target,
-        range:actor.attackRange ?? 1
-      });
+      return getRangeLegalityProbability(
+        { state }, actor, target, actor.attackRange ?? 1
+      ) > PROBABILITY_EPSILON;
     }
     if (!card.ignoresDistance && card.effectRange != null && target) {
-      return getRangeConditionBranches({ state }, {
-        source:actor,
-        target,
-        range:card.effectRange
+      return getRangeLegalityProbability(
+        { state }, actor, target, card.effectRange
+      ) > PROBABILITY_EPSILON;
+    }
+    return true;
+  }
+
+  /*
+  功能
+  在首次创建 Action 前确认目标与选择仍可能成立。
+
+  调用方
+  generate 的每个规则合法候选。
+
+  输入
+  World、行动者、动作类型、卡牌或技能定义、目标实体、selection、能量费用与可选 SearchBudget。
+
+  输出
+  target 与 selection 完整的 canonical Action；无可能世界时返回 null。
+
+  读取状态
+  只读局部动作语义、World 普通字段与 bounded Probability query。
+
+  写入状态
+  无；只在全部字段确定后调用一次 createAction。
+
+  调用函数
+  isActionConditionPossible、isSelectionPossible、createAction 与 SearchBudget checkpoint。
+
+  边界与不变量
+  Generator 只判断 possible/impossible，不计算联合概率、次数槽或执行世界；
+  返回后 Planner/Simulator 不得补 target、selection 或重新创建另一种 Action。
+  */
+  createCompleteAction(
+    state,
+    actor,
+    type,
+    definition,
+    targets = [],
+    selection = null,
+    energyCost = null,
+    searchBudget = null
+  ) {
+    searchBudget?.checkpointCurrentWork?.();
+    const targetIds = targets.map((target) => target.id);
+    if (!this.isActionConditionPossible(
+      state, actor, type, definition, targets, selection
+    ) || !this.isSelectionPossible(state, selection, targetIds)) return null;
+    if (type === "card") {
+      if (Number(definition.availability ?? 1) <= PROBABILITY_EPSILON) return null;
+      return createAction({
+        type:"card",
+        actorId:actor.id,
+        cardId:definition.definitionId,
+        cardInstanceId:definition.id ?? null,
+        targetIds,
+        selection
       });
     }
-    return [{ probability:1, conditions:{}, matches:true }];
-  }
 
-  /*
-  功能
-  将攻击次数容量规范为逐槽可用性概率分支。
-
-  调用方
-  attachProbabilityBranches。
-
-  输入
-  过滤后的行动者状态。
-
-  输出
-  每个攻击槽的互斥 available 分支数组。
-
-  读取状态
-  attackUseSlots；输入未携带正式槽位时回退读取 attackLimit 与 attackUsed。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  正式槽位原样返回；标量次数回退只用专用条件键保持已用质量，不改变期望容量。
-  */
-  getAttackUseSlots(actor) {
-    if (Array.isArray(actor.attackUseSlots)) return actor.attackUseSlots;
-    const limit = Math.max(0, Math.ceil(Number(actor.attackLimit) || 0));
-    const used = Math.max(0, Number(actor.attackUsed) || 0);
-    return Array.from({ length:limit }, (_, index) => {
-      if (index < Math.floor(used)) return [{ probability:1, conditions:{}, available:false }];
-      if (index > Math.floor(used) || used === Math.floor(used)) {
-        return [{ probability:1, conditions:{}, available:true }];
-      }
-      const unavailable = used - Math.floor(used);
-      return [
-        { probability:1 - unavailable, conditions:{}, available:true },
-        { probability:unavailable, conditions:{ [`attackUse:${actor.id}:${index}`]:"used" }, available:false }
-      ];
-    });
-  }
-
-  /*
-  功能
-  将主动技能次数容量规范为逐槽可用性概率分支。
-
-  调用方
-  attachProbabilityBranches。
-
-  输入
-  过滤后的行动者状态与技能定义。
-
-  输出
-  每个技能使用槽的互斥 available 分支数组。
-
-  读取状态
-  正式技能槽、availability branches 或使用次数/上限。
-
-  写入状态
-  无。
-
-  调用函数
-  getAvailabilityStateBranches。
-
-  边界与不变量
-  只投影次数容量；能量与目标条件由其他分区在同一世界联合。
-  */
-  getSkillUseSlots(actor, skill) {
-    if (Array.isArray(actor.activeSkillUseSlots)) return actor.activeSkillUseSlots;
-    if (Array.isArray(actor.activeSkillAvailabilityBranches)) {
-      return actor.activeSkillAvailabilityBranches.map((availabilityBranches) => (
-        getAvailabilityStateBranches({ availabilityBranches })
-      ));
-    }
-    const uses = Math.max(0, Number(actor.activeSkillUses ?? (actor.activeSkillUsed ? 1 : 0)) || 0);
-    const limit = Math.max(0, Math.ceil(Number(actor.activeSkillLimit ?? skill.limitPerTurn ?? 1) || 0));
-    return Array.from({ length:limit }, (_, index) => [{
-      probability:1,
-      conditions:{},
-      available:index >= Math.ceil(uses)
-    }]);
-  }
-
-  /*
-  功能
-  在单个 action probability preparation 内观察父 SearchBudget。
-
-  调用方
-  buildExecutionWorlds、summarizeExecution 与 attachProbabilityBranches。
-
-  输入
-  可选父 SearchBudget。
-
-  输出
-  可继续时返回 true；停止时抛出父预算的 cooperative unwind signal。
-
-  读取状态
-  传入 SearchBudget。
-
-  写入状态
-  SearchBudget 首次过期时写入停止原因。
-
-  调用函数
-  SearchBudget.checkpointCurrentWork。
-
-  边界与不变量
-  不创建第二套 timeout；无预算的根动作准备保持原完整同步语义。
-  */
-  checkpointProbabilityPreparation(searchBudget) {
-    return searchBudget?.checkpointCurrentWork?.() ?? true;
-  }
-
-  /*
-  功能
-  联合多个共享条件分区并标记每个完整世界是否执行动作。
-
-  调用方
-  attachProbabilityBranches。
-
-  输入
-  概率分区数组、对联合分支的执行谓词与可选 SearchBudget。
-
-  输出
-  新的完整世界数组，每项带 executes 标记。
-
-  读取状态
-  只读调用方提供的分支与条件键。
-
-  写入状态
-  无。
-
-  调用函数
-  joinProbabilityStateBranchesCooperatively、predicate、SearchBudget checkpoint/诊断。
-
-  边界与不变量
-  相同条件键必须先联合再求谓词，避免相关资源容量被独立相乘；
-  中断时不得返回 partial worlds。
-  */
-  buildExecutionWorlds(partitions, predicate, searchBudget = null) {
-    const joined = joinProbabilityStateBranchesCooperatively(
-      partitions,
-      () => this.checkpointProbabilityPreparation(searchBudget)
-    );
-    searchBudget?.observeProbabilityWork?.(joined.length);
-    const worlds = [];
-    for (let index = 0; index < joined.length; index += 1) {
-      if (index % 32 === 0) this.checkpointProbabilityPreparation(searchBudget);
-      const branch = joined[index];
-      worlds.push({
-        ...branch,
-        executes:Boolean(predicate(branch))
-      });
-    }
-    return worlds;
-  }
-
-  /*
-  功能
-  从完整执行世界提取动作实际执行的规范分支与总概率。
-
-  调用方
-  attachProbabilityBranches。
-
-  输入
-  带 executes 标记的完整世界数组与可选 SearchBudget。
-
-  输出
-  executionBranches 与 executionProbability。
-
-  读取状态
-  世界概率、条件键与 executes 标记。
-
-  写入状态
-  无。
-
-  调用函数
-  mergeProbabilityBranchesCooperatively、SearchBudget checkpoint/诊断。
-
-  边界与不变量
-  合并只发生在已执行世界，条件质量守恒且不改变动作排序；中断不返回 partial summary。
-  */
-  summarizeExecution(worlds, searchBudget = null) {
-    const executed = [];
-    for (let index = 0; index < worlds.length; index += 1) {
-      if (index % 32 === 0) this.checkpointProbabilityPreparation(searchBudget);
-      if (worlds[index].executes) executed.push(worlds[index]);
-    }
-    const executionBranches = mergeProbabilityBranchesCooperatively(
-      executed,
-      () => this.checkpointProbabilityPreparation(searchBudget)
-    );
-    searchBudget?.observeProbabilityWork?.(executionBranches.length);
-    let executionProbability = 0;
-    for (let index = 0; index < executionBranches.length; index += 1) {
-      if (index % 32 === 0) this.checkpointProbabilityPreparation(searchBudget);
-      executionProbability += Math.max(0, Number(executionBranches[index]?.probability) || 0);
-    }
-    return { executionBranches, executionProbability };
-  }
-
-  /*
-  功能
-  联合动作条件、卡牌可用性、次数槽和数量资源，构造互斥的完整执行世界。
-
-  调用方
-  根与深层候选生成路径。
-
-  输入
-  SearchState、行动者、动作、可选 SearchBudget 及其条件/卡牌/技能/次数槽约束。
-
-  输出
-  带 executionWorldBranches 与 executionProbability 的新动作描述。
-
-  读取状态
-  只读动作条件、资源概率分支和 SearchState 槽位。
-
-  写入状态
-  无；返回浅复制动作与新的世界分支数组。
-
-  调用函数
-  getActionConditionPartition、getAvailabilityStateBranches、getAttackUseSlots、getSkillUseSlots、
-  cooperative Probability join/project/merge 与 SearchBudget checkpoint。
-
-  边界与不变量
-  所有约束必须在同一条件世界联合，不能把相关概率当作独立标量相乘；
-  任一 checkpoint 中断会丢弃整个 action preparation。
-  */
-  attachProbabilityBranches(state, actor, action, searchBudget = null) {
-    this.checkpointProbabilityPreparation(searchBudget);
-    if (action.type === "end") return action;
-    const conditionBranches = this.getActionConditionPartition(state, actor, action);
-    this.checkpointProbabilityPreparation(searchBudget);
-    if (action.type === "card") {
-      const cardState = getAvailabilityStateBranches(action.card).map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        cardAvailable:branch.available
-      }));
-      const basePartitions = [conditionBranches, cardState];
-      const attackSlots = action.card.definitionId === "assault" ? this.getAttackUseSlots(actor) : [null];
-      let bestResult = null;
-      for (let attackUseSlot = 0; attackUseSlot < attackSlots.length; attackUseSlot += 1) {
-        this.checkpointProbabilityPreparation(searchBudget);
-        const attackState = attackSlots[attackUseSlot]?.map((branch) => ({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          attackSlotAvailable:branch.available
-        }));
-        const worlds = this.buildExecutionWorlds(
-          attackState ? [...basePartitions, attackState] : basePartitions,
-          (branch) => branch.matches && branch.cardAvailable && (attackState ? branch.attackSlotAvailable : true),
-          searchBudget
-        );
-        const summary = this.summarizeExecution(worlds, searchBudget);
-        if (summary.executionProbability <= PROBABILITY_EPSILON) continue;
-        const cardAvailabilityStateBranches = projectProbabilityStateBranchesCooperatively(
-          worlds,
-          (branch) => ({ available:branch.cardAvailable && !branch.executes }),
-          () => this.checkpointProbabilityPreparation(searchBudget)
-        );
-        searchBudget?.observeProbabilityWork?.(cardAvailabilityStateBranches.length);
-        const result = {
-          ...action,
-          conditionBranches,
-          executionWorldBranches:worlds,
-          ...summary,
-          remainingAvailabilityStateBranches:cardAvailabilityStateBranches,
-          remainingAvailabilityBranches:availableBranchesFromState(cardAvailabilityStateBranches)
-        };
-        if (attackState) result.attackUseSlot = attackUseSlot;
-        if (!bestResult || result.executionProbability > bestResult.executionProbability + PROBABILITY_EPSILON) {
-          bestResult = result;
-        }
-      }
-      return bestResult;
-    }
-
-    const slots = this.getSkillUseSlots(actor, action.skill);
-    const energyState = getValueBranches(actor, "energy", actor.energy).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      energyAmount:branch.amount
-    }));
-    const minimumEnergy = action.skill.id === "allIn"
+    const minimumEnergy = definition.id === "allIn"
       ? 1
-      : getSkillCost(action.skill, actor);
-    let bestResult = null;
-    for (let skillUseSlot = 0; skillUseSlot < slots.length; skillUseSlot += 1) {
-      this.checkpointProbabilityPreparation(searchBudget);
-      const slotState = slots[skillUseSlot].map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        skillSlotAvailable:branch.available ?? true
-      }));
-      const worlds = this.buildExecutionWorlds(
-        [conditionBranches, slotState, energyState],
-        (branch) => branch.matches && branch.skillSlotAvailable && branch.energyAmount >= minimumEnergy,
-        searchBudget
-      );
-      const summary = this.summarizeExecution(worlds, searchBudget);
-      if (summary.executionProbability <= PROBABILITY_EPSILON) continue;
-      const skillAvailabilityStateBranches = projectProbabilityStateBranchesCooperatively(
-        worlds,
-        (branch) => ({ available:branch.skillSlotAvailable && !branch.executes }),
-        () => this.checkpointProbabilityPreparation(searchBudget)
-      );
-      searchBudget?.observeProbabilityWork?.(skillAvailabilityStateBranches.length);
-      const result = {
-        ...action,
-        energyCost:minimumEnergy,
-        conditionBranches,
-        executionWorldBranches:worlds,
-        ...summary,
-        remainingSkillAvailabilityStateBranches:skillAvailabilityStateBranches,
-        remainingSkillAvailabilityBranches:availableBranchesFromState(skillAvailabilityStateBranches),
-        skillUseSlot,
-      };
-      if (!bestResult || result.executionProbability > bestResult.executionProbability + PROBABILITY_EPSILON) {
-        bestResult = result;
-      }
-    }
-    return bestResult;
+      : energyCost ?? getSkillCost(definition, actor);
+    return createAction({
+      type:"skill",
+      actorId:actor.id,
+      skillId:definition.id,
+      targetIds,
+      selection,
+      energyCost:minimumEnergy
+    });
   }
 }

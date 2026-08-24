@@ -9,7 +9,7 @@ AI VisibleState、ResponseBoundary 与 TransferPolicy。
 无。
 
 状态边界
-纯静态只读元数据，不读取或写入 GameState/SearchState。
+纯静态只读元数据，不读取或写入 GameState/World。
 
 信息边界
 标签全部来自公开角色身份，不含隐藏信息。

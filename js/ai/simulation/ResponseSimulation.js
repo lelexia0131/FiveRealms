@@ -1,6 +1,6 @@
 /*
 模块职责
-镜像 SearchState 中的格挡、反制、护援与响应资源容量，不拥有响应策略。
+镜像 World 中的格挡、反制、护援与响应资源容量，不拥有响应策略。
 
 上游
 Simulator 正式模拟门面与 Combat/Card/Status 模拟组件。
@@ -9,7 +9,7 @@ Simulator 正式模拟门面与 Combat/Card/Status 模拟组件。
 state/Probability、正式 ResponsePolicy、GlobalBenefit assessment 与共享 simulation runtime。
 
 状态边界
-只修改 Simulator 门面提供的独立 SearchState 副本及其概率分支。
+只修改 Simulator 门面提供的独立 World 副本及其概率分支。
 
 信息边界
 未知手牌只按合法 knownCards、handCount 与 remaining counts 建模。
@@ -22,9 +22,17 @@ import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/
 import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
 import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
 import { planningCounterDecision, planningDynamicCounterGain } from "../policy/ResponsePolicy.js";
-import { PROBABILITY_EPSILON, availableBranchesFromState, expectedBranchValue, getAvailabilityBranches, joinProbabilityStateBranches, probabilityEventPartition, totalBranchProbability } from "../state/Probability.js";
-import { mutateHiddenPool, projectHiddenSummaries } from "../state/HiddenPool.js";
-import { clampProbability, remainingCardDensity, unionProbability } from "./SimulationSupport.js";
+import {
+  PROBABILITY_EPSILON,
+  clampProbability,
+  getAvailabilityStateBranches,
+  intersectProbabilityStateBranches,
+  mutateProbability,
+  probabilityEventPartition,
+  queryOrderedFirstResponder,
+  queryPlayerHandProbability,
+  totalBranchProbability
+} from "../state/Probability.js";
 
 /*
 功能
@@ -78,7 +86,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   摸牌、奖励与技能效果入口：逐张推进无放回未知牌及响应容量。
 
   输入
-  SearchState、玩家、非负期望张数、可选条件世界与事件标签。
+  World、玩家、非负期望张数、可选条件世界与事件标签。
 
   输出
   实际获得的期望手牌数量。
@@ -124,14 +132,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
             cardWorlds.push({ ...branch, occurs:true });
           } else {
             const gate = probabilityEventPartition(
-              this.nextProbabilityEventKey(state, `${label}:branch-card`),
+              this.currentProbabilityEventKey(state, `${label}:branch-card`),
               cardProbability,
               "gateOccurs"
             );
             const gatedWorlds = this.rawProbabilityWork(
               "ResponseSimulation.gainUnknownCardsWithCounterState:single-branch-gate",
               3,
-              () => joinProbabilityStateBranches([branch], gate)
+              () => intersectProbabilityStateBranches([branch], gate)
             );
             for (const gated of gatedWorlds) {
               cardWorlds.push({ ...gated, occurs:Boolean(gated.gateOccurs) });
@@ -141,12 +149,11 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         const cardGain = this.eventProbability(cardWorlds);
         if (cardGain <= PROBABILITY_EPSILON) break;
         player.handCount = (player.handCount ?? 0) + cardGain;
-        mutateHiddenPool(state.hiddenPoolState, {
+        mutateProbability(state.probabilityState, {
           type:"ADD",
           targetBucketId:player.id,
           probability:cardGain
         });
-        projectHiddenSummaries(state);
         gained += cardGain;
         for (let index = 0; index < remainingByBranch.length; index += 1) {
           remainingByBranch[index] -= Math.min(1, remainingByBranch[index]);
@@ -166,12 +173,11 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       const cardGain = this.eventProbability(cardWorlds);
       if (cardGain <= PROBABILITY_EPSILON) break;
       player.handCount = (player.handCount ?? 0) + cardGain;
-      mutateHiddenPool(state.hiddenPoolState, {
+      mutateProbability(state.probabilityState, {
         type:"ADD",
         targetBucketId:player.id,
         probability:cardGain
       });
-      projectHiddenSummaries(state);
       gained += cardGain;
       remaining -= cardProbability;
     }
@@ -192,7 +198,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   CombatSimulation 与 consumeBlockResponseWorlds：把已决定的格挡消费映射到具体合法身份。
 
   输入
-  SearchState、玩家、含 requiredCount/blockUsed 的格挡世界与可选排除 ID。
+  World、玩家、含 requiredCount/blockUsed 的格挡世界与可选排除 ID。
 
   输出
   无返回值；相交世界中的已知格挡身份已消费。
@@ -227,17 +233,15 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     );
     for (const card of candidates) {
       this.checkpointSearchWork();
-      const availabilityState = this.getAvailabilityStateWork(
+      const availabilityState = getAvailabilityStateBranches(
         card,
-        "availabilityStateBranches",
-        1,
-        "ResponseSimulation.consumeBlockIdentities:availability"
+        1
       ).map((branch) => ({
         probability:branch.probability,
         conditions:branch.conditions,
         available:Boolean(branch.available)
       }));
-      const joined = this.joinProbabilityWork(
+      const joined = this.intersectProbabilityWork(
         [remainingWorlds, availabilityState],
         "ResponseSimulation.consumeBlockIdentities:join"
       );
@@ -251,15 +255,17 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         }),
         "ResponseSimulation.consumeBlockIdentities:used"
       );
-      card.availabilityStateBranches = this.projectProbabilityWork(
+      const remainingState = this.projectProbabilityWork(
         joined,
         (branch) => ({
           available:Boolean(branch.available && !(branch.available && branch.remaining > 0))
         }),
         "ResponseSimulation.consumeBlockIdentities:card-remaining"
       );
-      card.availabilityBranches = availableBranchesFromState(card.availabilityStateBranches);
-      if (totalBranchProbability(card.availabilityBranches) <= PROBABILITY_EPSILON) {
+      card.availability = totalBranchProbability(
+        remainingState.filter((branch) => branch.available)
+      );
+      if (card.availability <= PROBABILITY_EPSILON) {
         if (Array.isArray(player.hand)) player.hand = player.hand.filter((entry) => entry !== card);
         if (Array.isArray(player.knownCards)) player.knownCards = player.knownCards.filter((entry) => entry !== card);
       }
@@ -280,7 +286,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   CombatSimulation.applyDamage：在伤害穿过响应后结算守护援助。
 
   输入
-  SearchState、受保护目标、入射期望伤害、事件概率、排除守护者与伤害选项。
+  World、受保护目标、入射期望伤害、事件概率、排除守护者与伤害选项。
 
   输出
   护援后剩余的期望伤害量。
@@ -336,46 +342,16 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
 
   /*
   功能
-  汇总整张锦囊经过各反制响应后的最终生效概率。
+  按座次惰性查询同一有限牌池中的首名反制响应者。
 
   调用方
-  TacticResolutionQuery 与 Simulator.apply：取得整张 card-scope 战术的最终生效概率。
+  TacticResolutionQuery、consumeCountersForCardScope 与 Simulator.apply：冻结一次卡牌级反制链。
 
   输入
-  SearchState、行动者、卡牌、目标列表与可选 selection。
+  World、行动者、战术牌、目标列表、可选 selection 与动态条件创建选项。
 
   输出
-  所有卡牌级反制链结算后的零到一生效概率。
-
-  读取状态
-  响应者 counter 分布、座次、阵营与正式反制决策查询。
-
-  写入状态
-  无。
-
-  调用函数
-  evaluateCardScopeCounterResponses。
-
-  边界与不变量
-  本函数只查询，不消费反制；实际消费必须使用同一次 responseEvaluation。
-  */
-  tacticResolutionChance(state, actor, card, targets = [], selection = null) {
-    if (!isCounterEligible(card.category, card.counterable)) return 1;
-    return this.evaluateCardScopeCounterResponses(state, actor, card, targets, selection).resolutionChance;
-  }
-
-  /*
-  功能
-  按座次评估卡牌级反制链，在共享隐藏牌世界中选择首名确定响应者。
-
-  调用方
-  tacticResolutionChance、consumeCountersForCardScope 与 Simulator.apply：冻结一次卡牌级反制链。
-
-  输入
-  SearchState、行动者、战术牌、目标列表、可选 selection 与动态条件创建选项。
-
-  输出
-  包含 resolutionChance、联合响应世界和每名响应者边际消费质量的独立对象。
+  包含 resolutionChance、互斥响应结果和每名响应者边际消费质量的独立对象。
 
   读取状态
   存活座次、Counter finite-pool factor、确定身份与正式 counter decision。
@@ -384,13 +360,10 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   无。
 
   调用函数
-  queryCounterCountBranches、counterDecision、
-  Probability 联合/投影辅助函数。
+  counterDecision、queryOrderedFirstResponder。
 
   边界与不变量
-  链顺序和奇偶翻转只计算一次；正式 factor 路径只在调用方要求时创建动态条件；
-  返回结果不得修改任何响应容量；
-  join/project 中断时整个未完成响应 preparation 作废。
+  链顺序只计算一次；逐玩家边际不得独立相乘；返回结果不得修改任何响应容量。
   */
   evaluateCardScopeCounterResponses(
     state,
@@ -409,33 +382,35 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       const responderId = responderOrder[index];
       const player = state.players.find((entry) => entry.id === responderId);
       if (!player?.alive || player.id === actor.id) continue;
-      const counterProbability = clampProbability(player.counterProbability ?? 0);
+      const counterProbability = queryPlayerHandProbability(
+        state.probabilityState, player, "counter"
+      ).probability;
       const decision = this.counterDecision(state, player, actor, card, targets, selection) === true;
       contenders.push({ player, counterProbability, decision, effectiveProbability:0 });
     }
     void options;
     const active = contenders.filter((contender) => contender.decision);
-    const partitions = active.map(({ player }) => {
-      const field = `counterCount:${player.id}`;
-      return (player.counterCountDistribution ?? [])
-        .map((branch) => ({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          [field]:branch.counterCount
-        }));
-    });
-    const jointWorlds = partitions.length
-      ? this.joinProbabilityWork(partitions)
-      : [{ probability:1, conditions:{} }];
-    const responseWorlds = this.projectProbabilityWork(jointWorlds, (world) => {
-      const responder = active.find(({ player }) => (
-        (world[`counterCount:${player.id}`] ?? 0) >= 1
-      ));
-      return { responderId:responder?.player.id ?? null };
-    });
-    const resolutionChance = totalBranchProbability(
-      responseWorlds.filter((world) => world.responderId === null)
+    const ordered = queryOrderedFirstResponder(
+      state.probabilityState,
+      "counter",
+      active.map(({ player }) => ({
+        responderId:player.id,
+        bucketId:player.id,
+        knownResources:[
+          ...(Array.isArray(player.hand) ? player.hand : []),
+          ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+        ].filter((cardEntry) => cardEntry?.definitionId === "counter")
+      }))
     );
+    const responseWorlds = [
+      ...ordered.responders.map((entry) => ({
+        probability:entry.probability,
+        conditions:{},
+        responderId:entry.responderId
+      })),
+      { probability:ordered.none, conditions:{}, responderId:null }
+    ].filter((entry) => entry.probability > PROBABILITY_EPSILON);
+    const resolutionChance = ordered.none;
     for (let index = 0; index < contenders.length; index += 1) {
       if (index % 32 === 0) this.checkpointSearchWork();
       const contender = contenders[index];
@@ -455,7 +430,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   Simulator.apply：在卡牌级反制生效概率确定后兑现同一链的资源消耗。
 
   输入
-  SearchState、行动者、战术牌、目标/selection 与可选已冻结 responseEvaluation。
+  World、行动者、战术牌、目标/selection 与可选已冻结 responseEvaluation。
 
   输出
   实际消费的期望反制总量。
@@ -464,7 +439,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   响应链的 per-player 消费世界与各玩家反制分布。
 
   写入状态
-  响应者 counterCountDistribution、counterProbability、handCount 与确定反制身份。
+  响应者当前 Counter query、handCount 与确定反制身份。
 
   调用函数
   evaluateCardScopeCounterResponses、consumeCounterResponseWorlds。
@@ -489,16 +464,16 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   consumeCountersForCardScope：按同一次 card-scope 响应评估兑现资源。
 
   输入
-  SearchState、响应者与包含 responderId 的共享响应世界。
+  World、响应者与包含 responderId 的共享响应世界。
 
   输出
   实际消费的反制概率质量。
 
   读取状态
-  counterCountDistribution、共享 condition keys 与响应世界。
+  当前 Counter query、共享 condition keys 与响应世界。
 
   写入状态
-  counterCountDistribution、counterProbability、handCount 与确定身份 availability。
+  当前 Counter query、handCount 与确定身份 availability。
 
   调用函数
   consumeTargetCounterResponseWorlds、Probability 投影/汇总辅助函数。
@@ -531,7 +506,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   TacticResolutionQuery 与目标级卡牌效果：估算单个目标是否通过反制。
 
   输入
-  SearchState、行动者、卡牌与目标。
+  World、行动者、卡牌与目标。
 
   输出
   目标效果最终生效概率；非目标级可反制战术返回一。
@@ -551,10 +526,9 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   targetResolutionChance(state, actor, card, target) {
     if (!isCounterEligible(card.category, card.counterable) || card.counterScope !== "target") return 1;
     if (this.counterDecision(state, target, actor, card, [target]) !== true) return 1;
-    return (target.counterCountDistribution ?? []).reduce(
-      (sum, branch) => sum + (branch.counterCount < 1 ? branch.probability : 0),
-      0
-    );
+    return 1 - queryPlayerHandProbability(
+      state.probabilityState, target, "counter"
+    ).probability;
   }
 
   /*
@@ -565,7 +539,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   card-scope 与 target-scope 响应查询：请求正式 ResponsePolicy 的规划反制决策。
 
   输入
-  SearchState、响应者、行动者、卡牌、目标列表与可选 selection。
+  World、响应者、行动者、卡牌、目标列表与可选 selection。
 
   输出
   确定的 respond / do not respond 布尔值。
@@ -586,37 +560,8 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     return planningCounterDecision(state, responder, actor, card, targets, selection, {
       assessGlobalBenefit,
       simulatingRootResolution:this._simulatingRootResolution,
-      dynamicCounterGain:(...args) => this.dynamicCounterGain(...args)
+      dynamicCounterGain:planningDynamicCounterGain
     });
-  }
-
-  /*
-  功能
-  比较反制前后状态价值，计算当前响应在此世界中的动态收益。
-
-  调用方
-  planningCounterDecision：需要比较反制前后 root 结局时请求有界价值增量。
-
-  输入
-  SearchState、响应者、行动者、卡牌、目标列表与可选 selection。
-
-  输出
-  反制翻转相对不反制的纯价值差。
-
-  读取状态
-  只读传入过滤状态和公开 root context。
-
-  写入状态
-  无。
-
-  调用函数
-  planningDynamicCounterGain。
-
-  边界与不变量
-  本入口不修改当前 SearchState；具体配对模拟由正式查询 owner 隔离。
-  */
-  dynamicCounterGain(state, responder, actor, card, targets, selection = null) {
-    return planningDynamicCounterGain(state, responder, actor, card, targets, selection);
   }
 
   /*
@@ -627,7 +572,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   CombatSimulation.applyDamage：把已确定攻击世界与格挡容量和雷达结果联合。
 
   输入
-  SearchState、目标、攻击世界及可选判定前格挡/多个判定牌身份。
+  World、目标、攻击世界及可选判定前格挡/多个判定牌身份。
 
   输出
   outcomeWorlds、blockedProbability 与 expectedBlockSpend。
@@ -636,7 +581,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   block 分布、已知身份、requiredCount、雷达免疫与 responseAllowed 条件。
 
   写入状态
-  blockCountDistribution/摘要、格挡身份 availability 与 handCount。
+  当前 Block query、格挡身份 availability 与 handCount。
 
   调用函数
   getBlockCountBranches、consumeBlockIdentities、Probability 连接/投影 辅助函数。
@@ -645,7 +590,9 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   格挡选择、容量扣减和身份消费共享同一世界；雷达判定格挡按判定顺序只补足原格挡容量缺口。
   */
   consumeBlockResponseWorlds(state, target, attackWorlds, options = {}) {
-    const blockState = target.blockCountDistribution ?? [];
+    const blockState = queryPlayerHandProbability(
+      state.probabilityState, target, "block"
+    ).distribution.map(({ count, ...branch }) => ({ ...branch, blockCount:count }));
     const preJudgmentPartition = Array.isArray(options.preJudgmentBlockState)
       && options.preJudgmentBlockState.length
       ? options.preJudgmentBlockState.map((branch) => ({
@@ -654,7 +601,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
           preBlockCount:branch.blockCount
         }))
       : null;
-    const joined = this.joinProbabilityWork(
+    const joined = this.intersectProbabilityWork(
       preJudgmentPartition
         ? [attackWorlds, blockState, preJudgmentPartition]
         : [attackWorlds, blockState]
@@ -731,17 +678,15 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       for (let index = 0; index < judgmentBlockCards.length; index += 1) {
         this.checkpointSearchWork();
         const availabilityField = `judgmentBlockAvailable${index}`;
-        const availability = this.getAvailabilityStateWork(
+        const availability = getAvailabilityStateBranches(
           judgmentBlockCards[index],
-          "availabilityStateBranches",
-          1,
-          "ResponseSimulation.consumeBlockResponseWorlds:judgment-availability"
+          1
         ).map((branch) => ({
           probability:branch.probability,
           conditions:branch.conditions,
           [availabilityField]:Boolean(branch.available)
         }));
-        joinedJudgments = this.joinProbabilityWork([joinedJudgments, availability]);
+        joinedJudgments = this.intersectProbabilityWork([joinedJudgments, availability]);
       }
       for (let index = 0; index < judgmentBlockCards.length; index += 1) {
         this.checkpointSearchWork();
@@ -761,9 +706,10 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
             };
           }
         );
-        judgmentBlockCard.availabilityStateBranches = judgmentConsumedWorlds;
-        judgmentBlockCard.availabilityBranches = availableBranchesFromState(judgmentConsumedWorlds);
-        if (totalBranchProbability(judgmentBlockCard.availabilityBranches) <= PROBABILITY_EPSILON) {
+        judgmentBlockCard.availability = totalBranchProbability(
+          judgmentConsumedWorlds.filter((branch) => branch.available)
+        );
+        if (judgmentBlockCard.availability <= PROBABILITY_EPSILON) {
           if (Array.isArray(target.hand)) target.hand = target.hand.filter((card) => card !== judgmentBlockCard);
           if (Array.isArray(target.knownCards)) target.knownCards = target.knownCards.filter((entry) => entry !== judgmentBlockCard);
         }
@@ -772,21 +718,20 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
     const anonymousSpend = Math.max(0, expectedBlockSpend - (knownBefore - knownAfter));
     const wholeAnonymousSpend = Math.floor(anonymousSpend);
-    if (wholeAnonymousSpend > 0) mutateHiddenPool(state.hiddenPoolState, {
+    if (wholeAnonymousSpend > 0) mutateProbability(state.probabilityState, {
       type:"REMOVE",
       sourceBucketId:target.id,
       definitionId:"block",
       count:wholeAnonymousSpend
     });
     if (anonymousSpend - wholeAnonymousSpend > PROBABILITY_EPSILON) {
-      mutateHiddenPool(state.hiddenPoolState, {
+      mutateProbability(state.probabilityState, {
         type:"REMOVE",
         sourceBucketId:target.id,
         definitionId:"block",
         probability:anonymousSpend - wholeAnonymousSpend
       });
     }
-    projectHiddenSummaries(state);
     const outcomeWorlds = this.projectProbabilityWork(
       joined,
       (branch) => ({
@@ -811,7 +756,7 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   CardEffectSimulation 的 target-scope 战术：兑现单目标反制尝试。
 
   输入
-  SearchState、目标、效果世界、布尔反制决策与可选响应选项。
+  World、目标、效果世界、布尔反制决策与可选响应选项。
 
   输出
   完整 outcomeWorlds、最终 effectPassWorlds 与 counterAttemptedWorlds。
@@ -820,13 +765,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
   目标 counter/knownCounter 分布、确定身份 availability 与效果条件。
 
   写入状态
-  counterCountDistribution/摘要、反制身份 availability、hand/knownCards 与 handCount。
+  当前 Counter query、反制身份 availability、hand/knownCards 与 handCount。
 
   调用函数
-  getCounterCountBranches、getKnownCounterCountBranches、Probability 连接/投影 辅助函数。
+  queryPlayerHandProbability、Probability 连接/投影与 mutateProbability。
 
   边界与不变量
-  Policy heuristic 不得在这里转成随机事件；容量、具体身份选择和效果取消必须条件耦合；
+  Policy heuristic 不得在这里转成随机事件；W 个效果/count 世界与 H 个当前反制身份
+  直接生成至多 W×(H+1) 个选择结果，时间和空间上界 O(W·H)，不得枚举 2^H presence 组合；
   所有长 join/project/merge 在同一 SearchBudget 下 cooperative abort，partial outcome 不得返回。
   */
   consumeTargetCounterResponseWorlds(state, target, effectWorlds, counterDecision, options = {}) {
@@ -858,7 +804,9 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       conditions:{},
       willing:counterDecision === true
     }];
-    const counterState = target.counterCountDistribution ?? [];
+    const counterState = queryPlayerHandProbability(
+      state.probabilityState, target, "counter"
+    ).distribution.map(({ count, ...branch }) => ({ ...branch, counterCount:count }));
     const candidates = [
       ...(Array.isArray(target.hand) ? target.hand
         .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON && card.definitionId === "counter")
@@ -870,25 +818,12 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     const knownBefore = candidates.reduce(
       (sum, candidate) => sum + this.cardAvailability(candidate.card), 0
     );
-    const candidatePartitions = candidates.map((candidate, index) => (
-      this.getAvailabilityStateWork(
-        candidate.card,
-        "availabilityStateBranches",
-        1,
-        "ResponseSimulation.consumeTargetCounterResponseWorlds:candidate-availability"
-      ).map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        [`c${index}`]:Boolean(branch.available)
-      }))
-    ));
-    const joined = this.joinProbabilityWork([
+    const joined = this.intersectProbabilityWork([
       effectWorlds,
       decisionPartition,
-      counterState,
-      ...candidatePartitions
+      counterState
     ], "ResponseSimulation.consumeTargetCounterResponseWorlds:candidate-worlds");
-    const selectionKey = this.nextProbabilityEventKey(state, `counter-selection:${target.id ?? "unknown"}`);
+    const selectionKey = this.currentProbabilityEventKey(state, `counter-selection:${target.id ?? "unknown"}`);
     const outcomes = [];
     for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
       if (branchIndex % 32 === 0) this.checkpointSearchWork();
@@ -896,9 +831,9 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       const effectOccurs = Boolean(branch.occurs);
       const willing = Boolean(branch.willing);
       const counterCount = Math.max(0, Math.floor(Number(branch.counterCount) || 0));
-      const available = candidates.map((_, index) => Boolean(branch[`c${index}`]));
-      const availableCount = available.reduce((sum, value) => sum + (value ? 1 : 0), 0);
-      const anonymousCount = Math.max(0, counterCount - availableCount);
+      const knownWeights = candidates.map((candidate) => this.cardAvailability(candidate.card));
+      const knownCount = knownWeights.reduce((sum, weight) => sum + weight, 0);
+      const anonymousCount = Math.max(0, counterCount - knownCount);
       const attempted = effectOccurs && willing && counterCount >= 1;
       if (!attempted) {
         outcomes.push({
@@ -909,32 +844,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
         });
         continue;
       }
-      if (Array.isArray(target.hand)) {
-        // 当前 AI 自己：按真实手牌顺序选择第一张可用反制，不随机选择。
-        const firstIndex = available.indexOf(true);
-        if (firstIndex < 0) {
-          outcomes.push({
-            probability:branch.probability,
-            conditions:{ ...branch.conditions, [selectionKey]:"none" },
-            selectedIndex:-1,
-            anonymousSelected:false
-          });
-          continue;
-        }
-        outcomes.push({
-          probability:branch.probability,
-          conditions:{ ...branch.conditions, [selectionKey]:`known:${candidates[firstIndex].key}` },
-          selectedIndex:firstIndex,
-          anonymousSelected:false
-        });
-        continue;
-      }
-      // 其他玩家：已知反制身份与匿名反制桶交换对称互斥选择。
-      const total = availableCount + anonymousCount;
+      // World 只保存当前 identity 边际；按当前可用质量直接形成一个有限选择分布，
+      // 避免为 H 张 fractional identity 物化 2^H 个存在组合。
+      const total = knownCount + anonymousCount;
       for (let index = 0; index < candidates.length; index += 1) {
-        if (available[index]) {
+        if (knownWeights[index] > PROBABILITY_EPSILON) {
           outcomes.push({
-            probability:branch.probability / total,
+            probability:branch.probability * (knownWeights[index] / total),
             conditions:{ ...branch.conditions, [selectionKey]:`known:${candidates[index].key}` },
             selectedIndex:index,
             anonymousSelected:false
@@ -955,26 +871,14 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
     for (let index = 0; index < candidates.length; index += 1) {
       this.checkpointSearchWork();
       const candidate = candidates[index];
-      const availabilityState = this.getAvailabilityStateWork(
-        candidate.card,
-        "availabilityStateBranches",
-        1,
-        "ResponseSimulation.consumeTargetCounterResponseWorlds:remaining-availability"
-      ).map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        available:Boolean(branch.available)
-      }));
-      const joinedAvailability = this.joinProbabilityWork([
-        availabilityState,
-        selectionPartition
-      ]);
-      candidate.card.availabilityStateBranches = this.projectProbabilityWork(
-        joinedAvailability,
-        (branch) => ({ available:Boolean(branch.available && !(branch.selectedIndex === index)) })
+      const selectedProbability = totalBranchProbability(
+        selectionPartition.filter((branch) => branch.selectedIndex === index)
       );
-      candidate.card.availabilityBranches = availableBranchesFromState(candidate.card.availabilityStateBranches);
-      if (totalBranchProbability(candidate.card.availabilityBranches) <= PROBABILITY_EPSILON) {
+      candidate.card.availability = Math.max(
+        0,
+        this.cardAvailability(candidate.card) - selectedProbability
+      );
+      if (candidate.card.availability <= PROBABILITY_EPSILON) {
         if (Array.isArray(target.hand)) target.hand = target.hand.filter((card) => card !== candidate.card);
         if (Array.isArray(target.knownCards)) target.knownCards = target.knownCards.filter((entry) => entry !== candidate.card);
       }
@@ -993,14 +897,13 @@ export const withResponseSimulation = (Base) => class ResponseSimulation extends
       (sum, candidate) => sum + this.cardAvailability(candidate.card), 0
     );
     const anonymousSpend = Math.max(0, attemptedProbability - (knownBefore - knownAfter));
-    if (anonymousSpend > PROBABILITY_EPSILON) mutateHiddenPool(state.hiddenPoolState, {
+    if (anonymousSpend > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
       type:"REMOVE",
       sourceBucketId:target.id,
       definitionId:"counter",
       probability:anonymousSpend
     });
     target.handCount = Math.max(0, (target.handCount ?? 0) - attemptedProbability);
-    projectHiddenSummaries(state);
 
     const outcomeWorlds = this.projectProbabilityWork(joined, (branch) => {
       const effectOccurs = Boolean(branch.occurs);

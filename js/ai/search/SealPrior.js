@@ -9,7 +9,7 @@ SearchPrior 与直接搜索先验测试。
 domain/SealModel、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置。
 
 状态边界
-只读过滤后的 SearchState 与候选目标，不写状态。
+只读过滤后的 World 与候选目标，不写状态。
 
 信息边界
 只消费公开座次、封印状态和合法判定概率摘要。
@@ -21,45 +21,11 @@ import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js";
 import { projectRulePlayers } from "../state/RuleProjection.js";
 import { getBaseCardAiValue } from "../value/CardValue.js";
 import { hasSeal, sealOutcomeProbabilities } from "../domain/SealModel.js";
-import { joinProbabilityStateBranchesCooperatively } from "../state/Probability.js";
 import { turnOpportunityValue } from "../value/ThreatValue.js";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;
 const TURN_TIMING_STEP = 0.1;
-
-/*
-功能
-为封印 Search Prior 构造继承父搜索预算的 cooperative join 能力。
-
-调用方
-sealUseValue。
-
-输入
-可选父 SearchBudget。
-
-输出
-无预算时返回 undefined；有预算时返回兼容 SealModel 注入签名的 join 函数。
-
-读取状态
-SearchBudget 当前停止原因与 deadline。
-
-写入状态
-SearchBudget 首次过期时写入停止原因。
-
-调用函数
-joinProbabilityStateBranchesCooperatively、SearchBudget.checkpointCurrentWork。
-
-边界与不变量
-只改变搜索取消能力，不改变正常完成时的封印概率、条件或输出顺序。
-*/
-function sealPriorJoinCapability(searchBudget) {
-  if (!searchBudget) return undefined;
-  return (...partitions) => joinProbabilityStateBranchesCooperatively(
-    partitions,
-    () => searchBudget.checkpointCurrentWork()
-  );
-}
 
 /*
 功能
@@ -136,7 +102,7 @@ export function turnTimingFactor(state, actor, target) {
 SearchPrior.actionUtility 与直接先验测试。
 
 输入
-行动者、目标、过滤后的 SearchState 与可选父 SearchBudget。
+行动者、目标与过滤后的 World。
 
 输出
 封印候选的搜索先验；非法目标返回既有负五十。
@@ -148,13 +114,12 @@ SearchPrior.actionUtility 与直接先验测试。
 无。
 
 调用函数
-hasSeal、sealOutcomeProbabilities、sealPriorJoinCapability、turnOpportunityValue、turnTimingFactor。
+hasSeal、sealOutcomeProbabilities、turnOpportunityValue、turnTimingFactor。
 
 边界与不变量
-只为候选展开排序；既有基础值、0.65 折扣与座次因子不得进入 final transition；
-父搜索存在时团队反制 join 必须 cooperative abort 整个 partial candidate。
+只为候选展开排序；既有基础值、0.65 折扣与座次因子不得进入 final transition；概率在消费点惰性查询。
 */
-export function sealUseValue(actor, target, state, searchBudget = null) {
+export function sealUseValue(actor, target, state) {
   if (!actor?.alive || !target?.alive
     || target.battleTeam === actor.battleTeam || hasSeal(target)) {
     return -50;
@@ -162,14 +127,10 @@ export function sealUseValue(actor, target, state, searchBudget = null) {
   const futureTarget = {
     ...target,
     statuses:[...new Set([...(Array.isArray(target.statuses) ? target.statuses : []), "sealed"])],
-    sealedStatusStateBranches:[{ probability:1, conditions:{}, present:true }]
+    sealedStatusProbability:1
   };
-  const skipAction = sealOutcomeProbabilities(
-    state,
-    futureTarget,
-    sealPriorJoinCapability(searchBudget)
-  ).skipAction;
+  const skipAction = sealOutcomeProbabilities(state, futureTarget).skipAction;
   return getBaseCardAiValue("seal")
-    + skipAction * turnOpportunityValue(target) * FUTURE_DISCOUNT
+    + skipAction * turnOpportunityValue(target, state) * FUTURE_DISCOUNT
       * turnTimingFactor(state, actor, target);
 }

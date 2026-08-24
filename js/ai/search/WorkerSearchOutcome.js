@@ -12,7 +12,7 @@ AIController.acceptWorkerSearchOutcome。
 只保存冻结普通值；不写 GameState。
 
 信息边界
-只保存 ActionDescriptor/计划描述/stats/rngAfter；不保存真实实体或函数。
+只保存 Action/计划描述/stats/rngAfter；不保存真实实体或函数。
 
 架构约束
 不得 import Game/Application/Domain transitions；不得声称 ACCEPTED 或 Domain legality。
@@ -45,8 +45,8 @@ actionDescriptor/plannedSequenceDescriptors 必须是已投影 descriptor；不�
 */
 export function createWorkerSearchOutcome({
   request,
-  actionDescriptor = null,
-  plannedSequenceDescriptors = [],
+  action = null,
+  plannedActions = [],
   stats = null,
   searchStopReason = null,
   rngAfter = null,
@@ -58,9 +58,9 @@ export function createWorkerSearchOutcome({
     gameId:request.gameId,
     stateVersion:request.stateVersion,
     actorId:request.actorId,
-    actionDescriptor:actionDescriptor ? Object.freeze({ ...actionDescriptor }) : null,
-    plannedSequenceDescriptors:Object.freeze((plannedSequenceDescriptors ?? []).map(
-      (descriptor) => Object.freeze({ ...descriptor })
+    action,
+    plannedActions:Object.freeze((plannedActions ?? []).map(
+      (plannedAction) => plannedAction
     )),
     stats:stats ? Object.freeze({ ...stats }) : null,
     searchStopReason,

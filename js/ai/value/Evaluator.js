@@ -9,7 +9,7 @@ AIController 组合的状态价值适配器、ValueLedger 与测试。
 Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域函数。
 
 状态边界
-只读 VisibleState/SearchState 和显式传入的领域值；不持有 Game，不写状态。
+只读 Fact/World 和显式传入的领域值；不持有 Game，不写状态。
 
 信息边界
 只使用公开字段、合法概率摘要与 viewer 自身的可见卡牌身份。
@@ -18,7 +18,10 @@ Economics、CardValue、ThreatValue 以及封印、雷达的现有纯领域函�
 不得导入或构造 Simulator、Planner、Controller；State Value 只读一个状态，闪电等生命周期结果必须由调用层先计算为纯值。
 */
 import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js";
-import { PROBABILITY_CLASSIFICATION } from "../state/Probability.js";
+import {
+  queryCurrentCardCounts,
+  queryPlayerHandProbability
+} from "../state/Probability.js";
 import { sealTeamBurden } from "./SealValue.js";
 import { cardAvailability, getBaseCardAiValue, roleCardDelta } from "./CardValue.js";
 import {
@@ -68,35 +71,6 @@ export class Evaluator {
 
   /*
   功能
-  暴露 State Value 使用的正式攻击暴露 primitive。
-
-  调用方
-  playerValueTerms 与 value ownership 测试。
-
-  输入
-  过滤后的状态与被评估玩家。
-
-  输出
-  ThreatValue 的 current、future、energy 与逐敌分解。
-
-  读取状态
-  只读过滤后的威胁摘要和距离字段。
-
-  写入状态
-  无。
-
-  调用函数
-  ThreatValue.exposureComponents。
-
-  边界与不变量
-  只转发唯一威胁公式，使单次玩家估值可验证为只计算一次暴露分解。
-  */
-  exposureComponents(state, player) {
-    return exposureComponents(state, player);
-  }
-
-  /*
-  功能
   生成单个玩家状态价值的未签名共享分项。
 
   调用方
@@ -115,56 +89,43 @@ export class Evaluator {
   无。
 
   调用函数
-  CardValue、ThreatValue 与 energyDeviceFutureUtility。
+  queryPlayerHandProbability、CardValue、ThreatValue 与 energyDeviceFutureUtility。
 
   边界与不变量
   这里不施加团队符号，也不计封印/闪电 burden；同一分项同时供 state value 与 ledger 使用。
   */
   playerValueTerms(state, player, viewerId, radarTacticProbability) {
-    const hpBranches = player.hpStateBranchesClassification
-      !== PROBABILITY_CLASSIFICATION.EXPECTED_VALUE
-      && Array.isArray(player.hpStateBranches)
-      && player.hpStateBranches.length > 1
-      ? player.hpStateBranches
-      : null;
-    if (hpBranches) {
-      let death = 0;
-      const terms = {};
-      for (const branch of hpBranches) {
-        const projected = this.playerValueTerms(state, {
-          ...player,
-          hp:branch.hp,
-          alive:branch.alive,
-          hpStateBranches:null
-        }, viewerId, radarTacticProbability);
-        death += branch.probability * projected.death;
-        for (const [name, value] of Object.entries(projected.terms)) {
-          terms[name] = (terms[name] ?? 0) + branch.probability * value;
-        }
-      }
-      return { death, terms };
-    }
     if (!player.alive) return { death: -DEATH_VALUE, terms: {} };
     const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
-    const rescueOutlook = player.expectedRescueCoverage === undefined
-      ? 0
-      : (player.expectedRescueCoverage - 0.5) * 8;
+    let rescueOutlook = 0;
+    if (player.hp <= 1) {
+      const rescueCapacity = state.players
+        .filter((rescuer) => rescuer.alive && rescuer.battleTeam === player.battleTeam)
+        .reduce((sum, rescuer) => (
+          sum + queryPlayerHandProbability(
+            state.probabilityState,
+            rescuer,
+            "recover"
+          ).expected
+        ), 0);
+      if (rescueCapacity > 0) {
+        const requiredRecovery = Math.max(1, 1 - player.hp);
+        const rescueCoverage = Math.min(1, rescueCapacity / requiredRecovery);
+        // 零容量沿用无救援账字段时的中性值；非零容量保留原 coverage 价值曲线。
+        rescueOutlook = (rescueCoverage - 0.5) * 8;
+      }
+    }
     const equipmentValue = player.equipmentDefinitionId
       ? getBaseCardAiValue(player.equipmentDefinitionId)
       : 0;
-    const initialEquipmentValue = player.initialEquipmentValue ?? equipmentValue;
-    const equipmentDelta = (equipmentValue
+    const equipmentDelta = equipmentValue
       * (player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0))
-      - initialEquipmentValue + (player.expectedEquipmentGain ?? 0)) * RESOURCE_MATERIAL_SCALE;
+      * RESOURCE_MATERIAL_SCALE;
     const currentEquipmentRoleDelta = player.equipmentDefinitionId
       ? roleCardDelta(player.characterId, player.equipmentDefinitionId)
       : 0;
-    const initialEquipmentRoleDelta = Number.isFinite(player.initialEquipmentRoleDelta)
-      ? player.initialEquipmentRoleDelta
-      : currentEquipmentRoleDelta;
-    const equipmentRoleDelta = (currentEquipmentRoleDelta
+    const equipmentRoleDelta = currentEquipmentRoleDelta
       * (player.equipmentRetentionProbability ?? (currentEquipmentRoleDelta ? 1 : 0))
-      - initialEquipmentRoleDelta + (player.expectedEquipmentRoleDelta ?? 0))
       * RESOURCE_MATERIAL_SCALE;
     const handRoleDelta = player.id === viewerId
       ? (player.hand ?? []).reduce((sum, card) => (
@@ -183,7 +144,7 @@ export class Evaluator {
       futureInventory,
       energyPressure,
       perEnemy
-    } = this.exposureComponents(state, player);
+    } = exposureComponents(state, player);
     const exposure = currentThreat + futureInventory + energyPressure;
     const radarMitigation = radarMitigationUtility(exposure, player, radarTacticProbability);
     const residualExposure = Math.max(0, exposure - radarMitigation);
@@ -214,45 +175,14 @@ export class Evaluator {
         stacks: (player.exposeWeaknessStacks ?? 0) * 1.5,
         equipmentDelta,
         equipmentRoleDelta,
-        info: (player.expectedInformationGain ?? 0) * 0.35,
         markThreat: -markThreat * 1.5,
         currentThreat: -currentThreat,
         futureInventory: -futureInventory,
         energyPressure: -energyPressure,
         radar: radarMitigation,
-        energyDeviceFuture,
-        mutualDraft: player.mutualBenefitDraftValue ?? 0
+        energyDeviceFuture
       }
     };
-  }
-
-  /*
-  功能
-  提供 owner ledger 与 stateUtility 共用的原始状态项入口。
-
-  调用方
-  ValueLedger 与 ownerMaterialValue。
-
-  输入
-  状态、玩家、viewer ID 与雷达概率。
-
-  输出
-  与 playerValueTerms 完全相同的共享分项。
-
-  读取状态
-  与 playerValueTerms 相同。
-
-  写入状态
-  无。
-
-  调用函数
-  playerValueTerms。
-
-  边界与不变量
-  不复制公式，确保 owner ledger 与全局 state value 处于同一个价值世界。
-  */
-  ownerStateTerms(state, player, viewerId, radarTacticProbability) {
-    return this.playerValueTerms(state, player, viewerId, radarTacticProbability);
   }
 
   /*
@@ -263,7 +193,7 @@ export class Evaluator {
   ResourceValueQuery：把长期资产先验与当前已兑现装备效果分离。
 
   输入
-  before/after SearchState 与 viewer ID。
+  before/after World 与 viewer ID。
 
   输出
   已按 self/ally/enemy 符号投影的 equipmentDelta+equipmentRoleDelta 变化。
@@ -275,7 +205,7 @@ export class Evaluator {
   无。
 
   调用函数
-  ownerStateTerms。
+  playerValueTerms。
 
   边界与不变量
   只剥离两个静态装备材料项；距离、雷达、能量与其它上下文效果仍保留在完整 StateValue delta 中。
@@ -288,8 +218,8 @@ export class Evaluator {
     return after.players.reduce((sum, afterPlayer) => {
       const beforePlayer = beforePlayers.get(afterPlayer.id);
       if (!beforePlayer) return sum;
-      const beforeTerms = this.ownerStateTerms(before, beforePlayer, viewerId, 0).terms;
-      const afterTerms = this.ownerStateTerms(after, afterPlayer, viewerId, 0).terms;
+      const beforeTerms = this.playerValueTerms(before, beforePlayer, viewerId, 0).terms;
+      const afterTerms = this.playerValueTerms(after, afterPlayer, viewerId, 0).terms;
       const localDelta = (afterTerms.equipmentDelta ?? 0) - (beforeTerms.equipmentDelta ?? 0)
         + (afterTerms.equipmentRoleDelta ?? 0) - (beforeTerms.equipmentRoleDelta ?? 0);
       const sign = afterPlayer.battleTeam === viewer.battleTeam ? 1 : -1;
@@ -311,25 +241,74 @@ export class Evaluator {
   未施加团队符号的 owner material value。
 
   读取状态
-  与 ownerStateTerms 相同。
+  与 playerValueTerms 相同。
 
   写入状态
   无。
 
   调用函数
-  ownerStateTerms。
+  playerValueTerms。
 
   边界与不变量
   不包含封印与闪电自身 burden，避免生命周期查询递归调用 stateUtility。
   */
   ownerMaterialValue(state, player, viewerId, radarTacticProbability) {
-    const { death, terms } = this.ownerStateTerms(
+    const { death, terms } = this.playerValueTerms(
       state,
       player,
       viewerId,
       radarTacticProbability
     );
     return death + Object.values(terms).reduce((sum, value) => sum + value, 0);
+  }
+
+  /*
+  功能
+  计算同一 owner 在两个 World 中的材料状态价值差。
+
+  调用方
+  ValueSimulationQuery 的闪电生命周期分支。
+
+  输入
+  before/after World、owner ID、viewer ID 与两侧雷达战术概率。
+
+  输出
+  after owner material points 减 before owner material points。
+
+  读取状态
+  两个 World 中同一 owner 的公开材料与威胁状态。
+
+  写入状态
+  无。
+
+  调用函数
+  ownerMaterialValue。
+
+  边界与不变量
+  只比较同一 owner；团队符号与闪电概率权重由调用方各施加一次。
+  */
+  ownerMaterialDelta(
+    before,
+    after,
+    ownerId,
+    viewerId,
+    beforeRadarTacticProbability,
+    afterRadarTacticProbability
+  ) {
+    const beforeOwner = before.players.find((player) => player.id === ownerId);
+    const afterOwner = after.players.find((player) => player.id === ownerId);
+    if (!beforeOwner || !afterOwner) return 0;
+    return this.ownerMaterialValue(
+      after,
+      afterOwner,
+      viewerId,
+      afterRadarTacticProbability
+    ) - this.ownerMaterialValue(
+      before,
+      beforeOwner,
+      viewerId,
+      beforeRadarTacticProbability
+    );
   }
 
   /*
@@ -363,7 +342,7 @@ export class Evaluator {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer) return -Infinity;
     const radarTacticProbability = buildRadarJudgmentProbabilities(
-      state?.remainingCardCounts ?? null
+      queryCurrentCardCounts(state.probabilityState)
     ).tactic;
     let score = 0;
     for (let playerIndex = 0; playerIndex < state.players.length; playerIndex += 1) {

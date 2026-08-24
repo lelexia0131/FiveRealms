@@ -12,7 +12,7 @@ Application CardIntentRuntime。
 只读 source/from/receiver 的 controllerType 与 battleTeam；不写状态。
 
 信息边界
-不读取 AI memory、Planner、SearchState 或 hidden card。
+不读取 AI memory、Planner、World 或 hidden card。
 
 架构约束
 不得依赖 Game、AIController、Planner、Domain transitions 或其它 adapter；不得重新解释 ally/enemy 转移方向。

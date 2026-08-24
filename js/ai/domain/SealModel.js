@@ -21,12 +21,13 @@ import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions
 import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 import { hasStatus } from "../../domain/rules/status/StatusRules.js";
 import { projectRulePlayer } from "../state/RuleProjection.js";
-import { queryHiddenPool } from "../state/HiddenPool.js";
 import {
+  PROBABILITY_DRAW_BUCKET,
   clampProbability,
-  getAvailabilityStateBranches,
-  joinProbabilityStateBranches,
-  mergeProbabilityStateBranches,
+  probabilityAnyAvailable,
+  queryCardCategoryProbability,
+  queryProbability,
+  probabilityEventPartition,
   totalBranchProbability
 } from "../state/Probability.js";
 
@@ -84,20 +85,13 @@ mergeStateBranches、hasSeal。
 边界与不变量
 缺少概率分支时退化为概率一的确定状态；Simulation 可注入 cooperative merge，输出不复用输入分支对象。
 */
-export function getSealStatusStateBranches(
-  player,
-  mergeStateBranches = mergeProbabilityStateBranches
-) {
-  if (Array.isArray(player?.sealedStatusStateBranches) && player.sealedStatusStateBranches.length) {
-    return mergeStateBranches(
-      player.sealedStatusStateBranches.map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions ?? {},
-        present:Boolean(branch.present)
-      }))
-    );
-  }
-  return [{ probability:1, conditions:{}, present:hasSeal(player) }];
+export function getSealStatusStateBranches(player) {
+  const probability = player?.sealedStatusProbability ?? (hasSeal(player) ? 1 : 0);
+  return probabilityEventPartition(
+    `sealed-status:${player?.id ?? "unknown"}`,
+    probability,
+    "present"
+  );
 }
 
 /*
@@ -181,90 +175,44 @@ export function tacticJudgmentProbability(remainingCardCounts = null) {
 
 /*
 功能
-计算封印触发时持有者阵营至少拥有一张反制的 Belief probability。
+计算封印触发时持有者阵营至少拥有一张反制的 Probability probability。
 
 调用方
 sealOutcomeProbabilities、正式边界与直接领域测试。
 
 输入
-过滤状态、封印持有者与可选的状态分支联合能力。
+  过滤状态与封印持有者。
 
 输出
 零到一的团队反制概率。
 
 读取状态
-存活同阵营玩家的 Counter finite-pool factor 与合法已知反制身份；旧状态使用数量分支回退。
+  存活同阵营玩家的当前 Counter finite-pool factor 与合法已知反制身份。
 
 写入状态
 无。
 
 调用函数
-clampProbability、queryHiddenPool、getAvailabilityStateBranches、
-joinStateBranches、totalBranchProbability。
+  clampProbability、queryProbability、probabilityAnyAvailable。
 
 边界与不变量
-正式状态直接查询同一 HiddenPool；已知身份的共享 condition keys 只条件化一次；
-只有缺少 HiddenPool 的旧状态才使用数量分支回退；
-Domain 独立调用默认使用同步 raw join，搜索调用方可注入 cooperative join。
+  匿名牌直接查询同一 ProbabilityState；已知身份由当前实体事件索引查询；
+  不构造团队 hidden allocations 或兼容分支 Cartesian product。
 */
-export function sealCounterProbability(
-  state,
-  holder,
-  joinStateBranches = joinProbabilityStateBranches
-) {
+export function sealCounterProbability(state, holder) {
   if (!holder?.alive) return 0;
   const team = (state?.players ?? [])
     .filter((player) => player.alive && player.battleTeam === holder.battleTeam);
-  if (state?.hiddenPoolState) {
-    const knownFields = [];
-    const knownPartitions = [];
-    for (const player of team) {
-      const cards = [
-        ...(Array.isArray(player.hand) ? player.hand : []),
-        ...(Array.isArray(player.knownCards) ? player.knownCards : [])
-      ].filter((card) => card?.definitionId === "counter");
-      for (const card of cards) {
-        const field = `knownCounter:${player.id}:${knownFields.length}`;
-        knownFields.push(field);
-        knownPartitions.push(getAvailabilityStateBranches(card).map((branch) => ({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          [field]:Boolean(branch.available)
-        })));
-      }
-    }
-    const worlds = knownPartitions.length
-      ? joinStateBranches(...knownPartitions)
-      : [{ probability:1, conditions:{} }];
-    const knownProbability = totalBranchProbability(worlds.filter(
-      (world) => knownFields.some((field) => world[field])
-    ));
-    const anonymousProbability = queryHiddenPool(state.hiddenPoolState, {
-      definitionId:"counter",
-      groupBucketIds:team.map((player) => player.id)
-    }).probability;
-    return clampProbability(1 - (1 - knownProbability) * (1 - anonymousProbability));
-  }
-  const fields = team.map((player) => `counterCount:${player.id}`);
-  const partitions = team.map((player, index) => {
-    const source = Array.isArray(player.counterCountDistribution)
-      && player.counterCountDistribution.length
-      ? player.counterCountDistribution
-      : [
-          { probability:1 - clampProbability(player.counterProbability ?? 0), conditions:{}, counterCount:0 },
-          { probability:clampProbability(player.counterProbability ?? 0), conditions:{}, counterCount:1 }
-        ];
-    return source.filter((branch) => branch.probability > 0).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      [fields[index]]:Math.max(0, Math.floor(Number(branch.counterCount ?? branch.count) || 0))
-    }));
-  });
-  if (!partitions.length) return 0;
-  const worlds = joinStateBranches(...partitions);
-  return clampProbability(totalBranchProbability(worlds.filter(
-    (world) => fields.some((field) => world[field] >= 1)
-  )));
+  const knownCounters = team.flatMap((player) => [
+    ...(Array.isArray(player.hand) ? player.hand : []),
+    ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+  ].filter((card) => card?.definitionId === "counter"));
+  const knownProbability = probabilityAnyAvailable(knownCounters);
+  const anonymousProbability = queryProbability(state.probabilityState, {
+    definitionId:"counter",
+    groupBucketIds:team.map((player) => player.id)
+  }).probability;
+  return clampProbability(1 - (1 - knownProbability) * (1 - anonymousProbability));
 }
 
 /*
@@ -291,14 +239,10 @@ sealPresenceProbability、sealCounterProbability、tacticJudgmentProbability。
 
 边界与不变量
 countered、success、skipAction 互斥且总和等于 present；状态无论判定结果均清除；
-presence 为零时直接返回冻结零值且不启动团队反制 join；
+presence 为零时直接返回冻结零值且不启动团队反制有限池查询；
 未注入能力时保持 Domain raw 概率语义。
 */
-export function sealOutcomeProbabilities(
-  state,
-  holder,
-  joinStateBranches = joinProbabilityStateBranches
-) {
+export function sealOutcomeProbabilities(state, holder) {
   const present = sealPresenceProbability(holder);
   if (present <= 0) {
     return Object.freeze({
@@ -310,8 +254,15 @@ export function sealOutcomeProbabilities(
       cleared:0
     });
   }
-  const counter = sealCounterProbability(state, holder, joinStateBranches);
-  const tactic = tacticJudgmentProbability(state?.remainingCardCounts);
+  const counter = sealCounterProbability(state, holder);
+  const triggerCategory = CARD_DEFINITIONS.seal.judgmentTriggerCategory;
+  const tactic = queryCardCategoryProbability(
+    state.probabilityState,
+    PROBABILITY_DRAW_BUCKET,
+    Object.keys(CARD_DEFINITIONS).filter((definitionId) => (
+      CARD_DEFINITIONS[definitionId]?.category === triggerCategory
+    ))
+  );
   const judgment = present * (1 - counter);
   return Object.freeze({
     present,

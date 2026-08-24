@@ -12,7 +12,7 @@ value/Evaluator、SealValue 与 ValueSimulationQuery。
 只读过滤后的状态；不持有 Game，不写状态。
 
 信息边界
-只接受 VisibleState/SearchState，不访问未过滤的真实手牌。
+只接受 Fact/World，不访问未过滤的真实手牌。
 
 架构约束
 本服务只补齐运行时领域输入，不拥有第二套 State Value 公式；stateUtility 公式只存在于 value/Evaluator。
@@ -64,7 +64,7 @@ export class StateValue {
   value/Evaluator 返回的团队 State Value。
 
   读取状态
-  只读传入状态；闪电查询只使用 SearchState 克隆与缓存。
+  只读传入状态；闪电查询只使用 World 克隆与缓存。
 
   写入状态
   无。
@@ -88,5 +88,36 @@ ValueSimulationQuery.lightningValues、sealTeamBurden、Evaluator.stateUtility�
         ))
       : null;
     return this.evaluator.stateUtility(state, viewerId, lightningValues, sealValues);
+  }
+
+  /*
+  功能
+  计算两个 World 在同一观察者视角下的唯一状态价值差。
+
+  调用方
+  TransitionValue、资源/响应/root 配对查询与搜索反事实项。
+
+  输入
+  before World、after World、viewer ID 与可选父 SearchBudget。
+
+  输出
+  after State Value points 减 before State Value points。
+
+  读取状态
+  两个输入 World 及其有界领域价值查询。
+
+  写入状态
+  无；底层查询只写自身缓存和独立模拟 clone。
+
+  调用函数
+  stateUtility。
+
+  边界与不变量
+  运算顺序固定为 after-before；调用方不得再次手写同一状态比较公式，
+  两侧 nested query 必须继承同一个 SearchBudget。
+  */
+  transitionDelta(before, after, viewerId, searchBudget = null) {
+    return this.stateUtility(after, viewerId, searchBudget)
+      - this.stateUtility(before, viewerId, searchBudget);
   }
 }

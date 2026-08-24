@@ -9,7 +9,7 @@ MatchApplication composition root 与 AIController。
 SearchPolicy、Knowledge hidden-world sampling 与 CardSelectionPolicy 的 AI 随机消费。
 
 状态边界
-只写本实例 seed 与调用计数；不写 GameState 或 SearchState。
+只写本实例 seed 与调用计数；不写 GameState 或 World。
 
 信息边界
 不读取隐藏信息，不解释随机用途。

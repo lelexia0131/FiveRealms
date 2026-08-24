@@ -450,7 +450,7 @@ Evaluator、FrontierValue 与正式边界。
 零到一语义的现有概率总和；无分支时返回一。
 
 读取状态
-只读卡牌概率分支。
+只读卡牌当前 availability 标量。
 
 写入状态
 无。
@@ -459,23 +459,10 @@ Evaluator、FrontierValue 与正式边界。
 无。
 
 边界与不变量
-优先 availabilityStateBranches；不得读取未过滤的敌方手牌身份。
+不得读取未过滤的敌方手牌身份，也不得重建 availability branch hierarchy。
 */
 export function cardAvailability(card) {
-  const stateBranches = Array.isArray(card?.availabilityStateBranches)
-    ? card.availabilityStateBranches
-    : null;
-  if (stateBranches) {
-    return stateBranches
-      .filter((branch) => branch.available)
-      .reduce((sum, branch) => sum + (Number(branch.probability) || 0), 0);
-  }
-  if (Array.isArray(card?.availabilityBranches)) {
-    return card.availabilityBranches.reduce(
-      (sum, branch) => sum + (Number(branch.probability) || 0), 0
-    );
-  }
-  return 1;
+  return Math.max(0, Math.min(1, Number(card?.availability ?? 1) || 0));
 }
 
 /*

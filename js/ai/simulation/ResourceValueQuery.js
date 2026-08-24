@@ -9,7 +9,7 @@ CardSelectionBoundary、CardEffectSimulation 与 AI composition roots。
 value/Economics、注入的 StateValue、纯 Evaluator equipment material primitive 与 Simulator factory。
 
 状态边界
-只写 Simulator 创建的独立 SearchState 克隆，不修改输入或真实 GameState。
+只写 Simulator 创建的独立 World 克隆，不修改输入或真实 GameState。
 
 信息边界
 候选只含公开装备、合法 known identity 或匿名槽；query 不读取未知实体定义。
@@ -69,7 +69,7 @@ export class ResourceValueQuery {
   CardSelectionBoundary 与 CardEffectSimulation。
 
   输入
-  SearchState、actor/target ID、purpose、已合法整理的候选数组与可选父 SearchBudget。
+  World、actor/target ID、purpose、已合法整理的候选数组与可选父 SearchBudget。
 
   输出
   附加 raw/contextual/acquisition/skill-threshold Policy 点数分项的新候选数组。
@@ -95,7 +95,6 @@ export class ResourceValueQuery {
       return [];
     }
     searchBudget?.checkpointCurrentWork?.();
-    const baseline = this.stateValue.stateUtility(state, actorId, searchBudget);
     const simulator = this.simulatorFactory(state, { searchBudget });
     const evaluated = [];
     for (const candidate of candidates) {
@@ -110,7 +109,12 @@ export class ResourceValueQuery {
         evaluated.push({ ...candidate, contextualUtility: -Infinity, appliedProbability: 0 });
         continue;
       }
-      const rawStateDelta = this.stateValue.stateUtility(after, actorId, searchBudget) - baseline;
+      const rawStateDelta = this.stateValue.transitionDelta(
+        state,
+        after,
+        actorId,
+        searchBudget
+      );
       const equipmentMaterialDelta = this.evaluator.equipmentMaterialDelta(
         state, after, actorId
       );

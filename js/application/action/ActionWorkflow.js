@@ -15,7 +15,7 @@ actionLocked/interactionLocked/pendingHumanPlayEnd/resolutionOwners/resolutionSe
 不读取 concrete UI/AI/DOM；不直接写 statistics/aiMemory。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、Planner、SearchState、CardRuntime/SkillRuntime 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、Planner、AI World、CardRuntime/SkillRuntime 或 concrete adapters。
 */
 import { createTargetChoiceRequest } from "../choice/TargetChoiceRequest.js";
 import { getCurrentActor } from "../../domain/state/queries/MatchQueries.js";

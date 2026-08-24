@@ -12,7 +12,7 @@ Domain CardRules、AI RuleProjection/DistanceProbabilityBranches 与 policy/Card
 只读 runtime 提供的当前 state/Player 实体；不移动卡牌，实体移动仍由真实规则调用方执行。
 
 信息边界
-边界只把自己手牌、合法 aiMemory、公开装备和 Belief 交给 Policy，未知牌只能按位置解析。
+边界只把自己手牌、合法 aiMemory、公开装备和 Probability 交给 Policy，未知牌只能按位置解析。
 
 架构约束
 选择公式只存在于 policy 目录；本文件只负责合法集合、公开上下文与实体 ID 解析。
@@ -37,13 +37,13 @@ import {
 export class CardSelectionBoundary {
   /*
   功能
-  绑定真实规则边界、Knowledge 与 Controller 构造的正式 Policy。
+  绑定真实规则边界与 Controller 构造的正式 Policy。
 
   调用方
   AIController 组合根（统一组装依赖的位置） 与边界专项测试。
 
   输入
-  显式 runtime 能力、Knowledge 及可选正式 Policy 实例。
+  显式 runtime 能力及可选正式 Policy 实例。
 
   输出
   可解析真实实体的正式边界。
@@ -58,9 +58,9 @@ export class CardSelectionBoundary {
   ResourceSelectionPolicy、TransferPolicy、CardSelectionPolicy 构造函数。
 
   边界与不变量
-  不保存 Game；runtime 只提供 random/getState/getEnemies/createSearchState 窄能力，query 缺失时保留直接测试的旧静态回退。
+  不保存 Game；runtime 只提供 random/getState/getEnemies/createWorld 窄能力，query 缺失时保留直接测试的旧静态回退。
   */
-  constructor(runtime, knowledge, policies = {}) {
+  constructor(runtime, policies = {}) {
     if (!runtime || typeof runtime.random !== "function") {
       throw new TypeError("CardSelectionBoundary 缺少 runtime 能力：random");
     }
@@ -73,20 +73,22 @@ export class CardSelectionBoundary {
         entry.alive && entry.battleTeam !== player.battleTeam
       ));
     this.random = runtime.random;
-    this.createSearchState = typeof runtime.createSearchState === "function"
-      ? runtime.createSearchState
+    this.createWorld = typeof runtime.createWorld === "function"
+      ? runtime.createWorld
       : null;
-    this.knowledge = knowledge;
+    this.remainingCounts = typeof runtime.remainingCounts === "function"
+      ? runtime.remainingCounts
+      : () => null;
     this.resourceValueQuery = policies.resourceValueQuery ?? null;
     this.cardSelectionPolicy = policies.cardSelectionPolicy ?? new CardSelectionPolicy({
       random: () => this.random(),
-      remainingCounts: (actor) => this.knowledge?.remainingCounts?.(actor) ?? null
+      remainingCounts: (actor) => this.remainingCounts(actor)
     });
   }
 
   /*
   功能
-  在真实执行边界用与深层模拟相同的 SearchState 反事实语义选择资源并解析当前实体。
+  在真实执行边界用与深层模拟相同的 World 反事实语义选择资源并解析当前实体。
 
   调用方
   chooseZoneCard 的 destroy/plunder 分支。
@@ -98,7 +100,7 @@ export class CardSelectionBoundary {
   `{card, zone}` 或 null。
 
   读取状态
-  当前合法实体 ID、createSearchState 输出、公开装备、合法 known identities 与匿名容量。
+  当前合法实体 ID、createWorld 输出、公开装备、合法 known identities 与匿名容量。
 
   写入状态
   仅在匿名候选胜出时推进随机源。
@@ -116,9 +118,9 @@ export class CardSelectionBoundary {
     excludedCardIds,
     remainingCardCounts
   ) {
-    const searchState = this.createSearchState(actor.id, remainingCardCounts);
-    const searchActor = searchState.players.find((player) => player.id === actor.id);
-    const searchOwner = searchState.players.find((player) => player.id === owner.id);
+    const world = this.createWorld(actor.id, remainingCardCounts);
+    const searchActor = world.players.find((player) => player.id === actor.id);
+    const searchOwner = world.players.find((player) => player.id === owner.id);
     if (!searchActor || !searchOwner) return null;
     const eligibleCards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
     const eligibleIds = new Set(eligibleCards.map((card) => card.id));
@@ -141,7 +143,7 @@ export class CardSelectionBoundary {
       availableUnknownCount: unknownCards.length
     }));
     const evaluated = this.resourceValueQuery.evaluate({
-      state: searchState,
+      state: world,
       actorId: searchActor.id,
       targetId: searchOwner.id,
       purpose,
@@ -176,7 +178,7 @@ export class CardSelectionBoundary {
   仍存在于本次候选集合中的真实 Card 实体数组。
 
   读取状态
-  owner.hand、合法 aiMemory、Knowledge 与注入随机源。
+  owner.hand、合法 aiMemory、Fact 与注入随机源。
 
   写入状态
   仅 Policy 随机源序列。
@@ -281,7 +283,7 @@ export class CardSelectionBoundary {
   `{card, zone}` 或 null。
 
   读取状态
-  当前实体区域、Knowledge 与公开装备。
+  当前实体区域、Fact 与公开装备。
 
   写入状态
   可能推进未知位置随机源。
@@ -296,10 +298,10 @@ export class CardSelectionBoundary {
     if (!owner?.alive) return null;
     const purpose = context?.purpose ?? null;
     const remainingCardCounts = purpose === "plunder" || purpose === "destroy"
-      ? (this.knowledge?.remainingCounts?.(actor) ?? null)
+      ? this.remainingCounts(actor)
       : null;
     if ((purpose === "plunder" || purpose === "destroy")
-      && this.createSearchState && this.resourceValueQuery) {
+      && this.createWorld && this.resourceValueQuery) {
       return this.chooseContextualZoneCard(
         actor, owner, purpose, excludedCardIds, remainingCardCounts
       );
@@ -374,7 +376,7 @@ export class CardSelectionBoundary {
   冻结 transfer selection 或 null。
 
   读取状态
-  Domain CardRules 合法集合、Knowledge remaining counts 与 TransferPolicy。
+  Domain CardRules 合法集合、Fact current counts 与 TransferPolicy。
 
   写入状态
   无。
@@ -392,7 +394,7 @@ export class CardSelectionBoundary {
     allowedReceiverIds = null,
     excludedCardIds = null
   ) {
-    const remainingCardCounts = this.knowledge?.remainingCounts?.(actor) ?? null;
+    const remainingCardCounts = this.remainingCounts(actor);
     const players = this.getState()?.players ?? [];
     return chooseBestPositiveTransfer(buildTransferCandidates({
       actor,

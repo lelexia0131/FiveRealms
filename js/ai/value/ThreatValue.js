@@ -9,7 +9,7 @@ Evaluator、SearchPrior、响应策略与转移策略。
 Domain Card Definitions、AI DistanceProbabilityBranches 与 value/Economics 的生命尺度。
 
 状态边界
-只读传入的 VisibleState/SearchState；不写状态，不启动模拟。
+只读传入的 Fact/World；不写状态，不启动模拟。
 
 信息边界
 只使用公开字段、概率摘要与合法的近期攻击者记忆，不读取敌方隐藏手牌身份。
@@ -21,7 +21,8 @@ import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions
 import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js";
 import {
   PROBABILITY_EPSILON,
-  clampProbability
+  clampProbability,
+  queryPlayerHandProbability
 } from "../state/Probability.js";
 import { HP_VALUE } from "./Economics.js";
 
@@ -45,7 +46,7 @@ expectedAssaultResources。
 非负期望可用数量。
 
 读取状态
-availabilityStateBranches 或 availabilityBranches。
+卡牌当前 availability 标量。
 
 写入状态
 无。
@@ -54,22 +55,14 @@ availabilityStateBranches 或 availabilityBranches。
 无。
 
 边界与不变量
-缺少概率分支的合法已知条目按完整可用一张计算。
+缺少 availability 的合法已知条目按完整可用一张计算。
 */
 const availableCardCount = (cards, definitionId) => (Array.isArray(cards) ? cards : [])
   .filter((card) => card?.definitionId === definitionId)
-  .reduce((sum, card) => {
-    if (Array.isArray(card.availabilityStateBranches)) {
-      return sum + card.availabilityStateBranches
-        .filter((branch) => branch.available)
-        .reduce((total, branch) => total + (Number(branch.probability) || 0), 0);
-    }
-    if (Array.isArray(card.availabilityBranches)) {
-      return sum + card.availabilityBranches
-        .reduce((total, branch) => total + (Number(branch.probability) || 0), 0);
-    }
-    return sum + 1;
-  }, 0);
+  .reduce((sum, card) => sum + Math.max(
+    0,
+    Math.min(1, Number(card?.availability ?? 1) || 0)
+  ), 0);
 
 /*
 功能
@@ -96,11 +89,9 @@ availableCardCount。
 边界与不变量
 不会用 handCount 猜测未知牌定义；正式摘要存在时保持其概率含义。
 */
-const expectedAssaultResources = (player) => {
-  const known = availableCardCount(player?.hand, "assault")
-    + availableCardCount(player?.knownCards, "assault");
-  return Math.max(0, Number(player?.expectedAssaultCount ?? known) || 0);
-};
+const expectedAssaultResources = (player, state) => queryPlayerHandProbability(
+  state.probabilityState, player, "assault"
+).expected;
 
 /*
 功能
@@ -305,16 +296,14 @@ futureSkillReadinessProbability、expectedUsableFromInventory。
 边界与不变量
 先受基础次数限制；破军只在未来可发动的概率世界增加一次容量。
 */
-export function expectedUsableAssaultsNextTurn(player) {
+export function expectedUsableAssaultsNextTurn(player, state) {
   const limit = nextTurnBaseAttackLimit(player);
   const extraAttackProbability = player?.activeSkillId === "breakArmy"
     ? futureSkillReadinessProbability(player)
     : 0;
-  const distribution = Array.isArray(player?.assaultCountDistribution)
-    ? player.assaultCountDistribution.filter((branch) => (
-      Number.isFinite(Number(branch?.count)) && Number(branch?.probability) > 0
-    ))
-    : [];
+  const distribution = queryPlayerHandProbability(
+    state.probabilityState, player, "assault"
+  ).distribution;
   const total = distribution.reduce((sum, branch) => sum + Number(branch.probability), 0);
   if (total > PROBABILITY_EPSILON) {
     return distribution.reduce((sum, branch) => (
@@ -323,7 +312,7 @@ export function expectedUsableAssaultsNextTurn(player) {
     ), 0) / total;
   }
   return expectedUsableFromInventory(
-    expectedAssaultResources(player), limit, extraAttackProbability
+    expectedAssaultResources(player, state), limit, extraAttackProbability
   );
 }
 
@@ -352,9 +341,9 @@ expectedUsableAssaultsNextTurn。
 边界与不变量
 可使用机会是主要价值；上限外库存只保留既有较小稳定性边际。
 */
-export function assaultThreat(player) {
-  const inventory = expectedAssaultResources(player);
-  const usable = expectedUsableAssaultsNextTurn(player);
+export function assaultThreat(player, state) {
+  const inventory = expectedAssaultResources(player, state);
+  const usable = expectedUsableAssaultsNextTurn(player, state);
   const reserve = Math.max(0, inventory - usable);
   return usable * 1.25 + Math.min(2, reserve) * 0.25;
 }
@@ -384,8 +373,8 @@ expectedUsableAssaultsNextTurn。
 边界与不变量
 没有攻击资源时返回零，不能凭角色身份产生固定排名。
 */
-export function roleThreatSynergy(player) {
-  const resources = Math.min(3, expectedUsableAssaultsNextTurn(player));
+export function roleThreatSynergy(player, state) {
+  const resources = Math.min(3, expectedUsableAssaultsNextTurn(player, state));
   if (resources <= PROBABILITY_EPSILON) return 0;
   const attackTags = (player?.roleTags ?? [])
     .filter((tag) => ["damage", "attacker", "caster", "hunter"].includes(tag)).length;
@@ -417,10 +406,10 @@ expectedUsableAssaultsNextTurn、clampProbability。
 边界与不变量
 非攻击型装备或无攻击资源时不会产生协同价值。
 */
-export function equipmentThreatSynergy(player) {
+export function equipmentThreatSynergy(player, state) {
   const definition = CARD_DEFINITIONS[player?.equipmentDefinitionId];
   if (!definition?.subtypes?.includes("attack")) return 0;
-  const resources = Math.min(3, expectedUsableAssaultsNextTurn(player));
+  const resources = Math.min(3, expectedUsableAssaultsNextTurn(player, state));
   return resources * 0.75 * clampProbability(player?.equipmentRetentionProbability ?? 1);
 }
 
@@ -449,12 +438,12 @@ skillReadinessThreat、assaultThreat、roleThreatSynergy、equipmentThreatSynerg
 边界与不变量
 各项及运算顺序保持既有封印价值尺度，不进入通用攻击暴露公式。
 */
-export function turnOpportunityValue(player) {
+export function turnOpportunityValue(player, state) {
   const hand = Math.max(0, Number(player?.handCount ?? player?.hand?.length ?? 0) || 0);
   const energy = Math.max(0, Number(player?.energy ?? 0) || 0);
   const characterResources = Math.min(2.5, hand * 0.25 + energy * 0.35);
-  return 6 + characterResources + skillReadinessThreat(player) + assaultThreat(player)
-    + roleThreatSynergy(player) + equipmentThreatSynergy(player);
+  return 6 + characterResources + skillReadinessThreat(player) + assaultThreat(player, state)
+    + roleThreatSynergy(player, state) + equipmentThreatSynergy(player, state);
 }
 
 export class ThreatCalculator {
@@ -511,7 +500,7 @@ export class ThreatCalculator {
 exposureComponents。
 
 输入
-SearchState、攻击敌人、该敌人全部存活敌对目标与待评估目标下标。
+World、攻击敌人、该敌人全部存活敌对目标与待评估目标下标。
 
 输出
 包含 rangeProbability 与 assaultAllocation 的新对象。
@@ -600,8 +589,11 @@ export function exposureComponents(state, player) {
     );
     if (rangeProbability <= 0) continue;
     const energy = Math.max(0, Number(enemy.energy ?? 0));
-    const expectedAssault = Math.max(0, Number(enemy.expectedAssaultCount ?? 0));
-    const response = Math.max(0, Math.min(1, Number(enemy.assaultResponseProbability) || 0));
+    const assault = queryPlayerHandProbability(
+      state.probabilityState, enemy, "assault"
+    );
+    const expectedAssault = assault.expected;
+    const response = assault.probability;
     // 同一张突袭牌不能同时充当“本次响应”和“下回合库存”：
     // 第一张（response 概率质量）已按当前威胁计满，未来库存只计超出响应保留的期望数量。
     const futureCount = Math.min(3, Math.max(0, expectedAssault - response));

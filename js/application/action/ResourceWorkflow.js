@@ -9,7 +9,7 @@ Match/Turn/Action/Combat workflows 与 composition root。
 Domain resource/zone transitions、zone queries 与显式 presentation/knowledge capabilities。
 
 状态边界
-只通过 Domain transitions 写能量、牌区和 handVersion；不写规则定义或 AI SearchState。
+只通过 Domain transitions 写能量、牌区和 handVersion；不写规则定义或 AI World。
 
 信息边界
 私密牌知识只经注入 knowledge adapter 更新；公开日志不得泄露未知牌名。

@@ -9,7 +9,7 @@ Simulator 正式模拟门面。
 Card/Combat/Response/Status 组件、Domain Skill Definitions/Rules 与 Probability。
 
 状态边界
-只修改 Simulator 门面提供的独立 SearchState 副本。
+只修改 Simulator 门面提供的独立 World 副本。
 
 信息边界
 只消费动作携带的合法技能、目标和执行世界。
@@ -25,10 +25,9 @@ import {
 } from "../../domain/rules/skill/SkillRules.js";
 import {
   PROBABILITY_EPSILON,
-  availableBranchesFromState,
-  totalBranchProbability
+  clampProbability
 } from "../state/Probability.js";
-import { clampProbability } from "./SimulationSupport.js";
+import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js";
 
 /*
 功能
@@ -64,7 +63,7 @@ export const withSkillEffectSimulation = (Base) => class SkillEffectSimulation e
   Simulator 构造/clone 与 CardEffectSimulation 的装备变化：刷新装备可能影响的技能费用。
 
   输入
-  独立 SearchState。
+  独立 World。
 
   输出
   无返回值；每名拥有正式主动技能的玩家费用已同步。
@@ -90,13 +89,81 @@ export const withSkillEffectSimulation = (Base) => class SkillEffectSimulation e
 
   /*
   功能
-  按技能标识分派主动效果，在独立 SearchState 中结算资源、目标和状态变化。
+  在当前 transition 调用栈内解析主动技能的目标、能量与次数条件。
+
+  调用方
+  Simulator.apply 的技能分派。
+
+  输入
+  独立 World、行动者、canonical Action 与正式技能定义。
+
+  输出
+  本次技能实际发生/不发生的有界局部分区。
+
+  读取状态
+  当前能量、技能使用次数、猎印概率与距离装备概率。
+
+  写入状态
+  只消费本次技能次数的局部槽位；不把分区写回 World 或 Action。
+
+  调用函数
+  getRangeConditionBranches、ensureSkillUseSlots、consumeSlot。
+
+  边界与不变量
+  当前技能至多涉及一个目标的两项距离装备变量和固定技能次数上限；分区有界，
+  结算后立即边缘化为 World 当前值，不形成持久 execution world。
+  */
+  buildSkillExecutionWorlds(state, actor, action, skill) {
+    const target = state.players.find((player) => player.id === action.targetIds?.[0]);
+    let conditionBranches = [{ probability:1, conditions:{}, matches:true }];
+    if (skill.id === "hunt") {
+      const markProbability = clampProbability(
+        target?.huntMarkProbabilities?.[actor.id]
+          ?? (target?.huntMarkSourceId === actor.id ? 1 : 0)
+      );
+      conditionBranches = this.getEventWorlds(
+        state,
+        markProbability,
+        null,
+        `hunt-mark:${actor.id}:${target?.id ?? "unknown"}`
+      ).map((branch) => ({ ...branch, matches:Boolean(branch.occurs) }));
+    } else if (skill.rangeRule === "attack" || skill.rangeRule === "fixed") {
+      conditionBranches = getRangeConditionBranches({ state }, {
+        source:actor,
+        target,
+        range:skill.rangeRule === "attack" ? actor.attackRange : skill.range
+      });
+    }
+    const minimumEnergy = skill.id === "allIn" ? 1 : action.energyCost;
+    const energyState = [{
+      probability:1,
+      conditions:{},
+      energyAmount:Number(actor.energy) || 0
+    }];
+    const joined = this.intersectProbabilityWork(
+      [conditionBranches, energyState],
+      "SkillEffectSimulation.buildSkillExecutionWorlds:conditions"
+    );
+    const desiredWorlds = this.projectProbabilityWork(joined, (branch) => ({
+      occurs:Boolean(branch.matches && branch.energyAmount >= minimumEnergy)
+    }), "SkillEffectSimulation.buildSkillExecutionWorlds:desired");
+    return this.consumeSlot(
+      state,
+      this.ensureSkillUseSlots(actor, skill),
+      desiredWorlds,
+      `skill-slot:${skill.id}`
+    ).eventWorlds;
+  }
+
+  /*
+  功能
+  按技能标识分派主动效果，在独立 World 中结算资源、目标和状态变化。
 
   调用方
   Simulator.apply：在技能次数槽与执行世界确定后结算主动技能。
 
   输入
-  独立 SearchState、行动者、已合法的技能动作与实际执行事件世界。
+  独立 World、行动者、已合法的技能动作与实际执行事件世界。
 
   输出
   无返回值；对应技能的资源、目标和状态效果已推进。
@@ -114,8 +181,8 @@ export const withSkillEffectSimulation = (Base) => class SkillEffectSimulation e
   技能分派顺序、费用、目标和随机/概率分支不在此重新决定；每个执行世界只消费一次技能容量。
   */
   applySkill(state, actor, action, eventWorlds) {
-    const skill = action.skill;
-    const target = state.players.find((player) => player.id === action.targets?.[0]?.id);
+    const skill = ACTIVE_SKILL_DEFINITIONS[action.skillId] ?? null;
+    const target = state.players.find((player) => player.id === action.targetIds?.[0]);
     const chance = this.eventProbability(eventWorlds);
     if (!skill || chance <= 0) return;
     if (skill.id === "allIn") {
@@ -141,13 +208,8 @@ export const withSkillEffectSimulation = (Base) => class SkillEffectSimulation e
     const energyCost = action.energyCost ?? getSkillCost(skill, actor, state?.players ?? []);
     this.changeEnergy(state, actor, -energyCost, eventWorlds);
     if (skill.id === "breakArmy") {
-      const attackSlots = this.ensureAttackUseSlots(actor);
-      attackSlots.push(this.projectProbabilityWork(eventWorlds, (branch) => ({
-        available:Boolean(branch.occurs)
-      }), "SkillEffectSimulation.applySkill:break-army-slot"));
-      actor.attackLimit = (actor.attackLimit ?? attackSlots.length - 1)
+      actor.attackLimit = (actor.attackLimit ?? 0)
         + chance * ACTIVE_SKILL_DEFINITIONS.breakArmy.attackLimitBonus;
-      actor.attackAvailabilityBranches = attackSlots.map(availableBranchesFromState);
     }
     else if (skill.id === "barrier" && target) {
       this.changeShield(state, target, ACTIVE_SKILL_DEFINITIONS.barrier.shieldAmount, eventWorlds);
@@ -164,28 +226,10 @@ export const withSkillEffectSimulation = (Base) => class SkillEffectSimulation e
       const oldMarkProbability = clampProbability(target.huntMarkProbabilities[actor.id]
         ?? (target.huntMarkSourceId === actor.id ? 1 : 0));
       const consumedMarkProbability = Math.min(oldMarkProbability, chance);
-      const markBranches = target.huntMarkStateBranchesBySource?.[actor.id];
-      if (Array.isArray(markBranches)) {
-        const markedState = markBranches.map((branch) => ({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          marked:Boolean(branch.marked)
-        }));
-        const joinedMarks = this.joinProbabilityWork(
-          [markedState, eventWorlds],
-          "SkillEffectSimulation.applySkill:hunt-join"
-        );
-        target.huntMarkStateBranchesBySource[actor.id] = this.projectProbabilityWork(
-          joinedMarks,
-          (branch) => ({ marked:Boolean(branch.marked && !branch.occurs) }),
-          "SkillEffectSimulation.applySkill:hunt-remaining"
-        );
-        target.huntMarkProbabilities[actor.id] = totalBranchProbability(
-          target.huntMarkStateBranchesBySource[actor.id].filter((branch) => branch.marked)
-        );
-      } else {
-        target.huntMarkProbabilities[actor.id] = Math.max(0, oldMarkProbability - consumedMarkProbability);
-      }
+      target.huntMarkProbabilities[actor.id] = Math.max(
+        0,
+        oldMarkProbability - consumedMarkProbability
+      );
       target.huntMarkProbability = Math.max(0, ...Object.values(target.huntMarkProbabilities ?? {}).map(clampProbability));
       const fullMarkSource = Object.entries(target.huntMarkProbabilities)
         .find(([, probability]) => clampProbability(probability) >= 1 - Number.EPSILON)?.[0] ?? null;

@@ -6,10 +6,10 @@
 Planner 与搜索价值回归测试。
 
 下游
-TransitionValue、ValueLedger、FrontierValue、SearchPrior、CounterfactualTerms、SiblingTransitionTerms、ActionDescriptor 与 Economics 尺度。
+TransitionValue、ValueLedger、FrontierValue、SearchPrior、CounterfactualTerms、SiblingTransitionTerms、Action 与 Economics 尺度。
 
 状态边界
-只读动作前后的 SearchState；反事实写入由注入的数值项生产者隔离。
+只读动作前后的 World；反事实写入由注入的数值项生产者隔离。
 
 信息边界
 只消费有明确归属者的数值与合法隐藏上下文，不访问 Game 或 Controller。
@@ -18,6 +18,7 @@ TransitionValue、ValueLedger、FrontierValue、SearchPrior、CounterfactualTerm
 每项价值只向唯一归属者请求一次；不得生成/执行真实动作、决定束裁剪或同分裁决，也不得复制最终价值组合公式。
 */
 import { statePointsToUtility } from "../value/Economics.js";
+import { actionIntentKey, actionSearchKey } from "./Action.js";
 import { STATE_UTILITY_PRIOR_WEIGHT } from "./SearchPrior.js";
 
 export class CandidateMaterializer {
@@ -29,7 +30,7 @@ export class CandidateMaterializer {
   AIController 组合根与 Planner 正式边界。
 
   输入
-  价值/搜索归属模块、转移项生产者与动作描述适配器。
+  价值/搜索归属模块与转移项生产者。
 
   输出
   候选物化服务实例。
@@ -53,7 +54,6 @@ export class CandidateMaterializer {
     searchPrior,
     counterfactualTerms,
     siblingTerms,
-    actionDescriptor,
     getResolutionScale
   } = {}) {
     const services = {
@@ -62,8 +62,7 @@ export class CandidateMaterializer {
       frontierValue,
       searchPrior,
       counterfactualTerms,
-      siblingTerms,
-      actionDescriptor
+      siblingTerms
     };
     for (const [name, service] of Object.entries(services)) {
       if (!service) throw new TypeError(`CandidateMaterializer 缺少依赖：${name}`);
@@ -83,7 +82,7 @@ export class CandidateMaterializer {
   Planner 在任何 root materialization 前。
 
   输入
-  根动作、行动者与根 SearchState。
+  根动作、行动者与根 World。
 
   输出
   有限调度分数；缺少测试 stub 方法时兼容返回零。
@@ -116,7 +115,7 @@ export class CandidateMaterializer {
   根候选动作。
 
   输出
-  ActionDescriptor 提供的稳定字符串键。
+  canonical Action 提供的稳定字符串键。
 
   读取状态
   只读动作公开搜索语义。
@@ -125,13 +124,13 @@ export class CandidateMaterializer {
   无。
 
   调用函数
-  ActionDescriptor.schedulingKey。
+  actionIntentKey。
 
   边界与不变量
   type、definition/skill、目标顺序与 selection 必须保留；不得包含 hand index。
   */
   rootSchedulingKey(action) {
-    return this.actionDescriptor.schedulingKey(action);
+    return actionIntentKey(action);
   }
 
   /*
@@ -145,7 +144,7 @@ export class CandidateMaterializer {
   当前 runtime search action。
 
   输出
-  ActionDescriptor 提供的稳定 search-semantic 字符串。
+  canonical Action 的稳定 search-semantic 字符串。
 
   读取状态
   只读动作已经携带的公开搜索执行语义。
@@ -154,13 +153,13 @@ export class CandidateMaterializer {
   无。
 
   调用函数
-  ActionDescriptor.searchSemanticKey。
+  actionSearchKey。
 
   边界与不变量
   不得进入 Pattern intent、候选 value 或 prior；不得使用 hand index 或 card instance ID。
   */
   schedulingSecondaryKey(action) {
-    return this.actionDescriptor.searchSemanticKey(action);
+    return actionSearchKey(action);
   }
 
   /*
@@ -171,7 +170,7 @@ export class CandidateMaterializer {
   Planner 在任何 child materialization 前。
 
   输入
-  当前动作、行动者与动作生成后的 SearchState。
+  当前动作、行动者与动作生成后的 World。
 
   输出
   与 root scheduling 相同定义的有限调度分数。
@@ -203,7 +202,7 @@ export class CandidateMaterializer {
   当前深层候选动作。
 
   输出
-  ActionDescriptor 提供的稳定字符串键。
+  canonical Action 提供的稳定字符串键。
 
   读取状态
   只读动作公开搜索语义。
@@ -212,7 +211,7 @@ export class CandidateMaterializer {
   无。
 
   调用函数
-  ActionDescriptor.schedulingKey。
+  actionIntentKey。
 
   边界与不变量
   必须与 root scheduling 使用同一 semantic identity，不得读取物理手牌顺序。
@@ -229,7 +228,7 @@ export class CandidateMaterializer {
   Planner.plan。
 
   输入
-  行动者、根 SearchState 与根动作。
+  行动者、根 World 与根动作。
 
   输出
   冻结的领域上下文。
@@ -306,7 +305,7 @@ export class CandidateMaterializer {
   */
   contextDiagnostics(context) {
     return {
-      hiddenSamples:context.hiddenWorldEstimate.sampleCount,
+      hiddenSamples:context.unknownHandEstimate?.sampleCount ?? 0,
       discoveredDynamicTarget:Boolean(context.discoveredDynamicTarget)
     };
   }
@@ -494,14 +493,14 @@ export class CandidateMaterializer {
   无。
 
   调用函数
-  ActionDescriptor.describe。
+  无。
 
   边界与不变量
   只在诊断开启且账本存在时调用，不参与评分。
   */
   diagnosticEntry(candidate) {
     return {
-      action:this.describeAction(candidate.action),
+      action:candidate.action,
       projected:candidate.candidateLedger.projected,
       responses:candidate.candidateLedger.responses,
       responseNet:candidate.responseNet,
@@ -511,7 +510,7 @@ export class CandidateMaterializer {
 
   /*
   功能
-  通过纯适配器返回稳定动作描述。
+  返回候选已经持有的 canonical Action。
 
   调用方
   Planner 计划序列、正式边界与测试。
@@ -520,7 +519,7 @@ export class CandidateMaterializer {
   候选动作。
 
   输出
-  稳定动作描述对象。
+  同一个 canonical Action。
 
   读取状态
   只读动作。
@@ -529,13 +528,13 @@ export class CandidateMaterializer {
   无。
 
   调用函数
-  actionDescriptor.describe。
+  无。
 
   边界与不变量
-  不访问 Game、合法性或隐藏信息。
+  不投影、不复制，也不创建另一种动作结构。
   */
   describeAction(action) {
-    return this.actionDescriptor.describe(action);
+    return action;
   }
 
   /*
@@ -569,7 +568,7 @@ export class CandidateMaterializer {
 
   /*
   功能
-  截断终止动作之后不会执行的计划尾部，并投影为稳定动作描述。
+  截断终止动作之后不会执行的计划尾部。
 
   调用方
   Planner 搜索收束。
@@ -578,7 +577,7 @@ export class CandidateMaterializer {
   动作序列。
 
   输出
-  截断后的稳定动作描述序列。
+  截断后的 canonical Action 序列。
 
   读取状态
   动作类型与动作描述字段。
@@ -596,8 +595,7 @@ export class CandidateMaterializer {
     const terminalIndex = sequence.findIndex(
       (action) => this.siblingTerms.isTerminalAction(action)
     );
-    return (terminalIndex >= 0 ? sequence.slice(0, terminalIndex + 1) : sequence)
-      .map((action) => this.describeAction(action));
+    return terminalIndex >= 0 ? sequence.slice(0, terminalIndex + 1) : [...sequence];
   }
 
   /*
@@ -614,7 +612,7 @@ export class CandidateMaterializer {
   与普通根 end 相同 shape 且已完成 transitionValue 的候选记录。
 
   读取状态
-  before/after SearchState、已物化 siblings 与正式搜索归属模块。
+  before/after World、已物化 siblings 与正式搜索归属模块。
 
   写入状态
   只写新建终止候选和 siblings 的浅复制，不修改调用方候选或真实 GameState。

@@ -9,7 +9,7 @@ Simulator、ValueSimulationQuery、Evaluator、ValueLedger 与正式边界。
 Domain Card/Ruleset Definitions、Domain JudgmentRules 与 state/Probability。
 
 状态边界
-只读剩余牌计数并返回独立概率对象，不读写 GameState 或 SearchState。
+只读剩余牌计数并返回独立概率对象，不读写 GameState 或 World。
 
 信息边界
 只使用调用方提供的公开剩余牌计数；缺失时使用 RulesetDefinition 正式初始牌堆构成。

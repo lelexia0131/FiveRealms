@@ -1,6 +1,6 @@
 /*
 模块职责
-镜像 SearchState 中的攻击、伤害、失去生命、治疗、濒死救援和死亡结算顺序。
+镜像 World 中的攻击、伤害、失去生命、治疗、濒死救援和死亡结算顺序。
 
 上游
 Simulator 正式模拟门面及 Card/Skill/Status 模拟组件。
@@ -9,7 +9,7 @@ Simulator 正式模拟门面及 Card/Skill/Status 模拟组件。
 ResponseSimulation、Radar domain、state/Probability 与共享 simulation runtime。
 
 状态边界
-只修改 Simulator 门面提供的独立 SearchState 副本，不持有真实 GameState。
+只修改 Simulator 门面提供的独立 World 副本，不持有真实 GameState。
 
 信息边界
 只消费可见/概率摘要，不读取隐藏实体牌或未来牌堆。
@@ -31,9 +31,18 @@ import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules
 import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js";
 import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
 import { RADAR_BASIC_DEFINITIONS } from "../domain/RadarModel.js";
-import { PROBABILITY_CLASSIFICATION, PROBABILITY_EPSILON, expectedBranchValue, getAvailabilityBranches, probabilityEventPartition, totalBranchProbability } from "../state/Probability.js";
-import { mutateHiddenPool, projectHiddenSummaries } from "../state/HiddenPool.js";
-import { clampProbability, unionProbability } from "./SimulationSupport.js";
+import {
+  PROBABILITY_CLASSIFICATION,
+  PROBABILITY_EPSILON,
+  clampProbability,
+  expectedAnonymousSlots,
+  expectedBranchValue,
+  mutateProbability,
+  probabilityEventPartition,
+  queryHandProbability,
+  queryPlayerHandProbability,
+  totalBranchProbability
+} from "../state/Probability.js";
 
 /*
 功能
@@ -69,7 +78,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   CardEffectSimulation 与搜索模拟：结算一张突袭或等价攻击效果。
 
   输入
-  独立 SearchState、存活来源/目标、发生概率或事件世界，以及已消费槽位等选项。
+  独立 World、存活来源/目标、发生概率或事件世界，以及已消费槽位等选项。
 
   输出
   目标实际受到生命伤害的概率；状态原地推进。
@@ -90,10 +99,10 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     const desiredWorlds = Array.isArray(resolution)
       ? this.getEventWorlds(state, 1, resolution, `assault:${source.id}:${target.id}`)
       : this.getEventWorlds(state, clampProbability(resolution), null, `assault:${source.id}:${target.id}`);
-    const tracksAttackSlots = Array.isArray(source.attackUseSlots) || Number.isFinite(Number(source.attackLimit));
+    const tracksAttackSlots = Number.isFinite(Number(source.attackLimit));
     const assaultWorlds = options.attackUseConsumed || !tracksAttackSlots
       ? desiredWorlds
-      : this.consumeAttackUse(state, source, desiredWorlds, options.attackUseSlot).eventWorlds;
+      : this.consumeAttackUse(state, source, desiredWorlds).eventWorlds;
     const chance = this.eventProbability(assaultWorlds);
     if (!chance || !source?.alive || !target?.alive) return 0;
     if (!tracksAttackSlots && !options.attackUseConsumed) {
@@ -139,7 +148,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   CardEffectSimulation.applyCardEffect：结算已经通过反制门控的对决。
 
   输入
-  独立 SearchState、对决双方、生效概率与伤害上下文。
+  独立 World、对决双方、生效概率与伤害上下文。
 
   输出
   双方失败概率、期望突袭消耗和剩余数量分布的新摘要对象。
@@ -158,8 +167,12 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   */
   applyDuel(state, actor, target, scale, damageContext = { cardDamage:true, emberTriggeredProbabilities:{} }) {
     const resolutionProbability = clampProbability(scale);
-    const actorDistribution = actor.assaultCountDistribution ?? [{ count:0, probability:1 }];
-    const targetDistribution = target.assaultCountDistribution ?? [{ count:0, probability:1 }];
+    const actorDistribution = queryPlayerHandProbability(
+      state.probabilityState, actor, "assault"
+    ).distribution;
+    const targetDistribution = queryPlayerHandProbability(
+      state.probabilityState, target, "assault"
+    ).distribution;
     const actorState = actorDistribution.map((branch) => ({
       probability:branch.probability,
       conditions:branch.conditions ?? {},
@@ -171,11 +184,11 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       targetCount:branch.count
     }));
     const resolutionState = probabilityEventPartition(
-      this.nextProbabilityEventKey(state, `duel-resolution:${actor.id}:${target.id}`),
+      this.currentProbabilityEventKey(state, `duel-resolution:${actor.id}:${target.id}`),
       resolutionProbability,
       "resolves"
     );
-    const joinedOutcomeWorlds = this.joinProbabilityWork(
+    const joinedOutcomeWorlds = this.intersectProbabilityWork(
       [actorState, targetState, resolutionState],
       "CombatSimulation.applyDuel:outcomes"
     );
@@ -233,13 +246,13 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       [target, targetAnonymousSpent]
     ]) {
       const whole = Math.floor(spent);
-      if (whole > 0) mutateHiddenPool(state.hiddenPoolState, {
+      if (whole > 0) mutateProbability(state.probabilityState, {
         type:"REMOVE",
         sourceBucketId:player.id,
         definitionId:"assault",
         count:whole
       });
-      if (spent - whole > PROBABILITY_EPSILON) mutateHiddenPool(state.hiddenPoolState, {
+      if (spent - whole > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
         type:"REMOVE",
         sourceBucketId:player.id,
         definitionId:"assault",
@@ -248,7 +261,6 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     }
     actor.handCount = Math.max(0, actor.handCount - expectedActorSpent);
     target.handCount = Math.max(0, target.handCount - expectedTargetSpent);
-    projectHiddenSummaries(state);
     this.applyDamage(state, target, actor, DOMAIN_CARD_DEFINITIONS.duel.failDamage, {
       canBlock:false,
       eventBranches:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
@@ -275,75 +287,46 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
 
   /*
   功能
-  读取玩家生命/存活的联合概率状态，并为旧 SearchState 提供确定性回退。
-
-  调用方
-  applyDamage。
-
-  输入
-  玩家过滤摘要。
-
-  输出
-  规范化的 hp/alive 状态分支。
-
-  读取状态
-  player.hpStateBranches、hp 与 alive。
-
-  写入状态
-  无。
-
-  调用函数
-  mergeProbabilityStateBranches。
-
-  边界与不变量
-  标量回退只能表示一个确定世界；已有分支的条件和概率不得丢失。
-  */
-  getHpStateBranches(player) {
-    const source = Array.isArray(player?.hpStateBranches) && player.hpStateBranches.length
-      ? player.hpStateBranches
-      : [{ probability:1, conditions:{}, hp:player?.hp ?? 0, alive:Boolean(player?.alive) }];
-    return this.projectProbabilityWork(source, (branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      hp:Number(branch.hp) || 0,
-      alive:Boolean(branch.alive)
-    }), "CombatSimulation.getHpStateBranches");
-  }
-
-  /*
-  功能
   把伤害条件世界投影为 HP/存活分支，并明确标记标量 HP 是否只是期望摘要。
 
   调用方
   applyDamage 在护盾和实际生命伤害确定后。
 
   输入
-  SearchState、目标、伤害世界与逐世界生命伤害查询。
+  World、目标、伤害世界与逐世界生命伤害查询。
 
-  输出
-  新的 hp/alive 分支数组。
+输出
+  只在本次伤害调用栈存在的 hp/alive 结果分区。
 
   读取状态
   目标既有 HP 分支与同阵营调息期望容量。
 
-  写入状态
-  hpStateBranches、分支/摘要分类、aliveProbability 与标量 hp。
+写入状态
+  hpSummaryClassification、aliveProbability、alive 与标量 hp。
 
   调用函数
-  getHpStateBranches、joinProbabilityStateBranches、projectProbabilityStateBranches。
+  getHpStateBranches、intersectProbabilityStateBranches、projectProbabilityStateBranches。
 
-  边界与不变量
+边界与不变量
   无救援容量时死亡边界按每个世界离散结算；可能救援的濒死世界保留为非 exact 限制，
-  绝不把跨边界的 expected HP 宣称为确定状态。
+  绝不把跨边界的 expected HP 宣称为确定状态，局部结果分区不写回 World。
   */
   commitHpOutcomeBranches(state, target, damageWorlds, hpDamageFor) {
-    const hpWorlds = this.joinProbabilityWork(
-      [this.getHpStateBranches(target), damageWorlds],
-      "CombatSimulation.commitHpOutcomeBranches:join"
-    );
+    const hpWorlds = damageWorlds.map((branch) => ({
+      ...branch,
+      hp:Number(target.hp) || 0,
+      alive:Boolean(target.alive)
+    }));
     const rescueCapacity = (state?.players ?? []).filter((player) => (
       player.alive && player.battleTeam === target.battleTeam
-    )).reduce((sum, player) => sum + Math.max(0, Number(player.expectedRecoverCount) || 0), 0);
+    )).reduce((sum, player) => sum + queryHandProbability(state.probabilityState, {
+      bucketId:player.id,
+      knownResources:[
+        ...(Array.isArray(player.hand) ? player.hand : []),
+        ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+      ],
+      definitionId:"recover"
+    }).expected, 0);
     let hasUnresolvedRescue = false;
     if (rescueCapacity > PROBABILITY_EPSILON) {
       for (let index = 0; index < hpWorlds.length; index += 1) {
@@ -372,16 +355,11 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       if (branch.alive) aliveProbability += branch.probability;
       expectedHp += branch.hp * branch.probability;
     }
-    target.hpStateBranches = branches;
-    target.hpStateBranchesClassification = hasUnresolvedRescue
-      ? PROBABILITY_CLASSIFICATION.EXPECTED_VALUE
-      : distinct.size > 1
-        ? PROBABILITY_CLASSIFICATION.BELIEF_PROBABILITY
-        : PROBABILITY_CLASSIFICATION.EXACT;
     target.hpSummaryClassification = distinct.size > 1
       ? PROBABILITY_CLASSIFICATION.EXPECTED_VALUE
       : PROBABILITY_CLASSIFICATION.EXACT;
     target.aliveProbability = aliveProbability;
+    target.alive = aliveProbability > PROBABILITY_EPSILON;
     target.hp = expectedHp;
     return branches;
   }
@@ -394,7 +372,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   CardEffect、SkillEffect、Status、ValueSimulationQuery 与本模块攻击入口：镜像一次条件化伤害。
 
   输入
-  独立 SearchState、可空攻击者、存活目标、正伤害量与格挡/装备/事件选项。
+  独立 World、可空攻击者、存活目标、正伤害量与格挡/装备/事件选项。
 
   输出
   期望生命伤害量；可选 outcome 同步得到伤害与格挡概率分支。
@@ -449,7 +427,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     let passChance = 1;
     let attackOutcomeWorlds = null;
     if (defenseProbability > 0) {
-      const battleKey = this.nextProbabilityEventKey(
+      const battleKey = this.currentProbabilityEventKey(
         state,
         `battle-required:${attacker?.id ?? "unknown"}:${target.id}`
       );
@@ -470,7 +448,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
               }
             ];
       const radarPresencePartition = probabilityEventPartition(
-        this.nextProbabilityEventKey(state, `radar-present:${target.id}`),
+        this.currentProbabilityEventKey(state, `radar-present:${target.id}`),
         defenseProbability,
         "hasRadar"
       );
@@ -484,7 +462,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         options.radarJudgmentProbabilities,
         options.radarJudgmentProbabilitiesByRequirement
       );
-      const joinedBaseWorlds = this.joinProbabilityWork(
+      const joinedBaseWorlds = this.intersectProbabilityWork(
         [eventWorlds, requiredPartition, radarPresencePartition, radarOutcomeSequence],
         "CombatSimulation.applyDamage:radar-base"
       );
@@ -511,8 +489,10 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       // 根容量和本次增量；该快照也用于判断判定得到的格挡是否真的被消费。
       // 无条件的匿名容量分支在这里显式键化，使判定格挡身份、判定前容量和
       // 最终 blockCount 在后续世界中保持同一条件关联。
-      const preJudgmentKey = this.nextProbabilityEventKey(state, "pre-judgment-blocks");
-      const preJudgmentBlockState = (target.blockCountDistribution ?? []).map((branch, index) => ({
+      const preJudgmentKey = this.currentProbabilityEventKey(state, "pre-judgment-blocks");
+      const preJudgmentBlockState = queryPlayerHandProbability(
+        state.probabilityState, target, "block"
+      ).distribution.map((branch, index) => ({
         probability:branch.probability,
         conditions:{ ...branch.conditions, [preJudgmentKey]:`v${index}` },
         blockCount:branch.blockCount
@@ -560,7 +540,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     } else if (options.canBlock) {
       // 非雷达路径：格挡数量分布与本次伤害事件世界联合，只有同时发生且数量足够的
       // 世界才消费格挡；消费张数由军火库条件决定（1 或 2）。
-      const battleKey = this.nextProbabilityEventKey(
+      const battleKey = this.currentProbabilityEventKey(
         state,
         `battle-required:${attacker?.id ?? "unknown"}:${target.id}`
       );
@@ -580,7 +560,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
                 requiredCount:getRequiredBlockCount(null, true)
               }
             ];
-      const responseWorlds = this.joinProbabilityWork(
+      const responseWorlds = this.intersectProbabilityWork(
         [eventWorlds, requiredPartition],
         "CombatSimulation.applyDamage:block"
       ).map((branch) => ({ ...branch, responseAllowed:true }));
@@ -603,26 +583,21 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
         }
       }
     }
-    const shieldState = this.getValueBranchesWork(
-      target,
-      "shield",
-      target.shield,
-      "CombatSimulation.applyDamage:shield-state"
-    ).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      shieldAmount:branch.amount
-    }));
+    const shieldState = [{
+      probability:1,
+      conditions:{},
+      shieldAmount:Number(target.shield) || 0
+    }];
     const aidPassWorlds = attackOutcomeWorlds
-      ?? this.joinProbabilityWork([
+      ?? this.intersectProbabilityWork([
         eventWorlds,
         probabilityEventPartition(
-          this.nextProbabilityEventKey(state, `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`),
+          this.currentProbabilityEventKey(state, `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`),
           passChance,
           "passes"
         )
       ], "CombatSimulation.applyDamage:aid-pass");
-    const preAidDamageWorlds = this.joinProbabilityWork(
+    const preAidDamageWorlds = this.intersectProbabilityWork(
       [aidPassWorlds, shieldState, amountState],
       "CombatSimulation.applyDamage:pre-aid"
     );
@@ -683,14 +658,14 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       }
     }
     const damageWorlds = attackOutcomeWorlds
-      ? this.joinProbabilityWork(
+      ? this.intersectProbabilityWork(
           [attackOutcomeWorlds, shieldState, amountState],
           "CombatSimulation.applyDamage:damage-worlds"
         )
-      : this.joinProbabilityWork([
+      : this.intersectProbabilityWork([
           eventWorlds,
           probabilityEventPartition(
-            this.nextProbabilityEventKey(state, `damage-pass:${attacker?.id ?? "unknown"}:${target.id}`),
+            this.currentProbabilityEventKey(state, `damage-pass:${attacker?.id ?? "unknown"}:${target.id}`),
             passChance,
             "passes"
           ),
@@ -758,7 +733,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       const absorbed = calculateShieldAbsorption(branch.shieldAmount, effectiveAmount);
       return calculateHpDamage(effectiveAmount, absorbed);
     };
-    target.shieldBranches = this.projectProbabilityWork(damageWorlds, (branch) => ({
+    const shieldOutcomes = this.projectProbabilityWork(damageWorlds, (branch) => ({
       amount:branch.occurs && branch.passes
         ? Math.max(
             0,
@@ -769,7 +744,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
           )
         : branch.shieldAmount
     }), "CombatSimulation.applyDamage:shield-outcome");
-    target.shield = expectedBranchValue(target.shieldBranches);
+    target.shield = expectedBranchValue(shieldOutcomes);
     let actualDamage = 0;
     for (let index = 0; index < damageWorlds.length; index += 1) {
       if (index % 32 === 0) this.checkpointSearchWork();
@@ -807,7 +782,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   applyDamage：在目标生命不大于零时结算救援和死亡。
 
   输入
-  独立 SearchState、濒死目标与可空伤害来源。
+  独立 World、濒死目标与可空伤害来源。
 
   输出
   无返回值；目标存活、死亡或被救援后的状态已完成。
@@ -832,8 +807,40 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     const allies = rescueOrder
       .map((id) => state.players.find((player) => player.id === id))
       .filter(Boolean);
-    const capacity = allies.reduce((sum, player) => sum + (player.expectedRecoverCount ?? 0), 0);
-    target.expectedRescueCoverage = Math.min(1, capacity / need);
+    /*
+    功能
+    惰性查询一名救援者当前可用调息的期望容量。
+
+    调用方
+    resolveFatal 的总容量判断与逐轮救援消费。
+
+    输入
+    当前 World 中的救援玩家。
+
+    输出
+    由唯一 ProbabilityState 和确定身份牌共同得到的非负期望张数。
+
+    读取状态
+    当前 World.probabilityState 与玩家 hand/knownCards。
+
+    写入状态
+    无。
+
+    调用函数
+    queryHandProbability。
+
+    边界与不变量
+    查询结果只在本次濒死结算调用栈中存在，不写回 World，也不创建调息分支层级。
+    */
+    const recoverCapacity = (player) => queryHandProbability(state.probabilityState, {
+      bucketId:player.id,
+      knownResources:[
+        ...(Array.isArray(player.hand) ? player.hand : []),
+        ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+      ],
+      definitionId:"recover"
+    }).expected;
+    const capacity = allies.reduce((sum, player) => sum + recoverCapacity(player), 0);
     if (capacity < need) {
       target.alive = false;
       target.hp = 0;
@@ -843,30 +850,25 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
       target.huntMarkProbability = 0;
       target.huntMarkProbabilities = {};
       target.momentum = 0;
-      target.momentumBranches = [{ probability:1, conditions:{}, amount:0 }];
       target.statuses = [];
       target.handCount = 0;
       target.hand = [];
       target.knownCards = [];
-      const anonymousSlots = Math.max(
-        0,
-        Number(state.hiddenPoolState?.slotsByBucket?.[target.id]) || 0
-      );
+      const anonymousSlots = expectedAnonymousSlots(state.probabilityState, target.id);
       const wholeSlots = Math.floor(anonymousSlots);
-      if (wholeSlots > 0) mutateHiddenPool(state.hiddenPoolState, {
+      if (wholeSlots > 0) mutateProbability(state.probabilityState, {
         type:"REMOVE",
         sourceBucketId:target.id,
         count:wholeSlots
       });
-      if (anonymousSlots - wholeSlots > PROBABILITY_EPSILON) mutateHiddenPool(
-        state.hiddenPoolState,
+      if (anonymousSlots - wholeSlots > PROBABILITY_EPSILON) mutateProbability(
+        state.probabilityState,
         {
           type:"REMOVE",
           sourceBucketId:target.id,
           probability:anonymousSlots - wholeSlots
         }
       );
-      projectHiddenSummaries(state);
       this.setSimulatedEquipment(target, null, 0);
       this.clearHuntMarksBySource(state, target.id);
       const targetFact = roster.find((player) => player.id === target.id) ?? null;
@@ -883,14 +885,13 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     }
     let remaining = need;
     let healingApplied = 0;
-    const totalRecover = allies.reduce((sum, rescuer) => sum + Math.max(0, rescuer.expectedRecoverCount ?? 0), 0);
-    const maxRounds = Math.max(1, Math.ceil(totalRecover));
+    const maxRounds = Math.max(1, Math.ceil(capacity));
     let rounds = 0;
     while (remaining > PROBABILITY_EPSILON && rounds < maxRounds) {
       let usedThisRound = false;
       for (const rescuer of allies) {
         if (remaining <= PROBABILITY_EPSILON) break;
-        const available = Math.max(0, rescuer.expectedRecoverCount ?? 0);
+        const available = Math.max(0, recoverCapacity(rescuer));
         if (available <= PROBABILITY_EPSILON) continue;
         const canRejuvenate = hasPassiveSkill(rescuer, "rejuvenation")
           && (rescuer.rejuvenationTriggerCount ?? 0)
@@ -910,14 +911,13 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
           .filter((entry) => entry.definitionId === "recover")
           .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
         const anonymousSpent = Math.max(0, spent - (knownBefore - knownAfter));
-        if (anonymousSpent > PROBABILITY_EPSILON) mutateHiddenPool(state.hiddenPoolState, {
+        if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
           type:"REMOVE",
           sourceBucketId:rescuer.id,
           definitionId:"recover",
           probability:anonymousSpent
         });
         rescuer.handCount = Math.max(0, (rescuer.handCount ?? 0) - spent);
-        projectHiddenSummaries(state);
         if (canRejuvenate) {
           // 概率救援按实际消耗的期望调息推进回春：摸牌与次数消耗必须共享同一概率权重，
           // 并以每回合 2 次为上限，避免“摸牌按分数计、次数却完整消耗”的条件世界失配。
@@ -939,7 +939,6 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
     }
     const appliedHealing = calculateHealAmount(healingApplied, target.maxHp, target.hp);
     target.hp += appliedHealing;
-    target.expectedRescueCoverage = 1;
     target.alive = true;
   }
 
@@ -982,7 +981,7 @@ export const withCombatSimulation = (Base) => class CombatSimulation extends Bas
   CardEffectSimulation 与 SkillEffectSimulation：结算带来源的治疗及回春被动。
 
   输入
-  独立 SearchState、治疗来源、存活目标与正治疗量。
+  独立 World、治疗来源、存活目标与正治疗量。
 
   输出
   无返回值；治疗和可能的回春摸牌已结算。

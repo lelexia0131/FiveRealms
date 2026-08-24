@@ -145,6 +145,28 @@ export function createHiddenCardChoiceWorkflow(runtime) {
       if (selection?.selectionId) runtime.hiddenSelection.clearSelection(selection.selectionId);
       return [];
     }
+    if (selection?.selectionKind === "known" && selection.cardId) {
+      const card = eligibleCards.find((entry) => entry.id === selection.cardId) ?? null;
+      return card ? [card] : [];
+    }
+    if (selection?.selectionKind === "unknown") {
+      const knownCardIds = new Set(selection.knownCardIds ?? []);
+      const card = eligibleCards.find((entry) => !knownCardIds.has(entry.id)) ?? null;
+      return card ? [card] : [];
+    }
+    if (selection?.selectionKind === "peek") {
+      const selected = (selection.cardIds ?? []).map((cardId) => (
+        eligibleCards.find((entry) => entry.id === cardId) ?? null
+      )).filter(Boolean);
+      if (selected.length !== (selection.cardIds?.length ?? 0)) return [];
+      const selectedIds = new Set(selected.map((entry) => entry.id));
+      const knownCardIds = new Set(selection.knownCardIds ?? []);
+      const unknownCount = Math.max(0, Math.floor(Number(selection.unknownCount) || 0));
+      const unknown = eligibleCards.filter((entry) => (
+        !selectedIds.has(entry.id) && !knownCardIds.has(entry.id)
+      )).slice(0, unknownCount);
+      return unknown.length === unknownCount ? [...selected, ...unknown].slice(0, maximum) : [];
+    }
     if (selection?.tokens?.length) {
       if (!selection.selectionId) return [];
       const uniqueTokens = [...new Set(selection.tokens)].slice(0, maximum);
@@ -203,12 +225,18 @@ export function createHiddenCardChoiceWorkflow(runtime) {
     if (!runtime.isSessionValid(gameId)) return null;
     const eligibleHandCount = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)).length ?? 0;
     if (!owner?.alive || (!eligibleHandCount && !owner.equipment)) return null;
-    if (selection?.zone === "equipment") {
-      if (!selection.selectionId || !runtime.hiddenSelection.isSelectionActive(selection.selectionId, owner)) return null;
+    if (selection?.zone === "equipment" && selection.selectionKind === "equipment") {
       const equipment = owner.equipment;
-      const chosen = equipment && equipment.id === selection.equipmentCardId ? { card:equipment, zone:"equipment" } : null;
-      runtime.hiddenSelection.clearSelection(selection.selectionId);
+      const chosen = equipment && equipment.definitionId === selection.definitionId
+        ? { card:equipment, zone:"equipment" }
+        : null;
       return chosen;
+    }
+    if (["known", "unknown"].includes(selection?.selectionKind)) {
+      const [card] = await chooseHiddenCards(
+        actor, owner, 1, reason, selection, excludedCardIds, aiContext
+      );
+      return card ? { card, zone:"hand" } : null;
     }
     if (selection?.tokens?.length) {
       const [card] = await chooseHiddenCards(actor, owner, 1, reason, selection, excludedCardIds);

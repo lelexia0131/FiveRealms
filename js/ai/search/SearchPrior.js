@@ -9,7 +9,7 @@ Planner 计算 pruneScore 时请求本模块提供展开优先级；正式边界
 CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
 
 状态边界
-只读 VisibleState/SearchState；不写状态、不执行动作。
+只读 Fact/World；不写状态、不执行动作。
 
 信息边界
 只使用过滤后的状态、viewer 合法记忆与显式难度参数。
@@ -18,6 +18,8 @@ CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
 本模块所有返回值只用于剪枝和排序；不得进入最终价值，TransitionValue 也不得调用或累计这些值。
 */
 import { AI_RUNTIME_POLICY } from "../policy/AiRuntimePolicy.js";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
 import { sealUseValue } from "./SealPrior.js";
 import {
@@ -32,6 +34,7 @@ import {
   statePointsToUtility
 } from "../value/Economics.js";
 import { ThreatCalculator, incomingExposure } from "../value/ThreatValue.js";
+import { queryPlayerHandProbability } from "../state/Probability.js";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
 // 这些权重只维持有限 beam 的相对探索顺序，不是单位换算，也不得进入 Final Utility。
@@ -132,22 +135,15 @@ export class SearchPrior {
   breakArmyUtility(actor) {
     const assaultCount = (actor.hand ?? [])
       .filter((card) => card.definitionId === "assault")
-      .reduce((sum, card) => sum + (Array.isArray(card.availabilityBranches)
-        ? card.availabilityBranches.reduce(
-            (total, branch) => total + (Number(branch.probability) || 0),
-            0
-          )
-        : 1), 0);
-    const availableAttackUses = Array.isArray(actor.attackUseSlots)
-      ? actor.attackUseSlots.reduce((sum, slot) => sum + (slot ?? []).reduce(
-          (total, branch) => total + (branch.available ? Number(branch.probability) || 0 : 0),
-          0
-        ), 0)
-      : Math.max(
-          0,
-          (Number(actor.attackLimit ?? actor.turnFlags?.attackLimit) || 0)
-            - (Number(actor.attackUsed ?? actor.turnFlags?.attackUsed) || 0)
-        );
+      .reduce((sum, card) => sum + Math.max(
+        0,
+        Math.min(1, Number(card.availability ?? 1) || 0)
+      ), 0);
+    const availableAttackUses = Math.max(
+      0,
+      (Number(actor.attackLimit ?? actor.turnFlags?.attackLimit) || 0)
+        - (Number(actor.attackUsed ?? actor.turnFlags?.attackUsed) || 0)
+    );
     const redeemableExtraCapacity = Math.min(
       1,
       Math.max(0, assaultCount - availableAttackUses)
@@ -200,7 +196,7 @@ export class SearchPrior {
   actionUtility 的 scout 分支。
 
   输入
-  窥探使用者、被查看目标与过滤后 SearchState。
+  窥探使用者、被查看目标与过滤后 World。
 
   输出
   零到一的排序相关性；只用于 prior。
@@ -225,7 +221,9 @@ export class SearchPrior {
       .filter((definition) => !definition.subtypes?.includes("information"));
     const offensiveDecision = Math.min(1, Math.max(
       0,
-      Number(actor?.expectedAssaultCount) || 0,
+      queryPlayerHandProbability(
+        visible.probabilityState, actor, "assault"
+      ).expected,
       decisionDefinitions.some((definition) => definition.subtypes?.some(
         (subtype) => ["attack", "damage", "attack-buff"].includes(subtype)
       )) ? 1 : 0
@@ -238,11 +236,15 @@ export class SearchPrior {
         (subtype) => ["defense", "response", "rescue", "support"].includes(subtype)
       ) || definition.targetType === "multiStage"
     )) ? 1 : 0;
-    const assaultProbability = Math.min(
-      1, Math.max(0, Number(target.assaultResponseProbability) || 0)
-    );
-    const blockProbability = Math.min(1, Math.max(0, Number(target.blockProbability) || 0));
-    const counterProbability = Math.min(1, Math.max(0, Number(target.counterProbability) || 0));
+    const assaultProbability = queryPlayerHandProbability(
+      visible.probabilityState, target, "assault"
+    ).probability;
+    const blockProbability = queryPlayerHandProbability(
+      visible.probabilityState, target, "block"
+    ).probability;
+    const counterProbability = queryPlayerHandProbability(
+      visible.probabilityState, target, "counter"
+    ).probability;
     const assaultUncertainty = assaultProbability * (1 - assaultProbability) / 0.25;
     const blockUncertainty = blockProbability * (1 - blockProbability) / 0.25;
     const counterUncertainty = counterProbability * (1 - counterProbability) / 0.25;
@@ -293,7 +295,7 @@ export class SearchPrior {
   Planner 经 CandidateMaterializer 的 root scheduling 适配入口。
 
   输入
-  根候选动作、行动者与过滤后的根 SearchState。
+  根候选动作、行动者与过滤后的根 World。
 
 输出
   由有界机会收益除以估算分支工作得到的有限调度密度；end 始终排在合法 non-end 后。
@@ -315,10 +317,9 @@ export class SearchPrior {
   rootSchedulingScore(action, player, visible) {
     const actor = visible.players.find((entry) => entry.id === player.id) ?? player;
     if (action.type === "end") return Number.NEGATIVE_INFINITY;
-    const actionTarget = action.targets?.[0];
-    const target = visible.players.find((entry) => entry.id === actionTarget?.id)
-      ?? actionTarget;
+    const target = visible.players.find((entry) => entry.id === action.targetIds?.[0]) ?? null;
     if (action.type === "skill") {
+      const skill = ACTIVE_SKILL_DEFINITIONS[action.skillId] ?? null;
       const missingHp = target ? Math.max(0, target.maxHp - target.hp) : 0;
       const skillScores = {
         breakArmy: actor.characterId
@@ -332,13 +333,13 @@ export class SearchPrior {
         allIn:Math.max(0, actor.energy - 1) * 3,
         resonance:5 + (target?.handCount <= 1 ? 3 : 0)
       };
-      const branchingWork = action.skill?.targetType === "enemyWithCardsOrEquipment"
+      const branchingWork = skill?.targetType === "enemyWithCardsOrEquipment"
         ? 1 + rootSchedulingResourceCount(target)
         : 1;
-      const density = (Number(skillScores[action.skill?.id] ?? 4) || 0) / branchingWork;
+      const density = (Number(skillScores[action.skillId] ?? 4) || 0) / branchingWork;
       return density / (1 + Math.abs(density));
     }
-    const card = action.card;
+    const card = CARD_DEFINITIONS[action.cardId] ?? null;
     if (!card?.definitionId) return 0;
     let score = actor.characterId
       ? getRoleCardAiValue(actor.characterId, card.definitionId)
@@ -390,9 +391,9 @@ export class SearchPrior {
         actor.equipmentRetentionProbability ?? 1
       );
     }
-    const targets = (action.targets ?? []).map((entry) => (
-      visible.players.find((playerEntry) => playerEntry.id === entry?.id) ?? entry
-    ));
+    const targets = (action.targetIds ?? []).map((targetId) => (
+      visible.players.find((entry) => entry.id === targetId)
+    )).filter(Boolean);
     let branchingWork = 1;
     if (card.subtypes?.includes("hidden-selection")) {
       const sourceId = action.selection?.sourceId;
@@ -402,9 +403,14 @@ export class SearchPrior {
       branchingWork += rootSchedulingResourceCount(resourceOwner);
     }
     if (card.subtypes?.includes("attack")) {
-      branchingWork += targets.reduce((sum, entry) => sum
-        + Math.max(0, Number(entry?.blockProbability) || 0)
-        + Math.max(0, Number(entry?.twoBlockProbability) || 0), 0);
+      branchingWork += targets.reduce((sum, entry) => {
+        const block = queryPlayerHandProbability(
+          visible.probabilityState, entry, "block"
+        );
+        return sum + block.probability + queryPlayerHandProbability(
+          visible.probabilityState, entry, "block", 2
+        ).probability;
+      }, 0);
     }
     if (card.counterable) {
       const responders = card.counterScope === "target"
@@ -412,10 +418,10 @@ export class SearchPrior {
         : visible.players.filter((entry) => (
             entry.alive && entry.battleTeam !== actor.battleTeam
           ));
-      branchingWork += 1 + responders.reduce(
-        (sum, entry) => sum + Math.max(0, Number(entry.counterProbability) || 0),
-        0
-      );
+      branchingWork += 1 + responders.reduce((sum, entry) => sum
+        + queryPlayerHandProbability(
+          visible.probabilityState, entry, "counter"
+        ).probability, 0);
     }
     if (!Number.isFinite(score)) return 0;
     const density = score / branchingWork;
@@ -457,9 +463,7 @@ export class SearchPrior {
       return remainingCards > 0 ? -END_PRIOR_PENALTY : 0;
     }
     if (action.type === "skill") {
-      const actionTarget = action.targets?.[0];
-      const target = visible.players.find((entry) => entry.id === actionTarget?.id)
-        ?? actionTarget;
+      const target = visible.players.find((entry) => entry.id === action.targetIds?.[0]) ?? null;
       const missing = target ? Math.max(0, target.maxHp - target.hp) : 0;
       const values = {
         breakArmy: this.breakArmyUtility(actor),
@@ -475,13 +479,14 @@ export class SearchPrior {
           + Math.min(1, actor.energy * 0.25) * (1 - (actor.assaultBonus ?? 0)) * 4,
         resonance: 5 + (target?.handCount <= 1 ? 3 : 0)
       };
-      let value = values[action.skill.id] ?? 4;
-      if (["stealSkill", "hunt"].includes(action.skill.id)) {
+      let value = values[action.skillId] ?? 4;
+      if (["stealSkill", "hunt"].includes(action.skillId)) {
         value += this.threatPriority(actor, target, player.aiMemory, 1);
       }
       return value;
     }
-    const card = action.card;
+    const card = CARD_DEFINITIONS[action.cardId] ?? null;
+    if (!card) return 0;
     const identityDelta = roleCardDelta(actor?.characterId, card?.definitionId);
     let value = actor?.characterId && card?.definitionId
       ? getRoleCardAiValue(actor.characterId, card.definitionId)
@@ -499,9 +504,7 @@ export class SearchPrior {
         )) * STATE_UTILITY_PRIOR_WEIGHT
         + identityDelta;
     }
-    const actionTarget = action.targets?.[0];
-    const target = visible.players.find((entry) => entry.id === actionTarget?.id)
-      ?? actionTarget;
+    const target = visible.players.find((entry) => entry.id === action.targetIds?.[0]) ?? null;
     if (card.definitionId === "seal") {
       value = sealUseValue(actor, target, visible, options.searchBudget ?? null)
         + identityDelta;
@@ -564,13 +567,18 @@ export class SearchPrior {
       value += visible.players
         .filter((enemy) => enemy.alive && enemy.battleTeam !== actor.battleTeam)
         .reduce(
-          (sum, enemy) => sum + (1 - (enemy.assaultResponseProbability ?? 0)) * 3,
+          (sum, enemy) => sum + (1 - queryPlayerHandProbability(
+            visible.probabilityState, enemy, "assault"
+          ).probability) * 3,
           0
         );
     }
     if (card.definitionId === "duel" && target) {
-      value += ((actor.expectedAssaultCount ?? 0)
-        - (target.expectedAssaultCount ?? 0)) * 2;
+      value += (queryPlayerHandProbability(
+        visible.probabilityState, actor, "assault"
+      ).expected - queryPlayerHandProbability(
+        visible.probabilityState, target, "assault"
+      ).expected) * 2;
     }
     if (card.definitionId === "transfer") value += Number(action.selection?.score ?? 0);
     if (card.definitionId === "symbiosis") {
@@ -650,7 +658,7 @@ export class SearchPrior {
   BURNING_FIELD_SEARCH_PRIOR 是剪枝经验值，不是游戏价值，绝不进入 final valueScore。
   */
   actionSearchPrior(action, player, visible) {
-    if (action.skill?.id === "burningField") return BURNING_FIELD_SEARCH_PRIOR;
+    if (action.skillId === "burningField") return BURNING_FIELD_SEARCH_PRIOR;
     return 0;
   }
 }

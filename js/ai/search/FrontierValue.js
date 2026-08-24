@@ -9,7 +9,7 @@ Planner、TransitionValue 诊断与正式边界。
 ThreatValue、CardValue 与 Economics。
 
 状态边界
-只读 SearchState；不写状态、不执行动作。
+只读 World；不写状态、不执行动作。
 
 信息边界
 只使用 viewer 自身手牌身份与过滤后的敌方威胁摘要。
@@ -33,7 +33,7 @@ export class FrontierValue {
   Planner 与正式边界。
 
   输入
-  SearchState 与 viewer ID。
+  World 与 viewer ID。
 
   输出
   futureInventory、held.recover/recycle 与 total；viewer 无效时返回 null。

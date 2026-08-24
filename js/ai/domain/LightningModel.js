@@ -27,7 +27,8 @@ import { projectCanonicalSeatRoster, projectRulePlayer } from "../state/RuleProj
 import {
   PROBABILITY_EPSILON,
   clampProbability,
-  mergeProbabilityStateBranches,
+  probabilityEventPartition,
+  queryCurrentCardCounts,
   totalBranchProbability
 } from "../state/Probability.js";
 
@@ -85,20 +86,14 @@ mergeStateBranches、Domain StatusRules.hasStatus。
 边界与不变量
 缺少概率分支时退化为概率一的确定状态；Simulation 可注入 cooperative merge，输出不复用输入分支对象。
 */
-export function getLightningStatusStateBranches(
-  player,
-  mergeStateBranches = mergeProbabilityStateBranches
-) {
-  if (Array.isArray(player?.lightningStatusStateBranches) && player.lightningStatusStateBranches.length) {
-    return mergeStateBranches(
-      player.lightningStatusStateBranches.map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions ?? {},
-        present:Boolean(branch.present)
-      }))
-    );
-  }
-  return [{ probability:1, conditions:{}, present:hasLightning(player) }];
+export function getLightningStatusStateBranches(player) {
+  const probability = player?.lightningStatusProbability
+    ?? (hasLightning(player) ? 1 : 0);
+  return probabilityEventPartition(
+    `lightning-status:${player?.id ?? "unknown"}`,
+    probability,
+    "present"
+  );
 }
 
 /*
@@ -307,7 +302,9 @@ buildLightningPropagationChainIds、judgmentCategoryCounts。
 */
 export function buildLightningHitDistribution(state, initialHolder) {
   const chainIds = buildLightningPropagationChainIds(state?.players, initialHolder);
-  const counts = judgmentCategoryCounts(state?.remainingCardCounts);
+  const counts = judgmentCategoryCounts(
+    state?.probabilityState ? queryCurrentCardCounts(state.probabilityState) : null
+  );
   if (!chainIds.length || counts.equipment <= PROBABILITY_EPSILON || counts.total <= 0) return [];
   const outcomeProbability = new Map(chainIds.map((holderId) => [holderId, 0]));
   let remainingTotal = counts.total;

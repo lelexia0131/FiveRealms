@@ -12,21 +12,18 @@ AI value/policy/simulation/search modules 与 Domain Definitions/Rules。
 只读 request.searchState 与 request.searchConfig；Planner/Simulator 只写 Worker 本地状态。
 
 信息边界
-只消费 SearchRequest 已携带的合法 Visible/Knowledge/Belief 事实。
+只消费 SearchRequest 已携带的合法 Fact 与当前 Probability 状态。
 
 架构约束
 不得 import composition、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
 */
 import { getMaxEnergy, getTurnEnergyBreakdown } from "../../../domain/rules/team/TeamRules.js";
-import { sampleHiddenWorlds } from "../../../ai/state/BeliefState.js";
+import { sampleProbabilityWorlds } from "../../../ai/state/Probability.js";
 import { Evaluator } from "../../../ai/value/Evaluator.js";
 import { StateValue } from "../../../ai/value/StateValue.js";
 import { ValueLedger } from "../../../ai/value/ValueLedger.js";
-import { ValueService } from "../../../ai/value/ValueService.js";
 import { ValueSimulationQuery } from "../../../ai/simulation/ValueSimulationQuery.js";
-import { ResourceValueQuery } from "../../../ai/simulation/ResourceValueQuery.js";
 import { Simulator } from "../../../ai/simulation/Simulator.js";
-import { ActionCandidatePolicy } from "../../../ai/policy/ActionCandidatePolicy.js";
 import {
   ActionGenerator,
   deduplicateSearchEquivalentActions
@@ -42,39 +39,7 @@ import { SearchPrior } from "../../../ai/search/SearchPrior.js";
 import { SiblingTransitionTerms } from "../../../ai/search/SiblingTransitionTerms.js";
 import { tacticResolutionScale } from "../../../ai/search/TacticResolutionQuery.js";
 import { TransitionValue } from "../../../ai/search/TransitionValue.js";
-import { ActionDescriptor } from "../../../ai/search/ActionDescriptor.js";
 import { SearchRng } from "../../../ai/search/SearchRng.js";
-
-/*
-功能
-构造 Worker-safe deep action generator。
-
-调用方
-createSearchEngine。
-
-输入
-transfer/action candidate policies。
-
-输出
-deep-only ActionGenerator。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-ActionGenerator 构造函数。
-
-边界与不变量
-不注入 getRootContext/chooseTransferCombination；root generate 调用会 fail fast。
-*/
-function createDeepActionGenerator(actionCandidatePolicy) {
-  return new ActionGenerator({
-    actionCandidatePolicy
-  });
-}
 
 /*
 功能
@@ -102,23 +67,23 @@ Domain TeamRules、value/policy/search/simulation 模块。
 所有随机来自注入 rng；SearchBudget/SearchPolicy 只消费 request.searchConfig；不缓存跨请求服务。
 */
 export function createSearchEngine(request, rng, runtimeControl = {}) {
-  const searchState = request.searchState;
+  const searchState = request.world;
   const config = request.searchConfig;
   /*
   功能
-  从 SearchState 投影计算玩家 max energy。
+  从 World 投影计算玩家 max energy。
 
   调用方
   createSearchEngine 构造 Evaluator。
 
   输入
-  SearchState player。
+  World player。
 
   输出
   非负整数。
 
   读取状态
-  SearchState players 与 Domain TeamRules。
+  World players 与 Domain TeamRules。
 
   写入状态
   无。
@@ -135,19 +100,19 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   );
   /*
   功能
-  从 SearchState 投影计算玩家回合能量 breakdown。
+  从 World 投影计算玩家回合能量 breakdown。
 
   调用方
   createSearchEngine 构造 Evaluator。
 
   输入
-  SearchState player。
+  World player。
 
   输出
   Domain TeamRules breakdown。
 
   读取状态
-  SearchState players 与 Domain TeamRules。
+  World players 与 Domain TeamRules。
 
   写入状态
   无。
@@ -166,22 +131,21 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     getMaxEnergy:getMaxEnergyForPlayer,
     getTurnEnergyBreakdown:getTurnEnergyBreakdownForPlayer
   });
-  let resourceValueQuery = null;
   /*
   功能
   为 Worker search runtime 创建共享资源决策语义的独立 Simulator。
 
   调用方
-  ValueSimulationQuery、ResourceValueQuery 与 Planner。
+  ValueSimulationQuery 与 Planner。
 
   输入
-  当前查询或搜索节点的 SearchState，以及可选搜索工作诊断上下文。
+  当前查询或搜索节点的 World，以及可选搜索工作诊断上下文。
 
   输出
-  注入正式资源 Policy/query 的 Simulator。
+  注入搜索预算上下文的 Simulator。
 
   读取状态
-  当前 search engine 的 resourceSelectionPolicy 与已完成初始化的 resourceValueQuery。
+  当前 search engine 的搜索预算上下文。
 
   写入状态
   无。
@@ -190,10 +154,9 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   Simulator 构造函数。
 
   边界与不变量
-  闭包允许在 ResourceValueQuery 初始化完成前声明，但只在组合完成后调用；不得依赖 main-thread 对象。
+  不得依赖 main-thread 对象；Worker 不构造未被搜索消费的资源选择查询。
   */
   const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
-    resourceValueQuery,
     searchBudget:runtime.searchBudget ?? null
   });
   const valueSimulationQuery = new ValueSimulationQuery(
@@ -201,11 +164,6 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     simulatorFactory
   );
   const stateValue = new StateValue(stateEvaluator, valueSimulationQuery);
-  resourceValueQuery = new ResourceValueQuery({
-    stateValue,
-    evaluator: stateEvaluator,
-    simulatorFactory
-  });
   const valueLedger = new ValueLedger({
     evaluator:stateEvaluator,
     stateValue,
@@ -217,28 +175,20 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     simulationQuery:valueSimulationQuery
   });
   const transitionValue = new TransitionValue(stateValue);
-  const evaluator = new ValueService({
-    evaluator:stateEvaluator,
-    stateValue,
-    simulationQuery:valueSimulationQuery,
-    valueLedger,
-    frontierValue,
-    searchPrior,
-    transitionValue
-  });
-  const actionCandidatePolicy = new ActionCandidatePolicy();
-  const actionGenerator = createDeepActionGenerator(actionCandidatePolicy);
+  const actionGenerator = new ActionGenerator();
   const searchPolicy = new SearchPolicy({
     random: () => rng.next(),
     getRandomnessRange: () => config.randomnessRange,
+    compareCandidates:(left, right) => transitionValue.compareCandidates(left, right),
     config
   });
   const counterfactualTerms = new CounterfactualTerms({
-    evaluator,
-    generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
-    sampleHiddenWorlds: (viewer, state, count) => sampleHiddenWorlds(
-      viewer, state, count, () => rng.next()
-    ),
+    evaluator:stateValue,
+    generateActions: (...args) => actionGenerator.generate(...args),
+    sampleUnknownHands: (query) => sampleProbabilityWorlds({
+      ...query,
+      random:() => rng.next()
+    }),
     hiddenSampleCount:searchPolicy.structure().hiddenSamples
   });
   const siblingTransitionTerms = new SiblingTransitionTerms();
@@ -249,10 +199,9 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     searchPrior,
     counterfactualTerms,
     siblingTerms:siblingTransitionTerms,
-    actionDescriptor:ActionDescriptor,
     getResolutionScale:tacticResolutionScale
   });
-  const patternMatcher = new PatternMatcher({ actionDescriptor:ActionDescriptor });
+  const patternMatcher = new PatternMatcher();
   const planner = new Planner({
     candidateMaterializer,
     patternMatcher,
@@ -264,7 +213,7 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
       now:typeof runtimeControl.now === "function" ? runtimeControl.now : null
     }),
     deduplicateActions:deduplicateSearchEquivalentActions,
-    generateFromVisible: (...args) => actionGenerator.generateFromVisible(...args),
+    generateActions: (...args) => actionGenerator.generate(...args),
     yieldControl: typeof runtimeControl.yieldControl === "function"
       ? runtimeControl.yieldControl
       : async () => true

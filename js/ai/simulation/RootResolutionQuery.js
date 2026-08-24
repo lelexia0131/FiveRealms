@@ -9,7 +9,7 @@ ValueSimulationQuery 与固定响应回归测试。
 注入的 Simulator、StateValue 与 domain/GlobalBenefitModel。
 
 状态边界
-只通过注入 Simulator 写独立 SearchState 克隆，不修改输入状态或真实 GameState。
+只通过注入 Simulator 写独立 World 克隆，不修改输入状态或真实 GameState。
 
 信息边界
 只消费响应时刻的过滤状态、公开目标和显式选择，不读取隐藏实体牌。
@@ -17,8 +17,9 @@ ValueSimulationQuery 与固定响应回归测试。
 架构约束
 这是有界 Simulation query；不构造 Simulator、不决定响应策略、不拥有最终价值公式。
 */
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { isGlobalBenefitCard } from "../domain/GlobalBenefitModel.js";
-import { conditionHiddenPool, projectHiddenSummaries } from "../state/HiddenPool.js";
+import { conditionProbability } from "../state/Probability.js";
 
 export const TARGET_SCOPE_CARDS = new Set(["shockwave", "provoke"]);
 
@@ -30,10 +31,10 @@ export const TARGET_SCOPE_CARDS = new Set(["shockwave", "provoke"]);
 dynamicRootFlipGain。
 
 输入
-Simulator capability、SearchState、root 来源 ID 与公开目标。
+Simulator capability、World、root 来源 ID 与公开目标。
 
 输出
-独立的收敛 SearchState。
+独立的收敛 World。
 
 读取状态
 玩家阵营、存活状态和目标 ID。
@@ -57,7 +58,7 @@ export function buildTargetScopedBase(simulator, state, rootSourceId, targets) {
   }
   for (const player of reduced.players) {
     if (!targetIds.has(player.id)) continue;
-    conditionHiddenPool(reduced.hiddenPoolState, {
+    conditionProbability(reduced.probabilityState, {
       type:"CONDITION",
       definitionId:"counter",
       bucketId:player.id,
@@ -70,64 +71,7 @@ export function buildTargetScopedBase(simulator, state, rootSourceId, targets) {
       player.knownCards = player.knownCards.filter((card) => card.definitionId !== "counter");
     }
   }
-  projectHiddenSummaries(reduced);
   return reduced;
-}
-
-/*
-功能
-把转移或借势的公开 root 上下文投影为 Simulator action selection。
-
-调用方
-resolveRootState。
-
-输入
-root 卡、公开目标与规划/真实响应上下文。
-
-输出
-选择描述；无选择机制时为 null。
-
-读取状态
-显式 selection、公开转移来源/接收者与目标 ID。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-真实响应侧不携带隐藏牌身份；规划侧已有合法身份时保持原字段。
-*/
-function buildRootSelection(rootCard, targets, options = {}) {
-  const rootId = rootCard?.definitionId;
-  if (rootId === "transfer") {
-    const planned = options.selection ?? null;
-    if (planned?.sourceId && planned?.receiverId) {
-      return {
-        sourceId:planned.sourceId,
-        receiverId:planned.receiverId,
-        zone:planned.zone ?? "hand",
-        selectionKind:planned.selectionKind ?? null,
-        cardId:planned.cardId ?? null,
-        definitionId:planned.definitionId ?? null
-      };
-    }
-    const context = options.publicTransferContext ?? null;
-    if (!context?.fromPlayerId || !context?.receiverPlayerId) return null;
-    return {
-      sourceId:context.fromPlayerId,
-      receiverId:context.receiverPlayerId,
-      zone:context.zone ?? "hand"
-    };
-  }
-  if (rootId === "leverage") {
-    return {
-      firstTargetId:targets[0]?.id ?? null,
-      secondTargetId:targets[1]?.id ?? null
-    };
-  }
-  return null;
 }
 
 /*
@@ -138,10 +82,10 @@ function buildRootSelection(rootCard, targets, options = {}) {
 dynamicRootFlipGain。
 
 输入
-Simulator capability、SearchState、root 卡/来源/目标与公开选择上下文。
+  Simulator capability、World 与 Generator 已完成的 canonical root Action。
 
 输出
-root 效果已结算的独立 SearchState。
+root 效果已结算的独立 World。
 
 读取状态
 当前响应资源状态和显式 root 上下文。
@@ -150,7 +94,7 @@ root 效果已结算的独立 SearchState。
 临时写 Simulator 递归守卫，并通过 apply 写独立克隆。
 
 调用函数
-buildRootSelection、Simulator.apply。
+  Simulator.apply。
 
 边界与不变量
 root 卡资源已在真实响应链沉没，因此 restoreActorHand 抵消 apply 的重复手牌成本；counterable=false 防止二次概率化。
@@ -158,26 +102,12 @@ root 卡资源已在真实响应链沉没，因此 restoreActorHand 抵消 apply
 export function resolveRootState(
   simulator,
   state,
-  rootCard,
-  rootSourceId,
-  targets,
-  options = {}
+  rootAction
 ) {
   const previousSimulating = simulator._simulatingRootResolution ?? false;
   simulator._simulatingRootResolution = true;
   try {
-    const action = {
-      type:"card",
-      card:{
-        ...rootCard,
-        id:`root-sim:${rootCard.id ?? rootCard.definitionId}`,
-        counterable:false
-      },
-      targets,
-      selection:buildRootSelection(rootCard, targets, options),
-      restoreActorHand:true
-    };
-    return simulator.apply(state, action, rootSourceId);
+    return simulator.apply(state, rootAction);
   } finally {
     simulator._simulatingRootResolution = previousSimulating;
   }
@@ -191,7 +121,7 @@ export function resolveRootState(
 ValueSimulationQuery 与直接响应反事实测试。
 
 输入
-  StateValue、Simulator capability、响应状态、响应者、root 卡/来源/深度/目标上下文与父 SearchBudget。
+  StateValue、Simulator capability、响应 World、响应者、canonical root Action、深度与父 SearchBudget。
 
 输出
 全体受益或非法 root 为 null；否则返回 flip 世界减 stay 世界的原始 State Value points。
@@ -215,36 +145,34 @@ export function dynamicRootFlipGain(
   simulator,
   state,
   responderId,
-  rootCard,
-  rootSourceId,
+  rootAction,
   counterDepth,
-  rootTargetIds,
-  options = {},
   searchBudget = null
 ) {
-  const definitionId = rootCard?.definitionId;
-  if (!definitionId || rootCard.category !== "tactic" || isGlobalBenefitCard(definitionId)) {
+  const definitionId = rootAction?.cardId;
+  const definition = CARD_DEFINITIONS[definitionId] ?? null;
+  if (!definitionId || definition?.category !== "tactic" || isGlobalBenefitCard(definitionId)) {
     return null;
   }
-  const actor = state.players.find((player) => player.id === rootSourceId);
+  const actor = state.players.find((player) => player.id === rootAction.actorId);
   if (!actor?.alive) return 0;
-  const targets = (rootTargetIds ?? [])
+  const targets = (rootAction.targetIds ?? [])
     .map((id) => state.players.find((player) => player.id === id))
     .filter((target) => target?.alive);
   const resolvesAtStay = (counterDepth % 2) === 0;
   const baseState = TARGET_SCOPE_CARDS.has(definitionId)
-    ? buildTargetScopedBase(simulator, state, rootSourceId, targets)
+    ? buildTargetScopedBase(simulator, state, rootAction.actorId, targets)
     : state;
   const resolvedState = resolveRootState(
     simulator,
     baseState,
-    rootCard,
-    rootSourceId,
-    targets,
-    options
+    rootAction
   );
-  const baseValue = stateValue.stateUtility(baseState, responderId, searchBudget);
-  const resolvedValue = stateValue.stateUtility(resolvedState, responderId, searchBudget);
-  const rootEffectValue = resolvedValue - baseValue;
+  const rootEffectValue = stateValue.transitionDelta(
+    baseState,
+    resolvedState,
+    responderId,
+    searchBudget
+  );
   return resolvesAtStay ? -rootEffectValue : rootEffectValue;
 }

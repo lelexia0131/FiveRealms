@@ -9,7 +9,7 @@ AIController、状态价值适配器、ValueLedger 与正式边界。
 Simulator、闪电概率 辅助函数 与纯 value/Evaluator。
 
 状态边界
-只克隆并写入 SearchState；不持有或修改真实 GameState。
+只克隆并写入 World；不持有或修改真实 GameState。
 
 信息边界
 只接受过滤后的状态和合法概率摘要，不读取 Game 隐藏手牌。
@@ -25,7 +25,11 @@ import {
 } from "../domain/LightningModel.js";
 import { dynamicRootFlipGain as evaluateDynamicRootFlipGain } from "./RootResolutionQuery.js";
 import { HP_VALUE } from "../value/Economics.js";
-import { conditionHiddenPool, projectHiddenSummaries } from "../state/HiddenPool.js";
+import { exposureComponents } from "../value/ThreatValue.js";
+import {
+  conditionProbability,
+  queryCurrentCardCounts
+} from "../state/Probability.js";
 
 export class ValueSimulationQuery {
   /*
@@ -51,7 +55,7 @@ export class ValueSimulationQuery {
   WeakMap。
 
   边界与不变量
-  缓存仅以 SearchState 对象生命周期为界，不跨状态对象复用结果；组合根 factory 保证嵌套资源效果使用正式 query 语义。
+  缓存仅以 World 对象生命周期为界，不跨状态对象复用结果；组合根 factory 保证嵌套资源效果使用正式 query 语义。
   */
   constructor(
     evaluator,
@@ -107,7 +111,7 @@ export class ValueSimulationQuery {
   player ID 到未签名 owner delta 的 Map。
 
   读取状态
-  只读 SearchState、剩余牌计数与存活座位环。
+  只读 World、剩余牌计数与存活座位环。
 
   写入状态
   仅写本查询实例的 WeakMap 缓存；模拟写入独立克隆。
@@ -145,26 +149,24 @@ export class ValueSimulationQuery {
     this.checkpointSearchWork(searchBudget);
     const distribution = buildLightningHitDistribution(state, initialHolder);
     const beforeRadar = buildRadarJudgmentProbabilities(
-      state?.remainingCardCounts ?? null
+      queryCurrentCardCounts(state.probabilityState)
     ).tactic;
-    const beforeValues = new Map(state.players.map((player) => [
-      player.id,
-      this.evaluator.ownerMaterialValue(state, player, viewerId, beforeRadar)
-    ]));
     const simulator = this.simulatorFactory(state, { searchBudget });
     for (const outcome of distribution) {
       this.checkpointSearchWork(searchBudget);
       const after = simulator.applyLightningHit(state, outcome.holderId);
       const afterRadar = buildRadarJudgmentProbabilities(
-        after?.remainingCardCounts ?? null
+        queryCurrentCardCounts(after.probabilityState)
       ).tactic;
       for (const afterPlayer of after.players) {
-        const delta = this.evaluator.ownerMaterialValue(
+        const delta = this.evaluator.ownerMaterialDelta(
+          state,
           after,
-          afterPlayer,
+          afterPlayer.id,
           viewerId,
+          beforeRadar,
           afterRadar
-        ) - (beforeValues.get(afterPlayer.id) ?? 0);
+        );
         deltas.set(
           afterPlayer.id,
           (deltas.get(afterPlayer.id) ?? 0) + presence * outcome.probability * delta
@@ -294,7 +296,6 @@ export class ValueSimulationQuery {
     } else if (previous.statuses) {
       delete previous.statuses.lightning;
     }
-    previous.lightningStatusStateBranches = [{ probability: 1, conditions: {}, present: false }];
     previous.lightningStatusProbability = 0;
     return this.lightningTeamBurden(transferred, nextHolder, viewerId, 1, searchBudget);
   }
@@ -390,7 +391,7 @@ export class ValueSimulationQuery {
   `{stayValue, aidValue, futureInventory}` 原始 Policy state points 对象。
 
   读取状态
-  只读传入 SearchState 与公开伤害上下文。
+  只读传入 World 与公开伤害上下文。
 
   写入状态
   只修改两个独立 Simulator clone。
@@ -430,7 +431,7 @@ export class ValueSimulationQuery {
     });
     simulator.applyDamage(aidState, aidSource, aidTarget, amount, { canBlock: false });
     const visibleTarget = state.players.find((player) => player.id === targetId);
-    const { futureInventory } = this.evaluator.exposureComponents(state, visibleTarget);
+    const { futureInventory } = exposureComponents(state, visibleTarget);
     return {
       stayValue: stateValue.stateUtility(stayState, responderId, searchBudget),
       aidValue: stateValue.stateUtility(aidState, responderId, searchBudget),
@@ -452,7 +453,7 @@ export class ValueSimulationQuery {
   FLIP-STAY 数值；全体受益牌返回 null。
 
   读取状态
-  只读当前 SearchState 与 root 公开上下文。
+  只读当前 World 与 root 公开上下文。
 
   写入状态
   只写 Simulator 生成的独立克隆。
@@ -467,11 +468,8 @@ export class ValueSimulationQuery {
   dynamicRootFlipGain(
     state,
     responderId,
-    rootCard,
-    rootSourceId,
+    rootAction,
     counterDepth,
-    rootTargetIds,
-    options,
     stateValue,
     searchBudget = null
   ) {
@@ -482,11 +480,8 @@ export class ValueSimulationQuery {
       simulator,
       state,
       responderId,
-      rootCard,
-      rootSourceId,
+      rootAction,
       counterDepth,
-      rootTargetIds,
-      options,
       searchBudget
     );
   }
@@ -508,7 +503,7 @@ export class ValueSimulationQuery {
   只读 before/after 和指定响应概率字段。
 
   写入状态
-  只修改反事实浅克隆及 Simulator 生成的独立 SearchState。
+  只修改反事实浅克隆及 Simulator 生成的独立 World。
 
   调用函数
   SearchBudget checkpoint、Simulator.apply、stateValue.stateUtility。
@@ -531,7 +526,7 @@ export class ValueSimulationQuery {
     if (!action) return { grossAvoided: 0, ownerValue: 0, projected: 0 };
     this.checkpointSearchWork(searchBudget);
     const simulator = this.simulatorFactory(before, { searchBudget });
-    const actualAfter = after ?? simulator.apply(before, action, actorId);
+    const actualAfter = after ?? simulator.apply(before, action);
     const counterfactualBefore = simulator.clone(before);
     const defender = counterfactualBefore.players.find((player) => player.id === defenderId);
     for (const [definitionId, remove] of [
@@ -540,7 +535,7 @@ export class ValueSimulationQuery {
       ["recover", opts.removeRecover]
     ]) {
       if (!remove) continue;
-      conditionHiddenPool(counterfactualBefore.hiddenPoolState, {
+      conditionProbability(counterfactualBefore.probabilityState, {
         type:"CONDITION",
         definitionId,
         bucketId:defenderId,
@@ -555,7 +550,6 @@ export class ValueSimulationQuery {
         );
       }
     }
-    projectHiddenSummaries(counterfactualBefore);
     this.checkpointSearchWork(searchBudget);
     const counterfactualAfter = this.simulatorFactory(
       counterfactualBefore,
@@ -573,10 +567,18 @@ export class ValueSimulationQuery {
       0,
       (actualDefender?.hp ?? 0) - (counterfactualDefender?.hp ?? 0)
     ) * HP_VALUE;
-    const ownerValue = stateValue.stateUtility(actualAfter, defenderId, searchBudget)
-      - stateValue.stateUtility(counterfactualAfter, defenderId, searchBudget);
-    const projected = stateValue.stateUtility(actualAfter, viewerId, searchBudget)
-      - stateValue.stateUtility(counterfactualAfter, viewerId, searchBudget);
+    const ownerValue = stateValue.transitionDelta(
+      counterfactualAfter,
+      actualAfter,
+      defenderId,
+      searchBudget
+    );
+    const projected = stateValue.transitionDelta(
+      counterfactualAfter,
+      actualAfter,
+      viewerId,
+      searchBudget
+    );
     return { grossAvoided, ownerValue, projected };
   }
 }

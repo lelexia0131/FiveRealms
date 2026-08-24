@@ -91,15 +91,7 @@ totalBranchProbability。
 优先使用条件状态分支，不能把部分概率身份当成确定已知。
 */
 function cardAvailability(card) {
-  if (Array.isArray(card?.availabilityStateBranches)) {
-    return totalBranchProbability(
-      card.availabilityStateBranches.filter((branch) => branch.available)
-    );
-  }
-  if (Array.isArray(card?.availabilityBranches)) {
-    return totalBranchProbability(card.availabilityBranches);
-  }
-  return 1;
+  return Math.max(0, Math.min(1, Number(card?.availability ?? 1) || 0));
 }
 
 /*

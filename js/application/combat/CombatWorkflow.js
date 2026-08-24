@@ -15,7 +15,7 @@ Domain CombatRules、Domain ResourceTransitions、Application Response、Applica
 不读取 concrete UI/AI/DOM；只读取 workflow 需要的公开角色事实。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher、SearchState、Planner 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher、AI World、Planner 或 concrete adapters。
 */
 import { calculateDamageResult, calculateHealAmount, isDying } from "../../domain/rules/combat/CombatRules.js";
 import { changeHp, changeShield } from "../../domain/state/transitions/ResourceTransitions.js";

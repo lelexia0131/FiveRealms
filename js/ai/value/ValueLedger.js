@@ -9,7 +9,7 @@ Planner 诊断、正式边界 与价值归属测试。
 纯 Evaluator、运行时 State Value、闪电/响应模拟查询与封印纯函数。
 
 状态边界
-只读 before/after SearchState；不修改输入状态。
+只读 before/after World；不修改输入状态。
 
 信息边界
 只使用过滤后的玩家字段和合法概率摘要。
@@ -18,6 +18,10 @@ Planner 诊断、正式边界 与价值归属测试。
 账本解释已有价值，不是第二个 Evaluator；所有响应/候选字段仅供诊断，开关不得改变最终价值或选择。
 */
 import { buildRadarJudgmentProbabilities } from "../domain/RadarModel.js";
+import {
+  queryCurrentCardCounts,
+  queryPlayerHandProbability
+} from "../state/Probability.js";
 import { statePointsToUtility } from "./Economics.js";
 import { sealTeamBurden } from "./SealValue.js";
 
@@ -73,7 +77,7 @@ export class ValueLedger {
   无；闪电查询只写自身缓存。
 
   调用函数
-  Evaluator.ownerStateTerms、sealTeamBurden、lightningOwnerDelta。
+  Evaluator.playerValueTerms、sealTeamBurden、lightningOwnerDelta。
 
   边界与不变量
   每个字段只归属于一个 owner；团队符号只在 projectOwnerLedger 施加；
@@ -81,7 +85,7 @@ export class ValueLedger {
   */
   ownerStateLedger(before, after, viewerId, searchBudget = null) {
     const radarTactic = buildRadarJudgmentProbabilities(
-      after?.remainingCardCounts ?? null
+      queryCurrentCardCounts(after.probabilityState)
     ).tactic;
     const viewer = after.players.find((player) => player.id === viewerId)
       ?? before.players.find((player) => player.id === viewerId);
@@ -93,13 +97,13 @@ export class ValueLedger {
       const relation = afterPlayer.battleTeam === viewer.battleTeam
         ? (afterPlayer.id === viewerId ? "self" : "ally")
         : "enemy";
-      const beforeTerms = this.evaluator.ownerStateTerms(
+      const beforeTerms = this.evaluator.playerValueTerms(
         before,
         beforePlayer,
         viewerId,
         radarTactic
       );
-      const afterTerms = this.evaluator.ownerStateTerms(
+      const afterTerms = this.evaluator.playerValueTerms(
         after,
         afterPlayer,
         viewerId,
@@ -302,10 +306,16 @@ export class ValueLedger {
       if (player.id === actorId || !player.alive) continue;
       const beforePlayer = beforeById.get(player.id);
       if (!beforePlayer) continue;
-      const blockDropped = (beforePlayer.blockProbability ?? 0)
-        - (player.blockProbability ?? 0) > 1e-9;
-      const counterDropped = (beforePlayer.counterProbability ?? 0)
-        - (player.counterProbability ?? 0) > 1e-9;
+      const blockDropped = queryPlayerHandProbability(
+        before.probabilityState, beforePlayer, "block"
+      ).probability - queryPlayerHandProbability(
+        after.probabilityState, player, "block"
+      ).probability > 1e-9;
+      const counterDropped = queryPlayerHandProbability(
+        before.probabilityState, beforePlayer, "counter"
+      ).probability - queryPlayerHandProbability(
+        after.probabilityState, player, "counter"
+      ).probability > 1e-9;
       if (blockDropped || counterDropped) {
         const counterfactual = this.responseCounterfactual(
           before,
@@ -337,8 +347,11 @@ export class ValueLedger {
       if (rescuer.id === actorId || !rescuer.alive) continue;
       const beforeRescuer = beforeById.get(rescuer.id);
       if (!beforeRescuer) continue;
-      const recoverSpent = (beforeRescuer.expectedRecoverCount ?? 0)
-        - (rescuer.expectedRecoverCount ?? 0);
+      const recoverSpent = queryPlayerHandProbability(
+        before.probabilityState, beforeRescuer, "recover"
+      ).expected - queryPlayerHandProbability(
+        after.probabilityState, rescuer, "recover"
+      ).expected;
       if (recoverSpent > 1e-9) {
         const counterfactual = this.responseCounterfactual(
           before,

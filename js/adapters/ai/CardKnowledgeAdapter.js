@@ -15,7 +15,7 @@
 只有显式传入的 viewer/owner/card 才能建立知识；离开原手牌时按实体 ID 失效。
 
 架构约束
-不得读取未知敌方牌来推断知识，不得拥有 Belief/SearchState。
+不得读取未知敌方牌来推断知识，不得拥有 Belief/World。
 */
 
 /*

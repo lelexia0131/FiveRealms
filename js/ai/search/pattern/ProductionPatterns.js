@@ -9,10 +9,10 @@ PatternMatcher 与 Pattern focused tests。
 Domain CardDefinitions 的公开静态语义。
 
 状态边界
-只读 PatternMatcher 提供的 SearchState、行动者与合法动作快照，不修改任何状态。
+只读 PatternMatcher 提供的 World、行动者与合法动作快照，不修改任何状态。
 
 信息边界
-只消费动作已携带的公开语义、SearchState 中合法可见/记忆字段和卡牌静态定义。
+只消费动作已携带的公开语义、World 中合法可见/记忆字段和卡牌静态定义。
 
 架构约束
 不得调用 Simulator、Evaluator、Value、SearchPrior、SearchPolicy 或 ActionGenerator；
@@ -58,7 +58,7 @@ Pattern context 与一个或多个 definitionId。
 保持 legalActions 顺序的匹配动作数组。
 
 读取状态
-context.legalActions 与 ActionDescriptor 投影能力。
+context.legalActions 与 Action 投影能力。
 
 写入状态
 无。
@@ -110,7 +110,7 @@ function setupTargetId(context, action) {
 
 /*
 功能
-返回 SearchState 中与当前行动者对应的搜索玩家。
+返回 World 中与当前行动者对应的搜索玩家。
 
 调用方
 PRESERVE_BREAK_STANCE_FOR_LATE_ASSAULT。
@@ -131,7 +131,7 @@ context.state.players 与 context.player.id。
 Array.find。
 
 边界与不变量
-不得回退读取真实 Game/Player 手牌；Worker 与 Main Thread 必须消费同一 SearchState 表示。
+不得回退读取真实 Game/Player 手牌；Worker 与 Main Thread 必须消费同一 World 表示。
 */
 function searchActor(context) {
   return context.state?.players?.find((entry) => entry.id === context.player?.id) ?? null;
@@ -214,7 +214,7 @@ Pattern context 与当前 definition。
 是否应生成该 Pattern 的 sequence proposals。
 
 读取状态
-合法根动作、SearchState 玩家公开装备/手牌计数/合法记忆与行动者自己的手牌。
+合法根动作、World 玩家公开装备/手牌计数/合法记忆与行动者自己的手牌。
 
 写入状态
 无。
@@ -283,7 +283,7 @@ Pattern context 与当前 definition。
 带 steps、explorationPriority 与 reason 的普通对象数组。
 
 读取状态
-合法根动作、目标公开装备、合法 knownCards 数量与行动者自己的 SearchState 手牌。
+合法根动作、目标公开装备、合法 knownCards 数量与行动者自己的 World 手牌。
 
 写入状态
 无。

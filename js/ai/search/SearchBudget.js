@@ -9,7 +9,7 @@ Planner 与搜索预算回归测试。
 RUNTIME_POLICY 默认时间配置与注入时钟。
 
 状态边界
-只修改当前 SearchBudget 实例的计数和停止原因，不读取 SearchState。
+只修改当前 SearchBudget 实例的计数和停止原因，不读取 World。
 
 信息边界
 不读取动作、玩家、卡牌、技能或隐藏信息。
@@ -86,10 +86,6 @@ export class SearchBudget {
     this.stateUtilityCalls = 0;
     this.actionGenerationPhysicalCandidates = 0;
     this.actionGenerationUniqueCandidates = 0;
-    this.actionGenerationPreparedCandidates = 0;
-    this.probabilityPreparations = 0;
-    this.conditionBranches = 0;
-    this.executionWorldBranches = 0;
     this.yieldCount = 0;
     this.stopReason = null;
     this.rootSafetyCompletion = null;
@@ -119,7 +115,7 @@ export class SearchBudget {
   无。
 
   输出
-  simulation/response/probability/condition/execution work 的普通对象。
+  simulation/response/probability work 的普通对象。
 
   读取状态
   当前 SearchBudget 结构计数。
@@ -139,10 +135,7 @@ export class SearchBudget {
       cloneCalls:this.cloneCalls,
       probabilityOperations:this.probabilityOperations,
       probabilityWorldBranches:this.probabilityWorldBranches,
-      responseBranches:this.responseBranches,
-      probabilityPreparations:this.probabilityPreparations,
-      conditionBranches:this.conditionBranches,
-      executionWorldBranches:this.executionWorldBranches
+      responseBranches:this.responseBranches
     };
   }
 
@@ -178,10 +171,7 @@ export class SearchBudget {
       "cloneCalls",
       "probabilityOperations",
       "probabilityWorldBranches",
-      "responseBranches",
-      "probabilityPreparations",
-      "conditionBranches",
-      "executionWorldBranches"
+      "responseBranches"
     ]) {
       delta[key] = Math.max(0, (Number(after[key]) || 0) - (Number(before[key]) || 0));
     }
@@ -211,7 +201,7 @@ export class SearchBudget {
   workSnapshot。
 
   边界与不变量
-  同时只允许一个 Planner candidate preparation；不读取动作或 SearchState。
+  同时只允许一个 Planner candidate preparation；不读取动作或 World。
   */
   beginPreparation(depth) {
     if (this.activePreparation) {
@@ -606,7 +596,7 @@ export class SearchBudget {
 
   /*
   功能
-  记录一次完整 SearchState 克隆实际开始执行。
+  记录一次完整 World 克隆实际开始执行。
 
   调用方
   Simulator 构造与 clone 的 SearchBudget checkpoint 之后。
@@ -900,50 +890,39 @@ export class SearchBudget {
 
   /*
   功能
-  记录深层动作生成在等价去重前后的候选数与实际概率准备工作量。
+  记录动作生成在等价去重前后的候选数。
 
   调用方
-  ActionGenerator.generateFromVisible。
+  ActionGenerator.generate。
 
   输入
-  单个完整 preparation 或一次生成汇总的 physical/unique/prepared candidate 数，
-  以及实际 condition/execution branch 数。
+  一次生成汇总的 physical/unique candidate 数。
 
   输出
-  累计完成的 probability preparation 次数。
+  累计 unique candidate 数。
 
   读取状态
   当前动作生成诊断计数。
 
   写入状态
-  累加动作生成候选、概率准备与条件世界计数。
+  累加动作生成候选计数。
 
   调用函数
   无。
 
   边界与不变量
-  单个 preparation 完成后立即记录其 world work，保证 deadline 快照不把此前完成工作误记到 TIME 之后；
-  只记录已经发生的工作，不参与 TIME/NODE、候选合法性、概率或排序；
-  prepared 少于 unique 可能来自概率为零的合法过滤，不得解释为预算中止。
+  只记录已经生成的动作数量，不参与 TIME/NODE、候选合法性、概率或排序；
+  Simulator 的局部 transition alternatives 由 probability operation 诊断单独计数。
   */
   observeActionGeneration({
     physicalCandidates = 0,
-    uniqueCandidates = 0,
-    preparedCandidates = 0,
-    probabilityPreparations = 0,
-    conditionBranches = 0,
-    executionWorldBranches = 0
+    uniqueCandidates = 0
   } = {}) {
     const physical = Math.max(0, Number(physicalCandidates) || 0);
     const unique = Math.max(0, Number(uniqueCandidates) || 0);
-    const prepared = Math.max(0, Number(preparedCandidates) || 0);
     this.actionGenerationPhysicalCandidates += physical;
     this.actionGenerationUniqueCandidates += unique;
-    this.actionGenerationPreparedCandidates += prepared;
-    this.probabilityPreparations += Math.max(0, Number(probabilityPreparations) || 0);
-    this.conditionBranches += Math.max(0, Number(conditionBranches) || 0);
-    this.executionWorldBranches += Math.max(0, Number(executionWorldBranches) || 0);
-    return this.probabilityPreparations;
+    return this.actionGenerationUniqueCandidates;
   }
 
   /*
@@ -1092,10 +1071,6 @@ export class SearchBudget {
       stateUtilityCalls:this.stateUtilityCalls,
       actionGenerationPhysicalCandidates:this.actionGenerationPhysicalCandidates,
       actionGenerationUniqueCandidates:this.actionGenerationUniqueCandidates,
-      actionGenerationPreparedCandidates:this.actionGenerationPreparedCandidates,
-      probabilityPreparations:this.probabilityPreparations,
-      conditionBranches:this.conditionBranches,
-      executionWorldBranches:this.executionWorldBranches,
       yieldCount:this.yieldCount,
       rootSafetyExpandedNodes:this.rootSafetyExpandedNodes,
       rootSafetySimulationCalls:this.rootSafetySimulationCalls,

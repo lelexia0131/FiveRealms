@@ -5,7 +5,6 @@
   "scripts": {
     "test": "node ./tests/run.mjs",
     "test:balance": "node ./tests/balance.mjs",
-    "test:ai": "node ./tests/ai-benchmark/run.mjs",
     "check:code-quality": "node ./tools/check-code-quality.mjs",
     "test:supervisor": "node ./.agents/skills/claude-supervisor/scripts/supervisor.test.mjs && node ./.agents/skills/claude-supervisor/scripts/policy.test.mjs"
   }

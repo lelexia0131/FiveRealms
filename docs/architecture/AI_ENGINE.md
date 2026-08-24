@@ -1271,7 +1271,7 @@ AI 架构不存在兼容算法或缺失 owner。后续功能必须在上述 fina
 | `planningCounterDecision`、`counterDecision` | `policy/ResponsePolicy` / Simulation query | `POLICY HEURISTIC` | 输出确定 boolean；Policy 分数先比较阈值，再决定 respond / do not respond。 |
 | `expectedRecoverCount`、`expectedAssaultCount`、`expectedInformationGain`、`expectedEquipmentGain` | Belief / Simulation | `EXPECTED VALUE, NOT PROBABILITY` | 资源数量或价值期望；不能作为条件事件概率使用。 |
 | `hp`（跨分支摘要）、`hpSummaryClassification` | `simulation/CombatSimulation` | `EXPECTED VALUE, NOT PROBABILITY` | 多个 HP/alive 世界的标量摘要；不得声明为确定生命状态。 |
-| `expectedRescueCoverage` | `simulation/CombatSimulation` | `EXPECTED VALUE, NOT PROBABILITY` | `expected recover capacity / required recovery` 的覆盖比例，不是 survival probability。 |
+| `rescueOutlook` | `value/Evaluator` | `EXPECTED VALUE, NOT PROBABILITY` | 由当前 World 的 HP/alive 与 ProbabilityState 调息容量直接派生；只参与 State Value，不写回 World。 |
 | `hpStateBranches`、`aliveProbability` | `simulation/CombatSimulation` | `BELIEF PROBABILITY` | 保留跨死亡边界的联合 HP/alive 世界；确定单世界仍标记 `EXACT`。 |
 
 `joinProbabilityStateBranches` 只负责条件代数，不改变输入来源的语义分类。相同 condition key 表示同一事实：连接时按条件概率只条件化一次；不同 condition key 才表示可相乘的独立来源。

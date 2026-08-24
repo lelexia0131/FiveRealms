@@ -1,5 +1,5 @@
 /**
- * AI Benchmark 公共辅助：构造合法测试局面并驱动生产 AI。
+ * AI 回归测试公共辅助：构造合法测试局面并驱动生产 AI。
  *
  * 原则：
  * - 局面构造只使用生产 Player / characterConfig / cardConfig / Game 权威定义；
@@ -7,13 +7,12 @@
  * - 其他玩家的手牌仅作为"计数"参与 AI 决策，AI 可见信息由 AiVisibleState /
  *   Knowledge 过滤，本文件不写入任何作弊信息。
  */
-import { createGameApplication } from "../../js/composition/createGameApplication.js";
-import { Player } from "../../js/application/match/Player.js";
-import { CHARACTER_BY_ID } from "../../js/domain/definitions/characters/CharacterDefinitions.js";
-import { CARD_DEFINITIONS } from "../../js/domain/definitions/cards/CardDefinitions.js";
-import { createId } from "../../js/utils/helpers.js";
-import { createInitialSearchState } from "../../js/ai/state/StateContracts.js";
-import { Simulator } from "../../js/ai/simulation/Simulator.js";
+import { createGameApplication } from "../js/composition/createGameApplication.js";
+import { Player } from "../js/application/match/Player.js";
+import { CHARACTER_BY_ID } from "../js/domain/definitions/characters/CharacterDefinitions.js";
+import { CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js";
+import { createId } from "../js/utils/helpers.js";
+import { deriveCurrentCardCounts } from "../js/ai/state/Fact.js";
 
 let cardSerial = 0;
 
@@ -28,27 +27,12 @@ export function makeRandom(seedValue) {
   };
 }
 
-/** 字符串 -> 32 位种子（FNV-1a）。 */
-export function hashSeed(text) {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash >>> 0;
-}
-
 /** 创建生产格式卡牌实例：定义属性 + 唯一 id。 */
 export function makeCard(definitionId, id = null) {
   const definition = CARD_DEFINITIONS[definitionId];
   if (!definition) throw new Error(`未知卡牌定义：${definitionId}`);
   cardSerial += 1;
   return { ...definition, id: id ?? `bm-card-${cardSerial}` };
-}
-
-/** 批量创建卡牌实例。 */
-export function makeCards(definitionIds) {
-  return (definitionIds ?? []).map((definitionId) => makeCard(definitionId));
 }
 
 /** 创建无头 UI，覆盖 Game 在 AI 模拟中可能调用的全部展示接口。 */
@@ -180,29 +164,21 @@ export async function runAiDecision(game, playerId = null) {
   const player = game.state.players.find((entry) => entry.id === (playerId ?? game.state.players[game.state.currentPlayerIndex]?.id));
   if (!player) throw new Error("AI 决策失败：找不到行动者");
   const legalActions = getActionCandidates(game, player.id);
-  const remainingCardCounts = game.aiController.knowledge.remainingCounts(player);
+  const remainingCardCounts = deriveCurrentCardCounts(player, game.state);
   const action = await game.aiController.selectAction(player, { gameId: game.state.gameId });
   const stats = { ...(game.aiController.planner.lastSearchStats ?? {}) };
   return { action, legalActions, stats, remainingCardCounts, player };
 }
 
-/** 返回 AI 可见状态（生产 createInitialSearchState 输出）。 */
-export function getVisibleState(game, playerId) {
-  const player = game.state.players.find((entry) => entry.id === playerId);
-  if (!player) return null;
-  const remainingCardCounts = game.aiController.knowledge.remainingCounts(player);
-  return createInitialSearchState(player.id, game.state, remainingCardCounts);
-}
-
-/** 动作描述：与 Planner.describeAction 一致，便于场景评价。 */
+/** 动作描述：投影 canonical Action 的稳定场景字段。 */
 export function describeAction(action) {
   if (!action) return null;
   return {
     type: action.type,
-    cardId: action.card?.definitionId ?? action.skill?.id ?? null,
-    cardInstanceId: action.card?.id ?? null,
-    targetId: action.targets?.[0]?.id ?? null,
-    targetIds: (action.targets ?? []).map((target) => target.id),
+    cardId: action.cardId ?? action.skillId ?? null,
+    cardInstanceId: action.cardInstanceId ?? null,
+    targetId: action.targetIds?.[0] ?? null,
+    targetIds: [...(action.targetIds ?? [])],
     selection: action.selection ? { ...action.selection } : null
   };
 }
@@ -212,31 +188,3 @@ export function disposeGame(game) {
   if (game && !game.state.isDisposed) game.dispose();
 }
 
-/**
- * Depth-1（贪心）消融：在完全相同的可见状态下，只比较每个动作的
- * "立即执行后状态效用"，不做任何前瞻，选择贪心动作。
- *
- * 注意：这里使用生产 Simulator + AiEvaluator 的组合作为"浅层启发式"参照，
- * 仅用于证明某 Scenario 需要更深规划；最终评分从不读取本函数的输出。
- */
-export function runGreedyDepth1(game, playerId = null) {
-  const player = game.state.players.find((entry) => entry.id === (playerId ?? game.state.players[game.state.currentPlayerIndex]?.id));
-  if (!player) return { type: "end" };
-  const legal = game.aiController.getActionCandidates(player);
-  const remainingCardCounts = game.aiController.knowledge.remainingCounts(player);
-  const visible = createInitialSearchState(player.id, game.state, remainingCardCounts);
-  const simulator = new Simulator(visible);
-  const evaluator = game.aiController.evaluator;
-  let best = null;
-  let bestScore = -Infinity;
-  for (const action of legal) {
-    const after = simulator.apply(visible, action, player.id);
-    const score = evaluator.actionUtility(action, player, visible, { availableActions: legal })
-      + evaluator.stateUtility(after, player.id) * 0.08;
-    if (score > bestScore) {
-      bestScore = score;
-      best = action;
-    }
-  }
-  return best ?? { type: "end" };
-}

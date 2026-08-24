@@ -1,6 +1,6 @@
 /*
 模块职责
-作为 SearchState 模拟的唯一正式门面（统一对外入口），负责世界克隆、动作分派与共享运行时协调。
+作为 World 模拟的唯一正式门面（统一对外入口），负责世界克隆、动作分派与共享运行时协调。
 
 上游
 Planner、ValueSimulationQuery 与模拟器专项测试。
@@ -9,29 +9,30 @@ Planner、ValueSimulationQuery 与模拟器专项测试。
 Response、Combat、CardEffect、SkillEffect 与 Status 模拟组件。
 
 状态边界
-只克隆并写入 SearchState；不持有或修改真实 GameState。
+只克隆并写入 World；不持有或修改真实 GameState。
 
 信息边界
-只消费过滤后的可见状态、合法记忆与 Belief 概率，不读取隐藏实体牌或未来牌堆。
+只消费过滤后的可见状态、合法记忆与 Probability 概率，不读取隐藏实体牌或未来牌堆。
 
 架构约束
-不得拥有 Policy、Value 或 Domain 公式；只保存组合根注入的资源 Policy/query 引用，所有模拟算法只存在于本目录组件。
+不得拥有 Policy、Value 或 Domain 公式；所有模拟算法只存在于本目录组件。
 */
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import {
   PROBABILITY_EPSILON,
-  availableBranchesFromState,
+  clampProbability,
+  currentProbabilitySignature,
   expectedBranchValue,
-  joinProbabilityStateBranchesCooperatively,
+  intersectProbabilityStateBranchesCooperatively,
   mergeProbabilityStateBranchesCooperatively,
   probabilityEventPartition,
   projectProbabilityStateBranchesCooperatively,
   totalBranchProbability
 } from "../state/Probability.js";
-import { cloneSearchState } from "../state/SearchState.js";
-import { projectHiddenSummaries } from "../state/HiddenPool.js";
+import { cloneWorld } from "../state/World.js";
 import { hasPassiveSkill } from "../state/RuleProjection.js";
 
-import { clampProbability } from "./SimulationSupport.js";
 import { withResponseSimulation } from "./ResponseSimulation.js";
 import { withCombatSimulation } from "./CombatSimulation.js";
 import { withCardEffectSimulation } from "./CardEffectSimulation.js";
@@ -41,37 +42,34 @@ import { withStatusSimulation } from "./StatusSimulation.js";
 class SimulatorCore {
   /*
   功能
-  创建只拥有独立 SearchState 根世界的轻量模拟器。
+  创建只拥有独立 World 根世界的轻量模拟器。
 
   调用方
   Planner 与有界 Value/Root simulation query：为一次搜索或配对查询创建模拟生命周期。
 
   输入
-  已经过滤且不含 Game 引用的 SearchState 根快照，以及可选的资源 Policy/query 依赖。
+  已经过滤且不含 Game 引用的 World 根快照，以及可选的搜索预算上下文。
 
   输出
   持有独立 initial 世界的 Simulator 实例。
 
   读取状态
-  只读输入 SearchState。
+  只读输入 World。
 
   写入状态
-  实例 initial、注入依赖、概率摘要初始化结果与 root 递归守卫。
+  实例 initial、搜索预算、概率摘要初始化结果与 root 递归守卫。
 
   调用函数
-  cloneSearchState、各 Simulation 组件初始化器。
+  cloneWorld、各 Simulation 组件初始化器。
 
   边界与不变量
-  构造不得回读 GameState；initial 与输入及其他模拟器实例不共享可变对象；缺少资源 query 时仅保留直接测试的旧静态回退。
+  构造不得回读 GameState；initial 与输入及其他模拟器实例不共享可变对象。
   */
   constructor(visibleState, options = {}) {
-    this.resourceValueQuery = options.resourceValueQuery ?? null;
     this.searchBudget = options.searchBudget ?? null;
     this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
-    this.initial = cloneSearchState(visibleState);
-    this.initializeEquipmentBaselines(this.initial);
-    projectHiddenSummaries(this.initial);
+    this.initial = cloneWorld(visibleState);
     this.initializeMomentumBranches(this.initial);
     // root 结算模拟守卫：目标级 root 的 apply 群伤循环会再次请求 counterDecision，避免递归。
     this._simulatingRootResolution = false;
@@ -82,7 +80,7 @@ class SimulatorCore {
   在已证实的长概率/响应同步循环内请求当前搜索预算 cooperative checkpoint。
 
   调用方
-  Action/Response/Combat Simulation 的 world join、projection 与身份消费边界。
+  Action/Response/Combat Simulation 的 current-event intersection、projection 与身份消费边界。
 
   输入
   无。
@@ -94,13 +92,13 @@ class SimulatorCore {
   注入的 searchBudget。
 
   写入状态
-  SearchBudget 首次过期时写入停止原因；不写 SearchState。
+  SearchBudget 首次过期时写入停止原因；不写 World。
 
   调用函数
   SearchBudget.checkpointCurrentWork。
 
   边界与不变量
-  只允许 Planner preparation boundary 捕获 signal；当前 partial SearchState/world 必须整体丢弃。
+  只允许 Planner preparation boundary 捕获 signal；当前 partial World/world 必须整体丢弃。
   */
   checkpointSearchWork() {
     return this.searchBudget?.checkpointCurrentWork?.() ?? true;
@@ -111,7 +109,7 @@ class SimulatorCore {
   在同一 SearchBudget 下原子执行一次概率操作并记录纯数字 timing/count 诊断。
 
   调用方
-  joinProbabilityWork、projectProbabilityWork、mergeProbabilityWork 与 rawProbabilityWork。
+  intersectProbabilityWork、projectProbabilityWork、mergeProbabilityWork 与 rawProbabilityWork。
 
   输入
   operation 名称、输入世界数、cooperative/raw 模式与返回完整分支数组的 work。
@@ -150,16 +148,16 @@ class SimulatorCore {
 
   /*
   功能
-  在同一 SearchBudget checkpoint 下完整联合高分支概率状态，并记录完成工作量。
+  在同一 SearchBudget checkpoint 下按当前事件索引相交概率状态，并记录完成工作量。
 
   调用方
-  ResponseSimulation 与 CardEffectSimulation 的生产高频 join 热点。
+  ResponseSimulation 与 CardEffectSimulation 的生产局部事件相交点。
 
   输入
   概率状态分区数组。
 
   输出
-  完整联合世界；预算中断时由 SearchBudget signal 回退整个 candidate。
+  完整当前事件交集；预算中断时由 SearchBudget signal 回退整个 candidate。
 
   读取状态
   注入的 SearchBudget 与只读概率分区。
@@ -168,31 +166,28 @@ class SimulatorCore {
   只更新 SearchBudget probability work 诊断。
 
   调用函数
-  joinProbabilityStateBranchesCooperatively、checkpointSearchWork、SearchBudget.observeProbabilityWork。
+  intersectProbabilityStateBranchesCooperatively、checkpointSearchWork、SearchBudget.observeProbabilityWork。
 
   边界与不变量
-  partial join 永不返回或计数；无预算时与普通 Probability join 保持相同顺序和语义。
+  partial 交集永不返回或计数；不预估或构造 generic Cartesian pair universe。
   */
-  joinProbabilityWork(partitions, operation = "Simulation.join") {
+  intersectProbabilityWork(partitions, operation = "Simulation.intersect") {
     let inputWorldCount = 0;
-    let estimatedPairs = 1;
     const probabilityPartitions = partitions ?? [];
     for (let index = 0; index < probabilityPartitions.length; index += 1) {
       if (index > 0 && index % 32 === 0) this.checkpointSearchWork();
       const partition = probabilityPartitions[index];
       if (!Array.isArray(partition)) continue;
       inputWorldCount += partition.length;
-      estimatedPairs *= Math.max(1, partition.length);
-      if (!Number.isFinite(estimatedPairs)) estimatedPairs = Number.MAX_SAFE_INTEGER;
     }
-    const checkpoint = estimatedPairs >= 32 || this.searchBudget?.stopReason
+    const checkpoint = inputWorldCount >= 32 || this.searchBudget?.stopReason
       ? () => this.checkpointSearchWork()
       : null;
     return this.runProbabilityOperation(
       operation,
       inputWorldCount,
       "cooperative",
-      () => joinProbabilityStateBranchesCooperatively(
+      () => intersectProbabilityStateBranchesCooperatively(
         partitions,
         checkpoint
       )
@@ -312,116 +307,25 @@ class SimulatorCore {
 
   /*
   功能
-  cooperative 规范化资源数值分支并提供确定性回退。
-
-  调用方
-  Simulation 公共 energy/shield 与 Status/Combat 资源路径。
-
-  输入
-  资源对象、字段名、回退值与 operation 名称。
-
-  输出
-  完整数值状态分支数组。
-
-  读取状态
-  resource 对应 Branches 字段。
-
-  写入状态
-  只写 SearchBudget probability diagnostics。
-
-  调用函数
-  mergeProbabilityWork。
-
-  边界与不变量
-  非空分支可能随 condition worlds 增长，必须共享当前 SearchBudget；缺失时返回概率一回退。
-  */
-  getValueBranchesWork(resource, field, fallbackValue = 0, operation = "Simulation.value-state") {
-    const branches = Array.isArray(resource?.[`${field}Branches`])
-      ? resource[`${field}Branches`]
-      : null;
-    if (branches?.length) return this.mergeProbabilityWork(branches, operation);
-    return [{ probability:1, conditions:{}, amount:Number(fallbackValue) || 0 }];
-  }
-
-  /*
-  功能
-  cooperative 读取资源的完整 available/unavailable 状态分区。
-
-  调用方
-  Simulation 的卡牌身份、响应资源与次数槽消费路径。
-
-  输入
-  资源对象、完整状态字段名、回退概率与 operation 名称。
-
-  输出
-  规范化 available 布尔状态分区。
-
-  读取状态
-  资源完整状态或兼容 availabilityBranches。
-
-  写入状态
-  只写 SearchBudget probability diagnostics。
-
-  调用函数
-  clampProbability、totalBranchProbability、mergeProbabilityWork。
-
-  边界与不变量
-  兼容视图缺失的概率质量显式补为 unavailable；完整状态可能随 condition worlds 增长，必须可中断。
-  */
-  getAvailabilityStateWork(
-    resource,
-    stateProperty = "availabilityStateBranches",
-    fallbackProbability = 1,
-    operation = "Simulation.availability-state"
-  ) {
-    if (Array.isArray(resource?.[stateProperty]) && resource[stateProperty].length) {
-      return this.mergeProbabilityWork(resource[stateProperty], operation);
-    }
-    const available = Array.isArray(resource?.availabilityBranches)
-      ? this.projectProbabilityWork(
-          resource.availabilityBranches,
-          () => ({}),
-          `${operation}:compatibility`
-        )
-      : clampProbability(fallbackProbability) > PROBABILITY_EPSILON
-        ? [{ probability:clampProbability(fallbackProbability), conditions:{} }]
-        : [];
-    const probability = totalBranchProbability(available);
-    if (probability >= 1 - PROBABILITY_EPSILON) {
-      return available.map((branch) => ({ ...branch, available:true }));
-    }
-    const availableStates = this.projectProbabilityWork(
-      available,
-      () => ({ available:true }),
-      `${operation}:available`
-    );
-    return this.mergeProbabilityWork([
-      ...availableStates,
-      { probability:1 - probability, conditions:{}, available:false }
-    ], operation);
-  }
-
-  /*
-  功能
-  创建一个与输入和兄弟分支隔离的可变 SearchState 模拟世界。
+  创建一个与输入和兄弟分支隔离的可变 World 模拟世界。
 
   调用方
   Planner、RootResolutionQuery、ValueSimulationQuery 与组件内反事实分支：创建兄弟世界。
 
   输入
-  可选 SearchState；缺省为实例 initial。内部 apply 可声明 checkpoint 已在同一原子边界完成。
+  可选 World；缺省为实例 initial。内部 apply 可声明 checkpoint 已在同一原子边界完成。
 
   输出
-  完成必要摘要同步的独立可变 SearchState。
+  完成必要摘要同步的独立可变 World。
 
   读取状态
   只读输入状态或实例 initial。
 
   写入状态
-  只写新克隆的装备、响应、势能与技能费用摘要。
+  只写新克隆的响应、势能与技能费用摘要。
 
   调用函数
-  checkpointSearchWork、SearchBudget.observeClone、cloneSearchState、组件初始化器与 syncActiveSkillCosts。
+  checkpointSearchWork、SearchBudget.observeClone、cloneWorld、组件初始化器与 syncActiveSkillCosts。
 
   边界与不变量
   默认必须在 structuredClone 前观察同一个 SearchBudget；不得修改输入或 initial；
@@ -430,9 +334,7 @@ class SimulatorCore {
   clone(state = this.initial, options = {}) {
     if (options.checkpoint !== false) this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
-    const cloned = cloneSearchState(state);
-    this.initializeEquipmentBaselines(cloned);
-    projectHiddenSummaries(cloned);
+    const cloned = cloneWorld(state);
     this.initializeMomentumBranches(cloned);
     this.syncActiveSkillCosts(cloned);
     return cloned;
@@ -440,32 +342,31 @@ class SimulatorCore {
 
   /*
   功能
-  为概率事件分配单调递增的稳定键，使同一事件的互补世界共享条件身份。
+  从当前 Probability 充分状态与事件语义生成稳定键。
 
   调用方
   getEventWorlds、概率门控和各 Simulation 组件：为新条件事件取得共享身份。
 
   输入
-  当前独立 SearchState 与仅用于诊断的事件标签。
+  当前独立 World 与事件语义标签。
 
   输出
   新的稳定字符串键。
 
   读取状态
-  SearchState.probabilityEventCounter。
+  当前 ProbabilityState sufficient statistics。
 
   写入状态
-  将 probabilityEventCounter 单调增加一。
-
-  调用函数
   无。
 
+  调用函数
+  currentProbabilitySignature。
+
   边界与不变量
-  一次调用只分配一个键；同一事件的发生/未发生分支必须复用该键。
+  同一当前物理概率状态与同一语义事件必须复用该键；历史 operation count 不得进入键或 World。
   */
-  nextProbabilityEventKey(state, label = "event") {
-    state.probabilityEventCounter = Math.max(0, Number(state.probabilityEventCounter) || 0) + 1;
-    return `simulation:${label}:${state.probabilityEventCounter}`;
+  currentProbabilityEventKey(state, label = "event") {
+    return `simulation:${label}:${currentProbabilitySignature(state?.probabilityState)}`;
   }
 
   /*
@@ -476,19 +377,19 @@ class SimulatorCore {
   动作分派及所有条件效果组件：把标量概率或调用方分支统一为概率分支（带条件的互斥世界）。
 
   输入
-  独立 SearchState、缺省发生概率、可选 suppliedBranches 与事件标签。
+  独立 World、缺省发生概率、可选 suppliedBranches 与事件标签。
 
   输出
   规范化的新 occurs 分支数组。
 
   读取状态
-  只读取显式概率输入；生成新事件时读取事件计数。
+  只读取显式概率输入与当前 ProbabilityState。
 
   写入状态
-  仅在生成新事件键时推进 probabilityEventCounter。
+  无。
 
   调用函数
-  mergeProbabilityStateBranches、probabilityEventPartition、nextProbabilityEventKey。
+  mergeProbabilityStateBranches、probabilityEventPartition、currentProbabilityEventKey。
 
   边界与不变量
   调用方分支优先且不得被重新采样；新建分区的发生/未发生质量之和必须为一。
@@ -502,7 +403,7 @@ class SimulatorCore {
       );
     }
     return probabilityEventPartition(
-      this.nextProbabilityEventKey(state, label),
+      this.currentProbabilityEventKey(state, label),
       probability,
       "occurs"
     );
@@ -516,19 +417,19 @@ class SimulatorCore {
   反制、技能与资源效果：在既有条件世界上追加一个独立触发门。
 
   输入
-  SearchState、已有事件分支、零到一的附加 chance 与门标签。
+  World、已有事件分支、零到一的附加 chance 与门标签。
 
   输出
   保留原条件并追加门条件的 occurs 分支数组。
 
   读取状态
-  只读已有分支；中间概率时读取事件计数。
+  只读已有分支与当前 ProbabilityState。
 
   写入状态
-  仅在需要新门键时推进 probabilityEventCounter。
+  无。
 
   调用函数
-  joinProbabilityStateBranches、probabilityEventPartition、nextProbabilityEventKey。
+  intersectProbabilityStateBranches、probabilityEventPartition、currentProbabilityEventKey。
 
   边界与不变量
   chance 为零或一时不得额外创建随机条件；原事件为 false 的世界不能被门重新激活。
@@ -544,14 +445,14 @@ class SimulatorCore {
       );
     }
     const gate = probabilityEventPartition(
-      this.nextProbabilityEventKey(state, label), probability, "gateOccurs"
+      this.currentProbabilityEventKey(state, label), probability, "gateOccurs"
     );
-    const joined = this.joinProbabilityWork(
+    const intersection = this.intersectProbabilityWork(
       [eventWorlds, gate],
-      "Simulator.gateEventWorlds:join"
+      "Simulator.gateEventWorlds:intersect"
     );
     return this.projectProbabilityWork(
-      joined,
+      intersection,
       (branch) => ({ occurs:Boolean(branch.occurs && branch.gateOccurs) }),
       "Simulator.gateEventWorlds:project"
     );
@@ -600,38 +501,33 @@ class SimulatorCore {
   新的完整能量状态分支数组。
 
   读取状态
-  玩家 energyBranches 或确定 energy。
+  玩家当前 energy。
 
   写入状态
-  玩家 energyBranches 与期望 energy 摘要。
+  玩家当前 energy。
 
   调用函数
-  getValueBranches、joinProbabilityStateBranches、projectProbabilityStateBranches、expectedBranchValue。
+  intersectProbabilityStateBranches、projectProbabilityStateBranches、expectedBranchValue。
 
   边界与不变量
   transformer 只能改变当前分支能量；条件身份和概率质量必须保留。
   */
   updateEnergyFromWorlds(player, worldBranches, transformer) {
-    const energy = this.getValueBranchesWork(
-      player,
-      "energy",
-      player.energy,
-      "Simulator.updateEnergyFromWorlds:current"
-    ).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      energyAmount:branch.amount
-    }));
-    const joined = this.joinProbabilityWork(
+    const energy = [{
+      probability:1,
+      conditions:{},
+      energyAmount:Number(player.energy) || 0
+    }];
+    const intersection = this.intersectProbabilityWork(
       [energy, worldBranches],
-      "Simulator.updateEnergyFromWorlds:join"
+      "Simulator.updateEnergyFromWorlds:intersect"
     );
-    player.energyBranches = this.projectProbabilityWork(joined, (branch) => ({
+    const updated = this.projectProbabilityWork(intersection, (branch) => ({
       amount:Math.max(0, Math.min(player.maxEnergy ?? Infinity,
         Number(transformer(branch.energyAmount, branch)) || 0))
     }), "Simulator.updateEnergyFromWorlds:project");
-    player.energy = expectedBranchValue(player.energyBranches);
-    return joined;
+    player.energy = expectedBranchValue(updated);
+    return intersection;
   }
 
   /*
@@ -642,16 +538,16 @@ class SimulatorCore {
   CardEffectSimulation 与 SkillEffectSimulation：结算确定或条件化能量增减。
 
   输入
-  SearchState、目标玩家、能量 delta 与可选事件世界。
+  World、目标玩家、能量 delta 与可选事件世界。
 
   输出
   无返回值；玩家能量分支和摘要已推进。
 
   读取状态
-  玩家当前能量分支与事件世界。
+  玩家当前能量与事件世界。
 
   写入状态
-  玩家 energyBranches 与 energy。
+  玩家 energy。
 
   调用函数
   getEventWorlds、updateEnergyFromWorlds。
@@ -680,37 +576,32 @@ class SimulatorCore {
   新的完整护盾状态分支数组。
 
   读取状态
-  玩家 shieldBranches 或确定 shield。
+  玩家当前 shield。
 
   写入状态
-  玩家 shieldBranches 与期望 shield 摘要。
+  玩家当前 shield。
 
   调用函数
-  getValueBranches、joinProbabilityStateBranches、projectProbabilityStateBranches、expectedBranchValue。
+  intersectProbabilityStateBranches、projectProbabilityStateBranches、expectedBranchValue。
 
   边界与不变量
   条件身份与概率质量保持不变；transformer 不得修改其他战斗资源。
   */
   updateShieldFromWorlds(player, worldBranches, transformer) {
-    const shield = this.getValueBranchesWork(
-      player,
-      "shield",
-      player.shield,
-      "Simulator.updateShieldFromWorlds:current"
-    ).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      shieldAmount:branch.amount
-    }));
-    const joined = this.joinProbabilityWork(
+    const shield = [{
+      probability:1,
+      conditions:{},
+      shieldAmount:Number(player.shield) || 0
+    }];
+    const intersection = this.intersectProbabilityWork(
       [shield, worldBranches],
-      "Simulator.updateShieldFromWorlds:join"
+      "Simulator.updateShieldFromWorlds:intersect"
     );
-    player.shieldBranches = this.projectProbabilityWork(joined, (branch) => ({
+    const updated = this.projectProbabilityWork(intersection, (branch) => ({
       amount:Math.max(0, Number(transformer(branch.shieldAmount, branch)) || 0)
     }), "Simulator.updateShieldFromWorlds:project");
-    player.shield = expectedBranchValue(player.shieldBranches);
-    return joined;
+    player.shield = expectedBranchValue(updated);
+    return intersection;
   }
 
   /*
@@ -721,16 +612,16 @@ class SimulatorCore {
   CardEffectSimulation 与 SkillEffectSimulation：结算确定或条件化护盾增减。
 
   输入
-  SearchState、目标玩家、护盾 delta 与可选事件世界。
+  World、目标玩家、护盾 delta 与可选事件世界。
 
   输出
   无返回值；玩家护盾分支和摘要已推进。
 
   读取状态
-  玩家当前护盾分支与事件世界。
+  玩家当前护盾与事件世界。
 
   写入状态
-  玩家 shieldBranches 与 shield。
+  玩家 shield。
 
   调用函数
   getEventWorlds、updateShieldFromWorlds。
@@ -753,34 +644,34 @@ class SimulatorCore {
   consumeAttackUse、CardEffectSimulation 与破军技能：取得突袭次数资源的完整槽位。
 
   输入
-  行动者 SearchState 摘要。
+  行动者 World 摘要。
 
   输出
   每次突袭容量各自对应的可用状态分支数组。
 
   读取状态
-  attackUseSlots；缺失时读取 attackLimit、attackUsed 与 availability 视图。
+  attackLimit 与 attackUsed 当前摘要。
 
   写入状态
-  仅在正式槽位缺失时补建 player.attackUseSlots。
+  无；槽位只存在本次突袭 transition 调用栈。
 
   调用函数
   getAvailabilityStateBranches、availableBranchesFromState。
 
   边界与不变量
-  标量次数回退只重建等价槽位；不得合并独立次数或改变部分已用质量。
+  标量次数只投影为本次 transition 的有界局部槽位；不得写回 World 或 Action。
   */
   ensureAttackUseSlots(player) {
-    if (Array.isArray(player.attackUseSlots)) return player.attackUseSlots;
-    const hasLimit = Number.isFinite(Number(player.attackLimit));
     const used = Math.max(0, Number(player.attackUsed) || 0);
-    const limit = hasLimit ? Math.max(0, Math.ceil(Number(player.attackLimit))) : Math.max(1, Math.ceil(used + 1));
-    player.attackUseSlots = Array.from({ length:limit }, (_, index) => [{
-      probability:1,
-      conditions:{},
-      available:index >= Math.ceil(used)
-    }]);
-    return player.attackUseSlots;
+    const limit = Number.isFinite(Number(player.attackLimit))
+      ? Math.max(0, Number(player.attackLimit))
+      : used + 1;
+    const remaining = Math.max(0, limit - used);
+    return Array.from({ length:Math.ceil(remaining) }, (_, index) => probabilityEventPartition(
+      `attack-use:${player.id}:${index}`,
+      Math.min(1, remaining - index),
+      "available"
+    ));
   }
 
   /*
@@ -791,44 +682,32 @@ class SimulatorCore {
   apply：取得当前主动技能次数资源的完整槽位。
 
   输入
-  行动者 SearchState 摘要与正式技能定义。
+  行动者 World 摘要与正式技能定义。
 
   输出
   该技能每次容量对应的可用状态分支数组。
 
   读取状态
-  activeSkillUseSlots；缺失时读取技能次数、限制和 availability 视图。
+  当前技能次数、限制与使用摘要。
 
   写入状态
-  仅在正式槽位缺失时补建 player.activeSkillUseSlots。
+  无；槽位只存在本次技能 transition 调用栈。
 
   调用函数
   getAvailabilityStateBranches、availableBranchesFromState。
 
   边界与不变量
-  技能限制为零时不得创建槽位；回退不能增加期望可用次数。
+  技能限制为零时不得创建槽位；局部槽位不能增加期望可用次数或进入 World。
   */
   ensureSkillUseSlots(player, skill) {
-    if (Array.isArray(player.activeSkillUseSlots)) return player.activeSkillUseSlots;
-    if (Array.isArray(player.activeSkillAvailabilityBranches)) {
-      player.activeSkillUseSlots = player.activeSkillAvailabilityBranches.map((availabilityBranches) => (
-        this.getAvailabilityStateWork(
-          { availabilityBranches },
-          "availabilityStateBranches",
-          1,
-          "Simulator.ensureSkillUseSlots:availability"
-        )
-      ));
-      return player.activeSkillUseSlots;
-    }
     const uses = Math.max(0, Number(player.activeSkillUses ?? (player.activeSkillUsed ? 1 : 0)) || 0);
-    const limit = Math.max(0, Math.ceil(Number(player.activeSkillLimit ?? skill?.limitPerTurn ?? 1) || 0));
-    player.activeSkillUseSlots = Array.from({ length:limit }, (_, index) => [{
-      probability:1,
-      conditions:{},
-      available:index >= Math.ceil(uses)
-    }]);
-    return player.activeSkillUseSlots;
+    const limit = Math.max(0, Number(player.activeSkillLimit ?? skill?.limitPerTurn ?? 1) || 0);
+    const remaining = Math.max(0, limit - uses);
+    return Array.from({ length:Math.ceil(remaining) }, (_, index) => probabilityEventPartition(
+      `skill-use:${player.id}:${skill?.id ?? "unknown"}:${index}`,
+      Math.min(1, remaining - index),
+      "available"
+    ));
   }
 
   /*
@@ -839,7 +718,7 @@ class SimulatorCore {
   consumeAttackUse 与 apply 的技能分派：把执行世界绑定到一个次数槽。
 
   输入
-  SearchState、槽位数组、期望执行世界、可选首选槽位和标签。
+  World、槽位数组、期望执行世界和标签。
 
   输出
   被消费的槽位下标、实际消费世界及其概率。
@@ -851,15 +730,13 @@ class SimulatorCore {
   只更新选中槽位在相交世界中的 available 状态。
 
   调用函数
-  joinProbabilityStateBranches、projectProbabilityStateBranches、nextProbabilityEventKey。
+  intersectProbabilityStateBranches、projectProbabilityStateBranches、currentProbabilityEventKey。
 
   边界与不变量
   每个世界最多消费一个槽位；不兼容条件不能交叉消费，未满足质量原样返回为未执行。
   */
-  consumeSlot(state, slots, desiredEventWorlds, preferredIndex = null, label = "slot") {
-    const indexes = preferredIndex == null
-      ? slots.map((_, index) => index)
-      : [preferredIndex];
+  consumeSlot(state, slots, desiredEventWorlds, label = "slot") {
+    const indexes = slots.map((_, index) => index);
     let best = null;
     for (const index of indexes) {
       const slot = slots[index];
@@ -878,20 +755,20 @@ class SimulatorCore {
           slotAvailable:Boolean(branch.available)
         });
       }
-      const joined = this.joinProbabilityWork(
+      const intersection = this.intersectProbabilityWork(
         [desiredEventWorlds, slotState],
-        "Simulator.consumeSlot:join"
+        "Simulator.consumeSlot:intersect"
       );
-      const actualWorlds = this.projectProbabilityWork(joined, (branch) => ({
+      const actualWorlds = this.projectProbabilityWork(intersection, (branch) => ({
         occurs:Boolean(branch.occurs && branch.slotAvailable)
       }), "Simulator.consumeSlot:actual");
       const executionProbability = this.eventProbability(actualWorlds);
       if (executionProbability <= PROBABILITY_EPSILON
         || (best && executionProbability <= best.executionProbability + PROBABILITY_EPSILON)) continue;
-      best = { index, joined, eventWorlds:actualWorlds, executionProbability };
+      best = { index, intersection, eventWorlds:actualWorlds, executionProbability };
     }
     if (best) {
-      slots[best.index] = this.projectProbabilityWork(best.joined, (branch) => ({
+      slots[best.index] = this.projectProbabilityWork(best.intersection, (branch) => ({
         available:Boolean(branch.slotAvailable && !(branch.occurs && branch.slotAvailable))
       }), "Simulator.consumeSlot:remaining");
       return { index:best.index, eventWorlds:best.eventWorlds };
@@ -914,7 +791,7 @@ class SimulatorCore {
   CombatSimulation.simulateAssault：在伤害结算前消费一次攻击容量。
 
   输入
-  SearchState、行动者、期望攻击世界与可选槽位下标。
+  World、行动者与期望攻击世界。
 
   输出
   实际攻击事件世界、消费概率和槽位下标。
@@ -923,7 +800,7 @@ class SimulatorCore {
   行动者 attackUseSlots 与攻击次数摘要。
 
   写入状态
-  attackUseSlots、attackAvailabilityBranches、attackUsed 与 attackLimit 摘要。
+  attackUsed 当前摘要。
 
   调用函数
   ensureAttackUseSlots、consumeSlot、eventProbability。
@@ -931,12 +808,15 @@ class SimulatorCore {
   边界与不变量
   同一槽位在同一条件世界只能使用一次；摘要必须由槽位重新投影而不能另行扣减。
   */
-  consumeAttackUse(state, player, desiredEventWorlds, preferredIndex = null) {
+  consumeAttackUse(state, player, desiredEventWorlds) {
     const slots = this.ensureAttackUseSlots(player);
-    const consumed = this.consumeSlot(state, slots, desiredEventWorlds, preferredIndex,
-      `attack-slot:${player.id}`);
+    const consumed = this.consumeSlot(
+      state,
+      slots,
+      desiredEventWorlds,
+      `attack-slot:${player.id}`
+    );
     const probability = this.eventProbability(consumed.eventWorlds);
-    player.attackAvailabilityBranches = slots.map(availableBranchesFromState);
     player.attackUsed = (player.attackUsed ?? 0) + probability;
     return consumed;
   }
@@ -949,32 +829,31 @@ class SimulatorCore {
   Planner、CounterfactualTerms 与有界 simulation query：推进一个已经合法枚举的抽象动作。
 
   输入
-  动作前 SearchState、抽象动作与 viewer ID；动作已经由 ActionGenerator/Policy 选择。
+  动作前 World、抽象动作与 viewer ID；动作已经由 ActionGenerator/Policy 选择。
 
   输出
-  独立的动作后 SearchState；输入状态保持不变。
+  独立的动作后 World；输入状态保持不变。
 
   读取状态
-  输入 SearchState、动作描述、执行概率分支与正式卡牌/技能定义。
+  输入 World、canonical Action 的真实意图与正式卡牌/技能定义。
 
   写入状态
   只写本次 clone 及 root 递归守卫；具体效果写入委托各 Simulation 组件。
 
   调用函数
-  clone、applySkill、applyCardEffect、响应查询与次数槽 辅助函数。
+  clone、buildSkillExecutionWorlds、buildCardExecutionWorlds、applySkill、applyCardEffect 与响应查询。
 
   边界与不变量
   必须先通过当前 SearchBudget checkpoint 再 clone、支付和结算；卡牌级反制容量只消费一次，
   响应顺序和随机调用顺序不得改变；中断 signal 由 Planner preparation boundary 统一收束。
   */
-  apply(state, abstractAction, viewerId) {
+  apply(state, action) {
     this.checkpointSearchWork();
     const next = this.clone(state, { checkpoint:false });
     if (next.playPhaseEnded) return next;
-    const actor = next.players.find((player) => player.id === viewerId);
-    if (abstractAction.type === "end") {
+    const actor = next.players.find((player) => player.id === action.actorId);
+    if (action.type === "end") {
       if (hasPassiveSkill(actor, "momentum")) {
-        actor.momentumBranches = [{ probability:1, conditions:{}, amount:0 }];
         actor.momentum = 0;
       }
       next.playPhaseEnded = true;
@@ -984,89 +863,69 @@ class SimulatorCore {
       return next;
     }
     if (!actor) return next;
-    if (abstractAction.type === "skill") {
-      const desiredWorlds = this.getEventWorlds(next,
-        abstractAction.executionProbability ?? 1,
-        abstractAction.executionWorldBranches,
-        `skill:${abstractAction.skill?.id ?? "unknown"}`);
-      const skillSlots = this.ensureSkillUseSlots(actor, abstractAction.skill);
-      const consumed = this.consumeSlot(next, skillSlots, desiredWorlds,
-        abstractAction.skillUseSlot, `skill-slot:${abstractAction.skill?.id ?? "unknown"}`);
-      const skillEventWorlds = consumed.eventWorlds;
+    if (action.type === "skill") {
+      const skill = ACTIVE_SKILL_DEFINITIONS[action.skillId] ?? null;
+      if (!skill) return next;
+      const skillEventWorlds = this.buildSkillExecutionWorlds(next, actor, action, skill);
       const executionProbability = this.eventProbability(skillEventWorlds);
       if (executionProbability <= 0) return next;
-      const skillLimit = actor.activeSkillLimit ?? abstractAction.skill?.limitPerTurn ?? 1;
-      actor.activeSkillAvailabilityBranches = skillSlots.map(availableBranchesFromState);
+      const skillLimit = actor.activeSkillLimit ?? skill.limitPerTurn ?? 1;
       actor.activeSkillUses = Math.min(skillLimit,
         (actor.activeSkillUses ?? (actor.activeSkillUsed ? 1 : 0)) + executionProbability);
       actor.activeSkillUsed = actor.activeSkillUses >= skillLimit - PROBABILITY_EPSILON;
-      this.applySkill(next, actor, abstractAction, skillEventWorlds);
+      this.applySkill(next, actor, action, skillEventWorlds);
       this.syncActiveSkillCosts(next);
       return next;
     }
-    const card = abstractAction.card;
+    const definition = CARD_DEFINITIONS[action.cardId] ?? null;
+    const card = definition ? { ...definition, id:action.cardInstanceId } : null;
     if (!card) return next;
-    const targetId = abstractAction.targets?.[0]?.id;
+    const targetId = action.targetIds?.[0];
     const target = next.players.find((player) => player.id === targetId);
-    const targetBeforeResponse = state.players.find((player) => player.id === targetId);
-    const heldCard = (actor.hand ?? []).find((entry) => entry.id === card.id) ?? null;
-    const cardAvailabilityState = this.getAvailabilityStateWork(
-      heldCard ?? card,
-      "availabilityStateBranches",
-      1,
-      "Simulator.apply:card-availability"
+    const targets = (action.targetIds ?? [])
+      .map((id) => next.players.find((player) => player.id === id))
+      .filter(Boolean);
+    const heldCard = (actor.hand ?? []).find((entry) => entry.id === action.cardInstanceId) ?? null;
+    const cardEventWorlds = this.buildCardExecutionWorlds(
+      next,
+      actor,
+      action,
+      card,
+      heldCard
     );
-    let cardProbability = 0;
-    for (let index = 0; index < cardAvailabilityState.length; index += 1) {
-      if (index % 32 === 0) this.checkpointSearchWork();
-      const branch = cardAvailabilityState[index];
-      if (branch.available) cardProbability += Math.max(0, Number(branch.probability) || 0);
-    }
-    const desiredCardWorlds = this.getEventWorlds(next,
-      abstractAction.executionProbability ?? cardProbability,
-      abstractAction.executionWorldBranches,
-      `card:${card.id ?? card.definitionId}`);
-    let cardEventWorlds = desiredCardWorlds;
     if (heldCard) {
-      const availabilityState = this.projectProbabilityWork(
-        cardAvailabilityState,
-        (branch) => ({ cardAvailable:Boolean(branch.available) }),
-        "Simulator.apply:held-card-availability"
+      heldCard.availability = Math.max(
+        0,
+        Number(heldCard.availability ?? 1) - this.eventProbability(cardEventWorlds)
       );
-      const joined = this.joinProbabilityWork([desiredCardWorlds, availabilityState]);
-      cardEventWorlds = this.projectProbabilityWork(joined, (branch) => ({
-        occurs:Boolean(branch.occurs && branch.cardAvailable)
-      }));
-      heldCard.availabilityStateBranches = this.projectProbabilityWork(joined, (branch) => ({
-        available:Boolean(branch.cardAvailable && !(branch.occurs && branch.cardAvailable))
-      }));
-      heldCard.availabilityBranches = availableBranchesFromState(heldCard.availabilityStateBranches);
-      const remainingProbability = totalBranchProbability(heldCard.availabilityBranches);
-      actor.hand = remainingProbability > 0 ? actor.hand : actor.hand.filter((entry) => entry.id !== card.id);
+      if (heldCard.availability <= PROBABILITY_EPSILON) {
+        actor.hand = actor.hand.filter((entry) => entry.id !== action.cardInstanceId);
+      }
     }
     const executionProbability = this.eventProbability(cardEventWorlds);
     // restoreActorHand：root 效果估值专用。当前状态中 root 卡牌已经打出（资源已沉没），
     // 结算模拟时把这张卡的打出成本还原再扣，使资源账目净变化为 0，只体现 root 效果价值。
-    const handRestore = abstractAction.restoreActorHand && executionProbability > PROBABILITY_EPSILON ? 1 : 0;
+    const handRestore = action.execution?.restoreActorHand
+      && executionProbability > PROBABILITY_EPSILON ? 1 : 0;
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - executionProbability + handRestore);
-    projectHiddenSummaries(next);
     if (executionProbability <= 0) return next;
     // card-scope 的取消概率与容量消费必须使用同一份 responder 评估；两者之间没有
     // 状态变化，因此重复计算 counterDecision 只会增加开销，不会提供新信息。
     const cardScopeCounterEvaluation = card.category === "tactic"
-      && card.counterable !== false && card.counterScope !== "target"
+      && card.counterable !== false && !action.execution?.ignoreCounter
+      && card.counterScope !== "target"
       ? this.evaluateCardScopeCounterResponses(
         next,
         actor,
         card,
-        abstractAction.targets ?? [],
-        abstractAction.selection ?? null,
+        targets,
+        action.selection ?? null,
         { createCondition:true }
       )
       : null;
     let effectEventWorlds = cardEventWorlds;
     if (card.counterScope !== "target" && cardScopeCounterEvaluation) {
-      const responseWorlds = this.joinProbabilityWork([
+      const responseWorlds = this.intersectProbabilityWork([
         cardEventWorlds,
         cardScopeCounterEvaluation.responseWorlds
       ], "Simulator.apply:card-scope-response");
@@ -1087,26 +946,25 @@ class SimulatorCore {
     const scale = this.eventProbability(effectEventWorlds);
     // card-scope 战术的生效概率与反制资源消费必须来自同一 responseEvaluation。
     // 这里兑现该评估的边际取消世界，使同一张反制不能既取消当前战术，又保留在
-    // counterProbability / sealCounterProbability 中成为未来可用容量。
-    if (card.category === "tactic" && card.counterable !== false && card.counterScope !== "target") {
+    // 当前 Counter query / sealCounterProbability 中成为未来可用容量。
+    if (card.category === "tactic" && card.counterable !== false
+      && !action.execution?.ignoreCounter && card.counterScope !== "target") {
       this.consumeCountersForCardScope(
         next,
         actor,
         card,
-        abstractAction.targets ?? [],
-        abstractAction.selection ?? null,
+        targets,
+        action.selection ?? null,
         cardScopeCounterEvaluation
       );
     }
-    return this.applyCardEffect(next, actor, abstractAction, {
+    return this.applyCardEffect(next, actor, action, {
       card,
       target,
       cardEventWorlds,
       effectEventWorlds,
       executionProbability,
-      scale,
-      stateBeforeResponse:state,
-      targetBeforeResponse
+      scale
     });
   }
 
@@ -1118,7 +976,7 @@ class SimulatorCore {
   apply 的 end 分支。
 
   输入
-  独立 SearchState 与行动者。
+  独立 World 与行动者。
 
   输出
   无；行动者总手牌数量按生命上限压缩，并同步已知身份、匿名容量与概率摘要。
@@ -1186,16 +1044,6 @@ class SimulatorCore {
       });
     }
     actor.handCount = Math.min(Math.max(0, Number(actor.handCount) || 0), hp);
-    const explicitAfter = [
-      ...(Array.isArray(actor.hand) ? actor.hand : []),
-      ...(Array.isArray(actor.knownCards) ? actor.knownCards : [])
-    ].reduce((sum, card) => sum + this.cardAvailability(card), 0);
-    actor.anonymousCountBranches = [{
-      probability: 1,
-      conditions: {},
-      anonymousCount: Math.max(0, (Number(actor.handCount) || 0) - explicitAfter)
-    }];
-    projectHiddenSummaries(state);
   }
 
   /*
@@ -1206,7 +1054,7 @@ class SimulatorCore {
   CardEffectSimulation 的全体受益结算：按真实座次取得接收顺序。
 
   输入
-  SearchState、来源玩家与是否包含来源的布尔选项。
+  World、来源玩家与是否包含来源的布尔选项。
 
   输出
   按来源之后顺时针排列的存活玩家新数组。
