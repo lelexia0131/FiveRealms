@@ -309,6 +309,140 @@ export function cyclicFirstSuccessDistribution(total, successes, cycleLength) {
 
 /*
 功能
+从调用方提供的 identity counts 与分类器创建局部 finite-pool sequence state。
+
+调用方
+finitePoolSequence。
+
+输入
+identity 到容量的当前计数，以及把 identity 映射为 outcome key 的纯 classifier。
+
+输出
+唯一包含 counts、initialCounts 与 total 的局部 pool。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+classifier。
+
+边界与不变量
+非法/非正容量和 null outcome 被忽略；pool 只存在于本次 query，不进入 ProbabilityState 或 World。
+*/
+function createSequencePool(initialCounts = {}, classifier) {
+  const counts = {};
+  let total = 0;
+  for (const [identity, rawCount] of Object.entries(initialCounts ?? {})) {
+    const count = Number(rawCount);
+    if (!Number.isFinite(count) || count <= 0) continue;
+    const outcome = classifier(identity);
+    if (outcome == null) continue;
+    const key = String(outcome);
+    counts[key] = (counts[key] ?? 0) + count;
+    total += count;
+  }
+  return {
+    counts,
+    initialCounts:counts,
+    total
+  };
+}
+
+/*
+功能
+通过唯一 Pool consumption path 扣减一个物理 outcome capacity。
+
+调用方
+finitePoolSequence。
+
+输入
+当前局部 pool 与 distribution branch 指定的 consumeKey。
+
+输出
+容量与 total 各减一的新 pool。
+
+读取状态
+当前 pool counts、initialCounts 与 total。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+不存在或已耗尽 key 立即失败；synthetic outcome 必须使用 null consumeKey，不能进入本函数。
+*/
+function consumeSequencePool(pool, consumeKey) {
+  const available = pool.counts[consumeKey] ?? 0;
+  if (available <= POOL_EPSILON || pool.total <= POOL_EPSILON) {
+    throw new RangeError(`finite-pool outcome 已耗尽：${consumeKey}`);
+  }
+  return {
+    counts:{ ...pool.counts, [consumeKey]:available - 1 },
+    initialCounts:pool.initialCounts,
+    total:pool.total - 1
+  };
+}
+
+/*
+功能
+按 caller 提供的逐槽 distribution 推进 generic finite-pool without-replacement sequence。
+
+调用方
+Probability facade 的 business-facing sequence query。
+
+输入
+初始 identity counts、槽数、identity classifier 与逐槽 distribution callback。
+
+输出
+只含 probability 与 outcomes 的最终序列分布；内部 pool 已立即投影移除。
+
+读取状态
+每个局部 world 的唯一 pool。
+
+写入状态
+无。
+
+调用函数
+createSequencePool、distributionForSlot、consumeSequencePool。
+
+边界与不变量
+physical outcome 必须提供 consumeKey 并走唯一扣减路径；null consumeKey 表示 synthetic/non-physical；
+不 clone World、不保存历史 genealogy，也不解释任何业务 outcome。
+*/
+export function finitePoolSequence({
+  initialCounts = {},
+  slotCount = 0,
+  classifyOutcome,
+  distributionForSlot
+} = {}) {
+  if (typeof classifyOutcome !== "function" || typeof distributionForSlot !== "function") {
+    throw new TypeError("finitePoolSequence 缺少 classifier/distribution callback");
+  }
+  const count = Math.max(0, Math.floor(Number(slotCount) || 0));
+  if (count <= 0) return [{ probability:1, outcomes:[] }];
+  const initialPool = createSequencePool(initialCounts, classifyOutcome);
+  let worlds = [{ probability:1, outcomes:[], pool:initialPool }];
+  for (let slot = 0; slot < count; slot += 1) {
+    worlds = worlds.flatMap((world) => (
+      distributionForSlot(world.pool, slot).map((branch) => ({
+        probability:world.probability * branch.probability,
+        outcomes:[...world.outcomes, branch.outcome],
+        pool:branch.consumeKey == null
+          ? world.pool
+          : consumeSequencePool(world.pool, String(branch.consumeKey))
+      }))
+    ));
+  }
+  return worlds.map(({ probability, outcomes }) => ({ probability, outcomes }));
+}
+
+/*
+功能
 规范一个匿名槽组，确保身份约束只由当前允许集合决定。
 
 调用方

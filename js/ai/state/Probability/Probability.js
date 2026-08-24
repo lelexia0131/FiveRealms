@@ -44,6 +44,7 @@ import {
   conditionFinitePool,
   createFinitePoolState,
   cyclicFirstSuccessDistribution,
+  finitePoolSequence,
   mutateFinitePool,
   hypergeometricProbabilityAtLeast,
   probabilityFromCurrentCounts,
@@ -119,7 +120,7 @@ const STATUS_PROBABILITY_FIELDS = Object.freeze({
 buildRadarJudgmentProbabilities、buildRadarJudgmentSequenceProbabilities。
 
 输入
-可选的当前剩余牌定义计数，以及是否直接按判定 outcome 聚合。
+可选的当前剩余牌定义计数。
 
 输出
 只含合法正计数的独立 counts 对象及其 totalWeight。
@@ -135,9 +136,9 @@ Domain CardDefinitions 与 RulesetDefinition.deckComposition。
 
 边界与不变量
 不读取真实判定牌身份或修改输入；null 使用正式初始牌堆，显式空对象保持空池语义；
-definition 与 outcome 两种粒度都只扫描并物化当前牌池一次。
+当前 definition 粒度只扫描并物化一次。
 */
-function radarJudgmentPoolCounts(remainingCardCounts = null, groupByOutcome = false) {
+function radarJudgmentPoolCounts(remainingCardCounts = null) {
   const sourceCounts = remainingCardCounts
     && typeof remainingCardCounts === "object"
     && !Array.isArray(remainingCardCounts)
@@ -149,10 +150,7 @@ function radarJudgmentPoolCounts(remainingCardCounts = null, groupByOutcome = fa
     const value = Number(count);
     const definition = CARD_DEFINITIONS[definitionId];
     if (!definition || !Number.isFinite(value) || value <= 0) continue;
-    const key = groupByOutcome
-      ? definition.category === "basic" ? `basic:${definitionId}` : definition.category
-      : definitionId;
-    counts[key] = (counts[key] ?? 0) + value;
+    counts[definitionId] = (counts[definitionId] ?? 0) + value;
     totalWeight += value;
   }
   return { counts, totalWeight };
@@ -293,7 +291,7 @@ buildRadarJudgmentSequenceProbabilities 的统一逐槽状态机。
 当前 outcome counts、初始 outcome counts、当前总容量与可选单槽 override。
 
 输出
-包含 outcome、probability 与是否耗用当前池容量的分布。
+包含 outcome、probability 与可选 consumeKey 的分布。
 
 读取状态
 Radar 基础牌 definition 投影与当前槽 pool counts。
@@ -316,14 +314,14 @@ function radarOutcomeDistribution(
 ) {
   if (totalWeight <= PROBABILITY_EPSILON) {
     const hasOverride = overrideProbabilities && typeof overrideProbabilities === "object";
-    if (!hasOverride) return [{ outcome:"noJudgment", probability:1, consumes:false }];
+    if (!hasOverride) return [{ outcome:"noJudgment", probability:1, consumeKey:null }];
   }
   const baseDistribution = Object.entries(poolCounts)
     .filter(([, available]) => available > PROBABILITY_EPSILON)
     .map(([outcome, available]) => ({
       outcome,
       probability:available / totalWeight,
-      consumes:true
+      consumeKey:outcome
     }));
   const override = overrideProbabilities && typeof overrideProbabilities === "object"
     ? overrideProbabilities
@@ -383,10 +381,10 @@ function radarOutcomeDistribution(
     const currentCapacity = poolCounts[outcome] ?? 0;
     const initialCapacity = initialPoolCounts[outcome] ?? 0;
     if (currentCapacity > PROBABILITY_EPSILON) {
-      return [{ outcome, probability, consumes:true }];
+      return [{ outcome, probability, consumeKey:outcome }];
     }
     return initialCapacity <= PROBABILITY_EPSILON
-      ? [{ outcome, probability, consumes:false }]
+      ? [{ outcome, probability, consumeKey:null }]
       : [];
   });
   const transformedTotal = transformed.reduce(
@@ -400,7 +398,7 @@ function radarOutcomeDistribution(
       }))
     : baseDistribution.length
       ? baseDistribution
-      : [{ outcome:"noJudgment", probability:1, consumes:false }];
+      : [{ outcome:"noJudgment", probability:1, consumeKey:null }];
 }
 
 /*
@@ -423,7 +421,7 @@ Domain CardDefinitions、RulesetDefinition 与传入当前牌池计数。
 无。
 
 调用函数
-radarJudgmentPoolCounts、radarOutcomeDistribution。
+Pool.finitePoolSequence、radarOutcomeDistribution。
 
 边界与不变量
 所有槽统一从前一槽剩余容量抽取；per-slot/uniform override 只变换当前分布，不能跳过物理耗用；
@@ -440,39 +438,28 @@ export function buildRadarJudgmentSequenceProbabilities(
   const overrides = Array.isArray(overrideProbabilitiesByRequirement)
     ? overrideProbabilitiesByRequirement
     : null;
-  const {
-    counts:outcomeCounts,
-    totalWeight
-  } = radarJudgmentPoolCounts(remainingCardCounts, true);
-  let worlds = [{
-    probability:1,
-    outcomes:[],
-    counts:outcomeCounts,
-    initialCounts:outcomeCounts,
-    total:totalWeight
-  }];
-  for (let slot = 0; slot < count; slot += 1) {
-    worlds = worlds.flatMap((world) => {
-      const distribution = radarOutcomeDistribution(
-        world.counts,
-        world.initialCounts,
-        world.total,
-        overrides?.[slot] ?? overrideProbabilities
-      );
-      return distribution.map(({ outcome, probability, consumes }) => {
-        return {
-          probability:world.probability * probability,
-          outcomes:[...world.outcomes, outcome],
-          counts:consumes
-            ? { ...world.counts, [outcome]:world.counts[outcome] - 1 }
-            : world.counts,
-          initialCounts:world.initialCounts,
-          total:consumes ? world.total - 1 : world.total
-        };
-      });
-    });
-  }
-  return worlds.map(({ probability, outcomes }) => ({ probability, outcomes }));
+  const sourceCounts = remainingCardCounts
+    && typeof remainingCardCounts === "object"
+    && !Array.isArray(remainingCardCounts)
+    ? remainingCardCounts
+    : RULESET_DEFINITION.deckComposition;
+  return finitePoolSequence({
+    initialCounts:sourceCounts,
+    slotCount:count,
+    classifyOutcome:(definitionId) => {
+      const definition = CARD_DEFINITIONS[definitionId];
+      if (!definition) return null;
+      return definition.category === "basic"
+        ? `basic:${definitionId}`
+        : definition.category;
+    },
+    distributionForSlot:(pool, slot) => radarOutcomeDistribution(
+      pool.counts,
+      pool.initialCounts,
+      pool.total,
+      overrides?.[slot] ?? overrideProbabilities
+    )
+  });
 }
 
 /*

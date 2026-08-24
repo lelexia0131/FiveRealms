@@ -13617,11 +13617,18 @@ async function probabilityArchitectureClosure() {
   }
   const branchCode = branch.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
   const poolCode = pool.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  const facadeCode = facade.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
   assert.doesNotMatch(
     branchCode,
     /\b(?:recover|block|counter|assault|Radar|Lightning|Seal|equipment|huntMark)\b/
   );
   assert.doesNotMatch(poolCode, /\b(?:Radar|Lightning|Seal|Simulator|Evaluator|Generator)\b/);
+  assert.match(poolCode, /function consumeSequencePool\s*\(/);
+  assert.match(poolCode, /export function finitePoolSequence\s*\(/);
+  assert.doesNotMatch(
+    facadeCode,
+    /\[outcome\]\s*:\s*[^,\n]+-\s*1|world\.total\s*-\s*1/
+  );
   for (const file of ["RadarModel.js", "LightningModel.js", "SealModel.js"]) {
     await assert.rejects(access(projectFile(`js/ai/domain/${file}`)));
   }
