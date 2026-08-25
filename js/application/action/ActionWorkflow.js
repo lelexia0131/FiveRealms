@@ -447,10 +447,10 @@ export function createActionWorkflow(dependencies) {
   卡牌经 zone collaborators；card-specific resolution 经 resolver；generic locks/owners 经 actionRuntime。
 
   调用函数
-  canPlayCard、canUseForcedAssault、getCardTargets、prepareTransferIntent、prepareLeverageIntent、preparePrivateCardSelectionIntent、moveHandToResolving、emitEvent、responseWorkflow、resolveCardEffect、finishResolvingToDiscard、isCardCommittedToDiscard、isCardCommittedToEquipment、cleanupFailedResolution、diagnostics.recordCardPlayed。
+  cardRuntime.prepareCardAction/preparePostCounterEffectIntent/resolveCardAction、moveHandToResolving、emitEvent、responseWorkflow、finishResolvingToDiscard、isCardCommittedToDiscard、isCardCommittedToEquipment、cleanupFailedResolution、diagnostics.recordCardPlayed。
 
   边界与不变量
-  借势嵌套锁豁免、counter/cancel/destination/failure cleanup 与旧 playCard 完全一致。
+  公开声明在反制前完成；具体效果资源只能在完整反制链后准备。借势嵌套锁豁免、counter/cancel/destination/failure cleanup 保持不变。
   */
   async function playCard(source, card, requestedTargets = [], selection = null, options = {}) {
     const state = runtime.getState();
@@ -462,7 +462,6 @@ export function createActionWorkflow(dependencies) {
     let targets = plan.targets;
     const preparedTransfer = plan.preparedTransfer;
     const preparedLeverage = plan.preparedLeverage;
-    const preparedPrivateSelection = plan.preparedPrivateSelection;
 
     const previousActionLocked = actionRuntime.actionLocked;
     actionRuntime.actionLocked = true;
@@ -507,9 +506,8 @@ export function createActionWorkflow(dependencies) {
       const counterResult = !cancelledBeforeResolve && card.counterScope !== "target"
         ? await runtime.responseWorkflow.askForCounter(source, card, targets, {
           publicTransferContext: preparedTransfer?.publicContext ?? null,
-          publicSelectionContext: preparedPrivateSelection?.publicContext ?? null,
           relatedTargets: preparedTransfer
-            ? [preparedTransfer.privateIntent.from, preparedTransfer.privateIntent.receiver]
+            ? [preparedTransfer.from, preparedTransfer.receiver]
             : targets
         })
         : { status: "unavailable" };
@@ -521,13 +519,21 @@ export function createActionWorkflow(dependencies) {
       if (cancelledBeforeResolve) {
         runtime.presentation.log(`「${card.name}」的效果被取消。`, "important");
       } else if (!countered) {
-        const effectResult = await runtime.cardRuntime.resolveCardAction(source, card, targets, selection, resolutionId, plan);
+        const postCounterIntent = await runtime.cardRuntime.preparePostCounterEffectIntent(
+          source, card, targets, selection, plan
+        );
         if (!runtime.isSessionValid(gameId)) return false;
-        destination = effectResult.destination;
-        effectResolved = effectResult.resolved ?? true;
-        effectEffectiveTargets = Array.isArray(effectResult.effectiveTargets)
-          ? effectResult.effectiveTargets
-          : null;
+        if (postCounterIntent) {
+          const effectResult = await runtime.cardRuntime.resolveCardAction(
+            source, card, targets, selection, resolutionId, plan, postCounterIntent
+          );
+          if (!runtime.isSessionValid(gameId)) return false;
+          destination = effectResult.destination;
+          effectResolved = effectResult.resolved ?? true;
+          effectEffectiveTargets = Array.isArray(effectResult.effectiveTargets)
+            ? effectResult.effectiveTargets
+            : null;
+        }
       }
       expectedDestination = destination;
       if (destination === "discard") {

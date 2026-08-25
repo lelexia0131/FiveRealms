@@ -19,8 +19,8 @@ private intent 只存在于当前调用栈；公开 context 不含 hidden Card e
 */
 const REQUIRED_DEPENDENCIES = [
   "getState", "canPlayCard", "canUseForcedAssault", "getCardTargets",
-  "getAssaultTargetCandidates", "prepareTransferIntent", "prepareLeverageIntent",
-  "preparePrivateCardSelectionIntent", "resolveCardEffect", "getActionTargetLabel",
+  "getAssaultTargetCandidates", "prepareTransferDeclaration", "prepareTransferEffectIntent",
+  "prepareLeverageIntent", "preparePrivateCardSelectionIntent", "resolveCardEffect", "getActionTargetLabel",
   "getActionLogMessage", "shouldSuppressUseLog"
 ];
 
@@ -35,7 +35,7 @@ composition root。
 显式注入的 legality/preparation/effect/presentation collaborators。
 
 输出
-冻结 { prepareCardAction, resolveCardAction, getEffectiveTargets }。
+冻结 { prepareCardAction, preparePostCounterEffectIntent, resolveCardAction, getEffectiveTargets }。
 
 读取状态
 无。
@@ -66,7 +66,7 @@ export function createCardRuntime(dependencies) {
   source、card、requestedTargets、selection 与 options。
 
   输出
-  { legality, forcedAssault, legalTargets, targets, preparedTransfer, preparedLeverage, preparedPrivateSelection, targetLabel, useLogMessage }。
+  { legality, forcedAssault, legalTargets, targets, preparedTransfer, preparedLeverage, targetLabel, useLogMessage }。
 
   读取状态
   legality/preparation collaborators 与 card facts。
@@ -75,10 +75,10 @@ export function createCardRuntime(dependencies) {
   无。
 
   调用函数
-  canPlayCard、canUseForcedAssault、getCardTargets、getAssaultTargetCandidates、prepareTransferIntent、prepareLeverageIntent、preparePrivateCardSelectionIntent、getActionTargetLabel、getActionLogMessage。
+  canPlayCard、canUseForcedAssault、getCardTargets、getAssaultTargetCandidates、prepareTransferDeclaration、prepareLeverageIntent、getActionTargetLabel、getActionLogMessage。
 
   边界与不变量
-  具体卡牌分支只在本模块出现；返回 data-only plan，不执行 zone move。
+  反制前只准备公开声明所需事实；具体隐藏资源由 post-counter boundary 负责。
   */
   async function prepareCardAction(source, card, requestedTargets = [], selection = null, options = {}) {
     const state = runtime.getState();
@@ -98,18 +98,13 @@ export function createCardRuntime(dependencies) {
       return { legality: legality.ok ? { ok:false, reason:"目标非法" } : legality, forcedAssault, legalTargets, targets };
     }
     const preparedTransfer = card.definitionId === "transfer"
-      ? await runtime.prepareTransferIntent(source, card, selection)
+      ? runtime.prepareTransferDeclaration(source, card, selection)
       : null;
     const preparedLeverage = card.definitionId === "leverage"
       ? runtime.prepareLeverageIntent(source, selection)
       : null;
-    const needsPrivateSelection = ["scout", "plunder", "destroy"].includes(card.definitionId);
-    const preparedPrivateSelection = needsPrivateSelection
-      ? await runtime.preparePrivateCardSelectionIntent(source, card, targets, selection)
-      : null;
     if (card.definitionId === "transfer" && !preparedTransfer) return { legality: { ok:false, reason:"转移准备失败" }, forcedAssault, legalTargets, targets };
     if (card.definitionId === "leverage" && !preparedLeverage) return { legality: { ok:false, reason:"借势准备失败" }, forcedAssault, legalTargets, targets };
-    if (needsPrivateSelection && !preparedPrivateSelection) return { legality: { ok:false, reason:"私密选择失败" }, forcedAssault, legalTargets, targets };
     if (preparedLeverage) targets = [preparedLeverage.firstTarget, preparedLeverage.secondTarget];
     const targetLabel = preparedTransfer
       ? `来源 ${preparedTransfer.publicContext.fromName} → 接收 ${preparedTransfer.publicContext.receiverName}`
@@ -133,11 +128,58 @@ export function createCardRuntime(dependencies) {
       targets,
       preparedTransfer: preparedTransfer ?? null,
       preparedLeverage: preparedLeverage ?? null,
-      preparedPrivateSelection: preparedPrivateSelection ?? null,
       targetLabel,
       useLogMessage,
       gameId: state.gameId
     });
+  }
+
+  /*
+  功能
+  在完整反制链结束后准备当前卡牌效果需要的私密资源 intent。
+
+  调用方
+  ActionWorkflow.playCard。
+
+  输入
+  source、card、当前 targets、selection 与反制前 action plan。
+
+  输出
+  frozen post-counter intent；需要私密选择但准备失败时返回 null。
+
+  读取状态
+  card-specific intent collaborators 在调用时读取的当前 MatchState。
+
+  写入状态
+  仅通过 intent collaborators 创建并清理短期隐藏选择 session。
+
+  调用函数
+  prepareTransferEffectIntent、preparePrivateCardSelectionIntent。
+
+  边界与不变量
+  ActionWorkflow 不出现 card ID；未被反制前不得调用；无内部选择的卡牌返回空 intent 并继续原 resolver。
+  */
+  async function preparePostCounterEffectIntent(source, card, targets, selection, plan) {
+    if (card.definitionId === "transfer") {
+      const privateTransferIntent = await runtime.prepareTransferEffectIntent(
+        source, card, plan.preparedTransfer, selection
+      );
+      return privateTransferIntent
+        ? Object.freeze({ privateTransferIntent, privateCardSelectionIntent: null })
+        : null;
+    }
+    if (["scout", "plunder", "destroy"].includes(card.definitionId)) {
+      const preparedSelection = await runtime.preparePrivateCardSelectionIntent(
+        source, card, targets, selection
+      );
+      return preparedSelection
+        ? Object.freeze({
+            privateTransferIntent: null,
+            privateCardSelectionIntent: preparedSelection.privateIntent
+          })
+        : null;
+    }
+    return Object.freeze({ privateTransferIntent: null, privateCardSelectionIntent: null });
   }
 
   /*
@@ -148,7 +190,7 @@ export function createCardRuntime(dependencies) {
   ActionWorkflow.playCard。
 
   输入
-  source、card、targets、selection、resolutionId 与 action plan。
+  source、card、targets、selection、resolutionId、action plan 与 post-counter intent。
 
   输出
   effect result。
@@ -163,14 +205,16 @@ export function createCardRuntime(dependencies) {
   resolveCardEffect。
 
   边界与不变量
-  不复制 resolver；只转发 plan 中的 private intents。
+  不复制 resolver；只转发反制后准备的 private intents 与反制前的 leverage declaration。
   */
-  async function resolveCardAction(source, card, targets, selection, resolutionId, plan) {
+  async function resolveCardAction(
+    source, card, targets, selection, resolutionId, plan, postCounterIntent
+  ) {
     return runtime.resolveCardEffect(source, card, targets, {
       resolutionId,
       selection,
-      privateTransferIntent: plan.preparedTransfer?.privateIntent ?? null,
-      privateCardSelectionIntent: plan.preparedPrivateSelection?.privateIntent ?? null,
+      privateTransferIntent: postCounterIntent.privateTransferIntent,
+      privateCardSelectionIntent: postCounterIntent.privateCardSelectionIntent,
       privateLeverageIntent: plan.preparedLeverage
     });
   }
@@ -204,7 +248,7 @@ export function createCardRuntime(dependencies) {
     if (!resolved) return [];
     if (Array.isArray(effectResult?.effectiveTargets)) return effectResult.effectiveTargets;
     if (card.definitionId === "transfer") {
-      return [plan.preparedTransfer.privateIntent.from, plan.preparedTransfer.privateIntent.receiver];
+      return [plan.preparedTransfer.from, plan.preparedTransfer.receiver];
     }
     if (card.definitionId === "leverage") {
       return [plan.preparedLeverage.firstTarget, plan.preparedLeverage.secondTarget];
@@ -213,5 +257,10 @@ export function createCardRuntime(dependencies) {
     return targets;
   }
 
-  return Object.freeze({ prepareCardAction, resolveCardAction, getEffectiveTargets });
+  return Object.freeze({
+    prepareCardAction,
+    preparePostCounterEffectIntent,
+    resolveCardAction,
+    getEffectiveTargets
+  });
 }

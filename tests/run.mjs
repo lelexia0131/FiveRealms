@@ -6244,6 +6244,51 @@ test("窥探：真人目标有两张手牌时只选择一张仍成功", async ()
   game.dispose();
 });
 
+test("窥探：完整反制链结束后才选择隐藏手牌，被反制时不创建选择", async () => {
+  const actor = makePlayer("scout-order-actor", 0, "dawn", "human"),
+    target = makePlayer("scout-order-target", 1, "dusk", "human"),
+    responder = makePlayer("scout-order-responder", 2, "dusk", "human"),
+    use = instance("scout"), secret = instance("block");
+  actor.hand.push(use);
+  target.hand.push(secret);
+  responder.hand.push(instance("counter"));
+  const order = [], { game, ui } = makeGame([actor, target, responder], {
+    response: () => { order.push("counter-request"); return false; }
+  });
+  game.ui.requestHiddenCards = async (selection) => {
+    order.push("hidden-choice");
+    return [selection.tokens[0].token];
+  };
+  const showPrivateReveal = game.ui.showPrivateReveal.bind(game.ui);
+  game.ui.showPrivateReveal = async (...args) => {
+    order.push("reveal");
+    return showPrivateReveal(...args);
+  };
+
+  assert.equal(await game.playCard(actor, use, [target]), true);
+  assert.deepEqual(order, ["counter-request", "hidden-choice", "reveal"]);
+  game.dispose();
+
+  const blockedActor = makePlayer("blocked-scout-actor", 0, "dawn", "human"),
+    blockedTarget = makePlayer("blocked-scout-target", 1, "dusk", "human"),
+    counterer = makePlayer("blocked-scout-counterer", 2, "dusk", "human"),
+    blockedUse = instance("scout");
+  blockedActor.hand.push(blockedUse);
+  blockedTarget.hand.push(instance("block"));
+  counterer.hand.push(instance("counter"));
+  const blocked = makeGame([blockedActor, blockedTarget, counterer], { response: () => true });
+  let hiddenChoiceCount = 0;
+  blocked.game.ui.requestHiddenCards = async () => {
+    hiddenChoiceCount += 1;
+    return [];
+  };
+
+  assert.equal(await blocked.game.playCard(blockedActor, blockedUse, [blockedTarget]), true);
+  assert.equal(hiddenChoiceCount, 0);
+  assert.equal(blocked.ui.reveals.length, 0);
+  blocked.game.dispose();
+});
+
 // ---- 转移 ----
 
 test("转移：支持来源、接收者与指定牌三阶段", async () => {
@@ -6271,6 +6316,69 @@ test("转移：支持来源、接收者与指定牌三阶段", async () => {
   ));
   assert.equal(game.state.logs.at(-1).message, `${a.name}将${b.name}的1张手牌转移给了${c.name}。`);
   assert.ok(!game.state.logs.at(-1).message.includes(moved.name));
+});
+
+test("转移：反制上下文先公开来源与接收者，链结束后才选择具体手牌", async () => {
+  const actor = makePlayer("transfer-order-actor", 0, "dawn", "human"),
+    from = makePlayer("transfer-order-from", 1, "dusk", "human"),
+    responder = makePlayer("transfer-order-responder", 2, "dusk", "human"),
+    receiver = makePlayer("transfer-order-receiver", 3, "dawn", "human"),
+    use = instance("transfer"), moved = instance("block");
+  actor.hand.push(use);
+  from.hand.push(moved);
+  responder.hand.push(instance("counter"));
+  const order = [];
+  let game = null;
+  const fixture = makeGame([actor, from, responder, receiver], {
+    response: (request) => {
+      order.push("counter-request");
+      const context = game.choiceContexts.get(request.id)?.context?.publicTransferContext;
+      assert.equal(context?.fromPlayerId, from.id);
+      assert.equal(context?.receiverPlayerId, receiver.id);
+      assert.equal(Object.hasOwn(context, "card"), false);
+      return false;
+    }
+  });
+  game = fixture.game;
+  game.ui.requestHiddenCards = async (selection) => {
+    order.push("hidden-hand-choice");
+    return [selection.tokens[0].token];
+  };
+  game.eventDispatcher.on("afterCardMove", "test:transfer-post-counter-order", (event) => {
+    if (event.card === moved && event.to === "hand") order.push("transfer");
+  });
+
+  assert.equal(await game.playCard(actor, use, [], {
+    sourceId: from.id, receiverId: receiver.id
+  }), true);
+  assert.deepEqual(order, ["counter-request", "hidden-hand-choice", "transfer"]);
+  assert.ok(receiver.hand.includes(moved));
+  game.dispose();
+
+  const blockedActor = makePlayer("blocked-transfer-actor", 0, "dawn", "human"),
+    blockedFrom = makePlayer("blocked-transfer-from", 1, "dusk", "human"),
+    counterer = makePlayer("blocked-transfer-counterer", 2, "dusk", "human"),
+    blockedReceiver = makePlayer("blocked-transfer-receiver", 3, "dawn", "human"),
+    blockedUse = instance("transfer"), held = instance("shield");
+  blockedActor.hand.push(blockedUse);
+  blockedFrom.hand.push(held);
+  counterer.hand.push(instance("counter"));
+  const blocked = makeGame(
+    [blockedActor, blockedFrom, counterer, blockedReceiver], { response: () => true }
+  );
+  let hiddenChoiceCount = 0;
+  blocked.game.ui.requestHiddenCards = async () => {
+    hiddenChoiceCount += 1;
+    return [];
+  };
+
+  assert.equal(await blocked.game.playCard(blockedActor, blockedUse, [], {
+    sourceId: blockedFrom.id, receiverId: blockedReceiver.id
+  }), true);
+  assert.equal(hiddenChoiceCount, 0);
+  assert.ok(blockedFrom.hand.includes(held));
+  assert.ok(!blockedReceiver.hand.includes(held));
+  blocked.game.dispose();
 });
 
 test("转移：接收者为使用者时声明与结果都显示自己", async () => {
@@ -6397,7 +6505,7 @@ test("转移：真人和核心都拒绝把装备区实体作为转移牌", async
   assert.equal(game.hiddenCardSelection.isSelectionActive(selection.selectionId, from), false);
 });
 
-test("转移：锁定牌在结算前离开来源时转移失败且没有有效目标、成功日志或协调", async () => {
+test("转移：反制后选择前来源已无手牌时转移失败且没有有效目标、成功日志或协调", async () => {
   const tuner = makePlayer("tuner", 0, "dawn", "ai", 7),
     from = makePlayer("from", 1, "dusk"),
     escaped = makePlayer("escaped", 2, "dusk"),
@@ -6480,7 +6588,7 @@ test("转移：在反制前的日志和响应上下文包含来源与接收者�
   assert.doesNotMatch(intentLog.message, new RegExp(secret.name));
 });
 
-test("转移：隐藏转移传给 AI 响应策略的公开上下文不含锁定手牌资料", async () => {
+test("转移：隐藏转移传给 AI 响应策略的公开上下文不含具体手牌资料", async () => {
   const actor = makePlayer("actor", 0, "dawn"),
     from = makePlayer("from", 1, "dusk"),
     responder = makePlayer("responder", 2, "dusk"),
@@ -6518,8 +6626,8 @@ test("转移：隐藏转移传给 AI 响应策略的公开上下文不含锁定�
   assert.equal(publicContext.safeItemLabel, "1张牌");
 });
 
-test("转移：响应期间手牌换序后仍移动反制前锁定的同一实体", async () => {
-  const actor = makePlayer("actor", 0, "dawn"),
+test("转移：响应期间手牌换序后按反制结束时的当前区域选择实体", async () => {
+  const actor = makePlayer("actor", 0, "dawn", "human"),
     from = makePlayer("from", 1, "dusk"),
     responder = makePlayer("responder", 2, "dusk"),
     receiver = makePlayer("receiver", 3, "dawn");
@@ -6533,13 +6641,14 @@ test("转移：响应期间手牌换序后仍移动反制前锁定的同一实�
     from.hand.reverse();
     return false;
   };
+  game.ui.requestHiddenCards = async (selection) => [selection.tokens[0].token];
   await game.playCard(actor, use, [], { sourceId: from.id, receiverId: receiver.id, zone: "hand" });
-  assert.ok(receiver.hand.includes(locked));
-  assert.ok(from.hand.includes(other));
-  assert.ok(!receiver.hand.includes(other));
+  assert.ok(receiver.hand.includes(other));
+  assert.ok(from.hand.includes(locked));
+  assert.ok(!receiver.hand.includes(locked));
 });
 
-test("转移：被反制后锁定手牌仍留在来源区域", async () => {
+test("转移：被反制后不选择具体牌且来源手牌保持不变", async () => {
   const actor = makePlayer("actor", 0, "dawn"),
     from = makePlayer("from", 1, "dusk"),
     responder = makePlayer("responder", 2, "dusk"),
@@ -7488,6 +7597,50 @@ test("掠夺：可把距离2内目标装备公开移入施牌者手牌", async (
   ));
 });
 
+test("掠夺：反制结束后才选择区域牌，被反制时不创建区域选择", async () => {
+  const actor = makePlayer("plunder-order-actor", 0, "dawn", "human"),
+    target = makePlayer("plunder-order-target", 1, "dusk", "human"),
+    responder = makePlayer("plunder-order-responder", 2, "dusk", "human"),
+    use = instance("plunder"), moved = instance("block");
+  actor.hand.push(use);
+  target.hand.push(moved);
+  responder.hand.push(instance("counter"));
+  const order = [], { game } = makeGame([actor, target, responder], {
+    response: () => { order.push("counter-request"); return false; }
+  });
+  game.ui.requestZoneCard = async (_game, _actor, owner) => {
+    order.push("zone-choice");
+    const selection = game.hiddenCardSelection.createHiddenSelection(owner);
+    return { zone: "hand", tokens: [selection.tokens[0].token], selectionId: selection.selectionId };
+  };
+  game.eventDispatcher.on("afterCardMove", "test:plunder-post-counter-order", (event) => {
+    if (event.card === moved && event.to === "hand") order.push("card-movement");
+  });
+
+  assert.equal(await game.playCard(actor, use, [target]), true);
+  assert.deepEqual(order, ["counter-request", "zone-choice", "card-movement"]);
+  assert.ok(actor.hand.includes(moved));
+  game.dispose();
+
+  const blockedActor = makePlayer("blocked-plunder-actor", 0, "dawn", "human"),
+    blockedTarget = makePlayer("blocked-plunder-target", 1, "dusk", "human"),
+    counterer = makePlayer("blocked-plunder-counterer", 2, "dusk", "human"),
+    blockedUse = instance("plunder");
+  blockedActor.hand.push(blockedUse);
+  blockedTarget.hand.push(instance("shield"));
+  counterer.hand.push(instance("counter"));
+  const blocked = makeGame([blockedActor, blockedTarget, counterer], { response: () => true });
+  let zoneChoiceCount = 0;
+  blocked.game.ui.requestZoneCard = async () => {
+    zoneChoiceCount += 1;
+    return null;
+  };
+
+  assert.equal(await blocked.game.playCard(blockedActor, blockedUse, [blockedTarget]), true);
+  assert.equal(zoneChoiceCount, 0);
+  blocked.game.dispose();
+});
+
 // ---- 破坏 ----
 
 test("破坏：公开牌名并把牌移入弃牌堆", async () => {
@@ -7550,7 +7703,81 @@ test("破坏：可不限距离弃置装备区装备", async () => {
   );
 });
 
+test("破坏：反制结束后才选择区域牌，被反制时不创建区域选择", async () => {
+  const actor = makePlayer("destroy-order-actor", 0, "dawn", "human"),
+    target = makePlayer("destroy-order-target", 1, "dusk", "human"),
+    responder = makePlayer("destroy-order-responder", 2, "dusk", "human"),
+    use = instance("destroy"), destroyed = instance("block");
+  actor.hand.push(use);
+  target.hand.push(destroyed);
+  responder.hand.push(instance("counter"));
+  const order = [], { game } = makeGame([actor, target, responder], {
+    response: () => { order.push("counter-request"); return false; }
+  });
+  game.ui.requestZoneCard = async (_game, _actor, owner) => {
+    order.push("zone-choice");
+    const selection = game.hiddenCardSelection.createHiddenSelection(owner);
+    return { zone: "hand", tokens: [selection.tokens[0].token], selectionId: selection.selectionId };
+  };
+  game.eventDispatcher.on("afterCardMove", "test:destroy-post-counter-order", (event) => {
+    if (event.card === destroyed && event.to === "discard") order.push("card-movement");
+  });
+
+  assert.equal(await game.playCard(actor, use, [target]), true);
+  assert.deepEqual(order, ["counter-request", "zone-choice", "card-movement"]);
+  assert.ok(game.state.deck.discardPile.includes(destroyed));
+  game.dispose();
+
+  const blockedActor = makePlayer("blocked-destroy-actor", 0, "dawn", "human"),
+    blockedTarget = makePlayer("blocked-destroy-target", 1, "dusk", "human"),
+    counterer = makePlayer("blocked-destroy-counterer", 2, "dusk", "human"),
+    blockedUse = instance("destroy");
+  blockedActor.hand.push(blockedUse);
+  blockedTarget.hand.push(instance("shield"));
+  counterer.hand.push(instance("counter"));
+  const blocked = makeGame([blockedActor, blockedTarget, counterer], { response: () => true });
+  let zoneChoiceCount = 0;
+  blocked.game.ui.requestZoneCard = async () => {
+    zoneChoiceCount += 1;
+    return null;
+  };
+
+  assert.equal(await blocked.game.playCard(blockedActor, blockedUse, [blockedTarget]), true);
+  assert.equal(zoneChoiceCount, 0);
+  blocked.game.dispose();
+});
+
 // ---- 反制（真实规则） ----
+
+test("反制：反反制完成整条链后才允许原牌创建效果内部选择", async () => {
+  const actor = makePlayer("counter-chain-order-actor", 0, "dawn", "human"),
+    target = makePlayer("counter-chain-order-target", 1, "dusk", "human"),
+    counterer = makePlayer("counter-chain-order-counterer", 2, "dusk", "human"),
+    counterCounterer = makePlayer("counter-chain-order-counter-counterer", 3, "dawn", "human"),
+    use = instance("scout");
+  actor.hand.push(use);
+  target.hand.push(instance("block"));
+  counterer.hand.push(instance("counter"));
+  counterCounterer.hand.push(instance("counter"));
+  const order = [], { game } = makeGame([actor, target, counterer, counterCounterer], {
+    response: (request) => {
+      order.push(`counter-request:${request.targetPlayerId}`);
+      return true;
+    }
+  });
+  game.ui.requestHiddenCards = async (selection) => {
+    order.push("hidden-choice");
+    return [selection.tokens[0].token];
+  };
+
+  assert.equal(await game.playCard(actor, use, [target]), true);
+  assert.deepEqual(order, [
+    `counter-request:${counterer.id}`,
+    `counter-request:${counterCounterer.id}`,
+    "hidden-choice"
+  ]);
+  game.dispose();
+});
 
 test("反制：者包含盟友并按施牌者后的座位顺序", async () => {
   const a = makePlayer("a", 0, "dawn"),
@@ -12687,7 +12914,7 @@ test("反制链：响应牌与装备牌只输出语义日志，不产生底层�
   assert.ok(!game.state.logs.some((entry) => entry.message.includes("使用了「充能桩」")));
 });
 
-test("反制链：真人破坏预选手牌经过双重反制后仍破坏原实体且不泄露私密选择", async () => {
+test("反制链：真人破坏经过双重反制后才选择手牌且不泄露私密选择", async () => {
   const source = makePlayer("private-destroy-source", 0, "dawn", "human"),
     target = makePlayer("private-destroy-target", 1, "dusk"),
     third = makePlayer("private-destroy-third", 2, "dawn");
@@ -12707,12 +12934,15 @@ test("反制链：真人破坏预选手牌经过双重反制后仍破坏原实�
   const { game, ui }
     = makeGame([source, target, third]), contexts = [];
   forceAvailableAiCounters(game, contexts);
-  const selection = await choosePrivateCardThroughInteraction(
-    game, source, use, target, { handIndexes: [0] }
-  );
-  assert.ok(selection?.selectionId);
-  assert.ok(game.hiddenCardSelection.selections.size > 0);
-  assert.equal(await game.playCard(source, use, [target], selection), true);
+  let zoneChoiceCount = 0;
+  game.ui.requestZoneCard = async (_game, _actor, owner) => {
+    zoneChoiceCount += 1;
+    const selection = game.hiddenCardSelection.createHiddenSelection(owner);
+    return { zone: "hand", tokens: [selection.tokens[0].token], selectionId: selection.selectionId };
+  };
+  assert.equal(game.hiddenCardSelection.selections.size, 0);
+  assert.equal(await game.playCard(source, use, [target]), true);
+  assert.equal(zoneChoiceCount, 1);
   assert.ok(game.state.deck.discardPile.includes(secret));
   assert.ok(target.hand.includes(decoy));
   assert.ok(!target.hand.includes(secret));
@@ -12722,7 +12952,7 @@ test("反制链：真人破坏预选手牌经过双重反制后仍破坏原实�
   for (const request of ui.responseRequests) assertNoHiddenSelectionLeak(request, [secret]);
 });
 
-test("反制链：真人掠夺预选手牌经过双重反制后仍获得原实体", async () => {
+test("反制链：真人掠夺经过双重反制后才选择并获得当前手牌实体", async () => {
   const source = makePlayer("private-plunder-source", 0, "dawn", "human"),
     target = makePlayer("private-plunder-target", 1, "dusk"),
     third = makePlayer("private-plunder-third", 2, "dawn");
@@ -12737,10 +12967,11 @@ test("反制链：真人掠夺预选手牌经过双重反制后仍获得原实�
   const { game }
     = makeGame([source, target, third]);
   forceAvailableAiCounters(game);
-  const selection = await choosePrivateCardThroughInteraction(
-    game, source, use, target, { handIndexes: [0] }
-  );
-  assert.equal(await game.playCard(source, use, [target], selection), true);
+  game.ui.requestZoneCard = async (_game, _actor, owner) => {
+    const selection = game.hiddenCardSelection.createHiddenSelection(owner);
+    return { zone: "hand", tokens: [selection.tokens[0].token], selectionId: selection.selectionId };
+  };
+  assert.equal(await game.playCard(source, use, [target]), true);
   assert.ok(source.hand.includes(secret));
   assert.ok(target.hand.includes(decoy));
   assert.ok(!target.hand.includes(secret));
@@ -12748,7 +12979,7 @@ test("反制链：真人掠夺预选手牌经过双重反制后仍获得原实�
   assert.equal(game.hiddenCardSelection.sessions.size, 0);
 });
 
-test("反制链：真人掠夺预选装备不受目标反制导致的手牌版本变化影响", async () => {
+test("反制链：真人掠夺经过双重反制后才选择当前装备", async () => {
   const source = makePlayer("private-equip-source", 0, "dawn", "human"),
     target = makePlayer("private-equip-target", 1, "dusk"),
     third = makePlayer("private-equip-third", 2, "dawn");
@@ -12763,16 +12994,15 @@ test("反制链：真人掠夺预选装备不受目标反制导致的手牌版�
   const { game }
     = makeGame([source, target, third]);
   forceAvailableAiCounters(game);
-  const selection = await choosePrivateCardThroughInteraction(
-    game, source, use, target, { equipment: true }
-  );
-  assert.equal(await game.playCard(source, use, [target], {
-    ...selection,
-    zone: "equipment",
-    selectionKind: "equipment",
-    definitionId: equipment.definitionId,
-    equipmentCardId: equipment.id
-  }), true);
+  game.ui.requestZoneCard = async (_game, _actor, owner) => {
+    const selection = game.hiddenCardSelection.createHiddenSelection(owner);
+    return {
+      zone: "equipment",
+      equipmentCardId: owner.equipment.id,
+      selectionId: selection.selectionId
+    };
+  };
+  assert.equal(await game.playCard(source, use, [target]), true);
   assert.equal(target.equipment, null);
   assert.equal(source.equipment, null);
   assert.ok(source.hand.includes(equipment));
@@ -12780,7 +13010,7 @@ test("反制链：真人掠夺预选装备不受目标反制导致的手牌版�
   assert.equal(game.hiddenCardSelection.sessions.size, 0);
 });
 
-test("反制链：真人窥探两张手牌经过双重反制后仍只展示反制前确认的实体", async () => {
+test("反制链：真人窥探经过双重反制后才选择并展示当前手牌实体", async () => {
   const source = makePlayer("private-scout-source", 0, "dawn", "human"),
     target = makePlayer("private-scout-target", 1, "dusk"),
     third = makePlayer("private-scout-third", 2, "dawn");
@@ -12795,10 +13025,13 @@ test("反制链：真人窥探两张手牌经过双重反制后仍只展示反�
   const { game, ui }
     = makeGame([source, target, third]);
   forceAvailableAiCounters(game);
-  const selection = await choosePrivateCardThroughInteraction(
-    game, source, use, target, { handIndexes: [0, 1] }
-  );
-  assert.equal(await game.playCard(source, use, [target], selection), true);
+  let hiddenChoiceCount = 0;
+  game.ui.requestHiddenCards = async (selection) => {
+    hiddenChoiceCount += 1;
+    return selection.tokens.slice(0, 2).map((entry) => entry.token);
+  };
+  assert.equal(await game.playCard(source, use, [target]), true);
+  assert.equal(hiddenChoiceCount, 1);
   assert.deepEqual(ui.reveals.at(-1)?.cards, [first, second]);
   assert.equal(source.aiMemory.knownCardsByPlayer[target.id][first.id], first.definitionId);
   assert.equal(source.aiMemory.knownCardsByPlayer[target.id][second.id], second.definitionId);
@@ -12806,7 +13039,7 @@ test("反制链：真人窥探两张手牌经过双重反制后仍只展示反�
   assert.equal(game.hiddenCardSelection.sessions.size, 0);
 });
 
-test("反制链：反制期间原预选牌离开区域时破坏安全失败且不改选其他牌", async () => {
+test("反制链：反制期间手牌离区后破坏按当前区域选择剩余合法牌", async () => {
   const source = makePlayer("private-missing-source", 0, "dawn", "human"),
     target = makePlayer("private-missing-target", 1, "dusk"),
     third = makePlayer("private-missing-third", 2, "dawn");
@@ -12831,19 +13064,20 @@ test("反制链：反制期间原预选牌离开区域时破坏安全失败且�
   game.eventDispatcher.on("cardUsed", "test:private-destroy-safe-failure", (event) => {
     if (event.card === use) usedEvent = event;
   });
-  const selection = await choosePrivateCardThroughInteraction(
-    game, source, use, target, { handIndexes: [0] }
-  );
-  assert.equal(await game.playCard(source, use, [target], selection), true);
+  game.ui.requestZoneCard = async (_game, _actor, owner) => {
+    const selection = game.hiddenCardSelection.createHiddenSelection(owner);
+    return { zone: "hand", tokens: [selection.tokens[0].token], selectionId: selection.selectionId };
+  };
+  assert.equal(await game.playCard(source, use, [target]), true);
   assert.ok(game.state.deck.discardPile.includes(selected));
-  assert.ok(target.hand.includes(decoy));
-  assert.equal(usedEvent?.resolved, false);
-  assert.deepEqual(usedEvent?.effectiveTargets, []);
+  assert.ok(game.state.deck.discardPile.includes(decoy));
+  assert.equal(usedEvent?.resolved, true);
+  assert.deepEqual(usedEvent?.effectiveTargets, [target]);
   assert.equal(game.hiddenCardSelection.selections.size, 0);
   assert.equal(game.hiddenCardSelection.sessions.size, 0);
 });
 
-test("反制链：窥探预选两张中一张在反制期间离开时只展示仍在原手牌的一张", async () => {
+test("反制链：反制期间一张手牌离区后窥探只展示当前仍在手牌的实体", async () => {
   const source = makePlayer("private-filter-source", 0, "dawn", "human"),
     target = makePlayer("private-filter-target", 1, "dusk"),
     third = makePlayer("private-filter-third", 2, "dawn");
@@ -12865,10 +13099,7 @@ test("反制链：窥探预选两张中一张在反制期间离开时只展示�
       await game.discardCardFromHand(target, left, "反制期间合法移走", { silent: true });
     }
   });
-  const selection = await choosePrivateCardThroughInteraction(
-    game, source, use, target, { handIndexes: [0, 1] }
-  );
-  assert.equal(await game.playCard(source, use, [target], selection), true);
+  assert.equal(await game.playCard(source, use, [target]), true);
   assert.deepEqual(ui.reveals.at(-1)?.cards, [remains]);
   assert.equal(source.aiMemory.knownCardsByPlayer[target.id]?.[left.id], undefined);
   assert.equal(source.aiMemory.knownCardsByPlayer[target.id][remains.id], remains.definitionId);
@@ -25602,13 +25833,16 @@ test("AI·转移：以自己为转移来源时排除正在使用的转移实体"
   assert.ok(action);
   assert.equal(action.selection.sourceId, actor.id);
   assert.equal(action.selection.zone, "hand");
-  const prepared = await game.prepareTransferIntent(actor, use, action.selection);
-  assert.ok(prepared);
-  assert.notEqual(prepared.privateIntent.card, use);
-  assert.ok([otherA, otherB].includes(prepared.privateIntent.card));
+  const declaration = game.prepareTransferDeclaration(actor, use, action.selection);
+  const privateIntent = await game.prepareTransferEffectIntent(
+    actor, use, declaration, action.selection
+  );
+  assert.ok(privateIntent);
+  assert.notEqual(privateIntent.card, use);
+  assert.ok([otherA, otherB].includes(privateIntent.card));
 });
 
-test("AI·转移：真人以自己为来源时核心拒绝选择正在使用的转移实体", async () => {
+test("AI·转移：真人以自己为来源时反制后选择排除正在结算的转移实体", async () => {
   const actor = makePlayer("actor", 0, "dawn", "human"),
     ally = makePlayer("ally", 1, "dawn"),
     use = instance("transfer"),
@@ -25616,26 +25850,19 @@ test("AI·转移：真人以自己为来源时核心拒绝选择正在使用的�
   actor.hand.push(use, other);
   const { game }
     = makeGame([actor, ally]);
-  const hidden = game.hiddenCardSelection.createHiddenSelection(actor);
-  assert.equal(
-    await game.playCard(
-      actor,
-      use,
-      [],
-      {
-        sourceId: actor.id,
-        receiverId: ally.id,
-        zone: "hand",
-        tokens: [hidden.tokens[0].token],
-        selectionId: hidden.selectionId
-      }
-    ),
-    false
-  );
-  assert.ok(actor.hand.includes(use));
-  assert.ok(actor.hand.includes(other));
+  game.ui.requestHiddenCards = async (selection) => {
+    assert.equal(selection.tokens.length, 1);
+    return [selection.tokens[0].token];
+  };
+  assert.equal(await game.playCard(actor, use, [], {
+    sourceId: actor.id,
+    receiverId: ally.id,
+    zone: "hand"
+  }), true);
+  assert.ok(game.state.deck.discardPile.includes(use));
+  assert.ok(!actor.hand.includes(other));
+  assert.ok(ally.hand.includes(other));
   assert.ok(!game.state.deck.resolvingCards.includes(use));
-  assert.ok(!game.state.deck.discardPile.includes(use));
 });
 
 test("AI·转移：排除转移牌后没有其他手牌时即使有装备也不能开始转移", async () => {
@@ -48025,12 +48252,12 @@ test("AI·转移评分：AI 的显式 Domain 合法计划不再被执行阶段�
   from.hand.push(held);
   const { game }
     = makeGame([actor, from, receiver]);
-  const prepared = await game.prepareTransferIntent(
-    actor, use, { sourceId: from.id, receiverId: receiver.id, zone: "hand" }
-  );
-  assert.ok(prepared);
-  assert.equal(prepared.privateIntent.card, held);
-  assert.equal(prepared.privateIntent.receiver, receiver);
+  const selection = { sourceId: from.id, receiverId: receiver.id, zone: "hand" };
+  const declaration = game.prepareTransferDeclaration(actor, use, selection);
+  const privateIntent = await game.prepareTransferEffectIntent(actor, use, declaration, selection);
+  assert.ok(privateIntent);
+  assert.equal(privateIntent.card, held);
+  assert.equal(privateIntent.receiver, receiver);
 });
 
 test("AI·转移评分：真人仍可把己方手牌转移给敌方", async () => {
@@ -48044,12 +48271,12 @@ test("AI·转移评分：真人仍可把己方手牌转移给敌方", async () =
   from.bumpHandVersion(TEST_VERSION_STATE);
   const { game }
     = makeGame([actor, from, receiver]);
-  const prepared = await game.prepareTransferIntent(
-    actor, use, { sourceId: from.id, receiverId: receiver.id, zone: "hand" }
-  );
-  assert.ok(prepared);
-  assert.equal(prepared.privateIntent.receiver, receiver);
-  assert.equal(prepared.privateIntent.card, held);
+  const selection = { sourceId: from.id, receiverId: receiver.id, zone: "hand" };
+  const declaration = game.prepareTransferDeclaration(actor, use, selection);
+  const privateIntent = await game.prepareTransferEffectIntent(actor, use, declaration, selection);
+  assert.ok(privateIntent);
+  assert.equal(privateIntent.receiver, receiver);
+  assert.equal(privateIntent.card, held);
 });
 
 test("AI·转移评分：转移己方到己方选择受伤接收者更需要的已知调息", async () => {
@@ -56997,7 +57224,13 @@ test("集成：掠夺装备收入手牌且不会替换或弃置使用者旧装�
     actor,
     use,
     [target],
-    { zone: "equipment", equipmentCardId: moved.id, selectionId: selection.selectionId }
+    {
+      zone: "equipment",
+      selectionKind: "equipment",
+      definitionId: moved.definitionId,
+      equipmentCardId: moved.id,
+      selectionId: selection.selectionId
+    }
   );
   assert.equal(actor.equipment, old);
   assert.ok(actor.hand.includes(moved));
