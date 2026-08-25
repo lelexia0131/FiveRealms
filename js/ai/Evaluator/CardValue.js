@@ -25,10 +25,10 @@ import { cardAvailability } from "../Event/Probability/Probability.js";
 
 export const RESOURCE_MATERIAL_SCALE = 0.25;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
-export const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
-export const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
+const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
+const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
 // 该值只表示资源选择中的技能门槛策略选择权，不是概率、State/Final Utility 或单位换算。
-export const SKILL_THRESHOLD_POLICY_BONUS = 4;
+const SKILL_THRESHOLD_POLICY_BONUS = 4;
 
 export const CARD_AI_VALUES = Object.freeze({
   assault: 4,
@@ -793,7 +793,7 @@ GlobalBenefitValue 价值与模拟查询与 assessGlobalBenefitOutcome。
 边界与不变量
 只包含互利与共生，不扩张真实卡牌规则。
 */
-export function isGlobalBenefitCard(definitionId) {
+function isGlobalBenefitCard(definitionId) {
   return GLOBAL_BENEFIT_CARDS.has(definitionId);
 }
 
@@ -822,7 +822,7 @@ player.id、seatIndex 与 alive。
 边界与不变量
 来源优先，随后按真实座位环顺时针；输出不持有 Player 引用。
 */
-export function mutualBenefitSeatOrderIds(players, source) {
+function mutualBenefitSeatOrderIds(players, source) {
   const all = Array.isArray(players) ? players : [];
   const seatCount = Math.max(1, all.length);
   const sourceSeat = Number(source?.seatIndex) || 0;
@@ -923,7 +923,7 @@ player.hp 与 maxHp。
 边界与不变量
 互利受益由公开池 recipient 模型提供；本函数不承担卡牌价值。
 */
-export function directBenefitForPlayer(player, definitionId) {
+function directBenefitForPlayer(player, definitionId) {
   if (definitionId === "symbiosis") {
     return calculateHealAmount(
       CARD_DEFINITIONS.symbiosis.healAmount,

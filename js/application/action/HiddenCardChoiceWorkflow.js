@@ -145,33 +145,10 @@ export function createHiddenCardChoiceWorkflow(runtime) {
       if (selection?.selectionId) runtime.hiddenSelection.clearSelection(selection.selectionId);
       return [];
     }
-    if (selection?.selectionKind === "known" && selection.cardId) {
-      if (runtime.bindCanonicalHiddenCards) {
-        return runtime.bindCanonicalHiddenCards(owner, selection, maximum, excludedCardIds);
-      }
-      const card = eligibleCards.find((entry) => entry.id === selection.cardId) ?? null;
-      return card ? [card] : [];
-    }
-    if (selection?.selectionKind === "unknown") {
-      if (runtime.bindCanonicalHiddenCards) {
-        return runtime.bindCanonicalHiddenCards(owner, selection, maximum, excludedCardIds);
-      }
-      const knownCardIds = new Set(selection.knownCardIds ?? []);
-      const card = eligibleCards.find((entry) => !knownCardIds.has(entry.id)) ?? null;
-      return card ? [card] : [];
-    }
-    if (selection?.selectionKind === "peek") {
-      const selected = (selection.cardIds ?? []).map((cardId) => (
-        eligibleCards.find((entry) => entry.id === cardId) ?? null
-      )).filter(Boolean);
-      if (selected.length !== (selection.cardIds?.length ?? 0)) return [];
-      const selectedIds = new Set(selected.map((entry) => entry.id));
-      const knownCardIds = new Set(selection.knownCardIds ?? []);
-      const unknownCount = Math.max(0, Math.floor(Number(selection.unknownCount) || 0));
-      const unknown = eligibleCards.filter((entry) => (
-        !selectedIds.has(entry.id) && !knownCardIds.has(entry.id)
-      )).slice(0, unknownCount);
-      return unknown.length === unknownCount ? [...selected, ...unknown].slice(0, maximum) : [];
+    if (["known", "unknown", "peek"].includes(selection?.selectionKind)) {
+      return runtime.bindCanonicalHiddenCards
+        ? runtime.bindCanonicalHiddenCards(owner, selection, maximum, excludedCardIds)
+        : [];
     }
     if (selection?.tokens?.length) {
       if (!selection.selectionId) return [];

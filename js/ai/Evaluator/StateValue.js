@@ -27,7 +27,7 @@ import {
 } from "../Event/Probability/Probability.js";
 
 export const HP_VALUE = 5;
-export const ENERGY_STATE_WEIGHT = 1.2;
+const ENERGY_STATE_WEIGHT = 1.2;
 
 /*
 功能
@@ -109,9 +109,9 @@ export function energyDeviceFutureUtility(rules = {}, player) {
 }
 
 export const DANGER_VALUE = 7;
-export const DEATH_VALUE = 28;
-export const SHIELD_RESERVE_WEIGHT = 2;
-export const SHIELD_PROTECTION_WEIGHT = 0.5;
+const DEATH_VALUE = 28;
+const SHIELD_RESERVE_WEIGHT = 2;
+const SHIELD_PROTECTION_WEIGHT = 0.5;
 export const HP_RISK_OPTION_WEIGHT = 0.05;
 
 /*
@@ -496,49 +496,47 @@ export function turnOpportunityValue(player, state) {
     + roleThreatSynergy(player, state) + equipmentThreatSynergy(player, state);
 }
 
-export class ThreatCalculator {
-  /*
-  功能
-  计算一个存活敌人的公开目标威胁分。
+/*
+功能
+计算一个存活敌人的公开目标威胁分。
 
-  调用方
-  搜索先验 与转移策略。
+调用方
+Evaluator 搜索先验与转移策略。
 
-  输入
-  viewer、目标可见条目、合法记忆与当前行动预计伤害。
+输入
+viewer、目标可见条目、合法记忆与当前行动预计伤害。
 
-  输出
-  越高越值得优先处理的策略值；非敌方返回负无穷。
+输出
+越高越值得优先处理的策略值；非敌方返回负无穷。
 
-  读取状态
-  只读可见角色字段与近期攻击者记忆。
+读取状态
+只读可见角色字段与近期攻击者记忆。
 
-  写入状态
-  无。
+写入状态
+无。
 
-  调用函数
-  无。
+调用函数
+无。
 
-  边界与不变量
-  不读取敌方具体手牌；本值属于 POLICY_VALUE，不进入最终 transition。
-  */
-  static calculate(viewer, target, memory, expectedDamage = 1) {
-    if (!target.alive || target.battleTeam === viewer.battleTeam) return -Infinity;
-    const roleTags = target.roleTags ?? [];
-    const displayTags = target.tags ?? [];
-    const statuses = target.statuses ?? [];
-    const handCount = target.handCount ?? target.hand?.length ?? 0;
-    let score = ((target.maxHp ?? 0) - (target.hp ?? 0)) * 2.5
-      + handCount * 1.4 + (target.energy ?? 0) * 2;
-    if (roleTags.some((tag) => ["damage", "attacker", "caster", "hunter"].includes(tag))
-      || displayTags.some((tag) => ["输出", "群攻", "爆发", "突破"].includes(tag))) score += 4;
-    if (roleTags.some((tag) => ["support", "healer", "tank", "protector", "control"].includes(tag))
-      || displayTags.some((tag) => ["防护", "恢复", "辅助", "控制", "过牌"].includes(tag))) score += 3;
-    if ((target.hp ?? 0) + (target.shield ?? 0) <= expectedDamage) score += 24;
-    if (statuses.includes("exposed") || statuses.includes("exposeWeakness") || statuses.includes("huntMark")) score += 4;
-    score += (memory?.recentAggressors?.[target.id] ?? 0) * 2;
-    return score;
-  }
+边界与不变量
+不读取敌方具体手牌；本值属于 POLICY_VALUE，不进入最终 transition。
+*/
+export function threatScore(viewer, target, memory, expectedDamage = 1) {
+  if (!target.alive || target.battleTeam === viewer.battleTeam) return -Infinity;
+  const roleTags = target.roleTags ?? [];
+  const displayTags = target.tags ?? [];
+  const statuses = target.statuses ?? [];
+  const handCount = target.handCount ?? target.hand?.length ?? 0;
+  let score = ((target.maxHp ?? 0) - (target.hp ?? 0)) * 2.5
+    + handCount * 1.4 + (target.energy ?? 0) * 2;
+  if (roleTags.some((tag) => ["damage", "attacker", "caster", "hunter"].includes(tag))
+    || displayTags.some((tag) => ["输出", "群攻", "爆发", "突破"].includes(tag))) score += 4;
+  if (roleTags.some((tag) => ["support", "healer", "tank", "protector", "control"].includes(tag))
+    || displayTags.some((tag) => ["防护", "恢复", "辅助", "控制", "过牌"].includes(tag))) score += 3;
+  if ((target.hp ?? 0) + (target.shield ?? 0) <= expectedDamage) score += 24;
+  if (statuses.includes("exposed") || statuses.includes("exposeWeakness") || statuses.includes("huntMark")) score += 4;
+  score += (memory?.recentAggressors?.[target.id] ?? 0) * 2;
+  return score;
 }
 
 /*
@@ -752,7 +750,7 @@ Evaluator 与直接价值查询。
 边界与不变量
 仅 HP=2 且有威胁时生效，上限严格使用既有 danger 与风险权重。
 */
-export function hp2ThreatRiskValue(player, bufferResidualExposure) {
+function hp2ThreatRiskValue(player, bufferResidualExposure) {
   if (!player?.alive || player.hp !== 2) return 0;
   const threatDamage = Math.max(0, bufferResidualExposure) / HP_VALUE;
   if (threatDamage <= 1e-9) return 0;

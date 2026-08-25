@@ -41,6 +41,7 @@ import {
   projectTransferRulePlayers
 } from "../Event/Fact.js";
 import {
+  cardAvailability,
   getRangeConditionBranches,
   getRangeLegalityProbability
 } from "../Event/Probability/Probability.js";
@@ -51,6 +52,64 @@ import {
   queryAnonymousSlotDistribution,
   statusPresence
 } from "../Event/Probability/Probability.js";
+
+/*
+功能
+从响应者合法可见的单一身份或匿名容量构造 root 反事实 selection。
+
+调用方
+Generator.createRootResolutionAction 的 Transfer/Plunder/Destroy runtime binding。
+
+输入
+canonical World player。
+
+输出
+known 或 unknown hand selection；无玩家时返回 null。
+
+读取状态
+viewer 自己的 hand、合法 knownCards、公开 handCount 与 canonical availability。
+
+写入状态
+无。
+
+调用函数
+cardAvailability。
+
+边界与不变量
+只有唯一可推导身份才返回 known；其余一律保持 anonymous，不读取未知实体定义。
+*/
+function inferPublicHandSelection(player) {
+  if (!player) return null;
+  const knownById = new Map();
+  for (const entry of [
+    ...(Array.isArray(player.hand) ? player.hand : []),
+    ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+  ]) {
+    const cardId = entry?.id ?? entry?.cardId ?? null;
+    if (cardId && entry.definitionId && cardAvailability(entry) > PROBABILITY_EPSILON) {
+      knownById.set(cardId, { cardId, definitionId:entry.definitionId });
+    }
+  }
+  const known = [...knownById.values()];
+  const handCount = Math.max(0, Number(player.handCount) || 0);
+  if (known.length === 1 && handCount <= 1) {
+    return {
+      zone:"hand",
+      selectionKind:"known",
+      cardId:known[0].cardId,
+      definitionId:known[0].definitionId,
+      availableUnknownCount:0
+    };
+  }
+  return {
+    zone:"hand",
+    selectionKind:"unknown",
+    cardId:null,
+    definitionId:null,
+    knownCardIds:known.map((entry) => entry.cardId),
+    availableUnknownCount:Math.max(0, handCount - known.length)
+  };
+}
 
 /*
 功能
@@ -171,16 +230,19 @@ export class Generator {
 
   边界与不变量
   该 root 已由真实 ActionWorkflow 完成合法性校验且卡牌成本已经沉没；这里只创建一次
-  配对反事实所需的同一动作语义，不重新枚举 legality，也不读取转移的隐藏牌身份。
+  配对反事实所需的同一动作语义，不重新枚举 legality，也不读取转移的隐藏牌身份；
+  Counter 响应支付本身不是可独立重放的 root effect。
   */
   createRootResolutionAction(state, rootCard, rootSourceId, rootTargetIds, options = {}) {
     if (!rootCard?.definitionId || !rootSourceId) return null;
+    // Counter 是响应支付而非可独立重放的 root effect；其 gain 由 Evaluator canonical fallback 评价。
+    if (rootCard.definitionId === "counter") return null;
     const targetIds = (rootTargetIds ?? []).filter((targetId) => (
       state.players.some((player) => player.id === targetId && player.alive)
     ));
-    let selection = null;
+    let selection = options.selection ?? null;
     if (rootCard.definitionId === "transfer") {
-      const planned = options.selection ?? null;
+      const planned = selection;
       if (planned?.sourceId && planned?.receiverId) {
         selection = {
           sourceId:planned.sourceId,
@@ -193,12 +255,32 @@ export class Generator {
       } else {
         const context = options.publicTransferContext ?? null;
         if (!context?.fromPlayerId || !context?.receiverPlayerId) return null;
+        const source = state.players.find((player) => player.id === context.fromPlayerId) ?? null;
+        const handSelection = inferPublicHandSelection(source);
+        if (!handSelection) return null;
         selection = {
+          ...handSelection,
           sourceId:context.fromPlayerId,
           receiverId:context.receiverPlayerId,
           zone:context.zone ?? "hand"
         };
       }
+    } else if (["plunder", "destroy"].includes(rootCard.definitionId)) {
+      const context = options.publicSelectionContext ?? null;
+      const ownerId = context?.ownerPlayerId ?? targetIds[0] ?? null;
+      const owner = state.players.find((player) => player.id === ownerId) ?? null;
+      if (!selection && context?.zone === "equipment" && owner?.equipmentDefinitionId) {
+        selection = {
+          zone:"equipment",
+          selectionKind:"equipment",
+          cardId:null,
+          definitionId:owner.equipmentDefinitionId,
+          availableUnknownCount:0
+        };
+      } else if (!selection && context?.zone === "hand") {
+        selection = inferPublicHandSelection(owner);
+      }
+      if (!selection) return null;
     } else if (rootCard.definitionId === "leverage") {
       selection = {
         firstTargetId:targetIds[0] ?? null,
@@ -552,7 +634,7 @@ export class Generator {
     const resources = Array.isArray(owner?.hand) ? owner.hand : (owner?.knownCards ?? []);
     const selections = resources.filter((entry) => (
       !excludedCardIds?.has(entry.id ?? entry.cardId)
-      && Number(entry.availability ?? 1) > PROBABILITY_EPSILON
+      && cardAvailability(entry) > PROBABILITY_EPSILON
     )).map((entry) => ({
       zone:"hand",
       selectionKind:"known",
@@ -968,7 +1050,7 @@ export class Generator {
     ];
     const knownPossible = selectedCardIds.every((selectedCardId) => resources.some((entry) => (
       (entry.id ?? entry.cardId) === selectedCardId
-      && Number(entry.availability ?? 1) > PROBABILITY_EPSILON
+      && cardAvailability(entry) > PROBABILITY_EPSILON
     )));
     if (!knownPossible) return false;
     const anonymousCount = selection.selectionKind === "unknown"
@@ -1117,7 +1199,7 @@ export class Generator {
       state, actor, type, definition, targets, selection
     ) || !this.isSelectionPossible(state, selection, targetIds)) return null;
     if (type === "card") {
-      if (Number(definition.availability ?? 1) <= PROBABILITY_EPSILON) return null;
+      if (cardAvailability(definition) <= PROBABILITY_EPSILON) return null;
       return createAction({
         type:"card",
         actorId:actor.id,

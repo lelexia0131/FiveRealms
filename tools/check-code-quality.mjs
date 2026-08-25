@@ -51,6 +51,8 @@ const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
 const SEARCHER_PATTERN = /^js\/ai\/Searcher\/Searcher\.js$/i;
 const SEARCHER_INTERNAL_PATTERN = /^js\/ai\/Searcher\/(?:Rng|Pattern)\.js$/i;
 const GENERATOR_FILE = "js/ai/Generator/Generator.js";
+const ACTION_FILE = "js/ai/Generator/Action.js";
+const HIDDEN_CARD_CHOICE_FILE = "js/application/action/HiddenCardChoiceWorkflow.js";
 const SIMULATOR_AI_PATTERN = /^js\/ai\/Simulator\//i;
 const AI_LEGACY_RULE_GUARD_PATTERN = /^(?:js\/ai\/(?:Event|Evaluator|Simulator|Searcher|search|policy)\/)/i;
 const CARD_EFFECT_RULES_FILE = "js/domain/rules/card/CardEffectRules.js";
@@ -70,7 +72,7 @@ const FINAL_CORE_PATTERN = /^js\/ai\/(?:Event|Simulator|Evaluator)\//i;
 const FINAL_AI_ALLOWLIST = Object.freeze(new Set([
   "js/ai/Controller.js",
   GENERATOR_FILE,
-  "js/ai/Generator/Action.js",
+  ACTION_FILE,
   "js/ai/Searcher/Searcher.js",
   "js/ai/Searcher/Rng.js",
   "js/ai/Searcher/Pattern.js",
@@ -1788,7 +1790,7 @@ function inspectSource(file, source, changed) {
     }
   }
 
-  if (file === "js/ai/Generator/Action.js") {
+  if (file === ACTION_FILE) {
     const replayMetadata = maskedSource.match(
       /\b(?:restoreActorHand|ignoreCounter)\b|\bexecution\s*:/
     );
@@ -1799,6 +1801,33 @@ function inspectSource(file, source, changed) {
         line:sourceLineAt(source, replayMetadata.index),
         missing:["架构约束：canonical Action 禁止 simulation replay metadata"]
       });
+    }
+    const aggregateFacade = maskedSource.match(/\bexport\s+const\s+Action\s*=/);
+    if (aggregateFacade) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, aggregateFacade.index),
+        missing:["架构约束：dead Action aggregate facade 已删除，调用方必须使用 canonical named exports"]
+      });
+    }
+  }
+
+  if (file === HIDDEN_CARD_CHOICE_FILE) {
+    const chooseHiddenCards = namedFunctionSource(source, "chooseHiddenCards", functions);
+    if (chooseHiddenCards) {
+      const peekPrefixBinding = maskComments(chooseHiddenCards.source).match(
+        /selectionKind\s*===\s*["']peek["'][\s\S]*?\.slice\s*\(\s*0\s*,\s*unknownCount\s*\)/
+      );
+      if (peekPrefixBinding) {
+        errors.push({
+          file,
+          functionName:"chooseHiddenCards",
+          line:chooseHiddenCards.startLine
+            + sourceLineAt(chooseHiddenCards.source, peekPrefixBinding.index) - 1,
+          missing:["架构约束：Scout peek anonymous remainder 必须由 Controller seeded binding，不得取数组前 N 张"]
+        });
+      }
     }
   }
 
@@ -1837,6 +1866,69 @@ function inspectSource(file, source, changed) {
           missing:["架构约束：cardAvailability normalization 只能由 Probability facade 公开唯一 primitive"]
         });
       }
+      const duplicateAvailabilityRead = maskedSource.match(
+        /\bNumber\s*\(\s*[A-Za-z_$][\w$]*\??\.availability\s*\?\?\s*1\s*\)|[A-Za-z_$][\w$]*\??\.availability\s*\?\?\s*1/
+      );
+      if (duplicateAvailabilityRead) {
+        errors.push({
+          file,
+          functionName:"<architecture>",
+          line:sourceLineAt(source, duplicateAvailabilityRead.index),
+          missing:["架构约束：card.availability 必须通过 canonical cardAvailability 读取，不得手写 fallback/clamp"]
+        });
+      }
+    }
+  }
+
+  if (file === SIMULATOR_FILE) {
+    const staleInitialWorld = maskedSource.match(
+      /\bconstructor\s*\(\s*visibleState\b|\bvoid\s+visibleState\s*;/
+    );
+    if (staleInitialWorld) {
+      errors.push({
+        file,
+        functionName:"constructor",
+        line:sourceLineAt(source, staleInitialWorld.index),
+        missing:["架构约束：Simulator constructor 不得保留 dead visibleState/initial World API"]
+      });
+    }
+  }
+
+  if (file === RESPONSE_FILE) {
+    const deadOptions = maskedSource.match(
+      /\bvoid\s+options\s*;|resolveTargetCounterResponseWorlds\s*\([^)]*\boptions\b/
+    );
+    if (deadOptions) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, deadOptions.index),
+        missing:["架构约束：Response dead options compatibility parameter 已删除"]
+      });
+    }
+    const blockResolver = namedFunctionSource(source, "resolveBlockResponseWorlds", functions);
+    if (/\bresolveBlockResponseWorlds\s*\(/.test(maskedSource)
+      && !/availableBlocks\s*:\s*branch\.blockCount/.test(maskedSource)) {
+      errors.push({
+        file,
+        functionName:"resolveBlockResponseWorlds",
+        line:blockResolver?.startLine ?? 1,
+        missing:["架构约束：Block willingness 必须使用当前 probability branch 的 blockCount"]
+      });
+    }
+  }
+
+  if (SEARCHER_PATTERN.test(file)) {
+    const businessDiagnostic = maskedSource.match(
+      /\b(?:rootAssaultTargets|discoveredDynamicTarget|observeCounterfactualCandidate)\b/
+    );
+    if (businessDiagnostic) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, businessDiagnostic.index),
+        missing:["架构约束：Searcher 禁止 assault-specific diagnostic residue"]
+      });
     }
   }
 
@@ -2057,6 +2149,43 @@ function inspectSource(file, source, changed) {
       ["decidePlanningDyingRescue", "dyingRescueWillingness"],
       ["decidePlanningCounter", "planningCounterDecision"]
     ]);
+    if (file === EVALUATOR_FILE) {
+      const planningGain = namedFunctionSource(
+        source,
+        "planningDynamicCounterGain",
+        functions
+      );
+      if (planningGain) {
+        const planningGainCode = maskNonCode(planningGain.source);
+        const selectionReferences = planningGainCode.match(/\bselection\b/g) ?? [];
+        if (/\bvoid\s+selection\s*;/.test(planningGainCode)
+          || selectionReferences.length < 2) {
+          errors.push({
+            file,
+            functionName:"planningDynamicCounterGain",
+            line:planningGain.startLine,
+            missing:["架构约束：planningDynamicCounterGain 必须消费 canonical selection semantic"]
+          });
+        }
+      }
+      const planningBlock = namedFunctionSource(
+        source,
+        "decidePlanningBlock",
+        functions
+      );
+      if (planningBlock) {
+        const planningBlockCode = maskNonCode(planningBlock.source);
+        if (/queryPlayerHandProbability|\.distribution\b/.test(planningBlockCode)
+          || !/\bavailableBlocks\b/.test(planningBlockCode)) {
+          errors.push({
+            file,
+            functionName:"decidePlanningBlock",
+            line:planningBlock.startLine,
+            missing:["架构约束：planning Block 禁止 distribution-global capacity，必须消费 branch availableBlocks"]
+          });
+        }
+      }
+    }
     for (const [owner, primitive] of willingnessContracts) {
       const fn = namedFunctionSource(source, owner, functions);
       if (!fn) continue;
@@ -2071,6 +2200,14 @@ function inspectSource(file, source, changed) {
     const runtimeResponse = namedFunctionSource(source, "shouldRespond", functions);
     if (runtimeResponse) {
       const runtimeBody = maskNonCode(runtimeResponse.source);
+      if (/rootId\s*===\s*["']counter["']/.test(maskComments(runtimeResponse.source))) {
+        errors.push({
+          file,
+          functionName:"shouldRespond",
+          line:runtimeResponse.startLine,
+          missing:["架构约束：Counter-against-Counter 禁止 runtime separate special case"]
+        });
+      }
       for (const primitive of [
         "blockWillingness",
         "dyingRescueWillingness",
@@ -2118,6 +2255,17 @@ function inspectSource(file, source, changed) {
         line:sourceLineAt(source, storedEvaluator.index),
         missing:["架构约束：StateValue/CardValue primitive 禁止保存父 Evaluator 或 simulation runtime"]
       });
+    }
+    if (file === STATE_VALUE_FILE) {
+      const threatShell = maskedSource.match(/\bclass\s+ThreatCalculator\b/);
+      if (threatShell) {
+        errors.push({
+          file,
+          functionName:"<architecture>",
+          line:sourceLineAt(source, threatShell.index),
+          missing:["架构约束：StateValue ThreatCalculator static wrapper shell 已删除"]
+        });
+      }
     }
   }
 
@@ -2732,6 +2880,114 @@ function identity(value) { return value; }`;
   );
   if (!duplicateGuardianRuntimeErrors.some((error) => error.missing.some((item) => item.includes("guardianAidWillingness")))) {
     throw new Error("Guardian runtime guard did not reject duplicated willingness");
+  }
+  const ignoredCounterSelection = pass.replace(
+    "function identity(value) { return value; }",
+    "function planningDynamicCounterGain(state, responder, actor, card, targets, selection = null) { void selection; return 0; }"
+  );
+  const ignoredCounterSelectionErrors = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${ignoredCounterSelection}`,
+    null,
+  );
+  if (!ignoredCounterSelectionErrors.some((error) => error.missing.some((item) => item.includes("canonical selection semantic")))) {
+    throw new Error("Counter gain guard did not reject ignored canonical selection");
+  }
+  const counterSpecial = pass
+    .replace("identity", "shouldRespond")
+    .replace(
+      "return value;",
+      "blockWillingness({}); dyingRescueWillingness({}); globalBenefitCounterDecision(); if (rootId === \"counter\") return true; return dynamicCounterWillingness(value);"
+    );
+  const counterSpecialErrors = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${counterSpecial}`,
+    null,
+  );
+  if (!counterSpecialErrors.some((error) => error.missing.some((item) => item.includes("separate special case")))) {
+    throw new Error("Counter runtime guard did not reject Counter-specific special case");
+  }
+  const globalBlockCapacity = pass
+    .replace("identity", "decidePlanningBlock")
+    .replace(
+      "return value;",
+      "const availableBlocks = Math.max(...blockState.distribution.map((branch) => branch.count)); return blockWillingness({ availableBlocks });"
+    );
+  const globalBlockCapacityErrors = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${globalBlockCapacity}`,
+    null,
+  );
+  if (!globalBlockCapacityErrors.some((error) => error.missing.some((item) => item.includes("distribution-global capacity")))) {
+    throw new Error("Block willingness guard did not reject distribution-global capacity");
+  }
+  const branchBlockResolver = pass.replace(
+    "function identity(value) { return value; }",
+    "function resolveBlockResponseWorlds(branch) { return decideBlock({ availableBlocks:branch.blockCount }); }"
+  );
+  const branchBlockResolverErrors = inspectSource(
+    RESPONSE_FILE,
+    `${moduleHeader}\n${branchBlockResolver}`,
+    null,
+  );
+  if (branchBlockResolverErrors.some((error) => error.missing.some((item) => item.includes("当前 probability branch")))) {
+    throw new Error("Block branch guard rejected branch-specific capacity");
+  }
+  const globalBlockResolverErrors = inspectSource(
+    RESPONSE_FILE,
+    `${moduleHeader}\n${pass.replace("identity", "resolveBlockResponseWorlds")}`,
+    null,
+  );
+  if (!globalBlockResolverErrors.some((error) => error.missing.some((item) => item.includes("当前 probability branch")))) {
+    throw new Error("Block branch guard did not reject missing branch-specific capacity");
+  }
+  const deadResponseOptions = pass.replace(
+    "function identity(value) { return value; }",
+    "function resolveTargetCounterResponseWorlds(state, target, worlds, decision, options = {}) { void options; return worlds; }"
+  );
+  const deadResponseOptionsErrors = inspectSource(
+    RESPONSE_FILE,
+    `${moduleHeader}\n${deadResponseOptions}`,
+    null,
+  );
+  if (!deadResponseOptionsErrors.some((error) => error.missing.some((item) => item.includes("dead options")))) {
+    throw new Error("Response options guard did not reject compatibility parameter");
+  }
+  const staleSimulatorConstructorErrors = inspectSource(
+    SIMULATOR_FILE,
+    `${moduleHeader}\nclass Simulator { constructor(visibleState, options = {}) { void visibleState; } }\n${pass}`,
+    null,
+  );
+  if (!staleSimulatorConstructorErrors.some((error) => error.missing.some((item) => item.includes("dead visibleState")))) {
+    throw new Error("Simulator constructor guard did not reject stale initial World parameter");
+  }
+  const searcherDiagnosticErrors = inspectSource(
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\n${pass.replace("return value;", "const rootAssaultTargets = new Set(); return rootAssaultTargets;")}`,
+    null,
+  );
+  if (!searcherDiagnosticErrors.some((error) => error.missing.some((item) => item.includes("assault-specific diagnostic")))) {
+    throw new Error("Searcher diagnostic guard did not reject assault-specific residue");
+  }
+  const threatShellErrors = inspectSource(
+    STATE_VALUE_FILE,
+    `${moduleHeader}\nclass ThreatCalculator { static calculate() { return 0; } }\n${pass}`,
+    null,
+  );
+  if (!threatShellErrors.some((error) => error.missing.some((item) => item.includes("ThreatCalculator static wrapper")))) {
+    throw new Error("StateValue guard did not reject ThreatCalculator wrapper shell");
+  }
+  const peekPrefixBinding = pass.replace(
+    "function identity(value) { return value; }",
+    "function chooseHiddenCards(selection, eligibleCards, unknownCount) { if (selection.selectionKind === \"peek\") return eligibleCards.slice(0, unknownCount); return []; }"
+  );
+  const peekPrefixBindingErrors = inspectSource(
+    HIDDEN_CARD_CHOICE_FILE,
+    `${moduleHeader}\n${peekPrefixBinding}`,
+    null,
+  );
+  if (!peekPrefixBindingErrors.some((error) => error.missing.some((item) => item.includes("数组前 N 张")))) {
+    throw new Error("Scout peek guard did not reject prefix physical binding");
   }
   const stateValueEvaluatorErrors = inspectSource(
     STATE_VALUE_FILE,
@@ -3816,6 +4072,14 @@ function identity(value) { return value; }`;
   if (!pollutedActionErrors.some((error) => error.missing.some((item) => item.includes("replay metadata")))) {
     throw new Error("Action replay guard did not reject simulation controls");
   }
+  const actionAggregateErrors = inspectSource(
+    ACTION_FILE,
+    `${moduleHeader}\n${pass}\nexport const Action = Object.freeze({ create:identity });`,
+    null,
+  );
+  if (!actionAggregateErrors.some((error) => error.missing.some((item) => item.includes("aggregate facade")))) {
+    throw new Error("Action guard did not reject dead aggregate facade");
+  }
 
   const canonicalWorldCloneErrors = inspectSource(
     "js/ai/Simulator/World.js",
@@ -3872,6 +4136,14 @@ function identity(value) { return value; }`;
   );
   if (!availabilityBackdoorErrors.some((error) => error.missing.some((item) => item.includes("cardAvailability normalization")))) {
     throw new Error("cardAvailability guard did not reject legacy Simulator method call");
+  }
+  const availabilityClampErrors = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "return Math.max(0, Math.min(1, Number(card.availability ?? 1) || 0));")}`,
+    null,
+  );
+  if (!availabilityClampErrors.some((error) => error.missing.some((item) => item.includes("canonical cardAvailability")))) {
+    throw new Error("cardAvailability guard did not reject duplicate fallback/clamp");
   }
 
   const goodWorkerBoundary = inspectSource(

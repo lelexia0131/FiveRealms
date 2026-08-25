@@ -405,10 +405,10 @@ export function createRuntimeComposition({
   Searcher、Controller runtime boundary。
 
   输入
-  canonical World 与可选 SearchBudget runtime。
+  可选 SearchBudget runtime。
 
   输出
-  只修改独立 World 的 Simulator。
+  不持有 World、只在显式方法输入上工作的 Simulator。
 
   读取状态
   闭包中的 Evaluator 与显式 SearchBudget。
@@ -422,7 +422,7 @@ export function createRuntimeComposition({
   边界与不变量
   所有环境共用完全相同的决策注入；Evaluator 不保存或反向调用 Simulator。
   */
-  const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
+  const simulatorFactory = (runtime = {}) => new Simulator({
     searchBudget:runtime.searchBudget ?? null,
     decideCounter:(...args) => evaluator.decidePlanningCounter(...args),
     decideLeverageAssault:(...args) => evaluator.decideLeverageAssault(...args),
@@ -1488,7 +1488,7 @@ export class Controller {
   HiddenCardChoiceWorkflow 的 AI canonical selection 路径。
 
   输入
-  资源拥有者、known/unknown selection、数量与可选排除实体 ID。
+  资源拥有者、known/unknown/peek selection、数量与可选排除实体 ID。
 
   输出
   仍位于手牌且符合选择位置的真实 Card 数组。
@@ -1497,20 +1497,39 @@ export class Controller {
   当前真实手牌位置与 search RNG。
 
   写入状态
-  unknown 绑定时推进 RNG；不修改 GameState。
+  unknown 或 peek anonymous remainder 绑定时推进 RNG；不修改 GameState。
 
   调用函数
   Rng.next。
 
   边界与不变量
-  不生成、模拟、评价或重新选择战略候选；known 只按 cardId 绑定，unknown 只在
-  canonical knownCardIds 排除后的匿名位置中随机绑定，且不读取候选 definitionId。
+  不生成、模拟、评价或重新选择战略候选；known/peek cardIds 只按 ID 精确绑定，
+  anonymous remainder 只在 canonical knownCardIds 排除后按 seeded 位置绑定，且不读取候选 definitionId。
   */
   bindCanonicalHiddenCards(owner, selection, count = 1, excludedCardIds = null) {
     const eligible = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
     if (selection?.selectionKind === "known" && selection.cardId) {
       const card = eligible.find((entry) => entry.id === selection.cardId) ?? null;
       return card ? [card] : [];
+    }
+    if (selection?.selectionKind === "peek") {
+      const selected = (selection.cardIds ?? []).map((cardId) => (
+        eligible.find((entry) => entry.id === cardId) ?? null
+      )).filter(Boolean);
+      if (selected.length !== (selection.cardIds?.length ?? 0)
+        || new Set(selected.map((card) => card.id)).size !== selected.length) return [];
+      const selectedIds = new Set(selected.map((card) => card.id));
+      const knownCardIds = new Set(selection.knownCardIds ?? []);
+      const anonymous = eligible.filter((card) => (
+        !selectedIds.has(card.id) && !knownCardIds.has(card.id)
+      ));
+      const unknownCount = Math.max(0, Math.floor(Number(selection.unknownCount) || 0));
+      const expectedCount = Math.min(count, selected.length + unknownCount);
+      while (selected.length < expectedCount && anonymous.length) {
+        const index = Math.floor(this.searchRng.next() * anonymous.length);
+        selected.push(anonymous.splice(index, 1)[0]);
+      }
+      return selected.length === expectedCount ? selected : [];
     }
     if (selection?.selectionKind !== "unknown") return [];
     const knownCardIds = new Set(selection.knownCardIds ?? []);
@@ -1604,6 +1623,23 @@ export class Controller {
       counterDepth:Math.max(0, Math.floor(Number(rawContext.counterDepth) || 0)),
       rootSourceId:rawContext.rootSourceId ?? rawContext.rootSource?.id ?? null,
       rootTargetIds:Object.freeze([...(rawContext.rootTargetIds ?? [])]),
+      publicTransferContext:rawContext.publicTransferContext
+        ? Object.freeze({
+            fromPlayerId:rawContext.publicTransferContext.fromPlayerId ?? null,
+            receiverPlayerId:rawContext.publicTransferContext.receiverPlayerId ?? null,
+            zone:rawContext.publicTransferContext.zone ?? "hand"
+          })
+        : null,
+      publicSelectionContext:rawContext.publicSelectionContext
+        ? Object.freeze({
+            ownerPlayerId:rawContext.publicSelectionContext.ownerPlayerId ?? null,
+            zone:rawContext.publicSelectionContext.zone ?? null,
+            selectedCount:Math.max(
+              0,
+              Math.floor(Number(rawContext.publicSelectionContext.selectedCount) || 0)
+            )
+          })
+        : null,
       card:rawCard ? Object.freeze({
         definitionId:rawCard.definitionId ?? null,
         category:rawCard.category ?? null,
@@ -1654,7 +1690,8 @@ export class Controller {
       guardianAidWorlds:null,
       lightningCounterWorlds:null,
       sealCounterTerms:null,
-      rootFlipWorlds:null
+      rootFlipWorlds:null,
+      counterSelection:null
     };
     if (type === "leverageAssault") {
       const target = publicContext.target ?? responderView;
@@ -1666,7 +1703,7 @@ export class Controller {
           remainingCardCounts
         );
     } else if (type === "skill" && publicContext.target) {
-      const simulator = this.simulatorFactory(world);
+      const simulator = this.simulatorFactory();
       const worlds = simulator.buildGuardianAidWorlds(
           world,
           responder.id,
@@ -1693,7 +1730,7 @@ export class Controller {
             remainingCardCounts
           );
         } else if (publicContext.statusCounterContext.statusId === "lightning") {
-          const simulator = this.simulatorFactory(world);
+          const simulator = this.simulatorFactory();
           const receiverId = simulator.nextLightningReceiverId(players, holder);
           const receiver = players.find((player) => player.id === receiverId) ?? null;
           const transferred = receiver
@@ -1722,10 +1759,15 @@ export class Controller {
         rootCard,
         rootSourceId,
         Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
-        { publicTransferContext:rawContext.publicTransferContext ?? null }
+        {
+          selection:rawContext.selection ?? null,
+          publicTransferContext:publicContext.publicTransferContext,
+          publicSelectionContext:publicContext.publicSelectionContext
+        }
       );
       if (rootAction) {
-        const simulator = this.simulatorFactory(world);
+        decision.counterSelection = rootAction.selection;
+        const simulator = this.simulatorFactory();
         const worlds = simulator.buildRootFlipWorlds(
           world,
           rootAction,

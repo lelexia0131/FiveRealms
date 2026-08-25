@@ -78,19 +78,19 @@ const TARGET_SCOPE_CARDS = new Set(["shockwave", "provoke"]);
 class SimulatorCore {
   /*
   功能
-  创建只拥有独立 World 根世界的轻量模拟器。
+  创建只保存运行能力、不拥有初始 World 的轻量模拟器。
 
   调用方
   Searcher 与有界 Value/Root simulation query：为一次搜索或配对查询创建模拟生命周期。
 
   输入
-  已过滤的 World 根快照，以及可选 SearchBudget、Evaluator response willingness 与 resolved discard capability。
+  可选 SearchBudget、Evaluator response willingness 与 resolved discard capability。
 
   输出
-  持有独立 initial 世界的 Simulator 实例。
+  不持有 World、仅保存窄运行能力的 Simulator 实例。
 
   读取状态
-  只读输入 World。
+  只读传入的运行选项。
 
   写入状态
   搜索预算、只读 willingness capabilities、概率摘要缓存与 root 递归守卫。
@@ -102,8 +102,7 @@ class SimulatorCore {
   构造不得回读 GameState；Evaluator capability 只返回 boolean 且必须全部显式注入；
   构造阶段不得复制 World；所有完整 World copy 必须由 clone 显式创建并计数。
   */
-  constructor(visibleState, options = {}) {
-    void visibleState;
+  constructor(options = {}) {
     this.searchBudget = options.searchBudget ?? null;
     const decisionCapabilities = [
       "decideCounter",
@@ -749,7 +748,7 @@ class SimulatorCore {
       const definitions = hiddenWorld?.[player.id] ?? [];
       const beforePlayer = beforeState.players.find((entry) => entry.id === player.id);
       const certainKnownCount = (beforePlayer?.knownCards ?? []).filter((entry) => (
-        Number(entry.availability ?? 1) >= 1 - PROBABILITY_EPSILON
+        cardAvailability(entry) >= 1 - PROBABILITY_EPSILON
       )).length;
       for (const definitionId of definitions.slice(certainKnownCount)) {
         mutateProbability(specialized.probabilityState, {
@@ -1062,9 +1061,8 @@ class SimulatorCore {
       controls
     );
     if (heldCard) {
-      heldCard.availability = Math.max(
-        0,
-        Number(heldCard.availability ?? 1) - this.eventProbability(cardEventWorlds)
+      heldCard.availability = clampProbability(
+        cardAvailability(heldCard) - this.eventProbability(cardEventWorlds)
       );
       if (heldCard.availability <= PROBABILITY_EPSILON) {
         actor.hand = actor.hand.filter((entry) => entry.id !== action.cardInstanceId);
@@ -1087,8 +1085,7 @@ class SimulatorCore {
         actor,
         card,
         targets,
-        action.selection ?? null,
-        { createCondition:true }
+        action.selection ?? null
       )
       : null;
     let effectEventWorlds = cardEventWorlds;
@@ -1312,7 +1309,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
   目标级战术、card-scope 首响应者兑现和 Simulator 专项测试。
 
   输入
-  World、目标、效果世界、确定 willingness 与响应选项。
+  World、目标、效果世界与确定 willingness。
 
   输出
   Response 解析得到的 outcome/effect/counter worlds。
@@ -1329,13 +1326,12 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
   边界与不变量
   willingness 不得重新计算；Response 选择与 Resource 消费必须复用同一 selection partition。
   */
-  consumeTargetCounterResponseWorlds(state, target, effectWorlds, counterDecision, options = {}) {
+  consumeTargetCounterResponseWorlds(state, target, effectWorlds, counterDecision) {
     const response = this.resolveTargetCounterResponseWorlds(
       state,
       target,
       effectWorlds,
-      counterDecision,
-      options
+      counterDecision
     );
     this.consumeCounterPayment(state, target, response.payment);
     return response;
@@ -2255,7 +2251,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
       ? [{ probability:1, conditions:{}, available:true }]
       : getAvailabilityStateBranches(
           heldCard,
-          heldCard ? heldCard.availability ?? 1 : 0
+          heldCard ? cardAvailability(heldCard) : 0
         );
     const joined = this.intersectProbabilityWork(
       [conditionBranches, availabilityBranches],

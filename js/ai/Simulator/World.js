@@ -169,7 +169,7 @@ createWorldPlayer。
 边界与不变量
 World 不持有 Game/Player 引用；probabilityState 是未知有限池的唯一充分状态；不得持久化其查询摘要。
 */
-export function createWorld(fact, probabilityState, derivedPlayersById = {}) {
+function createWorld(fact, probabilityState, derivedPlayersById = {}) {
   const world = {
     gameId:fact.gameId,
     currentRound:fact.currentRound,

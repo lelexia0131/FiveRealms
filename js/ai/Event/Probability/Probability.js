@@ -99,7 +99,7 @@ export const PROBABILITY_CLASSIFICATION = Object.freeze({
 const PROBABILITY_DEFINITION_IDS = Object.freeze([
   "recover", "block", "counter", "assault"
 ]);
-export const PROBABILITY_DRAW_BUCKET = "outside/drawPool";
+const PROBABILITY_DRAW_BUCKET = "outside/drawPool";
 
 const RADAR_BASIC_DEFINITION_IDS = Object.freeze(
   Object.values(CARD_DEFINITIONS)
@@ -750,7 +750,7 @@ Simulator 与装备相关评分。
 边界与不变量
 相同实体组合必须生成相同键。
 */
-export function equipmentConditionKey(playerOrId, definitionId) {
+function equipmentConditionKey(playerOrId, definitionId) {
   const playerId = typeof playerOrId === "object" ? playerOrId?.id : playerOrId;
   return `equipment:${playerId}:${definitionId}`;
 }
@@ -780,7 +780,7 @@ export function equipmentConditionKey(playerOrId, definitionId) {
 边界与不变量
 只读取公开装备定义，不读取实体反向引用。
 */
-export function getEquipmentDefinitionId(player) {
+function getEquipmentDefinitionId(player) {
   return player?.equipment?.definitionId ?? player?.equipmentDefinitionId ?? null;
 }
 
@@ -809,7 +809,7 @@ getEquipmentDefinitionId。
 边界与不变量
 缺少概率字段的确定世界按一处理；不同装备定义按零处理。
 */
-export function getEquipmentEffectProbability(player, definitionId) {
+function getEquipmentEffectProbability(player, definitionId) {
   if (getEquipmentDefinitionId(player) !== definitionId) return 0;
   const probability = player?.equipmentRetentionProbability;
   return probability == null ? 1 : clampProbability(probability);
@@ -1206,7 +1206,7 @@ availableResourceCountDistribution、totalBranchProbability。
 边界与不变量
 不构造所有隐藏牌世界；临时分支上界只由当前实体资源数与当前动态条件数决定。
 */
-export function probabilityAnyAvailable(resources = []) {
+function probabilityAnyAvailable(resources = []) {
   return clampProbability(totalBranchProbability(
     availableResourceCountDistribution(resources).filter((branch) => branch.count >= 1)
   ));

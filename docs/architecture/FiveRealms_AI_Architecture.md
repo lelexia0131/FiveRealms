@@ -263,6 +263,8 @@ Generator/
 
 整个 AI 唯一 canonical Action contract。
 
+模块只公开 `createAction`、`actionIntentKey`、`actionSearchKey`、`sameAction` 等 named functions；不得恢复仅为旧调用方聚合这些函数的 `Action` facade。
+
 Action 只保存 executable intent。root counterfactual replay 的 `restoreActorHand`、
 `ignoreCounter` 等控制只属于 Simulator 局部参数，不得进入 Action、search key 或 Worker payload。
 
@@ -450,6 +452,8 @@ Probability
 
 不得计算 Action 好不好。
 
+Simulator 构造器只接收 SearchBudget 与 Evaluator 注入的窄运行能力，不拥有 initial World。所有 `apply`、`clone` 与 paired/outcome World 构造都显式接收 canonical World；不得保留无效 `visibleState` 参数或默认初始状态。
+
 ## `World.js`
 
 整个 AI 唯一 canonical World contract。
@@ -577,6 +581,8 @@ Searcher 只消费 Evaluator 的结果，不自己建立第二套价值公式。
 - global board-state benefit
 
 `StateValue.js` 不直接给 hand card / equipment asset / resource card 本身计价。若装备造成了非卡牌局面结果（例如状态、距离、威胁变化），只评价这些 **state consequence**，不得重复计算装备资产价值。
+
+公开威胁 primitive 使用普通函数 `threatScore(...)`；无实例状态、只包装单个 static 方法的 class 不构成独立 abstraction。
 
 ## `CardValue.js`
 

@@ -305,56 +305,30 @@ export class Searcher {
   search。
 
   输入
-  行动者、根 World 与 canonical root Actions。
+  行动者与根 World。
 
   输出
   本次搜索共用的反事实上下文。
 
   读取状态
-  Searcher 的隐藏采样与 provenance 配置。
+  根 World 的 ProbabilityState、玩家与 Evaluator provenance。
 
   写入状态
-  只消费既有 Search RNG 采样序列。
+  只创建本次搜索的懒采样缓存容器。
 
   调用函数
-  createCounterfactualContext。
+  Evaluator.initialTransitionProvenance。
 
   边界与不变量
   每次 search 只创建一次，不作为线性 World middle layer。
   */
-  createContext(player, state, rootActions) {
-    return this.createCounterfactualContext(player, state, rootActions);
-  }
-
-  /*
-  功能
-  返回反事实上下文的 data-only 搜索诊断。
-
-  调用方
-  recordResult。
-
-  输入
-  当前搜索上下文。
-
-  输出
-  hiddenSamples 与 discoveredDynamicTarget。
-
-  读取状态
-  上下文诊断字段。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  不暴露样本内容，诊断不得参与候选比较。
-  */
-  contextDiagnostics(context) {
+  createContext(player, state) {
     return {
-      hiddenSamples:context.unknownHandEstimate?.sampleCount ?? 0,
-      discoveredDynamicTarget:Boolean(context.discoveredDynamicTarget)
+      viewer:player,
+      probabilityState:state.probabilityState,
+      probabilityPlayers:state.players,
+      unknownHandEstimate:null,
+      rootProvenance:this.evaluator.initialTransitionProvenance(player, state)
     };
   }
 
@@ -1121,7 +1095,6 @@ export class Searcher {
     while (nextActionIndex < followActions.length && newCandidateCount < candidateLimit) {
       if (budget.shouldStop()) break;
       const action = followActions[nextActionIndex];
-      this.observeCounterfactualCandidate(action, context);
       const prepared = this.prepareCandidate(budget, depth, () => {
         budget.observeSimulation();
         const state = simulator.apply(parentState, action);
@@ -1210,7 +1183,7 @@ export class Searcher {
   lastSequence 与 lastSearchStats。
 
   调用函数
-  describeSequence、contextDiagnostics、SearchBudget.diagnostics。
+  describeSequence、SearchBudget.diagnostics。
 
   边界与不变量
   统计只描述实际执行；provisional root 不得写入计划序列、best value 或完整候选计数。
@@ -1238,7 +1211,7 @@ export class Searcher {
     this.lastSequence = this.describeSequence(
       [...(choice?.sequence ?? [])]
     );
-    const contextStats = this.contextDiagnostics(context);
+    const hiddenSamples = context.unknownHandEstimate?.sampleCount ?? 0;
     const slowestPreparation = budgetStats.preparations.reduce((slowest, entry) => (
       !slowest || entry.durationMs > slowest.durationMs ? entry : slowest
     ), null);
@@ -1293,8 +1266,7 @@ export class Searcher {
       partialCandidateRegistered:budgetStats.partialCandidateRegistered,
       rootCandidatesStarted:budgetStats.rootCandidatesStarted,
       rootCandidatesStartedAfterTime:budgetStats.rootCandidatesStartedAfterTime,
-      discoveredDynamicTarget:contextStats.discoveredDynamicTarget,
-      hiddenSamples:contextStats.hiddenSamples,
+      hiddenSamples,
       bestSequence:this.lastSequence,
       bestRemainingProvenance:choice?.remainingHistory ?? [],
       bestValueScore:choice?.valueScore ?? null,
@@ -1410,8 +1382,7 @@ export class Searcher {
       ?? null;
     const context = this.createContext(
       player,
-      visibleState,
-      scheduledRootActions
+      visibleState
     );
     const requestedRootCandidateCount = Number(options.rootCandidateCount);
     const rootCandidateCount = Number.isFinite(requestedRootCandidateCount)
@@ -1460,7 +1431,7 @@ export class Searcher {
     let simulator;
     try {
       // 每次规划只从组合根注入的工厂创建一个 Simulator，所有节点复用该生命周期。
-      simulator = this.simulatorFactory(visibleState, { searchBudget:budget });
+      simulator = this.simulatorFactory({ searchBudget:budget });
     } catch (error) {
       if (!budget.isCurrentWorkInterruption?.(error)) throw error;
       return this.recordResult({
@@ -1999,48 +1970,6 @@ export class Searcher {
 
   /*
   功能
-  为一次根搜索记录当前 Probability 查询输入、已有破势层来源与动态目标诊断基线。
-
-  调用方
-  Searcher.createContext。
-
-  输入
-  行动者、根 World 与根动作集合。
-
-  输出
-  当前搜索唯一的领域 transition context；匿名手牌样本尚未计算。
-
-  读取状态
-  行动者过滤状态与当前 ProbabilityState。
-
-  写入状态
-  只创建当前查询输入和独立诊断 Set。
-
-  调用函数
-  无。
-
-  边界与不变量
-  进入搜索前不得预采样；首次真实隐藏查询才创建一次本 calculation memo。
-  */
-  createCounterfactualContext(player, visibleState, rootActions) {
-    const rootAssaultTargets = new Set(
-      rootActions
-        .filter((action) => action.cardId === "assault")
-        .map((action) => action.targetIds?.[0])
-    );
-    return {
-      viewer:player,
-      probabilityState:visibleState.probabilityState,
-      probabilityPlayers:visibleState.players,
-      unknownHandEstimate:null,
-      rootProvenance:this.evaluator.initialTransitionProvenance(player, visibleState),
-      rootAssaultTargets,
-      discoveredDynamicTarget:false
-    };
-  }
-
-  /*
-  功能
   在第一个真实隐藏牌查询点惰性创建并复用本次 calculation 的匿名手牌样本。
 
   调用方
@@ -2080,38 +2009,6 @@ export class Searcher {
       context.unknownHandEstimate = estimate;
     }
     return context.unknownHandEstimate;
-  }
-
-  /*
-  功能
-  记录深层生成是否发现根集合以外的突袭目标。
-
-  调用方
-  Searcher candidate diagnostics。
-
-  输入
-  候选动作与当前搜索领域 context。
-
-  输出
-  无。
-
-  读取状态
-  动作定义与首目标标识。
-
-  写入状态
-  只可能把 discoveredDynamicTarget 从 false 置为 true。
-
-  调用函数
-  无。
-
-  边界与不变量
-  该字段只用于诊断，不参与分数、排序或裁剪。
-  */
-  observeCounterfactualCandidate(action, context) {
-    if (action.cardId === "assault"
-      && !context.rootAssaultTargets.has(action.targetIds?.[0])) {
-      context.discoveredDynamicTarget = true;
-    }
   }
 
   /*

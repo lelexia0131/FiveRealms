@@ -220,11 +220,3 @@ JSON.stringify。
 export function sameAction(left, right) {
   return Boolean(left && right) && JSON.stringify(left) === JSON.stringify(right);
 }
-
-export const Action = Object.freeze({
-  create:createAction,
-  intentKey:actionIntentKey,
-  schedulingKey:actionIntentKey,
-  searchKey:actionSearchKey,
-  same:sameAction
-});

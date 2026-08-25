@@ -63,7 +63,7 @@ import {
   sealTeamBurden,
   statePlayerValueTerms,
   statePointsToUtility,
-  ThreatCalculator,
+  threatScore,
   turnOpportunityValue
 } from "./StateValue.js";
 
@@ -490,7 +490,7 @@ assessment 查询、counterOpportunityCost。
 边界与不变量
 偶数 depth 表示 root 生效；首层队友非负收益保护与既有严格成本比较保持不变。
 */
-export function globalBenefitCounterDecision(
+function globalBenefitCounterDecision(
   assessGlobalBenefitQuery,
   players,
   battleTeam,
@@ -520,6 +520,57 @@ export function globalBenefitCounterDecision(
 
 /*
 功能
+把 canonical resource selection 投影为 State Value 使用的单个资源存量分。
+
+调用方
+planningDynamicCounterGain 的 Plunder/Destroy/Transfer 有界 gain。
+
+输入
+资源持有者、canonical selection 与当前 viewer ID。
+
+输出
+与 State Value 手牌/装备存量同尺度的非负分值。
+
+读取状态
+CardValue canonical player terms 与 selection 的公开或合法已知 identity。
+
+写入状态
+无。
+
+调用函数
+cardPlayerValueTerms。
+
+边界与不变量
+unknown hand 只使用公开 hand-count 单位；不得猜测 definitionId 或把完整资源 preference 当作 State Value。
+*/
+function selectedResourceStateValue(player, selection, viewerId) {
+  if (!player || !selection) return 0;
+  if (selection.zone === "hand") {
+    const projection = cardPlayerValueTerms({
+      ...player,
+      handCount:1,
+      hand:selection.definitionId
+        ? [{ definitionId:selection.definitionId, availability:1 }]
+        : [],
+      equipmentDefinitionId:null,
+      equipmentRetentionProbability:0
+    }, viewerId);
+    return projection.handCount + projection.handRole;
+  }
+  const definitionId = selection.definitionId ?? player.equipmentDefinitionId ?? null;
+  if (selection.zone !== "equipment" || !definitionId) return 0;
+  const projection = cardPlayerValueTerms({
+    ...player,
+    handCount:0,
+    hand:[],
+    equipmentDefinitionId:definitionId,
+    equipmentRetentionProbability:1
+  }, viewerId);
+  return projection.equipmentDelta + projection.equipmentRoleDelta;
+}
+
+/*
+功能
 用与真实响应相同的价值单位估算规划世界中取消一张 root 战术的收益。
 
 调用方
@@ -538,7 +589,7 @@ planningCounterDecision 与直接价值测试。
 无。
 
 调用函数
-queryPlayerHandProbability、cardAvailability。
+queryPlayerHandProbability、cardAvailability、selectedResourceStateValue。
 
 边界与不变量
 这是既有规划价值近似；不得读取隐藏实体牌，不得改动 family、常量或分支顺序。
@@ -551,7 +602,6 @@ export function planningDynamicCounterGain(
   targets,
   selection = null
 ) {
-  void selection;
   const definitionId = card?.definitionId;
   if (!definitionId) return 0;
   const team = responder.battleTeam;
@@ -648,15 +698,41 @@ export function planningDynamicCounterGain(
     case "exposeWeakness": return actorEnemy ? 1.5 : -1.5;
     case "plunder": {
       if (!target?.alive || !hasResource(target)) return 0;
+      if (selection?.zone) {
+        const selected = {
+          ...selection,
+          definitionId:selection.definitionId
+            ?? (selection.zone === "equipment" ? target.equipmentDefinitionId : null)
+        };
+        return selectedResourceStateValue(target, selected, responder.id)
+          + (selection.zone === "hand"
+              ? selectedResourceStateValue(actor, selected, responder.id)
+              : 1.1);
+      }
       const threat = actorEnemy && knownAssault(target) ? HP_VALUE : 0;
       return actorEnemy ? 2.2 + threat : -(2.2 + threat);
     }
     case "destroy": {
       if (!target?.alive || !hasResource(target)) return 0;
+      if (selection?.zone) {
+        return selectedResourceStateValue(target, {
+          ...selection,
+          definitionId:selection.definitionId
+            ?? (selection.zone === "equipment" ? target.equipmentDefinitionId : null)
+        }, responder.id);
+      }
       const threat = !actorEnemy && knownAssault(target) ? HP_VALUE : 0;
       return (target.battleTeam === team ? 1.1 + threat : 1.1) * (actorEnemy ? 1 : -1);
     }
-    case "transfer": return actorEnemy ? 2.2 : -2.2;
+    case "transfer": {
+      const from = state.players.find((player) => player.id === selection?.sourceId) ?? null;
+      const receiver = state.players.find((player) => player.id === selection?.receiverId) ?? null;
+      const fromValue = selectedResourceStateValue(from, selection, responder.id);
+      const receiverValue = selectedResourceStateValue(receiver, selection, responder.id);
+      return (from?.battleTeam === team ? fromValue : -fromValue)
+        + (receiver?.battleTeam === team ? -receiverValue : receiverValue);
+    }
+    case "counter": return getBaseCardAiValue("counter");
     case "seal": return actorEnemy ? 2.8 : -2.8;
     case "lightning": return actorEnemy ? 2.8 : -2.8;
     case "leverage": {
@@ -1038,15 +1114,15 @@ ThreatValue 差值。
 无。
 
 调用函数
-ThreatCalculator.calculate、transferThreatView。
+threatScore、transferThreatView。
 
 边界与不变量
 不读取任一未知手牌定义。
 */
 function transferEnemyThreatGap(actor, from, receiver) {
   const memory = actor?.aiMemory ?? {};
-  return ThreatCalculator.calculate(transferThreatView(actor), transferThreatView(from), memory)
-    - ThreatCalculator.calculate(transferThreatView(actor), transferThreatView(receiver), memory);
+  return threatScore(transferThreatView(actor), transferThreatView(from), memory)
+    - threatScore(transferThreatView(actor), transferThreatView(receiver), memory);
 }
 
 /*
@@ -1290,9 +1366,9 @@ export function sealUseValue(actor, target, state) {
       * turnTimingFactor(state, actor, target);
 }
 
-export const BURNING_FIELD_SEARCH_PRIOR = 8;
+const BURNING_FIELD_SEARCH_PRIOR = 8;
 // 这些权重只维持有限 beam 的相对探索顺序，不是单位换算，也不得进入 Final Utility。
-export const STATE_UTILITY_PRIOR_WEIGHT = 0.4;
+const STATE_UTILITY_PRIOR_WEIGHT = 0.4;
 
 const END_PRIOR_PENALTY = 0.8;
 const SKILL_THRESHOLD_PRIOR_BONUS = 4;
@@ -1403,10 +1479,7 @@ export class Evaluator {
   breakArmyUtility(actor) {
     const assaultCount = (actor.hand ?? [])
       .filter((card) => card.definitionId === "assault")
-      .reduce((sum, card) => sum + Math.max(
-        0,
-        Math.min(1, Number(card.availability ?? 1) || 0)
-      ), 0);
+      .reduce((sum, card) => sum + cardAvailability(card), 0);
     const availableAttackUses = Math.max(
       0,
       (Number(actor.attackLimit ?? actor.turnFlags?.attackLimit) || 0)
@@ -2582,39 +2655,34 @@ export class Evaluator {
   Response.consumeBlockResponseWorlds。
 
   输入
-  当前 World、目标、攻击世界与响应选项。
+  当前 World、目标、单条攻击/容量联合分支与显式 availableBlocks/requiredBlocks。
 
   输出
   与 runtime Block willingness 相同的确定布尔值。
 
   读取状态
-  无；容量与合法性由 Probability 和 Simulator 分别判断。
+  当前联合分支的伤害、格挡容量与队伍公开事实。
 
   写入状态
   无。
 
   调用函数
-  无。
+  blockWillingness。
 
   边界与不变量
-  planning 只负责从 Probability/attack Worlds 投影同一组标量，不得复制或改写 Block threshold。
+  planning 只消费调用方当前分支的真实容量，不得从整个 distribution 取最大/平均值；
+  threshold 只能由 blockWillingness 定义。
   */
   decidePlanningBlock(state, target, attackWorlds, options = {}) {
-    const blockState = queryPlayerHandProbability(
-      state.probabilityState,
-      target,
-      "block"
-    );
-    const availableBlocks = Math.max(
-      0,
-      ...(blockState.distribution ?? []).map((branch) => Math.max(0, Number(branch.count) || 0))
-    );
+    const availableBlocks = Math.max(0, Number(options.availableBlocks) || 0);
     const requirements = (attackWorlds ?? [])
       .filter((branch) => branch.occurs && Number(branch.requiredCount) > 0)
       .map((branch) => Number(branch.requiredCount));
-    const requiredBlocks = requirements.length
-      ? Math.max(1, Math.min(...requirements))
-      : 1;
+    const requiredBlocks = Math.max(
+      1,
+      Number(options.requiredBlocks)
+        || (requirements.length ? Math.min(...requirements) : 1)
+    );
     const incomingDamage = Math.max(
       0,
       Number(options.incomingDamage) || 0,
@@ -3011,7 +3079,8 @@ export class Evaluator {
       guardianAidWorlds,
       lightningCounterWorlds,
       sealCounterTerms,
-      rootFlipWorlds
+      rootFlipWorlds,
+      counterSelection = null
     } = decision;
     const target = context.target ?? responder;
     if (type === "dyingRescue") {
@@ -3079,12 +3148,6 @@ export class Evaluator {
         }
       );
       if (globalDecision !== null) return globalDecision;
-      if (rootId === "counter") {
-        const sourceEnemy = context.source?.battleTeam !== responder.battleTeam;
-        return sourceEnemy && context.card?.definitionId
-          ? getBaseCardAiValue(context.card.definitionId) >= 7
-          : false;
-      }
       const gain = rootFlipWorlds
         ? this.dynamicRootFlipGain(
             rootFlipWorlds,
@@ -3092,7 +3155,16 @@ export class Evaluator {
             rootFlipWorlds.baseLightningOutcomeSets,
             rootFlipWorlds.resolvedLightningOutcomeSets
           )
-        : null;
+        : planningDynamicCounterGain(
+            world,
+            responder,
+            context.rootSource ?? context.source,
+            { definitionId:rootId },
+            (context.rootTargetIds ?? []).map((targetId) => (
+              world.players.find((player) => player.id === targetId)
+            )).filter(Boolean),
+            counterSelection
+          );
       return dynamicCounterWillingness(gain);
     }
     if (type === "assaultDiscard") {
@@ -3256,7 +3328,7 @@ export class Evaluator {
   无。
 
   调用函数
-  ThreatCalculator.calculate。
+  threatScore。
 
   边界与不变量
   这是唯一 target preference 语义；Searcher/Controller/Policy 不得复制公式，且本值不直接进入 Final Utility。
@@ -3267,7 +3339,7 @@ export class Evaluator {
       Number(this.getDifficultyMultiplier?.() ?? 1) || 0
     );
     if (!multiplier || !target || target.battleTeam === viewer.battleTeam) return 0;
-    return ThreatCalculator.calculate(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
+    return threatScore(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
   }
 
   /*

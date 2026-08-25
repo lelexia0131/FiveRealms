@@ -139,7 +139,7 @@ export const withResponse = (Base) => class Response extends Base {
   TacticResolutionQuery、consumeCountersForCardScope 与 Simulator.apply：冻结一次卡牌级反制链。
 
   输入
-  World、行动者、战术牌、目标列表、可选 selection 与动态条件创建选项。
+  World、行动者、战术牌、目标列表与可选 canonical selection。
 
   输出
   包含 resolutionChance、互斥响应结果和每名响应者边际消费质量的独立对象。
@@ -161,8 +161,7 @@ export const withResponse = (Base) => class Response extends Base {
     actor,
     card,
     targets = [],
-    selection = null,
-    options = {}
+    selection = null
   ) {
     this.checkpointSearchWork();
     const roster = projectCanonicalSeatRoster(state.players);
@@ -179,7 +178,6 @@ export const withResponse = (Base) => class Response extends Base {
       const decision = this.counterDecision(state, player, actor, card, targets, selection) === true;
       contenders.push({ player, counterProbability, decision, effectiveProbability:0 });
     }
-    void options;
     const active = contenders.filter((contender) => contender.decision);
     const ordered = queryOrderedFirstResponder(
       state.probabilityState,
@@ -297,13 +295,12 @@ export const withResponse = (Base) => class Response extends Base {
   无；只返回供 Resource 执行的 payment request。
 
   调用函数
-  getBlockCountBranches 与 Probability 连接/投影辅助函数。
+  queryPlayerHandProbability、decideBlock 与 Probability 连接/投影辅助函数。
 
   边界与不变量
   格挡结果与 payment request 共享同一世界；本方法不得修改手牌或概率容量。
   */
   resolveBlockResponseWorlds(state, target, attackWorlds, options = {}) {
-    const willing = this.decideBlock(state, target, attackWorlds, options) === true;
     const blockState = queryPlayerHandProbability(
       state.probabilityState, target, "block"
     ).distribution.map(({ count, ...branch }) => ({ ...branch, blockCount:count }));
@@ -320,6 +317,21 @@ export const withResponse = (Base) => class Response extends Base {
         ? [attackWorlds, blockState, preJudgmentPartition]
         : [attackWorlds, blockState]
     );
+    // willingness 只投影当前联合分支的真实容量；保持一进一出，不创建 branch genealogy。
+    const resolved = [];
+    for (let index = 0; index < joined.length; index += 1) {
+      if (index % 32 === 0) this.checkpointSearchWork();
+      const branch = joined[index];
+      resolved.push({
+        ...branch,
+        blockWilling:this.decideBlock(state, target, [branch], {
+          ...options,
+          availableBlocks:branch.blockCount,
+          requiredBlocks:branch.requiredCount,
+          incomingDamage:branch.damageAmount ?? options.incomingDamage ?? 0
+        }) === true
+      });
+    }
     /*
     功能
     判断一条响应资源分支与攻击世界条件是否兼容，避免跨世界重复消费。
@@ -346,24 +358,22 @@ export const withResponse = (Base) => class Response extends Base {
     必须同时发生、允许响应、未被雷达免疫且容量足够；不能跨条件世界借用格挡。
     */
     const responseMatches = (branch) => Boolean(
-      willing
+      branch.blockWilling
       && branch.occurs
       && branch.responseAllowed !== false
       && branch.requiredCount > 0
       && branch.blockCount >= branch.requiredCount
     );
-    const consumedBranches = [];
     let blockedProbability = 0;
     let expectedBlockSpend = 0;
-    for (let index = 0; index < joined.length; index += 1) {
+    for (let index = 0; index < resolved.length; index += 1) {
       if (index % 32 === 0) this.checkpointSearchWork();
-      const branch = joined[index];
+      const branch = resolved[index];
       if (!responseMatches(branch)) continue;
-      consumedBranches.push(branch);
       blockedProbability += Math.max(0, Number(branch.probability) || 0);
       expectedBlockSpend += branch.probability * branch.requiredCount;
     }
-    const identityWorlds = joined.map((branch, index) => {
+    const identityWorlds = resolved.map((branch, index) => {
       if (index % 32 === 0) this.checkpointSearchWork();
       return {
         probability:branch.probability,
@@ -378,7 +388,7 @@ export const withResponse = (Base) => class Response extends Base {
         ? [options.judgmentBlockCard]
         : [];
     const outcomeWorlds = this.projectProbabilityWork(
-      joined,
+      resolved,
       (branch) => ({
         occurs:Boolean(branch.occurs),
         radarOutcome:branch.radarOutcomes?.[0] ?? null,
@@ -398,7 +408,10 @@ export const withResponse = (Base) => class Response extends Base {
         identityWorlds,
         judgmentBlockCards,
         preJudgmentPartition,
-        joined:joined.map((branch) => ({ ...branch, blockUsed:responseMatches(branch) })),
+        joined:resolved.map(({ blockWilling, ...branch }) => ({
+          ...branch,
+          blockUsed:responseMatches({ ...branch, blockWilling })
+        })),
         expectedBlockSpend
       }
     };
@@ -412,7 +425,7 @@ export const withResponse = (Base) => class Response extends Base {
   Simulator 的 target-scope Counter 编排：解析单目标响应结果。
 
   输入
-  World、目标、效果世界、布尔反制决策与可选响应选项。
+  World、目标、效果世界与布尔反制决策。
 
   输出
   完整 outcome/effect/counter worlds 与局部 payment request。
@@ -432,7 +445,7 @@ export const withResponse = (Base) => class Response extends Base {
   所有长 join/project/merge 在同一 SearchBudget 下 cooperative abort，partial outcome 不得返回；
   identity 只写入 payment request，不在 Response 中修改 availability 或 handCount。
   */
-  resolveTargetCounterResponseWorlds(state, target, effectWorlds, counterDecision, options = {}) {
+  resolveTargetCounterResponseWorlds(state, target, effectWorlds, counterDecision) {
     this.checkpointSearchWork();
     if (!target) {
       const emptyOutcome = this.projectProbabilityWork(effectWorlds, (branch) => ({
@@ -456,7 +469,6 @@ export const withResponse = (Base) => class Response extends Base {
         payment:null
       };
     }
-    void options;
     const decisionPartition = [{
       probability:1,
       conditions:{},

@@ -56,6 +56,8 @@ REAL GAME
 
 运行时方向已经固定为 `Simulator -> completed/alternative Worlds -> Evaluator`。Evaluator 不 import、构造、保存、接收或回调 Simulator/transition capability；StateValue/CardValue 不反调 Evaluator。counterfactual 的 World clone/mutation/action/damage construction 全部属于 Simulator，准备完成的 World comparison 属于 Evaluator，Searcher 只组织调用和预算。Controller 的 response `DecisionContext` 只包含 canonical World/player、预物化 paired/outcome Worlds、普通数据与标量，不含 lazy query 或 service locator。
 
+Simulator 构造器只接收 SearchBudget 与 Evaluator 窄决策能力，不接收或保存 initial World；`apply`、`clone` 和所有 paired/outcome builder 都必须显式接收 canonical World。StateValue 的公开威胁 primitive 为普通函数 `threatScore`，不存在无状态 static wrapper class；Action 模块同样只公开 named functions，不提供 aggregate compatibility facade。
+
 正式 deterministic legality、目标、距离、伤害、响应与状态判定仍以 `js/domain/rules/**` 与 `js/domain/definitions/**` 为 Repository authority；AI core 没有第二套 Game Rule authority。正式搜索不得读取敌方未知手牌的 `definitionId`，unknown identity 只通过 Probability/World 的合法条件世界表达。
 
 ## Step 5.6 Snapshot (Historical)
@@ -1609,6 +1611,7 @@ StateValue  -> pure current-state primitives
 - Controller 只做 GameState/World、Generator、SearchRequest/outcome、当前实体重绑与真实运行边界；不模拟候选或重复选择。
 - Worker 只做 serialization、dispatch 与 runtime isolation；`WorkerSearchRuntime` 只 import public `Controller.js`，main/headless/Worker 共用 `executeSearchRequest`。
 - Block、Counter、Guardian、Rescue 的 planning/runtime 路径分别复用 canonical willingness primitive；planning 允许有界输入近似，但不得复制阈值或另写 `return true` 路径。
+- Block willingness 对现有 probability 联合分支逐条消费该分支的 `availableBlocks`，不得以 distribution 最大/平均容量覆盖其他分支；该遍历不产生新 genealogy。Counter 的 planning selection gain 与 runtime paired-World/fallback gain 最终都进入同一个 gain-to-willingness primitive，Counter-against-Counter 不另设 runtime policy。
 - canonical Action 只保存 executable intent；`restoreActorHand` / `ignoreCounter` 只作为 Simulator 局部 controls。完整 World deep clone 只经 `World.cloneWorld`，同一次 hidden specialization 不重复深拷贝。
 - `clampProbability` / `cardAvailability` 只在 `Event/Probability/Branch.js` 定义，并经 `Probability.js` facade 提供给业务消费者；Simulator、StateValue 与 CardValue 不保留第二套 normalization。
 
