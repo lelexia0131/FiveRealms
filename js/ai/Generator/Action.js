@@ -1,6 +1,6 @@
 /*
 模块职责
-定义搜索、Worker、计划复用与真实执行共同消费的唯一 Action 数据契约及其稳定身份。
+定义搜索、Worker 与真实执行共同消费的唯一 Action 数据契约及其稳定身份。
 
 上游
 Generator、Searcher、Pattern、Controller、Worker search runtime 与 TurnWorkflow。
@@ -197,7 +197,7 @@ export function actionSearchKey(action) {
 判断两个 Action 是否具有完全相同的可执行身份。
 
 调用方
-Controller request acceptance 与计划复用。
+Controller request acceptance。
 
 输入
 两个 canonical Action。

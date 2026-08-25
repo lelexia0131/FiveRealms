@@ -151,7 +151,7 @@ getStatusIds、getProjectedHandCount。
 边界与不变量
 这是确定性事实投影，不读取 aiMemory、隐藏牌定义或概率。
 */
-export function projectRulePlayer(player, _options = {}) {
+export function projectRulePlayer(player) {
   return Object.freeze({
     id:player?.id,
     seatIndex:player?.seatIndex,
@@ -610,7 +610,7 @@ export function deriveCurrentCardCounts(viewer, gameState) {
 创建 AI 在当前时刻确定知道的唯一不可变 Fact。
 
 调用方
-StateContracts。
+  Simulator/World.createInitialWorld。
 
 输入
 观察者 ID、当前 GameState 与可选的已验证当前牌池计数。

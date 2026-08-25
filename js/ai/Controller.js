@@ -26,9 +26,10 @@ import {
   Generator,
   deduplicateSearchEquivalentActions
 } from "./Generator/Generator.js";
-import { actionIntentKey, sameAction } from "./Generator/Action.js";
+import { createAction, sameAction } from "./Generator/Action.js";
 import {
   Evaluator,
+  chooseDiscardCandidates,
   chooseLowestKnownCardId,
   chooseLowestRoleCardId,
   choosePublicCardId
@@ -49,7 +50,6 @@ export const AI_RUNTIME_POLICY = Object.freeze({
   beamWidth:10,
   hiddenStateSamples:10,
   searchTimeBudgetMs:900,
-  replanAfterEveryAction:true,
   searchYieldEvery:48,
   nearTieRange:0.35,
   enableRandomness:true,
@@ -167,7 +167,7 @@ export function createSearchRequest({
 WorkerSearchRuntime 与 Controller transport-failure fallback。
 
 输入
-Request 与 canonical Action、计划、stats、RNG continuation、取消或错误字段。
+Request 与当前 root canonical Action、stats、RNG continuation、取消或错误字段。
 
 输出
 Structured-clone-safe plain object。
@@ -182,7 +182,7 @@ Request identity 与结果普通值。
 Object.freeze。
 
 边界与不变量
-Payload 不是第二 Action/World model；Action 与 plannedActions 保持 canonical identity。
+Payload 不是第二 Action/World model；只运输本次真实执行所需的 root Action。
 */
 export function createWorkerSearchOutcome({ request, ...result }) {
   return Object.freeze({
@@ -191,7 +191,6 @@ export function createWorkerSearchOutcome({ request, ...result }) {
     stateVersion:request.stateVersion,
     actorId:request.actorId,
     action:result.action ?? null,
-    plannedActions:Object.freeze([...(result.plannedActions ?? [])]),
     stats:result.stats ? Object.freeze({ ...result.stats }) : null,
     searchStopReason:result.searchStopReason ?? null,
     rngAfter:result.rngAfter ? Object.freeze({ ...result.rngAfter }) : null,
@@ -254,10 +253,10 @@ export const SEARCH_RESULT_STATUS = Object.freeze({
 在 Controller acceptance boundary 内记录一次 canonical Action 搜索结果。
 
 调用方
-Controller.acceptSearchResult 与 acceptWorkerSearchOutcome。
+acceptWorkerSearchOutcome。
 
 输入
-请求身份、canonical Action/sequence、stats、acceptance status 与可选 RNG continuation。
+请求身份、当前 root canonical Action、stats、acceptance status 与可选 RNG continuation。
 
 输出
 冻结的 main-thread 结果记录。
@@ -272,12 +271,11 @@ Controller.acceptSearchResult 与 acceptWorkerSearchOutcome。
 Object.freeze。
 
 边界与不变量
-这是 Controller 内联诊断记录，不是第二种 Action/World DTO；action 与 sequence 保持 canonical identity。
+这是 Controller 内联诊断记录，不是第二种 Action/World DTO；只记录当前 root Action。
 */
 function createSearchResult({
   request,
   action = null,
-  plannedActions = [],
   stats = null,
   status,
   rejectionReason = null,
@@ -291,7 +289,6 @@ function createSearchResult({
     status,
     rejectionReason,
     action,
-    plannedActions:Object.freeze([...(plannedActions ?? [])]),
     stats:stats ? Object.freeze({ ...stats }) : null,
     rngAfter:rngAfter ? Object.freeze({ ...rngAfter }) : null
   });
@@ -429,7 +426,7 @@ export function createRuntimeComposition({
     decideBlock:(...args) => evaluator.decidePlanningBlock(...args),
     decideGuardianAid:(...args) => evaluator.decidePlanningGuardianAid(...args),
     decideDyingRescue:(...args) => evaluator.decidePlanningDyingRescue(...args),
-    resolveDiscardCandidates:(...args) => evaluator.resolveDiscardCandidates(...args)
+    resolveDiscardCandidates:chooseDiscardCandidates
   });
   return { evaluator, simulatorFactory };
 }
@@ -502,7 +499,7 @@ WorkerSearchRuntime 的 local 与 Dedicated Worker dispatch。
 Canonical request 与 Worker-safe runtime control。
 
 输出
-Canonical Action、计划、stats、stop reason、RNG continuation 与取消标记。
+当前 root canonical Action、stats、stop reason、RNG continuation 与取消标记。
 
 读取状态
 request 的 World、Action、config 与 RNG snapshot。
@@ -533,7 +530,6 @@ export async function executeSearchRequest(request, runtimeControl = {}) {
   const cancelled = engine.searcher.lastSearchStats?.stopReason === "CANCELLED";
   return {
     action:cancelled ? null : action,
-    plannedActions:cancelled ? [] : engine.searcher.lastSequence,
     stats:engine.searcher.lastSearchStats,
     searchStopReason:engine.searcher.lastSearchStats?.stopReason ?? null,
     rngAfter:rng.snapshot(),
@@ -550,7 +546,7 @@ export class Controller {
   MatchApplication composition root 与直接构造测试。
 
   输入
-  显式 narrow dependencies（state/session/rule capability/search RNG/lifecycle/rebind）。
+  显式 narrow dependencies（state/session/rule capability/search RNG/lifecycle/current entity lookup）。
 
   输出
   完成装配的 Controller；缺少必要运行能力时由子组件构造立即失败。
@@ -608,7 +604,6 @@ export class Controller {
     this.lastSearchFallback = null;
     this.lastDecisionDiagnostics = null;
     this.lastMainThreadOperationDiagnostics = null;
-    this.acceptedPlannedSequence = [];
     this.lastSearchStats = null;
     this.committedRngRequestIds = new Set();
     this.searchDiagnostics = {
@@ -655,7 +650,7 @@ export class Controller {
   Generator.generate。
 
   边界与不变量
-  Domain Rules 定义确定性游戏合法性，ActionCandidatePolicy 只决定 AI 是否考虑候选；门面不得额外筛选或重排，也不得把策略拒绝解释为游戏非法。
+  Domain Rules 定义确定性游戏合法性；门面不得额外筛选或重排 Generator 的 canonical 候选。
   */
   getActionCandidates(player, world = null) {
     const currentState = this.getState();
@@ -731,7 +726,7 @@ export class Controller {
   当前 GameState、合法 Fact 与搜索配置。
 
   写入状态
-  最近搜索诊断与计划序列。
+  最近搜索诊断与当前 root Action acceptance 记录。
 
   调用函数
   deriveCurrentCardCounts、createInitialWorld、getActionCandidates、Searcher.search。
@@ -813,7 +808,7 @@ export class Controller {
   验证当前 main-thread state 是否仍接受一次 SearchRequest 的结果。
 
   调用方
-  acceptSearchResult。
+  acceptWorkerSearchOutcome。
 
   输入
   player 与 SearchRequest。
@@ -831,7 +826,7 @@ export class Controller {
   isSessionValid。
 
   边界与不变量
-  stateVersion 只保护一次异步 search result；queued planned sequence 走 resolvePlannedAction 的 current-state rebind。
+  stateVersion 保护本次异步 search result；每个真实 Action 后下一步都会从新 stateVersion 重新搜索。
   */
   validateRequestAcceptance(player, request) {
     if (!this.isSessionValid(request.gameId)) {
@@ -858,10 +853,10 @@ export class Controller {
   判断 Searcher 返回 action 是否属于本次请求的 canonical root Action 集合。
 
   调用方
-  acceptSearchResult。
+  acceptWorkerSearchOutcome。
 
   输入
-  descriptor 与 request.rootActions。
+  canonical Action 与 request.rootActions。
 
   输出
   布尔值。
@@ -873,7 +868,7 @@ export class Controller {
   无。
 
   调用函数
-  JSON.stringify。
+  sameAction。
 
   边界与不变量
   只用稳定普通字段比较；不会把策略收窄后的 root set 当成完整游戏合法集。
@@ -935,7 +930,7 @@ export class Controller {
   无。
 
   调用函数
-  Generator.createEndAction。
+  createAction。
 
   边界与不变量
   该路径不评分、不排序、不执行 Searcher/Simulator，也不尝试替代 AI 决策；
@@ -947,7 +942,7 @@ export class Controller {
       : this.getActionCandidates(player);
     return {
       action:candidates.find((action) => action?.type === "end")
-        ?? this.actionGenerator.createEndAction(player.id)
+        ?? createAction({ type:"end", actorId:player.id })
     };
   }
 
@@ -965,17 +960,17 @@ export class Controller {
   { action, result }；正常结果执行权威重绑，Worker fault 返回已重新比较的合法 fallback。
 
   读取状态
-  current GameState、session、request、outcome、Domain candidate set 与 Search Prior。
+  current GameState、session、request、outcome 与 decision-local root set。
 
   写入状态
-  searchRng continuation、lastWorkerOutcome、lastSearchResult、lastSearchFallback、acceptedPlannedSequence。
+  searchRng continuation、lastWorkerOutcome、lastSearchResult 与 lastSearchFallback。
 
   调用函数
   workerOutcomeViolations、selectWorkerFailureFallback、commitWorkerRng、validateRequestAcceptance、
-  isDescriptorInRootSet、resolvePlannedAction、createSearchResult。
+  isActionInRootSet、createSearchResult。
 
   边界与不变量
-  Worker 不宣布 ACCEPTED；Main Thread 验证全部身份/version/actor/phase/rebind/legality；
+  Worker 不宣布 ACCEPTED；Main Thread 验证全部身份/version/actor/phase/root membership；
   CANCELLED 与 stale 状态仍安全结束；validation 通过时允许复用同一 decision 已生成的合法实体根，
   但不得跨 stateVersion 或跨 decision 缓存。
   */
@@ -994,21 +989,18 @@ export class Controller {
         const result = createSearchResult({
           request,
           action:null,
-          plannedActions:[],
           stats:outcome?.stats ?? null,
           status:validation.status,
           rejectionReason:validation.reason,
           rngAfter:null
         });
         this.lastSearchResult = result;
-        this.acceptedPlannedSequence = [];
-        return { action:this.actionGenerator.createEndAction(request.actorId), result };
+        return { action:createAction({ type:"end", actorId:request.actorId }), result };
       }
       const fallback = this.selectWorkerFailureFallback(player, decisionRootActions);
       const result = createSearchResult({
         request,
         action:fallback.action,
-        plannedActions:[],
         stats:outcome?.stats ?? null,
         status:SEARCH_RESULT_STATUS.FALLBACK,
         rejectionReason:fallbackReason,
@@ -1021,7 +1013,6 @@ export class Controller {
       });
       this.searchDiagnostics.FALLBACK += 1;
       this.lastSearchResult = result;
-      this.acceptedPlannedSequence = [];
       return { action:fallback.action, result };
     }
     if (outcome.cancelled || outcome.searchStopReason === "CANCELLED") {
@@ -1029,15 +1020,13 @@ export class Controller {
       const result = createSearchResult({
         request,
         action:null,
-        plannedActions:[],
         stats:outcome.stats,
         status:SEARCH_RESULT_STATUS.CANCELLED,
         rejectionReason:"cancelled",
         rngAfter:null
       });
       this.lastSearchResult = result;
-      this.acceptedPlannedSequence = [];
-      return { action:this.actionGenerator.createEndAction(request.actorId), result };
+      return { action:createAction({ type:"end", actorId:request.actorId }), result };
     }
 
     const player = this.getState().players.find((entry) => entry.id === request.actorId) ?? null;
@@ -1046,15 +1035,13 @@ export class Controller {
       const result = createSearchResult({
         request,
         action:null,
-        plannedActions:[],
         stats:outcome.stats,
         status:validation.status,
         rejectionReason:validation.reason,
         rngAfter:null
       });
       this.lastSearchResult = result;
-      this.acceptedPlannedSequence = [];
-      return { action:this.actionGenerator.createEndAction(request.actorId), result };
+      return { action:createAction({ type:"end", actorId:request.actorId }), result };
     }
 
     const action = outcome.action;
@@ -1062,28 +1049,24 @@ export class Controller {
       const result = createSearchResult({
         request,
         action:null,
-        plannedActions:[],
         stats:outcome.stats,
         status:SEARCH_RESULT_STATUS.INVALID_ACTION,
         rejectionReason:"action not in request root set",
         rngAfter:null
       });
       this.lastSearchResult = result;
-      this.acceptedPlannedSequence = [];
-      return { action:this.actionGenerator.createEndAction(request.actorId), result };
+      return { action:createAction({ type:"end", actorId:request.actorId }), result };
     }
 
     const rngCommitted = this.commitWorkerRng(request, outcome);
     const result = createSearchResult({
       request,
       action,
-      plannedActions:outcome.plannedActions,
       stats:outcome.stats,
       status:SEARCH_RESULT_STATUS.ACCEPTED,
       rngAfter:rngCommitted ? outcome.rngAfter : null
     });
     this.lastSearchResult = result;
-    this.acceptedPlannedSequence = [...(outcome.plannedActions ?? [])];
     this.searchDiagnostics.RESULT += 1;
     return { action, result };
   }
@@ -1117,7 +1100,7 @@ export class Controller {
   async selectAction(player, options = {}) {
     const state = this.getState();
     if (!this.isSessionValid(options.gameId ?? state.gameId)) {
-      return this.actionGenerator.createEndAction(player.id);
+      return createAction({ type:"end", actorId:player.id });
     }
     const preWorkerStartedAt = decisionNow();
     const mainThreadOperations = [];
@@ -1165,7 +1148,6 @@ export class Controller {
       const cancelled = /\bcancell?ed\b/iu.test(errorMessage);
       outcome = createWorkerSearchOutcome({ request,
         action:null,
-        plannedActions:[],
         stats:null,
         searchStopReason:cancelled ? "CANCELLED" : null,
         rngAfter:this.searchRng.snapshot(),
@@ -1203,168 +1185,6 @@ export class Controller {
   }
   /*
   功能
-  返回搜索运行时诊断计数器的隔离副本。
-
-  调用方
-  runtime diagnostics、测试与 browser console audit。
-
-  输入
-  无。
-
-  输出
-  SEARCH/RESULT/CANCEL/WATCHDOG/STALE/WORKER_ERROR/FALLBACK 计数副本。
-
-  读取状态
-  searchDiagnostics。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  仅 diagnostics；不得被任何策略、候选排序或 RNG commit 读取。
-  */
-  getSearchDiagnostics() {
-    return { ...this.searchDiagnostics };
-  }
-
-  /*
-  功能
-  返回最近一次真实 selectAction 的阶段耗时与 pre-worker 工作摘要。
-
-  调用方
-  runtime diagnostics、真实入口回归与 browser console audit。
-
-  输入
-  无。
-
-  输出
-  最近 decision diagnostics 的隔离副本；尚未决策时返回 null。
-
-  读取状态
-  lastDecisionDiagnostics。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  仅诊断；不得被搜索预算、合法性、评分、fallback 或 RNG 读取。
-  */
-  getLastDecisionDiagnostics() {
-    return this.lastDecisionDiagnostics
-      ? {
-          ...this.lastDecisionDiagnostics,
-          mainThreadOperations:[...(this.lastDecisionDiagnostics.mainThreadOperations ?? [])]
-        }
-      : null;
-  }
-
-  /*
-  功能
-  返回最近一次同步 main-thread AI 边界操作的数字诊断。
-
-  调用方
-  runtime diagnostics、focused regression 与 browser console audit。
-
-  输入
-  无。
-
-  输出
-  最近 operation/timing/count 的隔离副本；尚未执行时返回 null。
-
-  读取状态
-  lastMainThreadOperationDiagnostics。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  只读诊断，不得被 Evaluator response willingness、runtime card resolution、搜索或 RNG 使用。
-  */
-  getLastMainThreadOperationDiagnostics() {
-    return this.lastMainThreadOperationDiagnostics
-      ? { ...this.lastMainThreadOperationDiagnostics }
-      : null;
-  }
-
-  /*
-  功能
-  将搜索计划中的动作描述重新绑定到当前真实局面的 AI 候选动作。
-
-  调用方
-  TurnWorkflow 复用计划序列时。
-
-  输入
-  当前行动 Player、稳定动作描述与可选 decision-local 合法根集合。
-
-  输出
-  匹配的当前动作；状态变化导致不匹配时返回 null。
-
-  读取状态
-  当前通过规则校验并经 AI 候选策略过滤的动作集合。
-
-  写入状态
-  无。
-
-  调用函数
-  getActionCandidates。
-
-  边界与不变量
-  实体牌优先按实例 ID 重绑，目标顺序和选择字段必须完全一致；外部计划复用仍重新生成当前合法集合，
-  只有同一 request 且 stateVersion 已验证的 selectAction acceptance 可提供 decision-local 集合。
-  */
-  resolvePlannedAction(player, plannedAction, decisionRootActions = null) {
-    if (!plannedAction) return null;
-    const state = this.getState();
-    if (!this.isSessionValid(state.gameId)) return null;
-    const currentPlayer = state.players[state.currentPlayerIndex] ?? null;
-    if (!player?.alive || currentPlayer?.id !== player.id || state.phase !== "play") return null;
-    const candidates = Array.isArray(decisionRootActions)
-      ? decisionRootActions
-      : this.getActionCandidates(player);
-    const intentKey = actionIntentKey(plannedAction);
-    return candidates.find((action) => actionIntentKey(action) === intentKey) ?? null;
-  }
-
-  /*
-  功能
-  返回最近一次已接受 Worker 搜索序列的隔离副本。
-
-  调用方
-  TurnWorkflow 可选连续计划执行路径。
-
-  输入
-  无。
-
-  输出
-  动作序列浅副本。
-
-  读取状态
-  acceptedPlannedSequence。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  调用方不得通过返回数组修改 Controller 已接受的 canonical Action 序列。
-  */
-  getPlannedSequence() {
-    return [...this.acceptedPlannedSequence];
-  }
-
-  /*
-  功能
   选择需要弃置的实体牌。
 
   调用方
@@ -1383,7 +1203,7 @@ export class Controller {
   无。
 
   调用函数
-  inAttackRange、Evaluator.resolveDiscardCandidates。
+  inAttackRange、chooseDiscardCandidates。
 
   边界与不变量
   门面不改动选择结果或牌序。
@@ -1395,7 +1215,7 @@ export class Controller {
     const stranded = enemies.length > 0 && !enemies.some(
       (enemy) => inAttackRange({ state }, player, enemy)
     );
-    const cards = this.evaluator.resolveDiscardCandidates(
+    const cards = chooseDiscardCandidates(
       player,
       player.hand,
       count,
@@ -1408,7 +1228,7 @@ export class Controller {
       }
     );
     this.recordMainThreadOperation(
-      "Evaluator.resolveDiscardCandidates",
+      "Evaluator.chooseDiscardCandidates",
       startedAt,
       { candidateCount:player?.hand?.length }
     );
@@ -1871,35 +1691,6 @@ export class Controller {
       { candidateCount:this.getState()?.players?.length }
     );
     return assessment;
-  }
-
-  /*
-  功能
-  通过 Controller runtime binding 评估护援响应。
-
-  调用方
-  护援专项测试与真实响应入口。
-
-  输入
-  守誓者与公开伤害上下文。
-
-  输出
-  是否发动护援。
-
-  读取状态
-  当前 GameState、Probability 与窄 simulation query。
-
-  写入状态
-  无。
-
-  调用函数
-  shouldRespond。
-
-  边界与不变量
-  与 skill 响应窗口共用同一 Evaluator willingness，Controller 不增加阈值。
-  */
-  shouldUseGuardianAid(responder, context) {
-    return this.shouldRespond(responder, "skill", context, []);
   }
 
 }

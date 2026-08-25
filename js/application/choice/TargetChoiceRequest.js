@@ -41,7 +41,7 @@ requestId、actorId、gameId、stateVersion、targets、label 与 source/card fa
 Object.freeze。
 
 边界与不变量
-kind 固定为 target；canDecline false；AI Planner 不走该 Choice。
+kind 固定为 target；canDecline false；AI search 不走该 Choice。
 */
 export function createTargetChoiceRequest({
   requestId,

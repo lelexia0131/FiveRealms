@@ -12,7 +12,7 @@ Application Combat/Turn workflows、Domain transitions 与 narrow collaborators�
 Domain mutation 经 transitions；随机与移动经注入 collaborator。
 
 信息边界
-不读取 UI/AI/Planner 或 hidden hand；只使用 target entity 执行。
+不读取 UI/AI search internals 或 hidden hand；只使用 target entity 执行。
 
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、ActionLegality 或 concrete adapters。

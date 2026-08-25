@@ -14132,7 +14132,8 @@ test("AI·资源闭合：旧 Resource owner 删除且 Simulation 无价值选择
     assert.doesNotMatch(source[name], /from\s+["'][^"']*\/(?:policy|value)\//, name);
   }
   assert.doesNotMatch(source.card, /\.(?:sort|toSorted)\(/);
-  assert.match(source.controller, /resolveDiscardCandidates:\(\.\.\.args\) => evaluator\.resolveDiscardCandidates/);
+  assert.match(source.controller, /resolveDiscardCandidates:chooseDiscardCandidates/);
+  assert.doesNotMatch(source.evaluator, /\bresolveDiscardCandidates\s*\(/);
   assert.doesNotMatch(source.worker, /resolveDiscardCandidates/);
   assert.doesNotMatch(
     source.controller,
@@ -15099,55 +15100,6 @@ function testMissingAiDependenciesFailAtConstruction() {
 }
 
 test("AI·依赖注入：缺少必要能力时构造立即给出依赖名", testMissingAiDependenciesFailAtConstruction);
-
-/*
-功能
-验证 Controller 只公开 Generator 候选并保持 canonical descriptor 重绑语义。
-
-调用方
-AI 依赖注入回归测试。
-
-输入
-合法转移牌、敌方资源与当前 GameState。
-
-输出
-门面、生成器和描述重绑返回同一 canonical 选择及当前动作。
-
-读取状态
-AIController、ActionGenerator 与当前合法动作集合。
-
-写入状态
-无。
-
-调用函数
-AIController.getActionCandidates、resolvePlannedAction、describeBenchmarkAction。
-
-边界与不变量
-Controller 不排序候选；selection 必须来自 Generator，descriptor 必须按当前实体重绑。
-*/
-function testControllerFacadePreservesTransferAndDescriptor() {
-  const actor = makePlayer("di-facade-actor", 0, "dawn", "ai", 0);
-  const ally = makePlayer("di-facade-ally", 1, "dawn", "ai", 1);
-  const enemy = makePlayer("di-facade-enemy", 2, "dusk", "ai", 2);
-  const transfer = instance("transfer");
-  actor.hand.push(transfer);
-  ally.hand.push(instance("block"));
-  enemy.hand.push(instance("assault"));
-  const { game } = makeGame([actor, ally, enemy]);
-  const controller = game.aiController;
-  const action = controller.getActionCandidates(actor).find((entry) => (
-    entry.cardInstanceId === transfer.id
-    && entry.selection?.sourceId === enemy.id
-    && entry.selection?.receiverId === actor.id
-    && entry.selection?.selectionKind === "unknown"
-  ));
-  assert.ok(action);
-  const descriptor = describeBenchmarkAction(action);
-  const rebound = controller.resolvePlannedAction(actor, descriptor);
-  assert.deepEqual(describeBenchmarkAction(rebound), descriptor);
-}
-
-test("AI·依赖注入：Controller 门面保持转移选择与 descriptor 重绑", testControllerFacadePreservesTransferAndDescriptor);
 
 // ---- AI 模拟器架构回归 ----
 
@@ -16917,7 +16869,7 @@ test("AI·搜索：壁垒固定场景的 end 由完整账本证明而非概率�
   }
 });
 
-test("AI·搜索：D4 固定场景按 P06 优先完整探索且仍由真实 Utility 选根", async () => {
+test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", async () => {
   const game = makeBenchmarkGame({
     players: [
       {
@@ -16954,25 +16906,32 @@ test("AI·搜索：D4 固定场景按 P06 优先完整探索且仍由真实 Util
       JSON.stringify(game.aiController.lastWorkerOutcome)
     );
     assert.deepEqual(describeBenchmarkAction(action), {
-      type: "card", cardId: "assault", cardInstanceId: "d4-assault",
+      type: "skill", cardId: "stealSkill", cardInstanceId: null,
       targetId: "b", targetIds: ["b"], selection: null
     });
-    assert.deepEqual(stats.bestSequence.map((entry) => [entry.type, entry.cardId, entry.targetId]), [
+    assert.deepEqual(stats.bestSequence.map((entry) => [
+      entry.type,
+      entry.cardId ?? entry.skillId,
+      entry.targetIds?.[0] ?? null
+    ]), [
+      ["skill", "stealSkill", "b"],
+      ["card", "seal", "c"],
       ["card", "assault", "b"],
-      ["card", "seal", "b"],
-      ["skill", "stealSkill", "c"],
-      ["card", "plunder", "b"]
+      ["end", null, null]
     ], JSON.stringify(stats));
-    assert.equal(stats.expanded, 200);
+    assert.deepEqual(stats.bestSequence[0], action);
+    assert.notDeepEqual(stats.scheduledRootOrder[0], action,
+      "最终 root 必须由完整未来价值决定，而不是照搬首个调度动作");
+    assert.equal(stats.expanded, 102);
     assert.equal(stats.depth, 4);
     assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 2.0228933886090275);
-    assert.equal(stats.stopReason, "NODE");
-    assert.equal(stats.simulationCalls, 308);
+    assert.equal(stats.bestValueScore, 2.5842210063856244);
+    assert.equal(stats.stopReason, "COMPLETE");
+    assert.equal(stats.simulationCalls, 186);
     assert.equal(stats.matchedPatternCount, 1);
     assert.equal(stats.patternProposalCount, 1);
     assert.equal(stats.completedPatternCount, 1);
-    assert.equal(stats.patternIncumbentUpdateCount, 1);
+    assert.equal(stats.patternIncumbentUpdateCount, 0);
     assert.equal(stats.selectedPatternId, "SEAL_LAST");
   } finally {
     disposeBenchmarkGame(game);
@@ -18622,32 +18581,86 @@ test("AI·搜索：到达搜索预算仍返回当前最佳合法动作", async (
 
 
 
-test("AI·搜索：关闭逐动作重规划时会复用仍合法的束搜索牌序", async () => {
-  const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
-  const charge = instance("charge");
-  actor.hand.push(charge);
-  const { game }
-    = makeGame([actor, enemy]);
-  game.aiReplanAfterEveryAction = false;
-  let plans = 0;
+/*
+功能
+证明真实 Action 提交后必须重新搜索，即使旧搜索的下一步仍合法也不能自动执行。
+
+调用方
+AI 搜索与规划回归测试。
+
+输入
+初始可搜索 A→B 的守誓者局面；A 提交后 B 仍合法，而新搜索选择 C。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+独立 Game、Controller 搜索诊断与每次真实提交后的最新候选。
+
+写入状态
+真实执行聚能 A、壁垒 C，并保留未执行的旧 B。
+
+调用函数
+getActionCandidates、takeAiPlayPhase、playCard、useActiveSkill。
+
+边界与不变量
+Searcher 的多步诊断不构成执行队列；每个真实 Action 后 selectAction 必须再次读取新 stateVersion。
+*/
+async function realActionAlwaysTriggersFreshSearch() {
+  const actor = makePlayer("fresh-search-actor", 0, "dawn", "ai", 1);
+  const ally = makePlayer("fresh-search-ally", 1, "dawn", "ai", 2);
+  const enemies = [
+    makePlayer("fresh-search-enemy-a", 2, "dusk", "ai", 3),
+    makePlayer("fresh-search-enemy-b", 3, "dusk", "ai", 4),
+    makePlayer("fresh-search-enemy-c", 4, "dusk", "ai", 5)
+  ];
+  const firstCharge = instance("charge");
+  const oldNextShield = instance("shield");
+  actor.energy = 1;
+  actor.hand.push(firstCharge, oldNextShield);
+  const { game } = makeGame([actor, ally, ...enemies]);
+  const initialCandidates = game.aiController.getActionCandidates(actor);
+  const firstAction = initialCandidates.find(
+    (action) => action.cardInstanceId === firstCharge.id
+  );
+  const oldNextAction = initialCandidates.find(
+    (action) => action.cardInstanceId === oldNextShield.id
+  );
+  assert.ok(firstAction && oldNextAction);
+  const searchedVersions = [];
+  let searchCalls = 0;
   game.aiController.selectAction = async () => {
-    plans += 1;
-    game.aiController.planner.lastPlannedSequence = [
-      createAction({
-        type:"card",
-        actorId:actor.id,
-        cardId:"charge",
-        cardInstanceId:charge.id
-      }),
-      createAction({ type:"end", actorId:actor.id })
-    ];
-    return game.aiController.planner.lastPlannedSequence[0];
+    searchCalls += 1;
+    searchedVersions.push(game.state.stateVersion);
+    if (searchCalls === 1) {
+      game.aiController.lastSearchStats = { bestSequence:[firstAction, oldNextAction] };
+      return firstAction;
+    }
+    const currentCandidates = game.aiController.getActionCandidates(actor);
+    if (searchCalls === 2) {
+      assert.ok(currentCandidates.some(
+        (action) => action.cardInstanceId === oldNextShield.id
+      ), "旧搜索中的 B 在真实执行 A 后仍然合法");
+      const freshBest = currentCandidates.find((action) => (
+        action.type === "skill"
+        && action.skillId === "barrier"
+        && action.targetIds[0] === ally.id
+      ));
+      assert.ok(freshBest, "执行 A 后的新 World 应出现最佳动作 C");
+      return freshBest;
+    }
+    return currentCandidates.find((action) => action.type === "end");
   };
+
   await game.takeAiPlayPhase(actor, game.state.gameId);
-  assert.equal(plans, 1);
-  assert.equal(actor.energy, 1);
-  assert.equal(actor.hand.length, 0);
-});
+
+  assert.equal(searchCalls, 3);
+  assert.ok(searchedVersions[1] > searchedVersions[0]);
+  assert.ok(actor.hand.includes(oldNextShield), "合法旧 B 不得绕过新搜索自动执行");
+  assert.equal(ally.shield, 1, "新搜索选择的 C 必须成为第二个真实动作");
+}
+
+test("AI·搜索：真实 Action 后强制重搜且合法旧后续不得自动执行", realActionAlwaysTriggersFreshSearch);
 
 test("AI·搜索：aiRandomnessRange 控制近似同分动作的评分扰动", () => {
   const actor = makePlayer("a", 0, "dawn"), enemy = makePlayer("b", 1, "dusk");
@@ -19154,7 +19167,7 @@ test("AI·搜索：影客不得结束并强制弃掉四张突袭与三张合法�
   assert.equal(faultChoice.type, "end");
   assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.FALLBACK);
   assert.equal(game.aiController.lastSearchFallback.source, "generator-safe-end");
-  assert.equal(game.aiController.getSearchDiagnostics().FALLBACK, 1);
+  assert.equal(game.aiController.searchDiagnostics.FALLBACK, 1);
 });
 
 /*
@@ -19246,7 +19259,7 @@ async function runHighBranchingShadeWorkerFixture({
       searchTimeBudgetMs:timeBudgetMs
     });
     const outcome = game.aiController.lastWorkerOutcome;
-    const diagnostics = game.aiController.getLastDecisionDiagnostics();
+    const diagnostics = game.aiController.lastDecisionDiagnostics;
     const evidence = {
       rootCandidateCount:game.aiController.lastSearchRequest.rootActions.length,
       assaultRootCount:game.aiController.lastSearchRequest.rootActions.filter(
@@ -19332,7 +19345,6 @@ test("AI·搜索：高分支 P07 root 超时时未完成 Pattern 不替代基础
   assert.deepEqual(outcome.stats.provisionalFallbackAction, outcome.action);
   assert.equal(outcome.stats.bestValueScore, null);
   assert.deepEqual(outcome.stats.bestSequence, []);
-  assert.deepEqual(outcome.plannedActions, []);
   assert.equal(evidence.inputStateUnchanged, true,
     "中断 preparation 的 identity/availability/projected state 不得泄漏回输入 SearchState");
   assert.equal(outcome.stats.partialCandidateRegistered, 0);
@@ -19405,7 +19417,7 @@ test("AI·搜索：主线程 Response 只记录 focused timing/count", () => {
     { source:target, target:actor, amount:1 },
     [instance("block")]
   );
-  const responseDiagnostics = game.aiController.getLastMainThreadOperationDiagnostics();
+  const responseDiagnostics = game.aiController.lastMainThreadOperationDiagnostics;
   assert.equal(responseDiagnostics.operation, "AIController.shouldRespond");
   assert.equal(responseDiagnostics.candidateCount, 1);
   assert.equal(responseDiagnostics.worldCount, "unavailable");
@@ -21101,10 +21113,10 @@ test("AI·搜索：Worker 故障时 only-End 合法局面仍可确定结束", as
   assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.FALLBACK);
   assert.equal(game.aiController.lastSearchFallback.source, "generator-safe-end");
   assert.equal(game.aiController.lastSearchFallback.action.type, "end");
-  assert.equal(game.aiController.getSearchDiagnostics().FALLBACK, 1);
+  assert.equal(game.aiController.searchDiagnostics.FALLBACK, 1);
   assert.equal(rootGenerationCalls, 1);
-  assert.equal(game.aiController.getLastDecisionDiagnostics().physicalRootCount, 1);
-  assert.equal(game.aiController.getLastDecisionDiagnostics().uniqueRootCount, 1);
+  assert.equal(game.aiController.lastDecisionDiagnostics.physicalRootCount, 1);
+  assert.equal(game.aiController.lastDecisionDiagnostics.uniqueRootCount, 1);
 });
 
 test("AI·搜索：Worker 主动取消不会进入 fault fallback 执行动作", async () => {
@@ -21121,8 +21133,8 @@ test("AI·搜索：Worker 主动取消不会进入 fault fallback 执行动作",
   assert.equal(chosen.type, "end");
   assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.CANCELLED);
   assert.equal(game.aiController.lastSearchFallback, null);
-  assert.equal(game.aiController.getSearchDiagnostics().CANCEL, 1);
-  assert.equal(game.aiController.getSearchDiagnostics().FALLBACK, 0);
+  assert.equal(game.aiController.searchDiagnostics.CANCEL, 1);
+  assert.equal(game.aiController.searchDiagnostics.FALLBACK, 0);
 });
 
 test("AI·搜索：Worker 故障时 Controller 不评分且只返回 Generator 安全结束", async () => {
@@ -21566,7 +21578,7 @@ test("AI·搜索：手牌超过生命上限时 end 不再因虚假保留将弃�
   assert.equal(chosen.card.definitionId, "assault");
 });
 
-test("AI·搜索：关闭逐动作重规划时转移描述只保存稳定ID并可重新绑定", () => {
+test("AI·资源身份：转移 Action 只保存可执行选择 ID", () => {
   const actor = makePlayer("transfer-rebind-actor", 0, "dawn"),
     from = makePlayer("transfer-rebind-from", 1, "dusk"),
     receiver = makePlayer("transfer-rebind-receiver", 2, "dawn"),
@@ -21581,7 +21593,6 @@ test("AI·搜索：关闭逐动作重规划时转移描述只保存稳定ID并�
   assert.equal(Object.hasOwn(descriptor.selection, "source"), false);
   assert.equal(Object.hasOwn(descriptor.selection, "score"), false);
   assert.equal(Object.hasOwn(descriptor.selection, "expectedValue"), false);
-  assert.ok(game.aiController.resolvePlannedAction(actor, structuredClone(descriptor)));
 });
 
 test("AI·搜索：破势在多次突袭中进入最后一次可兑现突袭之前", async () => {
@@ -22819,7 +22830,7 @@ test("AI·SearchRequest：structured clone / data-only / no hidden leak", frArch
 
 /*
 功能
-验证 AIController result acceptance 的 session/stateVersion/actor/phase/rebind 拒绝语义。
+验证 Controller result acceptance 的 session/stateVersion/actor/phase/root identity 拒绝语义。
 
 调用方
 当前测试。
@@ -22834,16 +22845,16 @@ test("AI·SearchRequest：structured clone / data-only / no hidden leak", frArch
 生产 AIController boundary 与当前 Game state。
 
 写入状态
-测试 Game stateVersion/phase/hand。
+测试 Game stateVersion/phase/actor。
 
 调用函数
-createSearchRequest、acceptSearchResult、bumpStateVersion。
+createSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome、bumpStateVersion。
 
 边界与不变量
-任一失败只能返回安全 end；合法 descriptor 必须在当前 Domain-legal set rebind。
+任一失败只能返回安全 end；接受边界只允许本次 request root set 中的 canonical Action。
 */
 async function frArch13StaleResultRejection() {
-  const { createSearchRequest } = await import("../js/ai/Controller.js");
+  const { createSearchRequest, createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
   const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
   const actor = makePlayer("stale-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("stale-enemy", 1, "dusk", "ai", 1);
@@ -22872,25 +22883,38 @@ async function frArch13StaleResultRejection() {
   );
   assert.ok(action);
   const request = makeRequest();
-  const accepted = controller.acceptSearchResult({
+  const accepted = controller.acceptWorkerSearchOutcome(request, createWorkerSearchOutcome({
     request,
     action,
-    plannedSequence: [action],
-    stats: { stopReason: "COMPLETE" }
-  });
+    stats:{ stopReason:"COMPLETE" },
+    searchStopReason:"COMPLETE",
+    rngAfter:request.rng
+  }), request.rootActions);
   assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
   assert.equal(accepted.action.cardInstanceId, card.id);
 
   bumpStateVersion(game.state);
-  const stale = controller.acceptSearchResult({ request, action, plannedSequence: [], stats: null });
+  const stale = controller.acceptWorkerSearchOutcome(request, createWorkerSearchOutcome({
+    request,
+    action,
+    searchStopReason:"COMPLETE",
+    rngAfter:request.rng
+  }), request.rootActions);
   assert.equal(stale.result.status, SEARCH_RESULT_STATUS.STALE_VERSION);
   assert.equal(stale.action.type, "end");
   bumpStateVersion(game.state);
   const freshRequest = makeRequest();
   game.state.isDisposed = true;
-  const invalidSession = controller.acceptSearchResult({
-    request: freshRequest, action, plannedSequence: [], stats: null
-  });
+  const invalidSession = controller.acceptWorkerSearchOutcome(
+    freshRequest,
+    createWorkerSearchOutcome({
+      request:freshRequest,
+      action,
+      searchStopReason:"COMPLETE",
+      rngAfter:freshRequest.rng
+    }),
+    freshRequest.rootActions
+  );
   assert.equal(invalidSession.result.status, SEARCH_RESULT_STATUS.INVALID_SESSION);
   assert.equal(invalidSession.action.type, "end");
   game.state.isDisposed = false;
@@ -22899,72 +22923,58 @@ async function frArch13StaleResultRejection() {
   const validAgain = makeRequest();
   assert.equal(validAgain.stateVersion, versionNow);
   actor.alive = false;
-  const deadActor = controller.acceptSearchResult({ request: validAgain, action, plannedSequence: [], stats: null });
+  const deadActor = controller.acceptWorkerSearchOutcome(
+    validAgain,
+    createWorkerSearchOutcome({
+      request:validAgain,
+      action,
+      searchStopReason:"COMPLETE",
+      rngAfter:validAgain.rng
+    }),
+    validAgain.rootActions
+  );
   assert.equal(deadActor.result.status, SEARCH_RESULT_STATUS.INVALID_ACTOR);
   assert.equal(deadActor.action.type, "end");
   actor.alive = true;
 
   const phaseNowRequest = makeRequest();
   game.state.phase = "discard";
-  const wrongPhase = controller.acceptSearchResult({ request: phaseNowRequest, action, plannedSequence: [], stats: null });
+  const wrongPhase = controller.acceptWorkerSearchOutcome(
+    phaseNowRequest,
+    createWorkerSearchOutcome({
+      request:phaseNowRequest,
+      action,
+      searchStopReason:"COMPLETE",
+      rngAfter:phaseNowRequest.rng
+    }),
+    phaseNowRequest.rootActions
+  );
   assert.equal(wrongPhase.result.status, SEARCH_RESULT_STATUS.INVALID_PHASE);
   assert.equal(wrongPhase.action.type, "end");
   game.state.phase = "play";
 
-  const movedRequest = makeRequest();
-  actor.hand = [];
-  const moved = controller.acceptSearchResult({ request: movedRequest, action, plannedSequence: [], stats: null });
-  assert.equal(moved.result.status, SEARCH_RESULT_STATUS.INVALID_ACTION);
-  assert.equal(moved.action.type, "end");
-}
-
-test("AI·陈旧结果拒绝：session/stateVersion/actor/phase/rebind 全拒绝", frArch13StaleResultRejection);
-
-/*
-功能
-验证 queued planned sequence 在自身 action commit bump stateVersion 后仍按 current-state rebind，非法项返回 null。
-
-调用方
-当前测试。
-
-输入
-无。
-
-输出
-无返回值，断言失败时抛错。
-
-读取状态
-AIController resolvePlannedAction 与 Domain candidate set。
-
-写入状态
-测试 Game stateVersion 与手牌。
-
-调用函数
-bumpStateVersion。
-
-边界与不变量
-第一项执行后的 version 变化不得让第二项必然 stale；失效动作只返回 null，由 TurnWorkflow 清空 plan。
-*/
-async function frArch13PlannedSequenceReuse() {
-  const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
-  const actor = makePlayer("plan-actor", 0, "dawn", "ai", 2);
-  const enemy = makePlayer("plan-enemy", 1, "dusk", "ai", 1);
-  const charge = instance("charge");
-  actor.hand.push(charge);
-  const { game } = makeGame([actor, enemy]);
-  const action = game.aiController.getActionCandidates(actor).find(
-    (entry) => entry.cardInstanceId === charge.id
+  const invalidRequest = makeRequest();
+  const foreignAction = createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"charge",
+    cardInstanceId:"not-in-root-set"
+  });
+  const invalid = controller.acceptWorkerSearchOutcome(
+    invalidRequest,
+    createWorkerSearchOutcome({
+      request:invalidRequest,
+      action:foreignAction,
+      searchStopReason:"COMPLETE",
+      rngAfter:invalidRequest.rng
+    }),
+    invalidRequest.rootActions
   );
-  const first = game.aiController.resolvePlannedAction(actor, action);
-  assert.equal(first?.cardInstanceId, charge.id);
-  bumpStateVersion(game.state);
-  const second = game.aiController.resolvePlannedAction(actor, action);
-  assert.equal(second?.cardInstanceId, charge.id, "queued plan 第二项不得因 stateVersion 变化而必然 stale");
-  actor.hand = [];
-  assert.equal(game.aiController.resolvePlannedAction(actor, action), null);
+  assert.equal(invalid.result.status, SEARCH_RESULT_STATUS.INVALID_ACTION);
+  assert.equal(invalid.action.type, "end");
 }
 
-test("AI·计划序列：current-state rebind 与 version 变化共存", frArch13PlannedSequenceReuse);
+test("AI·陈旧结果拒绝：session/stateVersion/actor/phase/root identity 全拒绝", frArch13StaleResultRejection);
 
 /*
 功能
@@ -23030,19 +23040,19 @@ test("AI·RNG 隔离：AI search RNG 与 real RNG 分离且 fixed-seed 可复现
 无返回值，断言失败时抛错。
 
 读取状态
-AIController acceptSearchResult 与 SearchResult contract。
+Controller Worker outcome acceptance contract。
 
 写入状态
 测试 request/result。
 
 调用函数
-createSearchRequest、acceptSearchResult。
+createSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome。
 
 边界与不变量
 cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
 */
 async function frArch13CancellationContract() {
-  const { createSearchRequest } = await import("../js/ai/Controller.js");
+  const { createSearchRequest, createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
   const actor = makePlayer("cancel-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("cancel-enemy", 1, "dusk", "ai", 1);
   const card = instance("assault");
@@ -23060,13 +23070,14 @@ async function frArch13CancellationContract() {
     rng: game.aiController.searchRng.snapshot(),
     rootActions:game.aiController.getActionCandidates(actor)
   });
-  const action = game.aiController.getActionCandidates(actor)[0];
-  const cancelled = game.aiController.acceptSearchResult({
+  const cancelled = game.aiController.acceptWorkerSearchOutcome(request, createWorkerSearchOutcome({
     request,
-    action,
-    plannedSequence: [],
-    stats: { stopReason: "CANCELLED" }
-  });
+    action:null,
+    stats:{ stopReason:"CANCELLED" },
+    searchStopReason:"CANCELLED",
+    rngAfter:request.rng,
+    cancelled:true
+  }), request.rootActions);
   assert.equal(cancelled.result.status, SEARCH_RESULT_STATUS.CANCELLED);
   assert.equal(cancelled.action.type, "end");
   assert.equal(cancelled.action.cardId, null);
@@ -23568,7 +23579,7 @@ async function frArch14ControllerWorkerClientHeartbeat() {
     const gaps = heartbeatTimes.slice(1).map((time, index) => time - heartbeatTimes[index]);
     const maxHeartbeatGap = gaps.length ? Math.max(...gaps) : 0;
     const lifecycle = executor.getLifecycleDiagnostics();
-    const decision = game.aiController.getLastDecisionDiagnostics();
+    const decision = game.aiController.lastDecisionDiagnostics;
     assert.ok(heartbeatTimes.length > 0,
       "AIController.selectAction → SearchWorkerClient 期间 heartbeat 必须获得执行机会");
     assert.ok(maxHeartbeatGap >= 0);
@@ -23658,7 +23669,6 @@ async function frArch14MutualBenefitRuntimeTrace() {
   const executionOutcome = createWorkerSearchOutcome({
     request,
     action:root,
-    plannedActions:[root, createAction({ type:"end", actorId:actor.id })],
     stats: outcome.stats,
     searchStopReason: "COMPLETE",
     rngAfter: outcome.rngAfter
@@ -23685,7 +23695,7 @@ async function frArch14MutualBenefitRuntimeTrace() {
   game.dispose();
 }
 
-test("AI·Worker 互利链路：root → worker → rebind → execution → public pool 全链", frArch14MutualBenefitRuntimeTrace);
+test("AI·Worker 互利链路：root → worker → acceptance → execution → public pool 全链", frArch14MutualBenefitRuntimeTrace);
 
 /*
 功能
@@ -23828,7 +23838,6 @@ async function frArch14WorkerClientTransport() {
       stateVersion: 0,
       actorId: "actor-1",
       action: { type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null },
-      plannedActions: [],
       stats: null,
       searchStopReason: "COMPLETE",
       rngAfter: { seed: 1, state: 1, algorithm: "lcg", draws: 0 },
@@ -23982,7 +23991,7 @@ test("AI·Worker 传输：Dedicated Worker 初始接线/结果/清理/恢复与 
 
 /*
 功能
-对同一固定 World 比较唯一 SearchEngineFactory 与 Worker runtime 的完整确定性 trace。
+对同一固定 World 比较 Controller public search engine 与 Worker runtime 的完整确定性 trace。
 
 调用方
 FR-ARCH-14 worker search parity audit。
@@ -24003,7 +24012,7 @@ Searcher/runSearchRequest/SearchRng/Action。
 makeGame、instance、getActionCandidates、createInitialWorld、createSearchRequest、SearchRng.restore、createSearchEngine、Searcher.search、runSearchRequest。
 
 边界与不变量
-固定 node budget 保证双方同 stopReason；比较 action、计划序列、stats、RNG after 与 hidden samples。
+固定 node budget 保证双方同 stopReason；Worker 只运输 root Action，多步序列只保留在诊断 stats。
 */
 async function frArch14WorkerSearchParityTrace() {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
@@ -24048,7 +24057,8 @@ async function frArch14WorkerSearchParityTrace() {
   const mainAfter = directRng.snapshot();
   const outcome = await runSearchRequest(request, { yieldControl: async () => true });
   assert.deepEqual(outcome.action, mainAction);
-  assert.deepEqual(outcome.plannedActions, mainSequence);
+  assert.equal(Object.hasOwn(outcome, "plannedActions"), false);
+  assert.deepEqual(outcome.stats.bestSequence, mainSequence);
   assert.equal(outcome.searchStopReason, mainStats.stopReason);
   assert.equal(outcome.stats.expanded, mainStats.expanded);
   assert.equal(outcome.stats.depth, mainStats.depth);
@@ -24061,7 +24071,7 @@ async function frArch14WorkerSearchParityTrace() {
   game.dispose();
 }
 
-test("AI·Worker 搜索一致性：同一 World/seed/config 下 canonical Action 全 trace 一致", frArch14WorkerSearchParityTrace);
+test("AI·Worker 搜索一致性：只运输 root Action 且多步序列仅保留在诊断", frArch14WorkerSearchParityTrace);
 
 /*
 功能
@@ -24118,7 +24128,6 @@ async function frArch14RngContinuityAcceptedSearches() {
     search: async (request) => createWorkerSearchOutcome({
       request,
       action:null,
-      plannedActions:[],
       stats:null,
       searchStopReason:null,
       rngAfter:request.rng,
@@ -24132,9 +24141,9 @@ async function frArch14RngContinuityAcceptedSearches() {
   assert.equal(game.aiController.lastSearchFallback.source, "generator-safe-end");
   assert.equal(game.aiController.lastSearchFallback.action, rejectedAction);
   assert.deepEqual(game.aiController.searchRng.snapshot(), beforeRejected, "rejected outcome 不得 commit RNG");
-  assert.equal(game.aiController.getSearchDiagnostics().WORKER_ERROR, 1);
-  assert.equal(game.aiController.getSearchDiagnostics().WATCHDOG, 1);
-  assert.equal(game.aiController.getSearchDiagnostics().FALLBACK, 1);
+  assert.equal(game.aiController.searchDiagnostics.WORKER_ERROR, 1);
+  assert.equal(game.aiController.searchDiagnostics.WATCHDOG, 1);
+  assert.equal(game.aiController.searchDiagnostics.FALLBACK, 1);
   game.dispose();
 }
 
@@ -31828,8 +31837,8 @@ test("AI·守誓者：1HP队友面临将通过的真实伤害时使用护援", (
   guardian.hand.push(instance("charge"));
   const { game } = makeGame([source, target, guardian]);
   assert.equal(
-    game.aiController.shouldUseGuardianAid(
-      guardian, { target, source, amount: 1 }
+    game.aiController.shouldRespond(
+      guardian, "skill", { target, source, amount: 1 }, []
     ),
     true,
     "阵亡风险的伤害应获得正边际并护援"
@@ -31845,8 +31854,8 @@ test("AI·守誓者：伤害会被目标护盾完全吸收时不使用护援", (
   guardian.hand.push(instance("charge"));
   const { game } = makeGame([source, target, guardian]);
   assert.equal(
-    game.aiController.shouldUseGuardianAid(
-      guardian, { target, source, amount: 1 }
+    game.aiController.shouldRespond(
+      guardian, "skill", { target, source, amount: 1 }, []
     ),
     false,
     "护盾可吸收时护援边际为负，不应弃牌"
@@ -31870,8 +31879,8 @@ test("AI·守誓者：敌方已兑现突袭不再重复计未来库存时非致�
   };
   const { game } = makeGame([source, target, guardian]);
   assert.equal(
-    game.aiController.shouldUseGuardianAid(
-      guardian, { target, source, amount: 1 }
+    game.aiController.shouldRespond(
+      guardian, "skill", { target, source, amount: 1 }, []
     ),
     true,
     "兑现后的突袭不重复计未来库存时，护援本次确定伤害为净正收益"
@@ -31887,8 +31896,8 @@ test("AI·守誓者：护援额度本全局回合已用时不重复使用", () =
   const { game } = makeGame([source, target, guardian]);
   guardian.turnFlags.guardianAidUsed = true;
   assert.equal(
-    game.aiController.shouldUseGuardianAid(
-      guardian, { target, source, amount: 1 }
+    game.aiController.shouldRespond(
+      guardian, "skill", { target, source, amount: 1 }, []
     ),
     false,
     "额度已用即使致命伤害也不能重复护援"
@@ -31902,13 +31911,18 @@ test("AI·守誓者：护援拒绝非合法场景（自己/敌方/无手牌/零�
   guardian.hand.push(instance("charge"));
   const { game } = makeGame([source, ally, guardian]);
   const policy = game.aiController;
-  assert.equal(policy.shouldUseGuardianAid(guardian, { target: guardian, source, amount: 1 }), false, "不能护援自己");
-  assert.equal(policy.shouldUseGuardianAid(guardian, { target: source, source, amount: 1 }), false, "不能护援敌方");
-  assert.equal(policy.shouldUseGuardianAid(guardian, { target: ally, source, amount: 0 }), false, "零伤害不护援");
+  assert.equal(policy.shouldRespond(guardian, "skill", { target: guardian, source, amount: 1 }, []), false, "不能护援自己");
+  assert.equal(policy.shouldRespond(guardian, "skill", { target: source, source, amount: 1 }, []), false, "不能护援敌方");
+  assert.equal(policy.shouldRespond(guardian, "skill", { target: ally, source, amount: 0 }, []), false, "零伤害不护援");
   const emptyGuardian = makePlayer("aid-guard-empty", 3, "dawn", "ai", 1);
   const { game: game2 } = makeGame([source, ally, emptyGuardian]);
   assert.equal(
-    game2.aiController.shouldUseGuardianAid(emptyGuardian, { target: ally, source, amount: 1 }),
+    game2.aiController.shouldRespond(
+      emptyGuardian,
+      "skill",
+      { target: ally, source, amount: 1 },
+      []
+    ),
     false,
     "无手牌不能护援"
   );
@@ -32098,8 +32112,11 @@ test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突�
   // 便宜牌 + 高价值格挡：确定性反事实知道会弃便宜牌，AID 收益超过未来额度成本。
   const cheap = makeGuardianAidFlipGame(["charge", "block"]);
   assert.equal(
-    cheap.game.aiController.shouldUseGuardianAid(
-      cheap.guardian, { target: cheap.target, source: cheap.source, amount: 1 }
+    cheap.game.aiController.shouldRespond(
+      cheap.guardian,
+      "skill",
+      { target: cheap.target, source: cheap.source, amount: 1 },
+      []
     ),
     true,
     "能弃便宜牌时应正确护援"
@@ -32108,8 +32125,11 @@ test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突�
   // 同一额度成本下护援本次确定伤害仍为净正收益。
   const forcedExpensive = makeGuardianAidFlipGame(["block"]);
   assert.equal(
-    forcedExpensive.game.aiController.shouldUseGuardianAid(
-      forcedExpensive.guardian, { target: forcedExpensive.target, source: forcedExpensive.source, amount: 1 }
+    forcedExpensive.game.aiController.shouldRespond(
+      forcedExpensive.guardian,
+      "skill",
+      { target: forcedExpensive.target, source: forcedExpensive.source, amount: 1 },
+      []
     ),
     true,
     "已兑现突袭不重复计未来库存时，弃高价值格挡护援仍为正收益"
@@ -32119,8 +32139,11 @@ test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突�
 test("AI·守誓者：敌方已兑现突袭时即使弃关键防御牌护援仍为正收益", () => {
   const fixture = makeGuardianAidFlipGame(["block", "counter"]);
   assert.equal(
-    fixture.game.aiController.shouldUseGuardianAid(
-      fixture.guardian, { target: fixture.target, source: fixture.source, amount: 1 }
+    fixture.game.aiController.shouldRespond(
+      fixture.guardian,
+      "skill",
+      { target: fixture.target, source: fixture.source, amount: 1 },
+      []
     ),
     true,
     "敌方已兑现突袭不重复计未来库存时，弃关键防御牌护援本次确定伤害仍为正"
@@ -43618,7 +43641,6 @@ test("AI·动态密度：Controller SearchRequest 使用 canonical World 当前�
         stateVersion: request.stateVersion,
         actorId: request.actorId,
         action: { type: "end", cardId: null, cardInstanceId: null, targetId: null, targetIds: [], selection: null },
-        plannedActions: [],
         stats: { stopReason: "COMPLETE", expandedNodes: 0 },
         searchStopReason: "COMPLETE",
         rngAfter: request.rng,
@@ -51171,7 +51193,6 @@ async function runDecisionWindowScenario(speed, searchElapsedMs) {
       return createWorkerSearchOutcome({
         request,
         action: end,
-        plannedActions: [end],
         stats: { stopReason: "COMPLETE", elapsedMs: searchElapsedMs, expanded: 1 },
         searchStopReason: "COMPLETE",
         rngAfter: request.rng

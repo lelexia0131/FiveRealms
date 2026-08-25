@@ -12,7 +12,7 @@ Domain rules、Application workflows 与 narrow collaborators。
 Domain mutation 经 transitions/workflows；trigger runtime state 经 transitions。
 
 信息边界
-不读取 UI/AI/DOM/Planner；private peek 经 opaque selection collaborator。
+不读取 UI/AI search internals/DOM；private peek 经 opaque selection collaborator。
 
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、concrete adapters 或 config runtime。

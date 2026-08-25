@@ -834,7 +834,7 @@ export function rankDiscardCandidates(player, cards, context = {}) {
 从合法卡牌候选中选择指定数量的最低保留价值实体。
 
 调用方
-Evaluator.resolveDiscardCandidates、AI runtime 与测试。
+  Controller、AI runtime 与测试。
 
 输入
 玩家、合法卡牌、数量与公开弃牌上下文。
@@ -1053,7 +1053,7 @@ function transferResourceUtility(actor, from, receiver, sourceValue, receiverVal
 
 /*
 功能
-把过滤后的玩家状态归一化为 ThreatValue 可消费的转移视图。
+把过滤后的玩家状态归一化为 StateValue threat primitive 可消费的转移视图。
 
 调用方
 transferEnemyThreatGap。
@@ -1105,7 +1105,7 @@ evaluateTransferSelection。
 行动者、来源与接收者 World 玩家。
 
 输出
-ThreatValue 差值。
+StateValue threat primitive 差值。
 
 读取状态
 公开玩家字段与行动者合法近期攻击者记忆。
@@ -1139,7 +1139,7 @@ Evaluator.evaluateTransferAction。
 包含冻结分数、资源身份和稳定比较字段的局部候选记录。
 
 读取状态
-CardValue primitive、公开关系/容量、ThreatValue 与控制器类型。
+CardValue primitive、公开关系/容量、StateValue threat primitive 与控制器类型。
 
 写入状态
 无。
@@ -1515,7 +1515,7 @@ export class Evaluator {
   无。
 
   调用函数
-  cardAvailability、ThreatValue.incomingExposure。
+  cardAvailability、StateValue incomingExposure primitive。
 
   边界与不变量
   只用关键资源的最大二项分布方差作轻量代理，不复制正式 VOI 求和；
@@ -1757,7 +1757,7 @@ export class Evaluator {
   无；闪电查询只写自身缓存。
 
   调用函数
-  CardValue、ThreatValue、sealUseValue、assessGlobalBenefit 与 lightningLifecycleValue。
+  CardValue、StateValue threat primitive、sealUseValue、assessGlobalBenefit 与 lightningLifecycleValue。
 
   边界与不变量
   静态牌值、目标焦点和领域启发式绝不进入 valueScore；已在 after-state 的收益这里只能作展开偏置。
@@ -2527,35 +2527,6 @@ export class Evaluator {
       selectionKind:selection.selectionKind,
       cardId:selection.cardId ?? null
     });
-  }
-
-  /*
-  功能
-  把弃牌候选解析为稳定的已选实体数组。
-
-  调用方
-  Controller、main-thread/Worker Simulator composition。
-
-  输入
-  玩家、合法卡牌、数量与公开弃牌上下文。
-
-  输出
-  最低保留价值的卡牌数组。
-
-  读取状态
-  CardValue discard primitive。
-
-  写入状态
-  无。
-
-  调用函数
-  chooseDiscardCandidates。
-
-  边界与不变量
-  本方法只决定身份，不移动卡牌；Simulator 必须只消费返回的 ID。
-  */
-  resolveDiscardCandidates(player, cards, count, context = {}) {
-    return chooseDiscardCandidates(player, cards, count, context);
   }
 
   /*
@@ -3583,7 +3554,7 @@ export class Evaluator {
 
   边界与不变量
   Final Utility 公式保持不变；低于冻结门槛的 Transfer 只失去竞争资格，preference 不叠加到 state delta；
-  depth 只作诊断，不缩放价值，Search Prior 不得进入。
+  depth 只作诊断，不缩放价值，search-prior terms 不得进入。
   */
   evaluateTransition({
     action,
@@ -3661,7 +3632,7 @@ export class Evaluator {
 
   边界与不变量
   两个根 Transfer 先保持旧 contextual winner；Transfer 与其它动作仍比较 Final Utility；
-  Final Utility 机器精度同分时稳定优先 skill-root，Searcher、Pattern、Search Prior 与随机数不得定义另一套偏好。
+  Final Utility 机器精度同分时稳定优先 skill-root，Searcher、Pattern、search-prior terms 与随机数不得定义另一套偏好。
   */
   compareCandidates(left, right, actor = null, rootWorld = null) {
     if (left?.action?.cardId === "transfer" && right?.action?.cardId === "transfer") {
@@ -3725,7 +3696,7 @@ export class Evaluator {
   statePointsToUtility。
 
   边界与不变量
-  responseNet 已包含在 state delta 中而不再相加；Search Prior 与 Pattern 不进入公式。
+  responseNet 已包含在 state delta 中而不再相加；search-prior terms 与 Pattern 不进入公式。
   */
   composeTransitionValue({
     baseTransition,

@@ -41,7 +41,7 @@ export class Searcher {
   无。
 
   写入状态
-  实例依赖、最近搜索统计与计划序列。
+  实例依赖、最近搜索统计与仅供搜索诊断的最优序列。
 
   调用函数
   无。
@@ -1165,7 +1165,7 @@ export class Searcher {
 
   /*
   功能
-  统一记录完成、预算中断或取消后的计划序列与搜索诊断。
+  统一记录完成、预算中断或取消后的最优搜索序列与搜索诊断。
 
   调用方
   search 的正常收束和 yield 取消路径。
@@ -1186,7 +1186,7 @@ export class Searcher {
   describeSequence、SearchBudget.diagnostics。
 
   边界与不变量
-  统计只描述实际执行；provisional root 不得写入计划序列、best value 或完整候选计数。
+  统计只描述已完成的搜索工作；provisional root 不得写入 bestSequence、best value 或完整候选计数。
   */
   recordResult({
     budget,
@@ -1341,9 +1341,9 @@ export class Searcher {
   TIME 下任何进入隐藏世界、后续候选或 paired simulation 的 root 必须 cooperative abort，
   安全阶段不得继续束搜索、深层扩展或随机选择。
   */
-  async search(player, visibleState, rootActions, options = {}) {
+  async search(player, world, rootActions, options = {}) {
     this.comparisonActor = player;
-    this.comparisonWorld = visibleState;
+    this.comparisonWorld = world;
     this.lastSequence = [];
     const collectDiagnostics = Boolean(options.collectAiDecisionDiagnostics);
     const budget = this.searchBudgetFactory();
@@ -1351,7 +1351,7 @@ export class Searcher {
     const uniqueRootActions = this.deduplicateActions(rootActions);
     const patternMatch = this.patternMatcher.match({
       player,
-      state:visibleState,
+      state:world,
       legalActions:uniqueRootActions,
       structure
     });
@@ -1359,16 +1359,16 @@ export class Searcher {
     const ordinaryRootActions = this.scheduleRootActions(
       uniqueRootActions,
       player,
-      visibleState
+      world
     );
     const scheduledRootActions = this.scheduleRootActions(
       uniqueRootActions,
       player,
-      visibleState,
+      world,
       patternProposals
     );
     const rootTerminalAction = ordinaryRootActions.find((action) => action?.type === "end");
-    const visiblePlayer = visibleState.players?.find((entry) => entry.id === player.id) ?? player;
+    const visiblePlayer = world.players?.find((entry) => entry.id === player.id) ?? player;
     const visibleHandCount = Number(
       visiblePlayer.handCount ?? visiblePlayer.hand?.length ?? player.hand?.length ?? 0
     );
@@ -1382,7 +1382,7 @@ export class Searcher {
       ?? null;
     const context = this.createContext(
       player,
-      visibleState
+      world
     );
     const requestedRootCandidateCount = Number(options.rootCandidateCount);
     const rootCandidateCount = Number.isFinite(requestedRootCandidateCount)
@@ -1463,10 +1463,10 @@ export class Searcher {
       budget.observeRootCandidateStarted?.();
       const prepared = this.prepareCandidate(budget, 1, () => {
         budget.observeSimulation();
-        const state = simulator.apply(visibleState, action);
+        const state = simulator.apply(world, action);
         const candidate = this.evaluateCandidate({
           action,
-          beforeState:visibleState,
+          beforeState:world,
           afterState:state,
           player,
           depth:1,
@@ -1516,7 +1516,7 @@ export class Searcher {
           progressiveRoot.action,
           0,
           [],
-          visibleState
+          world
         );
         const expansion = await this.materializeChildCandidates({
           parentState:progressiveRoot.state,
@@ -1606,10 +1606,10 @@ export class Searcher {
         budget.observeRootCandidateStarted?.();
         const prepared = this.prepareCandidate(budget, 1, () => {
           budget.observeSimulation();
-          const state = simulator.apply(visibleState, action);
+          const state = simulator.apply(world, action);
           const candidate = this.evaluateCandidate({
             action,
-            beforeState:visibleState,
+            beforeState:world,
             afterState:state,
             player,
             depth:1,
@@ -1667,7 +1667,7 @@ export class Searcher {
         candidateLedger:candidate.candidateLedger,
         frontierResidual:candidate.frontierResidual,
         completedAtWorkCount:candidate.completedAtWorkCount,
-        ...this.advancePatternState(patternProposals, candidate.action, 0, [], visibleState)
+        ...this.advancePatternState(patternProposals, candidate.action, 0, [], world)
       };
     });
     for (const node of beam) this.observeCompletedPatterns(node, workDiagnostics);
@@ -1861,12 +1861,12 @@ export class Searcher {
         const prepared = this.prepareCandidate(budget, 1, () => {
           budget.observeSimulation();
           const state = simulator.apply(
-            visibleState,
+            world,
             rootTerminalAction
           );
           const candidate = this.evaluateCandidate({
             action:rootTerminalAction,
-            beforeState:visibleState,
+            beforeState:world,
             afterState:state,
             player,
             depth:1,

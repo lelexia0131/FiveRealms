@@ -15,7 +15,7 @@ Domain TeamRules/TurnRules/transitions、Application Action/Combat/Response 能�
 不读取 concrete UI/AI/DOM；controllerType 仅用于 human/AI play-phase 参与者策略。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、Planner、AI World 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、AI search internals、AI World 或 concrete adapters。
 */
 import { getDrawCountFromRules, getTeamRules, getTurnEnergyBreakdownFromRules } from "../../domain/rules/team/TeamRules.js";
 import {
@@ -35,8 +35,7 @@ const REQUIRED_DEPENDENCIES = [
   "sampleAiDecisionWindow", "getRemainingAiDecisionDelay",
   "getTeamRules", "waitForHumanPlayEnd", "runAiPlayPhase", "choiceCoordinator",
   "choiceContexts", "createId",
-  "selectAction", "resolvePlannedAction", "getPlannedSequence",
-  "playCard", "useActiveSkill", "getAiMaxActions", "getAiReplanAfterEveryAction",
+  "selectAction", "playCard", "useActiveSkill", "getAiMaxActions",
   "getActionTargetLabel", "resetActionLocks", "discardCardFromHand",
   "cancelPendingInteractions"
 ];
@@ -294,14 +293,13 @@ export function createTurnWorkflow(dependencies) {
   thinking/prompt 经 PresentationPort；真实卡牌/技能经注入 action collaborators。
 
   调用函数
-  selectAction、resolvePlannedAction、getPlannedSequence、playCard、useActiveSkill。
+  selectAction、playCard、useActiveSkill。
 
   边界与不变量
-  首次动作与后续重规划都不得先叠加 initial pacing；计划重用必须重绑当前合法实体；真实搜索每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
+  每个真实 Action 后必须从最新 World 重新调用 selectAction；每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
-    let queuedPlan = [];
     try {
       runtime.presentation.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
       runtime.presentation.showThinking({ playerId: player.id, message: "正在观察战场与可用资源" });
@@ -309,36 +307,27 @@ export function createTurnWorkflow(dependencies) {
         if (!runtime.isSessionValid(gameId) || state.isGameOver || !player.alive) break;
         const decisionStartedAt = runtime.now();
         let action = null;
-        let decisionWindow = null;
-        if (!runtime.getAiReplanAfterEveryAction() && queuedPlan.length) {
-          action = runtime.resolvePlannedAction(player, queuedPlan.shift());
-          if (!action) queuedPlan = [];
+        const decisionWindow = runtime.sampleAiDecisionWindow();
+        try {
+          action = await runtime.selectAction(player, {
+            gameId,
+            searchTimeBudgetMs:decisionWindow.maximumMs
+          });
+        } catch (error) {
+          runtime.diagnostics.reportWorkflowError("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
+          action = null;
         }
-        if (!action) {
-          decisionWindow = runtime.sampleAiDecisionWindow();
-          try {
-            action = await runtime.selectAction(player, {
-              gameId,
-              searchTimeBudgetMs:decisionWindow.maximumMs
-            });
-          } catch (error) {
-            runtime.diagnostics.reportWorkflowError("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
-            action = null;
-          }
-          if (!runtime.isSessionValid(gameId)) return;
-          if (!action) break;
-          if (!runtime.getAiReplanAfterEveryAction()) queuedPlan = runtime.getPlannedSequence().slice(1);
-        }
+        if (!runtime.isSessionValid(gameId)) return;
+        if (!action) break;
         const decisionElapsedMs = Math.max(0, runtime.now() - decisionStartedAt);
-        const remainingSearchDelay = decisionWindow
-          ? runtime.getRemainingAiDecisionDelay(decisionWindow, decisionElapsedMs)
-          : null;
+        const remainingSearchDelay = runtime.getRemainingAiDecisionDelay(
+          decisionWindow,
+          decisionElapsedMs
+        );
         if (action.type === "end") {
           runtime.presentation.setPrompt(`${player.name}准备结束出牌阶段。`);
           runtime.presentation.showThinking({ playerId: player.id, message: "正在收束回合" });
-          if (!(await runtime.delay(decisionWindow
-            ? remainingSearchDelay
-            : runtime.getAiDelay("end", { elapsedMs:decisionElapsedMs })))) return;
+          if (!(await runtime.delay(remainingSearchDelay))) return;
           if (!runtime.isSessionValid(gameId)) return;
           break;
         }
@@ -349,7 +338,6 @@ export function createTurnWorkflow(dependencies) {
           .map((id) => runtime.getState().players.find((entry) => entry.id === id))
           .filter(Boolean);
         if (!definition || targets.length !== (action.targetIds?.length ?? 0)) {
-          queuedPlan = [];
           continue;
         }
         const actionName = action.type === "card"
@@ -363,9 +351,7 @@ export function createTurnWorkflow(dependencies) {
         );
         const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
         runtime.presentation.showThinking({ playerId: player.id, message: actionDescription });
-        if (!(await runtime.delay(decisionWindow
-          ? remainingSearchDelay
-          : runtime.getAiDelay("action", { elapsedMs:decisionElapsedMs })))) return;
+        if (!(await runtime.delay(remainingSearchDelay))) return;
         if (!runtime.isSessionValid(gameId)) return;
         runtime.presentation.clearThinking();
         let executed = false;
@@ -380,18 +366,15 @@ export function createTurnWorkflow(dependencies) {
           }
         } catch (error) {
           runtime.diagnostics.reportWorkflowError("AI", `${player.name}执行行动失败，安全结束出牌阶段`, error);
-          queuedPlan = [];
           break;
         }
         if (!executed) {
-          queuedPlan = [];
           break;
         }
         if (!runtime.isSessionValid(gameId)) return;
       }
       if (runtime.isSessionValid(gameId) && !state.isGameOver) runtime.presentation.setPrompt(`${player.name}结束了出牌阶段。`);
     } finally {
-      queuedPlan = [];
       if (state.gameId === gameId && !state.isDisposed) {
         runtime.resetActionLocks();
         runtime.presentation.clearThinking();

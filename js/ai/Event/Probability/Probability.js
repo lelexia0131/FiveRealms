@@ -1051,7 +1051,7 @@ export function inAttackRange(game, source, target, card = null) {
 从 canonical Fact 创建唯一 ProbabilityState facade contract。
 
 调用方
-StateContracts。
+  Simulator/World.createInitialWorld。
 
 输入
 当前 Fact。

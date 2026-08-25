@@ -613,7 +613,7 @@ function mergeProbabilityFactors(factors = []) {
 从 Fact 创建唯一的当前 ProbabilityState。
 
 调用方
-StateContracts。
+  Probability.createProbabilityState。
 
 输入
 包含 players、knownCardsByPlayer、viewerId 与 currentCardCounts 的当前 Fact。

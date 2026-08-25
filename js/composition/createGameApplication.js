@@ -643,7 +643,6 @@ class MatchApplication {
     });
     this.aiSpeed = RUNTIME_POLICY.defaultAiSpeed;
     this.simulationMode = RUNTIME_POLICY.simulationMode;
-    this.aiReplanAfterEveryAction = AI_RUNTIME_POLICY.replanAfterEveryAction;
     this.aiRandomnessRange = AI_RUNTIME_POLICY.randomnessRange;
     this.aiDifficultyMultiplier = AI_RUNTIME_POLICY.difficultyMultiplier;
     this.aiMaxActionsPerTurn = AI_RUNTIME_POLICY.maxActionsPerTurn;
@@ -876,12 +875,9 @@ class MatchApplication {
       choiceContexts: this.choiceContexts,
       createId,
       selectAction: (player, options) => this.aiController.selectAction(player, options),
-      resolvePlannedAction: (player, action) => this.aiController.resolvePlannedAction(player, action),
-      getPlannedSequence: () => this.aiController.getPlannedSequence(),
       playCard: (...args) => this.actionWorkflow.playCard(...args),
       useActiveSkill: (...args) => this.actionWorkflow.useActiveSkill(...args),
       getAiMaxActions: () => this.aiMaxActionsPerTurn,
-      getAiReplanAfterEveryAction: () => this.aiReplanAfterEveryAction,
       getActionTargetLabel: (source, cardOrSkill, targets, selection) => getActionTargetLabelFromRuntime(this.state, source, cardOrSkill, targets, selection),
       resetActionLocks: () => this.actionWorkflow.resetLocks(),
       discardCardFromHand: (...args) => this.discardCardFromHand(...args),

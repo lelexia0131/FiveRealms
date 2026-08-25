@@ -33,7 +33,7 @@ searchWorker onmessage、LocalSearchExecutor 与纯 runtime 测试。
 SearchRequest 与 { yieldControl, now } runtime control。
 
   输出
-  WorkerSearchOutcome；Worker error 时返回 workerError outcome 且无 actionDescriptor，
+  WorkerSearchOutcome；Worker error 时返回 workerError outcome 且无 canonical Action，
   成功时 stats 含 Worker 墙钟耗时与 workerReturned=true。
 
 读取状态
@@ -46,7 +46,7 @@ Worker 本地 rng/searcher/simulator 状态。
 Rng.restore、consume canonical root Action、createSearchEngine、Searcher.search、createWorkerSearchOutcome。
 
 边界与不变量
-rngAfter 必须存在；cancelled/error 不返回可执行 descriptor；root action rehydrate 失败只产生 workerError。
+rngAfter 必须存在；cancelled/error 不返回 canonical Action；搜索异常只产生 workerError。
 */
 export async function runSearchRequest(request, runtimeControl = {}) {
   const workerStartedAt = globalThis.performance?.now?.() ?? Date.now();

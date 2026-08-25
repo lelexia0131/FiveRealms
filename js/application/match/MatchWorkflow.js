@@ -15,7 +15,7 @@ pre-live setup 字段经显式 one-shot collaborator 写入；live Domain 字段
 不读取 concrete UI/AI/DOM；controllerType 仅作为 participant metadata 用于 Player 构造。
 
 架构约束
-不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、Planner 或 concrete adapters。
+不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、AI search internals 或 concrete adapters。
 */
 import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 import {

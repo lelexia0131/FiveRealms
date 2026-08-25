@@ -15,7 +15,7 @@ composition root。
 只处理 source/target/hpDamage 事实；不读取手牌或隐藏信息。
 
 架构约束
-不得依赖 Game class、AIController、Planner、World 或 Domain transitions。
+不得依赖 Game class、AIController、AI search internals、World 或 Domain transitions。
 */
 
 /*

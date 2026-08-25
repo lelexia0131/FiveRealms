@@ -373,7 +373,7 @@ class SimulatorCore {
   完成必要摘要同步的独立可变 World。
 
   读取状态
-  只读输入状态或实例 initial。
+  只读显式传入的 World。
 
   写入状态
   只写新克隆的响应、势能与技能费用摘要。
@@ -382,7 +382,7 @@ class SimulatorCore {
   checkpointSearchWork、SearchBudget.observeClone、cloneWorld、组件初始化器与 syncActiveSkillCosts。
 
   边界与不变量
-  默认必须在 structuredClone 前观察同一个 SearchBudget；不得修改输入；
+  默认必须在 cloneWorld 深拷贝前观察同一个 SearchBudget；不得修改输入；
   每个概率分支和兄弟节点必须拥有独立可变状态。
   */
   clone(state, options = {}) {

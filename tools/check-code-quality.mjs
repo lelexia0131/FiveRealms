@@ -69,6 +69,7 @@ const EVALUATOR_FILE = "js/ai/Evaluator/Evaluator.js";
 const STATE_VALUE_FILE = "js/ai/Evaluator/StateValue.js";
 const CARD_VALUE_FILE = "js/ai/Evaluator/CardValue.js";
 const FINAL_CORE_PATTERN = /^js\/ai\/(?:Event|Simulator|Evaluator)\//i;
+const REMOVED_CROSS_ACTION_PLAN_PATTERN = /\b(?:replanAfterEveryAction|aiReplanAfterEveryAction|getAiReplanAfterEveryAction|queuedPlan|plannedActions|acceptedPlannedSequence|resolvePlannedAction|getPlannedSequence)\b/;
 const FINAL_AI_ALLOWLIST = Object.freeze(new Set([
   "js/ai/Controller.js",
   GENERATOR_FILE,
@@ -1566,6 +1567,17 @@ function inspectSource(file, source, changed) {
   const functions = findFunctions(source);
   const errors = [];
   errors.push(...cacheBustImportErrors(file, source));
+  if (SOURCE_PATTERN.test(file)) {
+    const legacyPlan = source.match(REMOVED_CROSS_ACTION_PLAN_PATTERN);
+    if (legacyPlan) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, legacyPlan.index),
+        missing:["架构约束：跨真实 Action 的旧计划复用、运输与执行队列已删除"]
+      });
+    }
+  }
   for (const fn of functions) {
     if (!functionWasChanged(fn, changed, lines)) continue;
     const missing = missingHeaderFields(lines, fn.startLine, APPLICATION_LAYER_PATTERN.test(file));
@@ -4071,6 +4083,22 @@ function identity(value) { return value; }`;
   );
   if (!pollutedActionErrors.some((error) => error.missing.some((item) => item.includes("replay metadata")))) {
     throw new Error("Action replay guard did not reject simulation controls");
+  }
+  const currentActionExecutionErrors = inspectSource(
+    "js/application/turn/GoodActionExecution.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (currentActionExecutionErrors.some((error) => error.missing.some((item) => item.includes("旧计划复用")))) {
+    throw new Error("cross-action plan guard rejected current root-only execution");
+  }
+  const legacyActionExecutionErrors = inspectSource(
+    "js/application/turn/BadActionExecution.js",
+    `${moduleHeader}\n${pass.replace("return value;", "const plannedActions = [value]; return plannedActions[0];")}`,
+    null,
+  );
+  if (!legacyActionExecutionErrors.some((error) => error.missing.some((item) => item.includes("旧计划复用")))) {
+    throw new Error("cross-action plan guard did not reject executable sequence transport");
   }
   const actionAggregateErrors = inspectSource(
     ACTION_FILE,

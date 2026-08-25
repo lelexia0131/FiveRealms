@@ -152,62 +152,6 @@ export function deduplicateSearchEquivalentActions(actions) {
 export class Generator {
   /*
   功能
-  创建唯一合法动作生成器。
-
-  调用方
-  Controller 组合根与直接独立性测试。
-
-  输入
-  无。
-
-  输出
-  可生成根与深层动作的 Generator；缺少依赖时立即抛错。
-
-  读取状态
-  无。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  不接收 Game、Controller、选择 adapter 或其他动作 producer。
-  */
-  constructor() {}
-
-  /*
-  功能
-  创建取消、拒绝或无候选路径共同使用的 canonical END Action。
-
-  调用方
-  generate 与 Controller 的安全终止路径。
-
-  输入
-  当前行动者 ID。
-
-  输出
-  完整且不可变的 END Action。
-
-  读取状态
-  无。
-
-  写入状态
-  无。
-
-  调用函数
-  createAction。
-
-  边界与不变量
-  END 仍由唯一 Generator 创建；调用方不得自行制造另一种终止动作结构。
-  */
-  createEndAction(actorId) {
-    return createAction({ type:"end", actorId });
-  }
-
-  /*
-  功能
   把已经通过真实规则入口的 root 战术投影为响应反事实直接消费的 canonical Action。
 
   调用方
@@ -295,282 +239,6 @@ export class Generator {
       targetIds,
       selection
     });
-  }
-
-  /*
-  功能
-  把玩家实体解析为 Domain CardRules 目标 ID 对应的原玩家对象。
-
-  调用方
-  generate 与 generate 的根/深层动作枚举。
-
-  输入
-  原玩家数组、规则目标 ID 数组。
-
-  输出
-  原玩家对象数组。
-
-  读取状态
-  无。
-
-  写入状态
-  无。
-
-  调用函数
-  Array.find。
-
-  边界与不变量
-  保持 ID 数组顺序；找不到的 ID 不产生伪实体。
-  */
-  resolveRuleTargets(players, ids) {
-    return ids.map((id) => players.find((player) => player.id === id)).filter(Boolean);
-  }
-
-  /*
-  功能
-  把玩家数组投影为 Domain Card/Skill Rule canonical facts。
-
-  调用方
-  generate 与 generate。
-
-  输入
-  原玩家数组。
-
-  输出
-  冻结的 canonical player facts。
-
-  读取状态
-  无。
-
-  写入状态
-  无。
-
-  调用函数
-  projectRulePlayers。
-
-  边界与不变量
-  保持调用方顺序，保证候选 target order 不变。
-  */
-  projectPlayers(players) {
-    return projectRulePlayers(players);
-  }
-
-  /*
-  功能
-  计算排除当前转移牌后的 Domain transfer source facts。
-
-  调用方
-  generate 与 generate 的 transfer legality。
-
-  输入
-  原玩家数组与要排除的卡牌 ID 集合。
-
-  输出
-  冻结的 canonical player facts，handCount 已扣除排除实体。
-
-  读取状态
-  无。
-
-  写入状态
-  无。
-
-  调用函数
-  projectTransferRulePlayers。
-
-  边界与不变量
-  只投影可转移手牌数量；Domain Rule 负责来源与接收者公式。
-  */
-  projectTransferPlayers(players, excludedCardIds) {
-    return projectTransferRulePlayers(players, excludedCardIds);
-  }
-
-  /*
-  功能
-  从 Domain CardRules 取得卡牌合法目标实体。
-
-  调用方
-  generate 与 generate。
-
-  输入
-  原玩家数组、source 与 card。
-
-  输出
-  原玩家对象数组。
-
-  读取状态
-  canonical players facts。
-
-  写入状态
-  无。
-
-  调用函数
-  projectPlayers、findPlayerFact、getCardTargetIds、resolveRuleTargets。
-
-  边界与不变量
-  目标公式只由 Domain CardRules 解释；不在此过滤 AI policy。
-  */
-  getCardTargetsFromRule(players, source, card, isRangeLegal = null) {
-    const rulePlayers = this.projectPlayers(players);
-    const sourceFact = findPlayerFact(rulePlayers, source.id);
-    return this.resolveRuleTargets(players, getCardTargetIds(rulePlayers, sourceFact, card, isRangeLegal));
-  }
-
-  /*
-  功能
-  从 Domain CardRules 取得借势第二目标实体。
-
-  调用方
-  generate 与 generate。
-
-  输入
-  原玩家数组与 source。
-
-  输出
-  原玩家对象数组。
-
-  读取状态
-  canonical players facts。
-
-  写入状态
-  无。
-
-  调用函数
-  projectPlayers、findPlayerFact、getAssaultTargetIds、resolveRuleTargets。
-
-  边界与不变量
-  第二目标只受 Domain 距离规则约束，不检查次数或手牌。
-  */
-  getAssaultTargetsFromRule(players, source, isRangeLegal = null) {
-    const rulePlayers = this.projectPlayers(players);
-    const sourceFact = findPlayerFact(rulePlayers, source.id);
-    return this.resolveRuleTargets(players, getAssaultTargetIds(rulePlayers, sourceFact, isRangeLegal));
-  }
-
-  /*
-  功能
-  从 Domain CardRules 取得借势第一目标实体。
-
-  调用方
-  generate 与 generate。
-
-  输入
-  原玩家数组与 source。
-
-  输出
-  原玩家对象数组。
-
-  读取状态
-  canonical players facts。
-
-  写入状态
-  无。
-
-  调用函数
-  projectPlayers、findPlayerFact、getLeverageFirstTargetIds、resolveRuleTargets。
-
-  边界与不变量
-  第一目标装备与第二目标距离公式只由 Domain 解释。
-  */
-  getLeverageFirstTargetsFromRule(players, source, isRangeLegal = null) {
-    const rulePlayers = this.projectPlayers(players);
-    const sourceFact = findPlayerFact(rulePlayers, source.id);
-    return this.resolveRuleTargets(players, getLeverageFirstTargetIds(rulePlayers, sourceFact, isRangeLegal));
-  }
-
-  /*
-  功能
-  从 Domain CardRules 取得可转移来源实体。
-
-  调用方
-  generate 与 generate 的转移枚举。
-
-  输入
-  原玩家数组、source、card 与排除 ID。
-
-  输出
-  原玩家对象数组。
-
-  读取状态
-  canonical transfer facts。
-
-  写入状态
-  无。
-
-  调用函数
-  projectTransferPlayers、findPlayerFact、getTransferSourceIds、resolveRuleTargets。
-
-  边界与不变量
-  排除规则与 transferableHandCount 一致。
-  */
-  getTransferSourcesFromRule(players, source, card, excludedCardIds = null, isRangeLegal = null) {
-    const exclusions = excludedCardIds ?? (card?.id ? new Set([card.id]) : null);
-    const rulePlayers = this.projectTransferPlayers(players, exclusions);
-    const sourceFact = findPlayerFact(rulePlayers, source.id);
-    return this.resolveRuleTargets(players, getTransferSourceIds(rulePlayers, sourceFact, card, isRangeLegal));
-  }
-
-  /*
-  功能
-  从 Domain CardRules 取得转移接收者实体。
-
-  调用方
-  generate 与 generate 的转移枚举。
-
-  输入
-  原玩家数组、source、from 与 card。
-
-  输出
-  原玩家对象数组。
-
-  读取状态
-  canonical transfer facts。
-
-  写入状态
-  无。
-
-  调用函数
-  projectTransferPlayers、findPlayerFact、getTransferReceiverIds、resolveRuleTargets。
-
-  边界与不变量
-  接收者排除来源自身；公式只由 Domain CardRules 解释。
-  */
-  getTransferReceiversFromRule(players, source, from, card, isRangeLegal = null) {
-    const exclusions = card?.id ? new Set([card.id]) : null;
-    const rulePlayers = this.projectTransferPlayers(players, exclusions);
-    const sourceFact = findPlayerFact(rulePlayers, source.id);
-    const fromFact = findPlayerFact(rulePlayers, from.id);
-    return this.resolveRuleTargets(players, getTransferReceiverIds(rulePlayers, sourceFact, fromFact, card, isRangeLegal));
-  }
-
-  /*
-  功能
-  从 Domain SkillRules 取得技能目标实体。
-
-  调用方
-  generate 与 generate。
-
-  输入
-  原玩家数组、source 与 skill。
-
-  输出
-  原玩家对象数组。
-
-  读取状态
-  canonical players facts。
-
-  写入状态
-  无。
-
-  调用函数
-  projectPlayers、getSkillTargetIds、resolveRuleTargets。
-
-  边界与不变量
-  技能目标公式只由 Domain SkillRules 解释。
-  */
-  getSkillTargetsFromRule(players, source, skill, isRangeLegal = null) {
-    if (!skill?.rangeRule) return [];
-    const rulePlayers = this.projectPlayers(players);
-    return this.resolveRuleTargets(players, getSkillTargetIds(rulePlayers, source.id, skill, isRangeLegal));
   }
 
   /*
@@ -791,6 +459,8 @@ export class Generator {
     const alive = state.players.filter((player) => player.alive).sort((a,b) => a.seatIndex - b.seatIndex);
     // Domain Rules 只接收 canonical data facts；Generator 保留原规则枚举顺序。
     const enemies = alive.filter((player) => player.battleTeam !== actor.battleTeam);
+    const rulePlayers = projectRulePlayers(state.players);
+    const actorRule = findPlayerFact(rulePlayers, actor.id);
     /*
     功能
     把当前 World 绑定成 Domain target rules 所需的概率距离 predicate。
@@ -824,12 +494,25 @@ export class Generator {
       const definition = CARD_DEFINITIONS[held.definitionId];
       if (!definition || definition.usageMode === "response") continue;
       const card = { ...definition, ...held, id:held.id };
-      const transferSourceIds = card.definitionId === "transfer"
-        ? this.getTransferSourcesFromRule(state.players, actor, card, new Set([card.id]), isRangeLegal)
-          .map((source) => source.id)
+      const excludedTransferIds = card.definitionId === "transfer" && card.id
+        ? new Set([card.id])
+        : null;
+      const transferRulePlayers = card.definitionId === "transfer"
+        ? projectTransferRulePlayers(state.players, excludedTransferIds)
+        : null;
+      const transferActorRule = transferRulePlayers
+        ? findPlayerFact(transferRulePlayers, actor.id)
+        : null;
+      const transferSourceIds = transferRulePlayers
+        ? getTransferSourceIds(
+            transferRulePlayers,
+            transferActorRule,
+            card,
+            isRangeLegal
+          )
         : null;
       const legality = canPlayCard({
-        players:this.projectPlayers(state.players),
+        players:rulePlayers,
         sourceId:actor.id,
         currentPlayerId:actor.id,
         phase:state.phase,
@@ -843,8 +526,22 @@ export class Generator {
       });
       if (!legality.ok) continue;
       if (card.definitionId === "lightning" && hasStatus(projectRulePlayer(actor), "lightning")) continue;
+      const usesRuleTargets = card.definitionId === "assault"
+        || card.definitionId === "scout"
+        || [
+          "singleEnemy",
+          "singleUnsealedEnemy",
+          "singleAlly",
+          "otherWithCards",
+          "otherWithCardsOrEquipment"
+        ].includes(card.targetType);
+      const cardTargets = usesRuleTargets
+        ? getCardTargetIds(rulePlayers, actorRule, card, isRangeLegal)
+          .map((targetId) => state.players.find((player) => player.id === targetId))
+          .filter(Boolean)
+        : [];
       if (card.definitionId === "assault") {
-        for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
+        for (const target of cardTargets) {
           const action = this.createCompleteAction(
             state, actor, "card", card, [target], null, null, searchBudget
           );
@@ -855,14 +552,21 @@ export class Generator {
       if (card.definitionId === "recover" && (actor.hp >= actor.maxHp || (actor.recoverLimit !== null && actor.recoverUsed >= actor.recoverLimit))) continue;
       if (card.definitionId === "charge" && actor.energy >= actor.maxEnergy) continue;
       if (card.definitionId === "transfer") {
-        const excludedCardIds = card.id ? new Set([card.id]) : null;
-        for (const source of this.getTransferSourcesFromRule(
-          state.players, actor, card, excludedCardIds, isRangeLegal
-        )) {
-          for (const receiver of this.getTransferReceiversFromRule(
-            state.players, actor, source, card, isRangeLegal
-          )) {
-            for (const resource of this.getHandSelections(state, source, excludedCardIds)) {
+        for (const sourceId of transferSourceIds) {
+          const source = state.players.find((player) => player.id === sourceId);
+          const sourceRule = findPlayerFact(transferRulePlayers, sourceId);
+          if (!source || !sourceRule) continue;
+          const receiverIds = getTransferReceiverIds(
+            transferRulePlayers,
+            transferActorRule,
+            sourceRule,
+            card,
+            isRangeLegal
+          );
+          for (const receiverId of receiverIds) {
+            const receiver = state.players.find((player) => player.id === receiverId);
+            if (!receiver) continue;
+            for (const resource of this.getHandSelections(state, source, excludedTransferIds)) {
               const action = this.createCompleteAction(
                 state,
                 actor,
@@ -880,11 +584,22 @@ export class Generator {
         continue;
       }
       if (card.definitionId === "leverage") {
-        const firstTargets = this.getLeverageFirstTargetsFromRule(
-          state.players, actor, isRangeLegal
-        ).filter((firstTarget) => (firstTarget.equipmentRetentionProbability ?? 1) > PROBABILITY_EPSILON);
+        const firstTargets = getLeverageFirstTargetIds(
+          rulePlayers,
+          actorRule,
+          isRangeLegal
+        ).map((targetId) => state.players.find((player) => player.id === targetId))
+          .filter((firstTarget) => firstTarget
+            && (firstTarget.equipmentRetentionProbability ?? 1) > PROBABILITY_EPSILON);
         for (const firstTarget of firstTargets) {
-          for (const secondTarget of this.getAssaultTargetsFromRule(state.players, firstTarget, isRangeLegal)) {
+          const firstTargetRule = findPlayerFact(rulePlayers, firstTarget.id);
+          const secondTargets = getAssaultTargetIds(
+            rulePlayers,
+            firstTargetRule,
+            isRangeLegal
+          ).map((targetId) => state.players.find((player) => player.id === targetId))
+            .filter(Boolean);
+          for (const secondTarget of secondTargets) {
             const action = this.createCompleteAction(
               state,
               actor,
@@ -906,7 +621,7 @@ export class Generator {
         continue;
       }
       if (card.definitionId === "scout") {
-        for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
+        for (const target of cardTargets) {
           for (const selection of this.getScoutSelections(state, target)) {
             const action = this.createCompleteAction(
               state, actor, "card", card, [target], selection, null, searchBudget
@@ -915,14 +630,14 @@ export class Generator {
           }
         }
       } else if (["singleEnemy","singleUnsealedEnemy"].includes(card.targetType)) {
-        for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
+        for (const target of cardTargets) {
           const action = this.createCompleteAction(
             state, actor, "card", card, [target], null, null, searchBudget
           );
           if (action) actions.push(action);
         }
       } else if (card.targetType === "singleAlly" || card.targetType === "otherWithCards") {
-        for (const target of this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal)) {
+        for (const target of cardTargets) {
           const action = this.createCompleteAction(
             state, actor, "card", card, [target], null, null, searchBudget
           );
@@ -930,8 +645,7 @@ export class Generator {
         }
       }
       else if (card.targetType === "otherWithCardsOrEquipment") {
-        const targets = this.getCardTargetsFromRule(state.players, actor, card, isRangeLegal);
-        for (const target of targets) {
+        for (const target of cardTargets) {
           for (const selection of this.getResourceSelections(state, target)) {
             const action = this.createCompleteAction(
               state, actor, "card", card, [target], selection, null, searchBudget
@@ -951,7 +665,7 @@ export class Generator {
     }
     const skill = ACTIVE_SKILL_DEFINITIONS[actor.activeSkillId] ?? null;
     const skillLegality = skill ? canUseSkillBase({
-      players:this.projectPlayers(state.players),
+      players:rulePlayers,
       sourceId:actor.id,
       currentPlayerId:actor.id,
       phase:state.phase,
@@ -962,15 +676,15 @@ export class Generator {
       minimumEnergy:getSkillCost(skill, actor, state.players)
     }) : { ok:false };
     if (skill && skillLegality.ok) {
-      let targets = [];
-      if (skill.id === "barrier") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
-      else if (skill.id === "resonance") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
-      else if (skill.id === "symbiosis") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
-      else if (skill.id === "stealSkill") targets = this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal);
-      else if (skill.id === "hunt") {
-        const ruleTargets = new Set(this.getSkillTargetsFromRule(state.players, actor, skill, isRangeLegal)
-          .map((target) => target.id));
-        targets = enemies.filter((player) => ruleTargets.has(player.id)
+      const skillRuleTargetIds = skill.rangeRule
+        ? getSkillTargetIds(rulePlayers, actor.id, skill, isRangeLegal)
+        : [];
+      let targets = skillRuleTargetIds
+        .map((targetId) => state.players.find((player) => player.id === targetId))
+        .filter(Boolean);
+      if (skill.id === "hunt") {
+        const ruleTargetIds = new Set(skillRuleTargetIds);
+        targets = enemies.filter((player) => ruleTargetIds.has(player.id)
           || player.huntMarkSourceId === actor.id);
       }
       if (["none","allEnemies"].includes(skill.targetType)) {
@@ -1001,7 +715,7 @@ export class Generator {
         }
       }
     }
-    actions.push(this.createEndAction(actor.id));
+    actions.push(createAction({ type:"end", actorId:actor.id }));
     const uniqueActions = deduplicateSearchEquivalentActions(actions);
     searchBudget?.observeActionGeneration?.({
       physicalCandidates:actions.length,

@@ -88,7 +88,7 @@ FR-ARCH-12 historical facts：
 FR-ARCH-13 historical facts：
 - `AIController`、`Knowledge`、`ActionGenerator`、`CardSelectionBoundary`、`ResponseBoundary` 均不保存 raw Game；`js/ai/**` 的 `this.game` 与 `core/Game` import 为零；
 - `AIController.selectAction` 构造必要 Worker request shape（requestId/gameId/stateVersion/actor/phase/round/canonical World/config/rng/canonical root Actions），并在返回前执行 session、game identity、stateVersion、actor、phase 与 root Action acceptance；
-- queued planned sequence 的第二项不继承首项 requestVersion；`resolvePlannedAction` 继续 current-state rebind + Domain candidate revalidation；
+- 该阶段曾允许 queued planned sequence 在首项后按当前状态重绑；最终架构已删除跨真实 Action 的计划复用，真实执行每步重新搜索；
 - `SearchResult` wrapper 已删除；Controller 内联记录 canonical Action、计划与 stats；搜索边界不返回 real Card/Player/Simulator；
 - `SearchRng` 是 AI Search/Decision 专用 LCG；real Game RNG 不被纯 AI search 推进，固定 AI seed 可复现；
 - `createChoiceBoundary` 显式组合 Human/AI peer adapters、ChoicePort 与 coordinator；AI 不回读应用对象；
@@ -252,7 +252,7 @@ Game/ResponseSystem/PublicCardPool/skillRegistry -> AIController facade methods
 - `AiPlanner` 不再接收或保存 `Game`，也不持有 `AIController`；深层动作、隐藏世界、随机、预算与会话让步全部是构造时注入的窄能力。
 - `AiActionGenerator` 为真实根动作保留 `Game` 规则上下文，但转移选择由 `chooseTransferCombination` 显式注入，不再从 `game.aiController` 查找 CardSelector。
 - Controller 先构造 Knowledge/Evaluator/CardSelector/ResponsePolicy，再构造 ActionGenerator，最后构造 Planner；没有 post-construction patch，也没有搜索节点内组件构造。
-- 生产 `js/ai/**` 已无 `game.aiController` 或 `this.game.aiController` 回指。上游通过 Controller 的稳定门面访问响应、公开选牌、隐藏选择、区域选择、转移选择和计划序列。
+- 该历史阶段的上游曾通过 Controller 门面访问响应、选择和搜索序列；最终架构只保留当前 root Action 执行，最优序列仅供搜索诊断。
 - `.knowledge`、`.evaluator`、`.cardSelector`、`.responsePolicy`、`.actionGenerator`、`.planner` 公共字段暂留一个兼容阶段，保证历史测试猴子补丁仍作用于同一实例；生产上游不再直接访问这些字段。
 
 ## 6. 依赖矩阵
@@ -716,20 +716,20 @@ Architecture Guard 现已覆盖 `state/**` 的模块头与 UI import 禁令，�
 | `AiPlanner -> game.aiController.knowledge` | Controller 注入 `sampleHiddenWorlds` | 合法隐藏世界采样能力 | 采样实现、样本数量、时机和随机调用顺序 |
 | `AiPlanner -> Game` | random、配置 getter、`yieldControl` 窄能力 | 随机、预算覆盖和可取消让步 | 时间/节点预算语义、会话取消与 tie-break |
 | `AiActionGenerator -> game.aiController.cardSelector` | Controller 注入 `chooseTransferCombination` | 根转移动作所需选择能力 | TransferPolicy/评分、合法动作集合和实体复核 |
-| 上游直接取 Controller 子组件 | Controller 稳定门面 | 响应、公开/隐藏/区域/转移选择、计划序列读取 | 兼容子组件字段与历史测试替换点 |
+| 上游直接取 Controller 子组件 | Controller 稳定门面 | 响应、公开/隐藏/区域/转移选择与当时的搜索序列读取 | 兼容子组件字段与历史测试替换点；序列执行入口已在最终架构删除 |
 
 构造顺序固定为 `Knowledge -> Evaluator -> CardSelector -> ResponsePolicy -> ActionGenerator -> Planner`。ActionGenerator 注入闭包捕获具体 CardSelector，Planner 注入闭包捕获具体 ActionGenerator/Knowledge 与 Game 的窄运行能力；任何子组件都不接收 Controller。必要能力在构造阶段按名称校验，缺失即抛 `TypeError`，不存在半装配对象或事后回填。
 
 ### Controller 边界
 
-- 生产上游只使用 `getLegalActions`、`selectAction`、`resolvePlannedAction`、`getPlannedSequence`、`chooseDiscards`、`chooseTransferCombination`、`chooseHiddenCards`、`chooseZoneCard`、`choosePublicCard`、`shouldRespond`。
+- 该阶段生产上游曾包含计划重绑与序列读取入口；最终架构已删除这两个旧入口，真实执行只使用当前 `selectAction` 结果。
 - Descriptor resolver 保留在 Controller 的真实执行边界：它必须读取“当前合法动作”并按实体 ID、目标顺序和选择字段重绑，不属于纯 Planner。
 - 兼容子组件字段当时只服务历史测试与诊断工具，并非推荐 API；AI-ARCH-10 已在消费者审计后移除不再需要的入口。
 
 ### 行为冻结证据
 
 - 新增直接构造测试证明 Planner 实例没有 `game`/`aiController` 字段，ActionGenerator 在 `game.aiController = null` 时仍通过注入能力生成转移动作，缺依赖在构造时明确失败。
-- 固定种子 `20260814` 的生产装配与直接注入 Planner 对照：根动作 descriptor、10 个隐藏世界、每层深层动作 descriptor 集合和完整计划序列一致。
+- 固定种子 `20260814` 的生产装配与直接注入 Planner 对照：根动作 descriptor、10 个隐藏世界、每层深层动作 descriptor 集合和完整搜索诊断序列一致。
 - 转移选择门面、ActionGenerator 注入闭包和 descriptor 重绑使用同一当前 CardSelector/合法动作集合；兼容方法替换继续动态生效。
 - 功能测试在新增 4 项依赖注入测试后为 `1362/1362`；未修改规则、权重、搜索深度、束宽、hidden sample 数、prior、最终评分或 tie-break。
 
@@ -849,7 +849,7 @@ Expose、assault-stack 与 seal timing 的领域 producer 暂留 Planner/既有 
 
 ### 行为、数值与性能证据
 
-逐 term legacy/new 测试锁定 `economic`、`resolutionScale`、`executionProbability`、`immediate`、`stateDelta`、`stateDeltaValue`、`depth`、`baseTransition` 和 final composition。现有 value snapshots 继续覆盖普通/确定突袭、格挡、反制、濒死救援、击杀、调息、装备、破势新增/消费、封印 timing、frontier recover/recycle、end fallback、闪电与 GlobalBenefit。Diagnostics off/on 的 root action、计划序列、节点、深度、hidden samples、final value 和 tie-break 相同。
+逐 term legacy/new 测试锁定 `economic`、`resolutionScale`、`executionProbability`、`immediate`、`stateDelta`、`stateDeltaValue`、`depth`、`baseTransition` 和 final composition。现有 value snapshots 继续覆盖普通/确定突袭、格挡、反制、濒死救援、击杀、调息、装备、破势新增/消费、封印 timing、frontier recover/recycle、end fallback、闪电与 GlobalBenefit。Diagnostics off/on 的 root action、搜索诊断序列、节点、深度、hidden samples、final value 和 tie-break 相同。
 
 固定 D4 场景 `planning.d4-seal-then-kill`、seed `20260814`、node budget `200`，改造前后均选择 `seal -> c`，计划为 `seal c -> stealSkill c -> assault b -> end`，扩展 `102` 节点、深度 `4`、hidden samples `10`、`bestValueScore=0.04919669968375734`。
 
