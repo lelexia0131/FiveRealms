@@ -3,7 +3,7 @@
 定义搜索、Worker、计划复用与真实执行共同消费的唯一 Action 数据契约及其稳定身份。
 
 上游
-ActionGenerator、Searcher、Pattern、AIController、Worker search runtime 与 TurnWorkflow。
+Generator、Searcher、Pattern、Controller、Worker search runtime 与 TurnWorkflow。
 
 下游
 无。
@@ -94,7 +94,7 @@ function normalizeExecution(execution = null) {
 创建所有生产模块共同消费的 canonical Action。
 
 调用方
-ActionGenerator 与安全终止路径。
+Generator 与安全终止路径。
 
 输入
 动作类型、actor ID、卡牌/技能身份、完整目标 ID、selection、能量费用与 execution intent。
@@ -194,7 +194,7 @@ export function actionIntentKey(action) {
 为搜索去重生成忽略 card instance、保留完整执行语义的稳定键。
 
 调用方
-ActionGenerator 与 Searcher 的 secondary scheduling。
+Generator 与 Searcher 的 secondary scheduling。
 
 输入
 canonical Action。
@@ -232,7 +232,7 @@ export function actionSearchKey(action) {
 判断两个 Action 是否具有完全相同的可执行身份。
 
 调用方
-AIController request acceptance 与计划复用。
+Controller request acceptance 与计划复用。
 
 输入
 两个 canonical Action。

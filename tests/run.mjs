@@ -4,7 +4,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import * as nodePath from "node:path";
 import { fileURLToPath } from "node:url";
 import { AI_PACING, RUNTIME_POLICY } from "../js/application/policy/RuntimePolicy.js";
-import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILE } from "../js/ai/policy/AiRuntimePolicy.js";
+import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILE } from "../js/ai/Controller.js";
 import { PHASE_PRESENTATION as PHASE_NAMES, TEAM_PRESENTATION as TEAM_CONFIG } from "../js/adapters/ui/PresentationMetadata.js";
 import { CARD_PRESENTATION, presentCard } from "../js/adapters/ui/CardPresentationDefinitions.js";
 import { CHARACTER_PRESENTATION, presentCharacter } from "../js/adapters/ui/CharacterPresentationDefinitions.js";
@@ -79,16 +79,13 @@ import {
   tacticJudgmentProbability,
   totalBranchProbability
 } from "../js/ai/Event/Probability/Probability.js";
-import { Simulator as ProductionSimulator } from "../js/ai/Simulator/Simulator.js";
-import { Searcher } from "../js/ai/search/Searcher.js";
-import { createSearchEngine } from "../js/adapters/ai/worker/SearchEngineFactory.js";
+import { Simulator as ProductionSimulator, tacticResolutionScale } from "../js/ai/Simulator/Simulator.js";
+import { SearchBudget, Searcher, createSearchEngine } from "../js/ai/Searcher/Searcher.js";
 import { Pattern as PatternMatcher } from "../js/ai/Searcher/Pattern/Pattern.js";
-import { SearchBudget } from "../js/ai/search/SearchBudget.js";
-import { tacticResolutionScale } from "../js/ai/search/TacticResolutionQuery.js";
-import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
-import { SearchRng } from "../js/ai/search/SearchRng.js";
-import { SEARCH_RESULT_STATUS } from "../js/ai/AiController.js";
-import { Action, createAction } from "../js/ai/search/Action.js";
+import { Generator as ActionGenerator } from "../js/ai/Generator/Generator.js";
+import { Rng as SearchRng } from "../js/ai/Searcher/Rng.js";
+import { SEARCH_RESULT_STATUS } from "../js/ai/Controller.js";
+import { Action, createAction } from "../js/ai/Generator/Action.js";
 import { ThreatCalculator } from "../js/ai/Evaluator/StateValue.js";
 import { HP_RISK_OPTION_WEIGHT } from "../js/ai/Evaluator/StateValue.js";
 import {
@@ -102,10 +99,11 @@ import {
   counterOpportunityCost,
   planningCounterDecision,
   privatePeekInformationValue,
-  rankDiscardCandidates
+  rankDiscardCandidates,
+  sealUseValue,
+  turnOrderGap,
+  turnTimingFactor
 } from "../js/ai/Evaluator/Evaluator.js";
-import { CounterfactualTerms } from "../js/ai/search/CounterfactualTerms.js";
-import { StateValue } from "../js/ai/Evaluator/StateValue.js";
 import {
   HP_VALUE as OWNED_HP_VALUE,
   statePointsToUtility
@@ -207,13 +205,11 @@ import {
   turnOpportunityValue
 } from "../js/ai/Evaluator/StateValue.js";
 import { sealTeamBurden } from "../js/ai/Evaluator/StateValue.js";
-import { sealUseValue, turnOrderGap, turnTimingFactor } from "../js/ai/search/SealPrior.js";
 import { MUSIC_PROFILES, SOUND_THROTTLE_MS, SoundManager } from "../js/audio/SoundManager.js";
 import {
   assessGlobalBenefit,
   mutualBenefitDraftValues
 } from "../js/ai/Evaluator/CardValue.js";
-import { dynamicRootFlipGain } from "../js/ai/Evaluator/Evaluator.js";
 import {
   assessGlobalBenefitOutcome,
   buildMutualBenefitDraftOutcome
@@ -1257,7 +1253,7 @@ async function frArchRulesetAuthority() {
   }
   assert.equal(Object.hasOwn(RUNTIME_POLICY, "deckComposition"), false);
   const source = await readFile(projectFile("js/application/policy/RuntimePolicy.js"), "utf8");
-  const aiSource = await readFile(projectFile("js/ai/policy/AiRuntimePolicy.js"), "utf8");
+  const aiSource = await readFile(projectFile("js/ai/Controller.js"), "utf8");
   assert.doesNotMatch(source, /playerCount|defaultAttackRange|initialRound|deckComposition/);
   assert.doesNotMatch(source, /aiSearchTimeBudgetMs|aiSearchYieldEvery|forceAiRescueHuman/);
   for (const retained of ["defaultAiSpeed", "aiRawThinkingRanges", "debugMode"]) {
@@ -13511,7 +13507,7 @@ test("AI·架构：Event/Simulator/Evaluator 最终文件与 sibling 依赖闭�
 
 /*
 功能
-验证响应与战斗语义只由 Evaluator、Probability、Simulator 和 AIController 四个正式 owner 承担。
+验证响应与战斗语义只由 Evaluator、Probability、Simulator 和 Controller 四个正式 owner 承担。
 
 调用方
 AI 架构测试分组。
@@ -13536,12 +13532,12 @@ readFile、access、assert。
 */
 async function responseCombatSemanticClosure() {
   const paths = {
-    controller:"js/ai/AiController.js",
+    controller:"js/ai/Controller.js",
     evaluator:"js/ai/Evaluator/Evaluator.js",
     simulator:"js/ai/Simulator/Simulator.js",
     response:"js/ai/Simulator/Response.js",
     combat:"js/ai/Simulator/Damage.js",
-    worker:"js/adapters/ai/worker/SearchEngineFactory.js"
+    worker:"js/ai/Searcher/Searcher.js"
   };
   const source = Object.fromEntries(await Promise.all(
     Object.entries(paths).map(async ([name, path]) => [
@@ -13553,7 +13549,7 @@ async function responseCombatSemanticClosure() {
   await assert.rejects(access(projectFile("js/ai/policy/ResponseBoundary.js")));
   assert.match(source.evaluator, /shouldRespond\(decision\)/);
   assert.match(source.evaluator, /decidePlanningCounter[\s\S]*decidePlanningDyingRescue/);
-  assert.match(source.controller, /buildResponseDecisionContext[\s\S]*stateEvaluator\.shouldRespond/);
+  assert.match(source.controller, /buildResponseDecisionContext[\s\S]*this\.evaluator\.shouldRespond/);
   assert.doesNotMatch(source.controller, /ResponsePolicy|ResponseBoundary/);
   assert.doesNotMatch(
     source.controller,
@@ -13565,7 +13561,7 @@ async function responseCombatSemanticClosure() {
   assert.match(source.simulator, /this\.decideDyingRescue/);
   assert.match(source.response, /selectGuardianAidDiscard/);
   assert.doesNotMatch(source.response, /consumeChosenHandCard|consumeRandomHandCards/);
-  assert.match(source.worker, /stateEvaluator\.decidePlanningCounter/);
+  assert.match(source.worker, /evaluator\.decidePlanningCounter/);
   for (const name of ["evaluator", "response", "combat"]) {
     assert.doesNotMatch(source[name], /Probability\/(?:Branch|Pool)\.js/, name);
   }
@@ -13590,11 +13586,11 @@ test("AI·资源闭合：旧 Resource owner 删除且 Simulation 无价值选择
     "js/adapters/ai/TransferExecutionPolicyAdapter.js"
   ]) await assert.rejects(access(projectFile(path)));
   const paths = {
-    controller:"js/ai/AiController.js",
+    controller:"js/ai/Controller.js",
     card:"js/ai/Simulator/Resource.js",
     simulator:"js/ai/Simulator/Simulator.js",
     response:"js/ai/Simulator/Response.js",
-    worker:"js/adapters/ai/worker/SearchEngineFactory.js",
+    worker:"js/ai/Searcher/Searcher.js",
     evaluator:"js/ai/Evaluator/Evaluator.js",
     cardValue:"js/ai/Evaluator/CardValue.js"
   };
@@ -13611,11 +13607,11 @@ test("AI·资源闭合：旧 Resource owner 删除且 Simulation 无价值选择
     assert.doesNotMatch(source[name], /from\s+["'][^"']*\/(?:policy|value)\//, name);
   }
   assert.doesNotMatch(source.card, /\.(?:sort|toSorted)\(/);
-  assert.match(source.worker, /stateEvaluator\.resolveDiscardCandidates/);
-  assert.match(source.controller, /stateEvaluator\.evaluateResourceTransitionCandidate/);
+  assert.match(source.worker, /evaluator\.resolveDiscardCandidates/);
+  assert.match(source.controller, /this\.evaluator\.evaluateResourceTransitionCandidate/);
   assert.match(source.evaluator, /chooseContextualResourceCandidate/);
   assert.match(source.cardValue, /getDiscardKeepValue[\s\S]*getResourceUnknownUtility/);
-  assert.match(source.controller, /stateEvaluator\.chooseTransferAction/);
+  assert.match(source.controller, /this\.evaluator\.chooseTransferAction/);
   assert.match(source.evaluator, /chooseTransferHandCandidate[\s\S]*chooseTransferAction/);
 });
 
@@ -13920,11 +13916,11 @@ test("AI·资源闭合：Controller 每个 resource candidate 恰好一次 clone
   owner.equipment = instance("telescope");
   game.rememberPrivateCard(actor, owner, known);
   const originalFactory = game.aiController.simulatorFactory;
-  const originalTransitionDelta = game.aiController.stateValue.transitionDelta.bind(
-    game.aiController.stateValue
+  const originalTransitionDelta = game.aiController.evaluator.transitionDelta.bind(
+    game.aiController.evaluator
   );
-  const originalEvaluate = game.aiController.stateEvaluator.evaluateResourceTransitionCandidate.bind(
-    game.aiController.stateEvaluator
+  const originalEvaluate = game.aiController.evaluator.evaluateResourceTransitionCandidate.bind(
+    game.aiController.evaluator
   );
   const counts = { clone:0, transition:0, stateValue:0, comparison:0 };
   game.aiController.simulatorFactory = (...args) => {
@@ -13941,11 +13937,11 @@ test("AI·资源闭合：Controller 每个 resource candidate 恰好一次 clone
     };
     return simulator;
   };
-  game.aiController.stateValue.transitionDelta = (...args) => (
+  game.aiController.evaluator.transitionDelta = (...args) => (
     counts.stateValue += 1,
     originalTransitionDelta(...args)
   );
-  game.aiController.stateEvaluator.evaluateResourceTransitionCandidate = (...args) => (
+  game.aiController.evaluator.evaluateResourceTransitionCandidate = (...args) => (
     counts.comparison += 1,
     originalEvaluate(...args)
   );
@@ -14284,7 +14280,29 @@ test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 ser
     .filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
     .map((entry) => entry.name)
     .sort();
-  assert.deepEqual(rootFiles, ["AiController.js"]);
+  assert.deepEqual(rootFiles, ["Controller.js"]);
+  assert.deepEqual(files.map((file) => (
+    nodePath.relative(aiRoot, file).split(nodePath.sep).join("/")
+  )).sort(), [
+    "Controller.js",
+    "Evaluator/CardValue.js",
+    "Evaluator/Evaluator.js",
+    "Evaluator/StateValue.js",
+    "Event/Fact.js",
+    "Event/Probability/Branch.js",
+    "Event/Probability/Pool.js",
+    "Event/Probability/Probability.js",
+    "Generator/Action.js",
+    "Generator/Generator.js",
+    "Searcher/Pattern/Pattern.js",
+    "Searcher/Rng.js",
+    "Searcher/Searcher.js",
+    "Simulator/Damage.js",
+    "Simulator/Resource.js",
+    "Simulator/Response.js",
+    "Simulator/Simulator.js",
+    "Simulator/World.js"
+  ]);
 
   const removedCompatibilityNames = new Set([
     "AiSimulator", "AiEvaluator", "AiStateValue", "AiVisibleState", "AiKnowledge",
@@ -14418,8 +14436,12 @@ async function probabilityArchitectureClosure() {
 test("AI·Probability 架构：Facade/Branch/Pool 正交且旧 Model 引用闭合", probabilityArchitectureClosure);
 
 test("AI·架构：唯一 Searcher 只通过注入能力消费 Simulator/SearchBudget/Evaluator", async () => {
-  const source = await readFile(projectFile("js/ai/search/Searcher.js"), "utf8");
-  assert.doesNotMatch(source, /new\s+(?:Ai)?Simulator\s*\(/);
+  const source = await readFile(projectFile("js/ai/Searcher/Searcher.js"), "utf8");
+  const searcherClass = source.slice(
+    source.indexOf("export class Searcher"),
+    source.indexOf("export const SEARCH_STOP_REASON")
+  );
+  assert.doesNotMatch(searcherClass, /new\s+Simulator\s*\(/);
   assert.doesNotMatch(
     source,
     /cardConfig|gameConfig|characterConfig|skillRegistry|ActionLegality|AiController|\.\.\/policy\/|\.\.\/domain\/|SearchPolicy/
@@ -14429,15 +14451,13 @@ test("AI·架构：唯一 Searcher 只通过注入能力消费 Simulator/SearchB
   assert.match(source, /searchBudgetFactory\(\)/);
   assert.throws(() => new Searcher({
     evaluator: {},
-    stateValue:{},
-    valueLedger:{},
-    searchPrior:{},
-    counterfactualTerms:{},
     patternMatcher:{},
     getResolutionScale:() => 1,
     config:{},
     simulatorFactory: () => ({}),
+    deduplicateActions:(actions) => actions,
     generateActions: () => [],
+    sampleUnknownHands:() => monteCarloEstimate([]),
     yieldControl: async () => true
   }), /searchBudgetFactory/);
 });
@@ -14446,117 +14466,58 @@ test("AI·架构：唯一 Searcher 只通过注入能力消费 Simulator/SearchB
 
 /*
 功能
-验证直接构造的 Planner 不持有 Game 或 Controller，且与生产装配产生相同搜索轨迹。
+验证 Controller 与 Worker Searcher 只通过同一个 runtime composition 构造 Evaluator/Simulator 图。
 
 调用方
 AI 依赖注入回归测试。
 
 输入
-固定玩家、手牌、随机种子、节点预算与同一组生产组件能力。
+无。
 
 输出
-根动作、隐藏世界、深层动作集合和计划描述全部一致。
+共享 composition 调用、Worker public imports 与 Evaluator 单向边界全部成立。
 
 读取状态
-测试 GameState、Knowledge、ActionGenerator、Evaluator 与 SearchState。
+Controller、Searcher 与 WorkerSearchRuntime production source。
 
 写入状态
-测试期间临时替换并恢复组件方法与随机源。
+无。
 
 调用函数
-Planner、createInitialWorld、sampleHiddenWorlds、generateActions。
+readFile、assert。
 
 边界与不变量
-Planner 实例不得保存 Game；固定种子下采样时机、动作顺序和最终描述不得因装配方式改变。
+Controller 与 createSearchEngine 不得复制 runtime graph；Worker 只能引入公开 Controller/Searcher，Evaluator 不得保存或构造 Simulator。
 */
-async function testPlannerExplicitDependenciesPreserveTrace() {
-  const actor = makePlayer("di-planner-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("di-planner-enemy", 1, "dusk", "ai", 1);
-  actor.hand.push(instance("charge"), instance("exposeWeakness"), instance("assault"));
-  enemy.hand.push(instance("block"));
-  const seed = 20260814;
-  const { game } = makeGame([actor, enemy], { random: makeBenchmarkRandom(seed) });
-  game.aiRandomnessRange = 0;
-  game.aiSearchNodeBudgetOverride = 30;
-  const controller = game.aiController;
-  const actionGenerator = controller.actionGenerator;
-  const knowledge = controller.knowledge;
-  const productionPlanner = controller.planner;
-  const remainingCardCounts = knowledge.remainingCounts(actor);
-  const visible = createInitialWorld(actor.id, game.state, remainingCardCounts);
-  const roots = controller.getActionCandidates(actor);
-  const originalGenerate = actionGenerator.generate.bind(actionGenerator);
-  const originalSample = knowledge.sampleHiddenWorlds.bind(knowledge);
-  const deepActionSets = { production: [], direct: [] };
-  const hiddenSamples = { production: [], direct: [] };
-  let mode = "production";
-  actionGenerator.generate = (state, actorId) => {
-    const actions = originalGenerate(state, actorId);
-    deepActionSets[mode].push(actions.map((action) => describeBenchmarkAction(action)));
-    return actions;
-  };
-  knowledge.sampleHiddenWorlds = (...args) => {
-    const worlds = originalSample(...args);
-    hiddenSamples[mode].push({ count: args[2], worlds: structuredClone(worlds) });
-    return worlds;
-  };
-  const directPlanner = new Searcher({
-    candidateMaterializer: productionPlanner.candidateMaterializer,
-    patternMatcher:productionPlanner.patternMatcher,
-    searchPolicy: productionPlanner.searchPolicy,
-    simulatorFactory: productionPlanner.simulatorFactory,
-    searchBudgetFactory: productionPlanner.searchBudgetFactory,
-    deduplicateActions:productionPlanner.deduplicateActions,
-    generateActions: (...args) => actionGenerator.generate(...args),
-    yieldControl: async () => true
-  });
-  try {
-    game.aiRandom = new SearchRng(seed);
-    const traceRng = new SearchRng(seed);
-    knowledge.random = () => traceRng.next();
-    game.aiController.searchPolicy.random = () => traceRng.next();
-    const productionAction = await productionPlanner.plan(
-      actor, visible, roots, { gameId: game.state.gameId }
-    );
-    const productionDescriptor = describeBenchmarkAction(productionAction);
-    const productionSequence = productionPlanner.lastPlannedSequence.map(
-      (action) => describeBenchmarkAction(action)
-    );
-
-    mode = "direct";
-    game.aiRandom = new SearchRng(seed);
-    const directTraceRng = new SearchRng(seed);
-    knowledge.random = () => directTraceRng.next();
-    game.aiController.searchPolicy.random = () => directTraceRng.next();
-    const directAction = await directPlanner.plan(actor, visible, roots, { gameId: game.state.gameId });
-    assert.equal("game" in directPlanner, false);
-    assert.equal("aiController" in directPlanner, false);
-    assert.deepEqual(describeBenchmarkAction(directAction), productionDescriptor);
-    assert.deepEqual(
-      directPlanner.lastPlannedSequence.map((action) => describeBenchmarkAction(action)),
-      productionSequence
-    );
-    assert.ok(deepActionSets.production.length > 0);
-    assert.deepEqual(deepActionSets.direct, deepActionSets.production);
-    assert.deepEqual(hiddenSamples.direct, hiddenSamples.production);
-    assert.equal(hiddenSamples.direct[0].count, AI_RUNTIME_POLICY.hiddenStateSamples);
-  } finally {
-    actionGenerator.generate = originalGenerate;
-    knowledge.sampleHiddenWorlds = originalSample;
-  }
+async function testSharedRuntimeComposition() {
+  const controller = await readFile(projectFile("js/ai/Controller.js"), "utf8");
+  const searcher = await readFile(projectFile("js/ai/Searcher/Searcher.js"), "utf8");
+  const worker = await readFile(
+    projectFile("js/adapters/ai/worker/WorkerSearchRuntime.js"),
+    "utf8"
+  );
+  const evaluator = await readFile(projectFile("js/ai/Evaluator/Evaluator.js"), "utf8");
+  assert.match(controller, /import \{ createRuntimeComposition \} from "\.\/Searcher\/Searcher\.js"/);
+  assert.match(controller, /const runtimeComposition = createRuntimeComposition\(/);
+  assert.match(searcher, /export function createRuntimeComposition\(/);
+  assert.match(searcher, /export function createSearchEngine[\s\S]*createRuntimeComposition\(/);
+  assert.match(worker, /from "\.\.\/\.\.\/\.\.\/ai\/Searcher\/Searcher\.js"/);
+  assert.match(worker, /from "\.\.\/\.\.\/\.\.\/ai\/Controller\.js"/);
+  assert.doesNotMatch(worker, /ai\/(?:Evaluator|Simulator)\//);
+  assert.doesNotMatch(evaluator, /from "\.\.\/Simulator\/|new\s+Simulator\s*\(|configureRuntime/);
 }
 
-test("AI·依赖注入：Planner 脱离 Game 与 Controller 后保持固定种子搜索轨迹", testPlannerExplicitDependenciesPreserveTrace);
+test("AI·依赖注入：Controller 与 Worker 共用唯一 runtime composition", testSharedRuntimeComposition);
 
 /*
 功能
-验证 ActionGenerator 只调用构造时注入的转移选择能力。
+验证 Generator 从 canonical World 独立枚举转移动作。
 
 调用方
 AI 依赖注入回归测试。
 
 输入
-没有可用 aiController 的 Game、转移牌行动者与 canonical World。
+没有可用 Controller 的 Game、转移牌行动者与 canonical World。
 
 输出
 生成的转移动作包含 Domain 合法 source/receiver/resource 选择。
@@ -14568,12 +14529,12 @@ AI 依赖注入回归测试。
 测试期间临时清空并恢复 game.aiController。
 
 调用函数
-ActionGenerator.generate。
+Generator.generate。
 
 边界与不变量
-生成器不得通过 Game 回取 CardSelector；合法枚举不依赖 Controller 或 Evaluator preference。
+生成器不得通过 Game 回取 Controller；合法枚举不依赖 Evaluator preference。
 */
-function testActionGeneratorDoesNotNeedCardSelector() {
+function testGeneratorDoesNotNeedController() {
   const actor = makePlayer("di-generator-actor", 0, "dawn", "ai", 0);
   const ally = makePlayer("di-generator-ally", 1, "dawn", "ai", 1);
   const enemy = makePlayer("di-generator-enemy", 2, "dusk", "ai", 2);
@@ -14600,52 +14561,50 @@ function testActionGeneratorDoesNotNeedCardSelector() {
 }
 
 test(
-  "AI·依赖注入：ActionGenerator 无 Controller CardSelector 仍枚举转移动作",
-  testActionGeneratorDoesNotNeedCardSelector
+  "AI·依赖注入：Generator 无 Controller 仍枚举转移动作",
+  testGeneratorDoesNotNeedController
 );
 
 /*
 功能
-验证 Planner 与 ActionGenerator 的必要依赖在构造阶段明确失败。
+验证 Searcher 的全部运行能力在构造阶段明确失败，Generator 不接收价值或运行依赖。
 
 调用方
 AI 依赖注入回归测试。
 
 输入
-缺少 evaluator、动作生成或转移选择能力的构造参数。
+缺少 evaluator、动作生成或采样能力的构造参数。
 
 输出
 包含具体依赖名的 TypeError。
 
 读取状态
-测试 Game fixture。
+无。
 
 写入状态
 无。
 
 调用函数
-Planner、ActionGenerator 构造函数。
+Searcher、Generator 构造函数。
 
 边界与不变量
 不得创建半装配组件或依赖首次运行时才暴露错误。
 */
 function testMissingAiDependenciesFailAtConstruction() {
-  const actor = makePlayer("di-missing-actor", 0, "dawn");
-  const enemy = makePlayer("di-missing-enemy", 1, "dusk");
-  const { game } = makeGame([actor, enemy]);
-  assert.throws(() => new PatternMatcher(), /action/);
-  assert.throws(() => new Searcher(), /candidateMaterializer/);
+  assert.doesNotThrow(() => new PatternMatcher());
+  assert.doesNotThrow(() => new ActionGenerator());
+  assert.throws(() => new Searcher(), /evaluator/);
   assert.throws(() => new Searcher({
-    candidateMaterializer: {},
+    evaluator:{},
     patternMatcher:{},
-    searchPolicy: {},
+    getResolutionScale:() => 1,
+    config:{},
     simulatorFactory: () => ({}),
     searchBudgetFactory: () => ({}),
     deduplicateActions: (actions) => actions,
+    sampleUnknownHands:() => monteCarloEstimate([]),
     yieldControl: async () => true
   }), /generateActions/);
-  assert.throws(() => new ActionGenerator({ chooseTransferCombination: () => null }), /getRootContext/);
-  assert.throws(() => new ActionGenerator({ getRootContext: () => ({ state: { players: [] } }) }), /chooseTransferCombination/);
 }
 
 test("AI·依赖注入：缺少必要能力时构造立即给出依赖名", testMissingAiDependenciesFailAtConstruction);
@@ -14712,7 +14671,7 @@ test("AI·依赖注入：Controller 门面保持转移选择与 descriptor 重�
 
 /*
 功能
-冻结拆分前模拟器对完整 SearchState 的序列化结果。
+冻结最终 Simulator 对完整 canonical World 的序列化结果。
 
 调用方
 Simulation 架构迁移 characterization 回归测试。
@@ -14735,7 +14694,7 @@ createInitialWorld、Simulator.apply/applyLightningHit、createHash。
 边界与不变量
 指纹覆盖全部深层字段、概率条件键与数组顺序；迁移不得通过挑选摘要字段掩盖状态差异。
 */
-function testSimulationSearchStateCharacterization() {
+function testSimulationWorldCharacterization() {
   const fingerprint = (state) => {
     state.gameId = "<stable>";
     return createHash("sha256").update(JSON.stringify(state)).digest("hex");
@@ -14825,16 +14784,16 @@ function testSimulationSearchStateCharacterization() {
   }
 
   assert.deepEqual(fingerprints, {
-    combat: "e33dab70b99848e60a5cfe5317193ab588ba02cf761a1783d0892d1a83162877",
-    card: "0e1bebed4c10aefbd3aad4e6b8a32ddc5aa7f854af45035ed6fd9996d8a5016c",
-    skill: "c1967beace2f74c0e17a14f192085728606242bb50b689173a8328ed8c957906",
-    status: "a744755d11053401af173d00def509d6fe0b6577fa38407c12f7716f91426b57"
+    combat: "a3bc68960c90c939148a4490a8db1f61a7b41e6c088593934e4fe949b747ca9e",
+    card: "ed9516a8f4d05bf930dee18b1e71a8b93e2bfaa192672e7eee3f9fa58c81c4d1",
+    skill: "9bc8472a4e306c91c776956437f301facdb607aacfb125dc982af1175afe4227",
+    status: "932fff3ed8c3591319d1d0ab049ac50d17ba72bad54e8bc9615291950eca937b"
   });
 }
 
 test(
-  "AI·模拟器：四类完整 SearchState 指纹保持冻结",
-  testSimulationSearchStateCharacterization
+  "AI·模拟器：四类完整 canonical World 指纹保持冻结",
+  testSimulationWorldCharacterization
 );
 
 // ---- AI 系统·State Contract ----
@@ -15098,21 +15057,27 @@ test("AI·状态契约：同一条件事实跨三个派生量只条件化一次"
 test("AI·状态契约：隐藏世界有限采样必须携带 Monte Carlo estimate 契约", () => {
   const actor = { id:"estimate-actor" };
   const visible = { players:[actor] };
-  const createTerms = (sampleHiddenWorlds) => new CounterfactualTerms({
-    evaluator:{},
+  const createSearcher = (sampleUnknownHands) => new Searcher({
+    evaluator:{ compareCandidates:() => 0 },
+    patternMatcher:{},
+    getResolutionScale:() => 1,
+    config:{ hiddenSamples:2 },
+    simulatorFactory:() => ({}),
+    searchBudgetFactory:() => ({}),
+    deduplicateActions:(actions) => actions,
     generateActions:() => [],
-    sampleUnknownHands:sampleHiddenWorlds,
-    hiddenSampleCount:2
+    sampleUnknownHands,
+    yieldControl:async () => true
   });
-  const invalidTerms = createTerms(() => []);
-  const invalidContext = invalidTerms.createContext(actor, visible, []);
+  const invalidSearcher = createSearcher(() => []);
+  const invalidContext = invalidSearcher.createCounterfactualContext(actor, visible, []);
   assert.throws(
-    () => invalidTerms.getUnknownHandEstimate(invalidContext),
+    () => invalidSearcher.getUnknownHandEstimate(invalidContext),
     /MONTE CARLO ESTIMATE/u
   );
-  const validTerms = createTerms(() => monteCarloEstimate([{}, {}]));
-  const context = validTerms.createContext(actor, visible, []);
-  validTerms.getUnknownHandEstimate(context);
+  const validSearcher = createSearcher(() => monteCarloEstimate([{}, {}]));
+  const context = validSearcher.createCounterfactualContext(actor, visible, []);
+  validSearcher.getUnknownHandEstimate(context);
   assert.equal(context.unknownHandEstimate.classification, PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE);
   assert.equal(context.unknownHandEstimate.sampleCount, 2);
 });
@@ -16973,7 +16938,7 @@ async function frArchCurrentTimingFreeze() {
   assert.equal(Object.hasOwn(AI_SEARCH_PROFILE, "searchDeadlineMs"), false);
   assert.equal(Object.hasOwn(AI_SEARCH_PROFILE, "searchDeadlineMarginMs"), false);
   assert.equal(AI_SEARCH_PROFILE.hardWatchdogMs, 10000);
-  const budgetSource = await readFile(projectFile("js/ai/search/SearchBudget.js"), "utf8");
+  const budgetSource = await readFile(projectFile("js/ai/Searcher/Searcher.js"), "utf8");
   const timingSource = await readFile(projectFile("js/utils/aiTiming.js"), "utf8");
   assert.match(budgetSource, /AI_RUNTIME_POLICY\.searchTimeBudgetMs/);
   assert.match(timingSource, /aiRawThinkingRanges/);
@@ -18753,7 +18718,7 @@ async function runHighBranchingShadeWorkerFixture({
   throughController = false
 } = {}) {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
   const actor = makePlayer("deadline-shade", 0, "dawn", "ai", 3);
   const cheapTarget = makePlayer("deadline-cheap-target", 1, "dusk", "ai", 5);
   const allyA = makePlayer("deadline-ally-a", 2, "dawn", "ai", 1);
@@ -19022,7 +18987,7 @@ makeGame、createInitialWorld、createSearchRequest、describeRootSearchAction�
 */
 async function runDeterministicHighBranchIncumbentFixture(timeBudgetMs) {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
   const actor = makePlayer("quality-actor", 0, "dawn", "ai", 0);
   const enemyA = makePlayer("quality-enemy-a", 1, "dusk", "ai", 4);
   const allyA = makePlayer("quality-ally-a", 2, "dawn", "ai", 2);
@@ -19149,7 +19114,7 @@ makeGame、createInitialWorld、createSearchRequest、describeRootSearchAction�
 */
 async function runTwoStepHorizonFixture(kind, timeBudgetMs, tickMs) {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
   const actor = makePlayer(`horizon-${kind}-actor`, 0, "dawn", "ai", kind === "charge" ? 2 : 3);
   const ally = makePlayer(`horizon-${kind}-ally`, 1, "dawn", "ai", 1);
   const enemyA = makePlayer(`horizon-${kind}-enemy-a`, 2, "dusk", "ai", 4);
@@ -19798,7 +19763,7 @@ test("AI·搜索：Controller 不建第二搜索图且 Worker Searcher 消费唯
     deriveCurrentCardCounts(actor, game.state)
   );
   const { createSearchEngine } = await import(
-    "../js/adapters/ai/worker/SearchEngineFactory.js"
+    "../js/ai/Searcher/Searcher.js"
   );
   const workerEngine = createSearchEngine({
     world,
@@ -19819,7 +19784,7 @@ test("AI·搜索：Controller 不建第二搜索图且 Worker Searcher 消费唯
     id:definition.id,
     explorationPriority:definition.explorationPriority
   }));
-  const controllerSource = await readFile(projectFile("js/ai/AiController.js"), "utf8");
+  const controllerSource = await readFile(projectFile("js/ai/Controller.js"), "utf8");
   assert.doesNotMatch(controllerSource, /PatternMatcher|new\s+Searcher\s*\(/);
   assert.deepEqual(
     project(workerEngine.searcher.patternMatcher),
@@ -20575,7 +20540,7 @@ test("AI·搜索：normal candidate 可按同一 value incumbent 推翻完整 Pa
 
 test("AI·搜索：同定义实体动作只合并搜索等价分支并保留身份语义差异", async () => {
   const { deduplicateSearchEquivalentActions } = await import(
-    "../js/ai/search/ActionGenerator.js"
+    "../js/ai/Generator/Generator.js"
   );
   const target = { id:"equivalent-target" };
   const duplicateAssaults = Array.from({ length:4 }, () => {
@@ -20720,7 +20685,7 @@ test("AI·搜索：Worker 故障时 Controller 不评分且只返回 Generator �
   assert.equal(chosen.type, "end");
   assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.FALLBACK);
   assert.equal(game.aiController.lastSearchFallback.source, "generator-safe-end");
-  const source = await readFile(projectFile("js/ai/AiController.js"), "utf8");
+  const source = await readFile(projectFile("js/ai/Controller.js"), "utf8");
   const fallbackSource = source.slice(
     source.indexOf("selectWorkerFailureFallback("),
     source.indexOf("acceptWorkerSearchOutcome(")
@@ -22366,7 +22331,7 @@ createSearchRequest、structuredClone。
 request 直接保存 canonical World/Action identity，clone 后语义相等；敌方真实 hand definition 不得进入 request。
 */
 async function frArch13SearchRequestContract() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
   const actor = makePlayer("sr-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("sr-enemy", 1, "dusk", "ai", 1);
   const secret = instance("harvest");
@@ -22425,7 +22390,7 @@ createSearchRequest、acceptSearchResult、bumpStateVersion。
 任一失败只能返回安全 end；合法 descriptor 必须在当前 Domain-legal set rebind。
 */
 async function frArch13StaleResultRejection() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
   const { bumpStateVersion } = await import("../js/domain/state/transitions/StateVersion.js");
   const actor = makePlayer("stale-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("stale-enemy", 1, "dusk", "ai", 1);
@@ -22624,7 +22589,7 @@ createSearchRequest、acceptSearchResult。
 cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
 */
 async function frArch13CancellationContract() {
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
   const actor = makePlayer("cancel-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("cancel-enemy", 1, "dusk", "ai", 1);
   const card = instance("assault");
@@ -22748,7 +22713,7 @@ async function canonicalSearchResultIdentity() {
     readFile(projectFile("js/ai/search/SearchResult.js"), "utf8"),
     (error) => error?.code === "ENOENT"
   );
-  const source = await readFile(projectFile("js/ai/AiController.js"), "utf8");
+  const source = await readFile(projectFile("js/ai/Controller.js"), "utf8");
   assert.doesNotMatch(source, /from\s+["'][^"']*SearchResult\.js["']/);
 }
 
@@ -22780,7 +22745,7 @@ SearchRng.restore/commit/snapshot。
 restore 后 Worker 序列与 main 未消费序列一致；commit 后 next search 从 rngAfter 继续。
 */
 async function frArch14RngHandoff() {
-  const { SearchRng } = await import("../js/ai/search/SearchRng.js");
+  const { Rng:SearchRng } = await import("../js/ai/Searcher/Rng.js");
   const main = new SearchRng(42);
   main.next();
   const before = main.snapshot();
@@ -22866,8 +22831,8 @@ outcome 无真实实体/函数；Main Thread 仍负责 ACCEPTED 与 rebind。
 */
 async function frArch14RunSearchRequest() {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
+  const { workerOutcomeViolations } = await import("../js/ai/Controller.js");
   const actor = makePlayer("run-actor", 0, "dawn", "ai", 2);
   const enemy = makePlayer("run-enemy", 1, "dusk", "ai", 1);
   actor.hand.push(instance("charge"), instance("assault"));
@@ -22940,8 +22905,8 @@ async function frArch14WorkerProtocol() {
   const { game } = makeGame([actor, enemy]);
   game.aiSearchNodeBudgetOverride = 2;
   const roots = game.aiController.getActionCandidates(actor);
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
+  const { workerOutcomeViolations } = await import("../js/ai/Controller.js");
   const request = createSearchRequest({
     requestId: "proto-1",
     gameId: game.state.gameId,
@@ -22991,7 +22956,7 @@ runSearchRequest、setInterval、clearInterval。
 */
 async function frArch14MainThreadResponsiveness() {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
   const actor = makePlayer("heart-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("heart-enemy", 1, "dusk", "ai", 1);
   for (let index = 0; index < 60; index += 1) actor.hand.push(instance("exposeWeakness"));
@@ -23171,8 +23136,8 @@ Search 选择是否 end 不影响执行边界验证；Worker 与 main thread 不
 */
 async function frArch14MutualBenefitRuntimeTrace() {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
-  const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
+  const { createWorkerSearchOutcome, workerOutcomeViolations } = await import("../js/ai/Controller.js");
   const actor = makePlayer("mb-runtime-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("mb-runtime-enemy", 1, "dusk", "ai", 1);
   const benefit = instance("mutualBenefit");
@@ -23556,8 +23521,8 @@ makeGame、instance、getActionCandidates、createInitialWorld、createSearchReq
 */
 async function frArch14WorkerSearchParityTrace() {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchEngine } = await import("../js/adapters/ai/worker/SearchEngineFactory.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { createSearchEngine } = await import("../js/ai/Searcher/Searcher.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
   const actor = makePlayer("parity-actor", 0, "dawn", "ai", 0);
   const ally = makePlayer("parity-ally", 2, "dawn", "ai", 2);
   const enemy = makePlayer("parity-enemy", 1, "dusk", "ai", 1);
@@ -23638,7 +23603,7 @@ makeGame、instance、selectAction、acceptWorkerSearchOutcome、createWorkerSea
 正常结果只提交一次 RNG；Worker fault 使用确定性合法根候选 fallback，不提交失败 outcome 的 RNG。
 */
 async function frArch14RngContinuityAcceptedSearches() {
-  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
   const actor = makePlayer("rng-continuity-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("rng-continuity-enemy", 1, "dusk", "ai", 1);
   actor.hand.push(instance("assault"));
@@ -23792,7 +23757,7 @@ makeGame、createInitialWorld、createSearchRequest、describeRootSearchAction�
 */
 async function runTimedWorkerSearch(timeBudgetMs, tickMs, cardDefinitionIds, nodeBudget = null) {
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const { createSearchRequest } = await import("../js/ai/search/SearchRequest.js");
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
   const actor = makePlayer("timed-worker-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("timed-worker-enemy", 1, "dusk", "ai", 1);
   for (const definitionId of cardDefinitionIds) actor.hand.push(instance(definitionId));
@@ -24902,7 +24867,7 @@ test("AI·转移：负收益合法动作由 Worker Searcher 选择 end 淘汰", 
   ));
   assert.ok(transferAction);
   assert.equal(
-    game.aiController.stateEvaluator.evaluateTransferAction(
+    game.aiController.evaluator.evaluateTransferAction(
       transferAction,
       world.players.find((player) => player.id === actor.id),
       world
@@ -25371,7 +25336,7 @@ test("AI·借势：搜索模拟只消费 Evaluator 的确定 boolean choice", ()
   const visibleFirst = world.players.find((player) => player.id === first.id);
   const visibleEnemy = world.players.find((player) => player.id === actor.id);
   assert.equal(
-    game.aiController.stateEvaluator.decideLeverageAssault(
+    game.aiController.evaluator.decideLeverageAssault(
       world,
       visibleFirst,
       visibleEnemy
@@ -25379,7 +25344,7 @@ test("AI·借势：搜索模拟只消费 Evaluator 的确定 boolean choice", ()
     true
   );
   assert.equal(
-    game.aiController.stateEvaluator.decideLeverageAssault(
+    game.aiController.evaluator.decideLeverageAssault(
       world,
       visibleFirst,
       { ...visibleEnemy, battleTeam:visibleFirst.battleTeam }
@@ -47296,7 +47261,7 @@ function transferDirectionMatrixPreservesLegalityAndExecution() {
       )),
       false
     );
-    const preference = game.aiController.stateEvaluator.evaluateTransferAction(
+    const preference = game.aiController.evaluator.evaluateTransferAction(
       action,
       world.players.find((player) => player.id === actor.id),
       world
@@ -47360,7 +47325,7 @@ function transferMainWorkerEvaluatorParity() {
   ));
   assert.ok(action);
   const worldActor = world.players.find((player) => player.id === actor.id);
-  const mainPreference = game.aiController.stateEvaluator.evaluateTransferAction(
+  const mainPreference = game.aiController.evaluator.evaluateTransferAction(
     action,
     worldActor,
     world
@@ -48279,7 +48244,7 @@ test("AI·转移评分：转移动作携带已知候选身份", () => {
   assert.equal(selection.availableUnknownCount, 0);
   assert.equal(Object.hasOwn(selection, "expectedValue"), false);
   assert.equal(Object.hasOwn(selection, "score"), false);
-  const preference = game.aiController.stateEvaluator.evaluateTransferAction(
+  const preference = game.aiController.evaluator.evaluateTransferAction(
     action,
     world.players.find((player) => player.id === actor.id),
     world
@@ -49569,7 +49534,7 @@ function testEquipmentDeltaNeedsNoWorldBaseline() {
   const before = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
   const after = structuredClone(before);
   after.players[0].equipmentRetentionProbability = 0.4;
-  const delta = game.aiController.stateEvaluator.equipmentMaterialDelta(
+  const delta = game.aiController.evaluator.equipmentMaterialDelta(
     before,
     after,
     actor.id
@@ -49943,7 +49908,6 @@ test("AI·价值归属：当前威胁与未来攻击库存可分别变化", () =
 test("AI·价值归属：单次玩家估值只计算一次暴露分量并复用汇总", () => {
   const { game } = makeLedgerGame();
   const evaluator = game.aiController.evaluator;
-  const stateEvaluator = game.aiController.stateEvaluator;
   const state = ledgerState([
     ledgerPlayer("a", 0, "dawn", "oath-warden"),
     ledgerPlayer("c", 1, "dusk", "blade-walker", {
@@ -49952,9 +49916,9 @@ test("AI·价值归属：单次玩家估值只计算一次暴露分量并复用�
       assaultResponseProbability: 0.5
     })
   ]);
-  const original = stateEvaluator.exposureComponents.bind(stateEvaluator);
+  const original = evaluator.exposureComponents.bind(evaluator);
   let calls = 0;
-  stateEvaluator.exposureComponents = (...args) => {
+  evaluator.exposureComponents = (...args) => {
     calls += 1;
     return original(...args);
   };
@@ -50496,20 +50460,34 @@ test("AI·价值归属：统一价值 exports 指向正式 owner", () => {
   );
 });
 
-test("AI·价值归属：纯 Evaluator 不持有 Game 且只消费上游闪电纯值", () => {
-  const fixture = makeLightningFixture(["dawn", "dusk", "dusk"], { withCard: false });
-  const controller = fixture.game.aiController;
-  const lightningValues = controller.valueSimulationQuery.lightningValues(
-    fixture.visible,
-    fixture.actor.id
+test("AI·价值归属：纯 Evaluator 不持有 Simulator 且只消费上游闪电 Worlds", () => {
+  const actor = makePlayer("pure-evaluator-actor", 0, "dawn");
+  const holder = makePlayer("pure-evaluator-holder", 1, "dusk");
+  const receiver = makePlayer("pure-evaluator-receiver", 2, "dusk");
+  holder.statuses.lightning = {
+    cardDefinitionId:"lightning",
+    originPlayerId:actor.id
+  };
+  const { game } = makeGame([actor, holder, receiver]);
+  const visible = createInitialWorld(
+    actor.id,
+    game.state,
+    deriveCurrentCardCounts(actor, game.state)
   );
-  assert.equal("game" in controller.stateEvaluator, false);
-  assertClose(
-    controller.stateEvaluator.stateUtility(fixture.visible, fixture.actor.id, lightningValues),
-    controller.stateValue.stateUtility(fixture.visible, fixture.actor.id)
-  );
+  const controller = game.aiController;
+  const simulator = controller.simulatorFactory(visible);
+  const lightningOutcomeSets = simulator.buildLightningOutcomeSets(visible);
+  assert.equal("game" in controller.evaluator, false);
+  assert.equal("simulator" in controller.evaluator, false);
+  assert.equal("simulatorFactory" in controller.evaluator, false);
+  assert.equal(Number.isFinite(controller.evaluator.stateUtility(
+    visible,
+    actor.id,
+    lightningOutcomeSets
+  )), true);
   const standalone = new Evaluator();
   assert.equal("game" in standalone, false);
+  assert.equal("simulator" in standalone, false);
 });
 
 test("AI·价值归属：Evaluator 逐 term 保持 telescoping 唯一组合公式", () => {
@@ -50679,7 +50657,7 @@ makeGame、createWorkerSearchOutcome、takeAiPlayPhase。
 fake Worker 只替代计算耗时和 terminal outcome，不绕过 SearchRequest 构造/acceptance；同一 decision 的 MIN/MAX 必须只采样一次。
 */
 async function runDecisionWindowScenario(speed, searchElapsedMs) {
-  const { createWorkerSearchOutcome } = await import("../js/ai/search/WorkerSearchOutcome.js");
+  const { createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
   const actor = makePlayer(`decision-window-actor-${speed}`, 0, "dawn", "ai", 0);
   const enemy = makePlayer(`decision-window-enemy-${speed}`, 1, "dusk", "ai", 1);
   const { game, ui } = makeGame([actor, enemy]);
@@ -56727,38 +56705,36 @@ test("集成：击杀奖励README与规则文本统一为额外摸1张", async (
   assert.doesNotMatch(`${readme}\n${sources}`, /击杀[^\n]{0,20}摸(?:了)?2张|杀死敌人[^\n]{0,20}摸2张/);
 });
 
-test("集成：控制器文件名：目录真实文件名为 AiController.js", async () => {
+test("集成：控制器文件名：目录真实文件名为 Controller.js", async () => {
   const aiDirectoryEntries = await readdir(projectFile("js/ai"));
-  assert.ok(aiDirectoryEntries.includes("AiController.js"));
-  assert.ok(!aiDirectoryEntries.includes(`AI${"Controller.js"}`));
+  assert.ok(aiDirectoryEntries.includes("Controller.js"));
+  assert.ok(!aiDirectoryEntries.includes("AiController.js"));
 });
 
-test("集成：控制器文件名：新模块可导入且仍导出 AIController", async () => {
-  const module = await import("../js/ai/AiController.js");
-  assert.equal(typeof module.AIController, "function");
+test("集成：控制器文件名：canonical 模块导出 Controller", async () => {
+  const module = await import("../js/ai/Controller.js");
+  assert.equal(typeof module.Controller, "function");
 });
 
 test("集成：控制器文件名：composition root 使用新路径且无旧路径", async () => {
   const source = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
-  assert.match(source, /\.\.\/ai\/AiController\.js/);
-  assert.ok(!source.includes(`../ai/AI${"Controller.js"}`));
+  assert.match(source, /\.\.\/ai\/Controller\.js/);
+  assert.ok(!source.includes("../ai/AiController.js"));
 });
 
-test("集成：控制器文件名：全资源图无旧文件名", async () => {
-  const oldControllerFilename = `AI${"Controller.js"}`;
-  const files = [
-    ...(await listJavaScriptFiles()), projectFile("index.html"), projectFile("tests/run.mjs")
-  ];
+test("集成：控制器文件名：生产资源图无旧文件名", async () => {
+  const oldControllerFilename = "AiController.js";
+  const files = [...(await listJavaScriptFiles()), projectFile("index.html")];
   for (const file of files) {
     const source = await readFile(file, "utf8");
     assert.ok(!source.includes(oldControllerFilename), `${file} 包含旧文件名`);
   }
 });
 
-test("集成：控制器文件名：导出类名仍为 AIController", async () => {
-  const module = await import("../js/ai/AiController.js");
-  assert.equal(typeof module.AIController, "function");
-  assert.equal(module.AiController, undefined);
+test("集成：控制器文件名：旧类名不再导出", async () => {
+  const module = await import("../js/ai/Controller.js");
+  assert.equal(typeof module.Controller, "function");
+  assert.equal(module.AIController, undefined);
 });
 
 

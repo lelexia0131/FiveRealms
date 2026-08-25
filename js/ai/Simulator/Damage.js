@@ -114,7 +114,7 @@ export const withDamage = (Base) => class Damage extends Base {
         hp:survivesWithoutRescue || hasUnresolvedRescue ? hpAfterDamage : 0,
         alive:hasUnresolvedRescue ? branch.alive : survivesWithoutRescue
       };
-    }, "CombatSimulation.commitHpOutcomeBranches:project");
+    }, "Damage.commitHpOutcomeBranches:project");
     const distinct = new Set();
     let aliveProbability = 0;
     let expectedHp = 0;
@@ -268,7 +268,7 @@ export const withDamage = (Base) => class Damage extends Base {
             )
           )
         : branch.shieldAmount
-    }), "CombatSimulation.applyDamage:shield-outcome");
+    }), "Damage.applyDamage:shield-outcome");
     target.shield = expectedBranchValue(shieldOutcomes);
     let actualDamage = 0;
     for (let index = 0; index < damageWorlds.length; index += 1) {
@@ -278,7 +278,7 @@ export const withDamage = (Base) => class Damage extends Base {
     }
     const lifeDamageBranches = this.projectProbabilityWork(damageWorlds, (branch) => ({
       occurs:hpDamageFor(branch) > PROBABILITY_EPSILON
-    }), "CombatSimulation.applyDamage:life-damage");
+    }), "Damage.applyDamage:life-damage");
     const lifeDamageChance = this.eventProbability(lifeDamageBranches);
     if (resolution.outcome) {
       resolution.outcome.lifeDamageBranches = lifeDamageBranches;
@@ -288,7 +288,7 @@ export const withDamage = (Base) => class Damage extends Base {
       resolution.outcome.remainingBlockCountBranches = resolution.attackOutcomeWorlds
         ? this.projectProbabilityWork(resolution.attackOutcomeWorlds, (branch) => ({
             remainingBlockCount:branch.requiredCount
-          }), "CombatSimulation.applyDamage:remaining-blocks")
+          }), "Damage.applyDamage:remaining-blocks")
         : null;
     }
     this.commitHpOutcomeBranches(state, target, damageWorlds, hpDamageFor);

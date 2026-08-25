@@ -3,7 +3,7 @@
 唯一拥有正式 Tactical Pattern definitions、语义匹配、归一化、continuation 约束与 scheduling proposals。
 
 上游
-Worker SearchEngineFactory、Searcher 与 Pattern focused tests。
+共享搜索组合、Searcher 与 Pattern focused tests。
 
 下游
 canonical Action intent 与 Domain CardDefinitions 的公开静态语义。
@@ -19,7 +19,7 @@ Pattern 只提供探索顺序知识；不得定义合法性或价值、调用 Si
 扩大搜索预算或深度、建立第二搜索树、删除候选或改变最终 winner。
 */
 import { CARD_DEFINITIONS } from "../../../domain/definitions/cards/CardDefinitions.js";
-import { actionIntentKey } from "../../search/Action.js";
+import { actionIntentKey } from "../../Generator/Action.js";
 
 const ATTACK_CARD_IDS = Object.freeze(
   Object.values(CARD_DEFINITIONS)
@@ -733,7 +733,7 @@ export class Pattern {
   创建使用 canonical Action 语义身份与静态 definitions 的 Pattern owner。
 
   调用方
-  Worker SearchEngineFactory 与 focused tests。
+  共享搜索组合 与 focused tests。
 
   输入
   可选的测试 definitions。

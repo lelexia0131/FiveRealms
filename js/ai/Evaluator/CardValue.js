@@ -533,7 +533,7 @@ export function validateRoleCardValueDeltas(deltas = ROLE_CARD_VALUE_DELTAS, opt
 计算角色卡牌价值相对全局基础值的身份差量。
 
 调用方
-Evaluator、SearchPrior 与正式边界。
+Evaluator、Evaluator search prior 与正式边界。
 
 输入
 角色 ID 与卡牌定义 ID。
@@ -866,7 +866,7 @@ export function skillThresholdOptionPolicyValue(actor, owner, equipmentDefinitio
 计算观察者对自己或他人一张手牌的合法单卡期望价值。
 
 调用方
-AIController/测试的 card value 查询边界。
+Controller/测试的 card value 查询边界。
 
 输入
 观察者、资源拥有者与真实 Card token。
@@ -1220,7 +1220,7 @@ function cardValueFor(characterId, definitionId) {
 把互利公开池的逐座次选择结果投影为每名接收者的期望牌值。
 
 调用方
-CardEffectSimulation 与直接价值测试。
+Simulator 与直接价值测试。
 
 输入
 过滤玩家、来源玩家与公开剩余定义计数。
@@ -1261,7 +1261,7 @@ export function mutualBenefitDraftValues(players, source, remainingCounts) {
 从指定阵营视角计算互利或共生的盟友、敌方与团队净受益。
 
 调用方
-ResponsePolicy、SearchPrior、Simulation 与 AIController 组合根。
+Evaluator response willingness、Evaluator search prior、Simulation 与 Controller 组合根。
 
 输入
 过滤玩家、观察阵营、卡牌定义、来源 ID 与公开剩余定义计数。

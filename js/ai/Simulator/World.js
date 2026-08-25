@@ -3,7 +3,7 @@
 把确定 Fact、唯一 ProbabilityState 与已注入领域派生值组合成 canonical World。
 
 上游
-AiController、ActionGenerator、Searcher、Simulator、Evaluator 与状态契约测试。
+Controller、Generator、Searcher、Simulator、Evaluator 与状态契约测试。
 
 下游
 Fact、Probability facade 与 Domain Team/Skill Rules。
@@ -146,7 +146,7 @@ function createWorldPlayer(factPlayer, knownCards, viewerId, derivedPlayer) {
 
 /*
 功能
-创建 Planner、Simulator、Policy 与 Value 共同消费的 canonical World 根快照。
+创建 Searcher、Simulator、Policy 与 Value 共同消费的 canonical World 根快照。
 
 调用方
 createStateContracts 与状态契约测试。

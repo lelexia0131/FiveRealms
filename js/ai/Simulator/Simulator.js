@@ -40,8 +40,10 @@ import {
 import {
   PROBABILITY_EPSILON,
   availableBranchesFromState,
+  buildLightningHitDistribution,
   buildRadarJudgmentSequenceProbabilities,
   clampProbability,
+  conditionProbability,
   currentProbabilitySignature,
   expectedBranchValue,
   getAvailabilityStateBranches,
@@ -70,6 +72,7 @@ const RADAR_BASIC_DEFINITION_IDS = Object.freeze(
     .filter((definition) => definition.category === "basic")
     .map((definition) => definition.definitionId)
 );
+const TARGET_SCOPE_CARDS = new Set(["shockwave", "provoke"]);
 
 class SimulatorCore {
   /*
@@ -77,7 +80,7 @@ class SimulatorCore {
   创建只拥有独立 World 根世界的轻量模拟器。
 
   调用方
-  Planner 与有界 Value/Root simulation query：为一次搜索或配对查询创建模拟生命周期。
+  Searcher 与有界 Value/Root simulation query：为一次搜索或配对查询创建模拟生命周期。
 
   输入
   已过滤的 World 根快照，以及可选 SearchBudget、Evaluator response willingness 与 resolved discard capability。
@@ -123,6 +126,7 @@ class SimulatorCore {
     this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
     this.initial = cloneWorld(visibleState);
+    this.lightningOutcomeCache = new WeakMap();
     this.initializeMomentumBranches(this.initial);
     // root 结算模拟守卫：目标级 root 的 apply 群伤循环会再次请求 counterDecision，避免递归。
     this._simulatingRootResolution = false;
@@ -151,7 +155,7 @@ class SimulatorCore {
   SearchBudget.checkpointCurrentWork。
 
   边界与不变量
-  只允许 Planner preparation boundary 捕获 signal；当前 partial World/world 必须整体丢弃。
+  只允许 Searcher preparation boundary 捕获 signal；当前 partial World/world 必须整体丢弃。
   */
   checkpointSearchWork() {
     return this.searchBudget?.checkpointCurrentWork?.() ?? true;
@@ -204,7 +208,7 @@ class SimulatorCore {
   在同一 SearchBudget checkpoint 下按当前事件索引相交概率状态，并记录完成工作量。
 
   调用方
-  ResponseSimulation 与 CardEffectSimulation 的生产局部事件相交点。
+  Response 与 Simulator 的生产局部事件相交点。
 
   输入
   概率状态分区数组。
@@ -252,7 +256,7 @@ class SimulatorCore {
   在同一 SearchBudget checkpoint 下完整投影高分支概率状态，并记录完成工作量。
 
   调用方
-  ResponseSimulation 与 CardEffectSimulation 的生产高频 projection 热点。
+  Response 与 Simulator 的生产高频 projection 热点。
 
   输入
   完整世界数组与纯 projector。
@@ -293,7 +297,7 @@ class SimulatorCore {
   在同一 SearchBudget checkpoint 下完整合并高分支概率状态，并记录完成工作量。
 
   调用方
-  ResponseSimulation 与 CardEffectSimulation 的生产高频 merge 热点。
+  Response 与 Simulator 的生产高频 merge 热点。
 
   输入
   概率状态分支数组。
@@ -363,7 +367,7 @@ class SimulatorCore {
   创建一个与输入和兄弟分支隔离的可变 World 模拟世界。
 
   调用方
-  Planner、RootResolutionQuery、ValueSimulationQuery 与组件内反事实分支：创建兄弟世界。
+  Searcher、Simulator root outcome builder、Simulator/Evaluator composition 与组件内反事实分支：创建兄弟世界。
 
   输入
   可选 World；缺省为实例 initial。内部 apply 可声明 checkpoint 已在同一原子边界完成。
@@ -391,6 +395,490 @@ class SimulatorCore {
     this.initializeMomentumBranches(cloned);
     this.syncActiveSkillCosts(cloned);
     return cloned;
+  }
+
+  /*
+  功能
+  构造一枚闪电完整生命周期的互斥命中 World。
+
+  调用方
+  Searcher 与 Controller 的 State Value/状态反制编排。
+
+  输入
+  canonical World、初始持有者与可选存在概率覆盖。
+
+  输出
+  `{ holderId, presence, outcomes }`；每个 outcome 含命中概率和独立 after World。
+
+  读取状态
+  当前闪电状态、存活座位环、剩余判定牌池与可选 SearchBudget。
+
+  写入状态
+  只写独立命中 World 与本 Simulator 的 World-keyed 结果缓存。
+
+  调用函数
+  statusPresence、buildLightningPropagationChainIds、buildLightningHitDistribution、applyLightningHit。
+
+  边界与不变量
+  Probability 只给分布，Simulator 才构造 World；存在概率与命中概率分开保留，
+  命中顺序和浮点累加顺序必须与持有者传播链一致。
+  */
+  buildLightningOutcomeWorlds(state, initialHolder, presenceOverride = null) {
+    if (!state || !initialHolder?.alive) {
+      return { holderId:initialHolder?.id ?? null, presence:0, outcomes:[] };
+    }
+    const presence = presenceOverride == null
+      ? statusPresence(initialHolder, "lightning").probability
+      : clampProbability(presenceOverride);
+    let stateCache = this.lightningOutcomeCache.get(state);
+    if (!stateCache) {
+      stateCache = new Map();
+      this.lightningOutcomeCache.set(state, stateCache);
+    }
+    const cacheKey = `${initialHolder.id}:${presence}`;
+    if (stateCache.has(cacheKey)) return stateCache.get(cacheKey);
+    this.checkpointSearchWork();
+    const distribution = buildLightningHitDistribution(
+      state,
+      this.buildLightningPropagationChainIds(state.players, initialHolder)
+    );
+    const result = {
+      holderId:initialHolder.id,
+      presence,
+      outcomes:presence <= 0
+        ? []
+        : distribution.map((outcome) => {
+            this.checkpointSearchWork();
+            return {
+              holderId:outcome.holderId,
+              probability:outcome.probability,
+              world:this.applyLightningHit(state, outcome.holderId)
+            };
+          })
+    };
+    stateCache.set(cacheKey, result);
+    return result;
+  }
+
+  /*
+  功能
+  按 World 玩家顺序构造所有未结算闪电的生命周期 World 集合。
+
+  调用方
+  Searcher/Controller 在调用 Evaluator.stateUtility 前。
+
+  输入
+  canonical World。
+
+  输出
+  只包含存活且闪电存在概率大于零的 outcome 集合数组。
+
+  读取状态
+  玩家顺序与闪电存在概率。
+
+  写入状态
+  仅由 buildLightningOutcomeWorlds 写独立 World 和缓存。
+
+  调用函数
+  statusPresence、buildLightningOutcomeWorlds。
+
+  边界与不变量
+  holder 顺序保持不变，以冻结 State Value 的浮点累加顺序。
+  */
+  buildLightningOutcomeSets(state) {
+    const sets = [];
+    for (const holder of state?.players ?? []) {
+      if (!holder?.alive || statusPresence(holder, "lightning").probability <= 0) continue;
+      sets.push(this.buildLightningOutcomeWorlds(state, holder));
+    }
+    return sets;
+  }
+
+  /*
+  功能
+  构造同一枚闪电从旧持有者转交给新持有者后的 canonical World。
+
+  调用方
+  Controller 的闪电反制配对编排。
+
+  输入
+  当前 World、旧持有者与新持有者。
+
+  输出
+  `{ world, holder }`；实体缺失时返回 null。
+
+  读取状态
+  两名玩家的公开状态字段。
+
+  写入状态
+  只写 structuredClone 中旧持有者的闪电状态。
+
+  调用函数
+  structuredClone。
+
+  边界与不变量
+  必须先清除旧持有者再评估新传播链；不新增或复制价值语义。
+  */
+  buildTransferredLightningWorld(state, previousHolder, receiver) {
+    if (!state || !previousHolder || !receiver) return null;
+    this.checkpointSearchWork();
+    const world = structuredClone(state);
+    const previous = world.players.find((player) => player.id === previousHolder.id);
+    const holder = world.players.find((player) => player.id === receiver.id);
+    if (!previous || !holder) return null;
+    if (Array.isArray(previous.statuses)) {
+      previous.statuses = previous.statuses.filter((statusId) => statusId !== "lightning");
+    } else if (previous.statuses) {
+      delete previous.statuses.lightning;
+    }
+    previous.lightningStatusProbability = 0;
+    return { world, holder };
+  }
+
+  /*
+  功能
+  构造守誓者不护援与按既有响应链护援的两个配对 World。
+
+  调用方
+  Controller 的 Guardian willingness 编排。
+
+  输入
+  当前 World、响应者/目标/来源 ID 与伤害量。
+
+  输出
+  `{ stayWorld, aidWorld }`。
+
+  读取状态
+  伤害、响应资源、护援次数与存活状态。
+
+  写入状态
+  只写两个独立 Simulator clone。
+
+  调用函数
+  clone、applyDamage。
+
+  边界与不变量
+  STAY 只排除指定守誓者；AID 走既有完整护援 transition；两侧固定 canBlock=false。
+  */
+  buildGuardianAidWorlds(state, responderId, targetId, sourceId, amount) {
+    const stayWorld = this.clone(state);
+    const aidWorld = this.clone(state);
+    const stayTarget = stayWorld.players.find((player) => player.id === targetId);
+    const aidTarget = aidWorld.players.find((player) => player.id === targetId);
+    const staySource = sourceId
+      ? stayWorld.players.find((player) => player.id === sourceId)
+      : null;
+    const aidSource = sourceId
+      ? aidWorld.players.find((player) => player.id === sourceId)
+      : null;
+    this.applyDamage(stayWorld, staySource, stayTarget, amount, {
+      canBlock:false,
+      excludedGuardianIds:new Set([responderId])
+    });
+    this.applyDamage(aidWorld, aidSource, aidTarget, amount, { canBlock:false });
+    return { stayWorld, aidWorld };
+  }
+
+  /*
+  功能
+  构造当前响应深度下 root 战术 STAY/FLIP 比较所需的配对 World。
+
+  调用方
+  Controller 的动态反制 willingness 编排与专项测试。
+
+  输入
+  当前 response World、canonical root Action 与 counter depth。
+
+  输出
+  非战术或全体受益牌返回 null；否则返回 `{ baseWorld, resolvedWorld, resolvesAtStay }`。
+
+  读取状态
+  固定卡牌定义、root 来源/目标、响应容量与当前 counter depth。
+
+  写入状态
+  只写目标收敛 clone、root 结算 clone 与递归守卫。
+
+  调用函数
+  clone、conditionProbability、apply。
+
+  边界与不变量
+  两侧除 root 是否生效外必须完全配对；目标级群体战术继续清零目标反制容量，
+  root apply 期间不得递归请求同一动态反制。
+  */
+  buildRootFlipWorlds(state, rootAction, counterDepth) {
+    const definition = CARD_DEFINITIONS[rootAction?.cardId] ?? null;
+    if (!rootAction?.cardId || definition?.category !== "tactic" || definition.globalBenefit === true) {
+      return null;
+    }
+    const actor = state.players.find((player) => player.id === rootAction.actorId);
+    if (!actor?.alive) {
+      return { baseWorld:state, resolvedWorld:state, resolvesAtStay:(counterDepth % 2) === 0 };
+    }
+    const targets = (rootAction.targetIds ?? [])
+      .map((id) => state.players.find((player) => player.id === id))
+      .filter((target) => target?.alive);
+    let baseWorld = state;
+    if (TARGET_SCOPE_CARDS.has(rootAction.cardId)) {
+      baseWorld = this.clone(state);
+      const source = baseWorld.players.find((player) => player.id === rootAction.actorId);
+      const targetIds = new Set(targets.map((target) => target.id));
+      for (const player of baseWorld.players) {
+        if (player.id === rootAction.actorId || targetIds.has(player.id)) continue;
+        if (source && player.battleTeam !== source.battleTeam) player.alive = false;
+      }
+      for (const player of baseWorld.players) {
+        if (!targetIds.has(player.id)) continue;
+        conditionProbability(baseWorld.probabilityState, {
+          type:"CONDITION",
+          definitionId:"counter",
+          bucketId:player.id,
+          maximum:0
+        });
+        if (Array.isArray(player.hand)) {
+          player.hand = player.hand.filter((card) => card.definitionId !== "counter");
+        }
+        if (Array.isArray(player.knownCards)) {
+          player.knownCards = player.knownCards.filter((card) => card.definitionId !== "counter");
+        }
+      }
+    }
+    const previousSimulating = this._simulatingRootResolution ?? false;
+    this._simulatingRootResolution = true;
+    try {
+      return {
+        baseWorld,
+        resolvedWorld:this.apply(baseWorld, rootAction),
+        resolvesAtStay:(counterDepth % 2) === 0
+      };
+    } finally {
+      this._simulatingRootResolution = previousSimulating;
+    }
+  }
+
+  /*
+  功能
+  构造实际响应结果与只移除指定响应能力的配对反事实 World。
+
+  调用方
+  Searcher 的诊断编排。
+
+  输入
+  before World、canonical Action、defender ID、移除项与可选 actual after。
+
+  输出
+  `{ actualWorld, counterfactualWorld }`。
+
+  读取状态
+  指定响应者的 Probability、hand 与 knownCards。
+
+  写入状态
+  只写反事实 clone 和两个独立 action result World。
+
+  调用函数
+  apply、clone、conditionProbability。
+
+  边界与不变量
+  反事实只移除 block/counter/recover 中明确请求的能力；其他条件和身份保持配对。
+  */
+  buildResponseCounterfactualWorlds(before, action, defenderId, opts = {}, after = null) {
+    if (!action) return null;
+    const actualWorld = after ?? this.apply(before, action);
+    const counterfactualBefore = this.clone(before);
+    const defender = counterfactualBefore.players.find((player) => player.id === defenderId);
+    for (const [definitionId, remove] of [
+      ["block", opts.removeBlock],
+      ["counter", opts.removeCounter],
+      ["recover", opts.removeRecover]
+    ]) {
+      if (!remove) continue;
+      conditionProbability(counterfactualBefore.probabilityState, {
+        type:"CONDITION",
+        definitionId,
+        bucketId:defenderId,
+        maximum:0
+      });
+      if (Array.isArray(defender?.hand)) {
+        defender.hand = defender.hand.filter((card) => card.definitionId !== definitionId);
+      }
+      if (Array.isArray(defender?.knownCards)) {
+        defender.knownCards = defender.knownCards.filter(
+          (card) => card.definitionId !== definitionId
+        );
+      }
+    }
+    this.checkpointSearchWork();
+    return {
+      actualWorld,
+      counterfactualWorld:this.apply(counterfactualBefore, action)
+    };
+  }
+
+  /*
+  功能
+  为已枚举的资源候选分别构造强制 Destroy/Plunder transition World。
+
+  调用方
+  Controller 的真实资源实体选择边界。
+
+  输入
+  根 World、actor/owner ID、purpose 与 Evaluator 已建立的资源候选。
+
+  输出
+  每个候选的 after World 与实际应用概率。
+
+  读取状态
+  公开/known/anonymous 资源身份和候选描述。
+
+  写入状态
+  只写每个候选独立 clone。
+
+  调用函数
+  clone、applyForcedResourceSelection。
+
+  边界与不变量
+  每个候选恰好一次 clone 和强制 transition；本方法不生成候选、不评分也不决定胜者。
+  */
+  buildResourceSelectionWorlds(world, actorId, ownerId, purpose, candidates) {
+    return candidates.map((candidate) => {
+      const after = this.clone(world);
+      const actor = after.players.find((player) => player.id === actorId);
+      const owner = after.players.find((player) => player.id === ownerId);
+      return {
+        candidate,
+        after,
+        appliedProbability:this.applyForcedResourceSelection(
+          after,
+          actor,
+          owner,
+          purpose,
+          candidate
+        )
+      };
+    });
+  }
+
+  /*
+  功能
+  把一个合法匿名手牌样本专化为敌方身份确定的独立 World。
+
+  调用方
+  Searcher 的窥隙信息反事实编排。
+
+  输入
+  根 World、单个 Monte Carlo hidden world 与 viewer ID。
+
+  输出
+  已重建响应摘要的独立确定 World。
+
+  读取状态
+  根 World 的公开身份、合法 knownCards 与样本中的牌定义。
+
+  写入状态
+  只写 structuredClone 及最终 clone。
+
+  调用函数
+  mutateProbability、clone。
+
+  边界与不变量
+  不回读真实未知手牌；viewer 手牌保持原样；确定 known 占位按原顺序保留。
+  */
+  specializeHiddenWorld(beforeState, hiddenWorld, actorId) {
+    const specialized = structuredClone(beforeState);
+    for (const player of specialized.players ?? []) {
+      if (player.id === actorId) continue;
+      const definitions = hiddenWorld?.[player.id] ?? [];
+      const beforePlayer = beforeState.players.find((entry) => entry.id === player.id);
+      const certainKnownCount = (beforePlayer?.knownCards ?? []).filter((entry) => (
+        Number(entry.availability ?? 1) >= 1 - PROBABILITY_EPSILON
+      )).length;
+      for (const definitionId of definitions.slice(certainKnownCount)) {
+        mutateProbability(specialized.probabilityState, {
+          type:"REMOVE",
+          sourceBucketId:player.id,
+          definitionId
+        });
+      }
+      player.knownCards = definitions.map((definitionId, index) => ({
+        cardId:`revealed:${player.id}:${index}`,
+        definitionId,
+        availability:1
+      }));
+      player.hand = undefined;
+      player.handCount = definitions.length;
+    }
+    return this.clone(specialized);
+  }
+
+  /*
+  功能
+  构造新增破势层的 baseline/boosted 配对输入 World。
+
+  调用方
+  Searcher 的 expose marginal 编排。
+
+  输入
+  expose 动作后的 World、行动者 ID 与本动作新增层数。
+
+  输出
+  `{ baselineWorld, boostedWorld }`。
+
+  读取状态
+  行动者当前 exposeWeaknessStacks。
+
+  写入状态
+  只写 baseline structuredClone。
+
+  调用函数
+  structuredClone。
+
+  边界与不变量
+  baseline 只回退本动作新增层数；boosted 直接复用只读 after World。
+  */
+  buildExposeMarginalWorlds(afterState, actorId, addedStacks) {
+    const baselineWorld = structuredClone(afterState);
+    const actor = baselineWorld.players.find((entry) => entry.id === actorId);
+    actor.exposeWeaknessStacks = Math.max(
+      0,
+      (actor.exposeWeaknessStacks ?? 0) - addedStacks
+    );
+    return { baselineWorld, boostedWorld:afterState };
+  }
+
+  /*
+  功能
+  构造旧破势层消费信用的 baseline/boosted 配对输入 World。
+
+  调用方
+  Searcher 的 assault-stack marginal 编排。
+
+  输入
+  当前 World、行动者 ID 与剩余旧层数。
+
+  输出
+  `{ baselineWorld, boostedWorld }`。
+
+  读取状态
+  当前 canonical World。
+
+  写入状态
+  只写两个独立 structuredClone 的 exposeWeaknessStacks。
+
+  调用函数
+  structuredClone。
+
+  边界与不变量
+  两侧除行动者破势层分别为零/旧层数外完全一致。
+  */
+  buildAssaultStackWorlds(currentState, actorId, remainingRootExposeStacks) {
+    const boostedWorld = structuredClone(currentState);
+    const baselineWorld = structuredClone(currentState);
+    boostedWorld.players.find(
+      (entry) => entry.id === actorId
+    ).exposeWeaknessStacks = remainingRootExposeStacks;
+    baselineWorld.players.find(
+      (entry) => entry.id === actorId
+    ).exposeWeaknessStacks = 0;
+    return { baselineWorld, boostedWorld };
   }
 
   /*
@@ -574,10 +1062,10 @@ class SimulatorCore {
   按动作类型把单个抽象动作分派给已组合的 Simulation 组件并推进独立世界。
 
   调用方
-  Planner、CounterfactualTerms 与有界 simulation query：推进一个已经合法枚举的抽象动作。
+  Searcher、Searcher counterfactual terms 与有界 simulation query：推进一个已经合法枚举的抽象动作。
 
   输入
-  动作前 World、抽象动作与 viewer ID；动作已经由 ActionGenerator/Policy 选择。
+  动作前 World、抽象动作与 viewer ID；动作已经由 Generator/Policy 选择。
 
   输出
   独立的动作后 World；输入状态保持不变。
@@ -593,7 +1081,7 @@ class SimulatorCore {
 
   边界与不变量
   必须先通过当前 SearchBudget checkpoint 再 clone、支付和结算；卡牌级反制容量只消费一次，
-  响应顺序和随机调用顺序不得改变；中断 signal 由 Planner preparation boundary 统一收束。
+  响应顺序和随机调用顺序不得改变；中断 signal 由 Searcher preparation boundary 统一收束。
   */
   apply(state, action) {
     this.checkpointSearchWork();
@@ -721,7 +1209,7 @@ class SimulatorCore {
   从给定座位沿真实座次生成循环顺序，可选择是否包含起点。
 
   调用方
-  CardEffectSimulation 的全体受益结算：按真实座次取得接收顺序。
+  Simulator 的全体受益结算：按真实座次取得接收顺序。
 
   输入
   World、来源玩家与是否包含来源的布尔选项。
@@ -791,7 +1279,7 @@ class SimulatorCore {
   构造闪电在当前存活座位环的一圈合法持有者 ID 顺序。
 
   调用方
-  ValueSimulationQuery 与 simulation lifecycle tests。
+  Simulator/Evaluator composition 与 simulation lifecycle tests。
 
   输入
   canonical 玩家座次数组与初始持有者。
@@ -1113,7 +1601,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
     const amountState = (Array.isArray(options.amountBranches) && options.amountBranches.length
       ? this.mergeProbabilityWork(
           options.amountBranches,
-          "CombatSimulation.applyDamage:amount"
+          "Damage.applyDamage:amount"
         )
       : [{ probability:1, conditions:{}, amount }]).map((branch) => ({
       probability:branch.probability,
@@ -1171,7 +1659,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       );
       const joinedBaseWorlds = this.intersectProbabilityWork(
         [eventWorlds, requiredPartition, radarPresencePartition, radarOutcomeSequence],
-        "CombatSimulation.applyDamage:radar-base"
+        "Damage.applyDamage:radar-base"
       );
       const baseWorlds = joinedBaseWorlds.map((branch, index) => {
         if (index % 32 === 0) this.checkpointSearchWork();
@@ -1215,7 +1703,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
                 && slot < branch.originalRequiredCount
                 && branch.radarOutcomes?.[slot] === `basic:${definitionId}`)
             }),
-            "CombatSimulation.applyDamage:radar-identity"
+            "Damage.applyDamage:radar-identity"
           );
           if (this.eventProbability(acquisitionWorlds) <= PROBABILITY_EPSILON) continue;
           const simulatedId = this.nextSimulatedCardId(state, definitionId);
@@ -1275,7 +1763,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
             ];
       const responseWorlds = this.intersectProbabilityWork(
         [eventWorlds, requiredPartition],
-        "CombatSimulation.applyDamage:block"
+        "Damage.applyDamage:block"
       ).map((branch) => ({ ...branch, responseAllowed:true }));
       const response = this.consumeBlockResponseWorlds(state, target, responseWorlds);
       blockedByCardChance = eventProbability > 0
@@ -1310,10 +1798,10 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
           passChance,
           "passes"
         )
-      ], "CombatSimulation.applyDamage:aid-pass");
+      ], "Damage.applyDamage:aid-pass");
     const preAidDamageWorlds = this.intersectProbabilityWork(
       [aidPassWorlds, shieldState, amountState],
-      "CombatSimulation.applyDamage:pre-aid"
+      "Damage.applyDamage:pre-aid"
     );
     /*
     功能
@@ -1376,7 +1864,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
     const damageWorlds = attackOutcomeWorlds
       ? this.intersectProbabilityWork(
           [attackOutcomeWorlds, shieldState, amountState],
-          "CombatSimulation.applyDamage:damage-worlds"
+          "Damage.applyDamage:damage-worlds"
         )
       : this.intersectProbabilityWork([
           eventWorlds,
@@ -1390,7 +1878,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
           ),
           shieldState,
           amountState
-        ], "CombatSimulation.applyDamage:damage-worlds");
+        ], "Damage.applyDamage:damage-worlds");
     const damageResult = this.applyResolvedDamage(
       state,
       target,
@@ -1836,11 +2324,11 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
         );
     const joined = this.intersectProbabilityWork(
       [conditionBranches, cardAvailability],
-      "CardEffectSimulation.buildCardExecutionWorlds:conditions"
+      "Simulator.buildCardExecutionWorlds:conditions"
     );
     return this.projectProbabilityWork(joined, (branch) => ({
       occurs:Boolean(branch.matches && branch.available)
-    }), "CardEffectSimulation.buildCardExecutionWorlds:execution");
+    }), "Simulator.buildCardExecutionWorlds:execution");
   }
 
   /*
@@ -1864,7 +2352,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
   仅输入 World 的卡牌效果、资源和触发摘要。
 
   调用函数
-  CombatSimulation、ResponseSimulation、Skill/Status 后置钩子与资源辅助函数。
+  Damage、Response、Skill/Status 后置钩子与资源辅助函数。
 
   边界与不变量
   不重新计算动作支付或 card-scope 响应；响应前摘要只供窥探 option value 读取，
@@ -2171,7 +2659,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
   联合突袭执行、格挡响应与增伤世界，结算命中伤害并返回生命伤害概率。
 
   调用方
-  CardEffectSimulation 与搜索模拟：结算一张突袭或等价攻击效果。
+  Simulator 与搜索模拟：结算一张突袭或等价攻击效果。
 
   输入
   独立 World、存活来源/目标、发生概率或事件世界，以及已消费槽位等选项。
@@ -2241,7 +2729,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
   按双方可用突袭身份和概率世界轮流结算对决，直至一方无法继续响应。
 
   调用方
-  CardEffectSimulation.applyCardEffect：结算已经通过反制门控的对决。
+  Simulator.applyCardEffect：结算已经通过反制门控的对决。
 
   输入
   独立 World、对决双方、生效概率与伤害上下文。
@@ -2286,7 +2774,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
     );
     const joinedOutcomeWorlds = this.intersectProbabilityWork(
       [actorState, targetState, resolutionState],
-      "CombatSimulation.applyDuel:outcomes"
+      "Damage.applyDuel:outcomes"
     );
     const outcomeWorlds = this.projectProbabilityWork(joinedOutcomeWorlds, (branch) => {
       const targetLoses = branch.resolves && branch.targetCount <= branch.actorCount;
@@ -2298,7 +2786,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
         actorSpent:branch.resolves ? Math.min(branch.actorCount, branch.targetCount) : 0,
         targetSpent:branch.resolves ? Math.min(branch.targetCount, branch.actorCount + 1) : 0
       };
-    }, "CombatSimulation.applyDuel:resolved-outcomes");
+    }, "Damage.applyDuel:resolved-outcomes");
     let actorLoseProbability = 0;
     let targetLoseProbability = 0;
     let expectedActorSpent = 0;
@@ -2313,10 +2801,10 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
     }
     const actorRemainingDistribution = this.projectProbabilityWork(outcomeWorlds, (branch) => ({
       count:branch.actorCount - branch.actorSpent
-    }), "CombatSimulation.applyDuel:actor-remaining");
+    }), "Damage.applyDuel:actor-remaining");
     const targetRemainingDistribution = this.projectProbabilityWork(outcomeWorlds, (branch) => ({
       count:branch.targetCount - branch.targetSpent
-    }), "CombatSimulation.applyDuel:target-remaining");
+    }), "Damage.applyDuel:target-remaining");
     const actorKnownBefore = (Array.isArray(actor.hand) ? actor.hand : [])
       .filter((entry) => entry.definitionId === "assault")
       .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
@@ -2361,14 +2849,14 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
       canBlock:false,
       eventBranches:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
         occurs:branch.actorLoses
-      }), "CombatSimulation.applyDuel:actor-loses"),
+      }), "Damage.applyDuel:actor-loses"),
       damageContext
     });
     this.applyDamage(state, actor, target, CARD_DEFINITIONS.duel.failDamage, {
       canBlock:false,
       eventBranches:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
         occurs:branch.targetLoses
-      }), "CombatSimulation.applyDuel:target-loses"),
+      }), "Damage.applyDuel:target-loses"),
       damageContext
     });
     return {
@@ -2413,7 +2901,7 @@ const withSkillTransition = (Base) => class SkillTransition extends Base {
   按技能费用与显式使用世界同步主动技能次数、可用概率和摘要字段。
 
   调用方
-  Simulator 构造/clone 与 CardEffectSimulation 的装备变化：刷新装备可能影响的技能费用。
+  Simulator 构造/clone 与 Simulator 的装备变化：刷新装备可能影响的技能费用。
 
   输入
   独立 World。
@@ -2495,11 +2983,11 @@ const withSkillTransition = (Base) => class SkillTransition extends Base {
     }];
     const joined = this.intersectProbabilityWork(
       [conditionBranches, energyState],
-      "SkillEffectSimulation.buildSkillExecutionWorlds:conditions"
+      "Simulator.buildSkillExecutionWorlds:conditions"
     );
     const desiredWorlds = this.projectProbabilityWork(joined, (branch) => ({
       occurs:Boolean(branch.matches && branch.energyAmount >= minimumEnergy)
-    }), "SkillEffectSimulation.buildSkillExecutionWorlds:desired");
+    }), "Simulator.buildSkillExecutionWorlds:desired");
     return this.consumeSlot(
       state,
       this.ensureSkillUseSlots(actor, skill),
@@ -2689,7 +3177,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   规范势能数量分支并把其期望值同步到玩家势能摘要。
 
   调用方
-  CombatSimulation 与本模块势能推进：读取规范化刀客势能世界。
+  Damage 与本模块势能推进：读取规范化刀客势能世界。
 
   输入
   包含势能确定值或 momentumBranches 的玩家摘要。
@@ -2769,7 +3257,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   联合卡牌使用、类别历史与生命伤害世界，结算刀客势能获得或清空。
 
   调用方
-  CardEffectSimulation 与 CombatSimulation：在牌实际使用后推进刀客势能。
+  Simulator 与 Damage：在牌实际使用后推进刀客势能。
 
   输入
   World、行动者、卡牌类别、使用世界与可选生命伤害世界。
@@ -2822,7 +3310,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
         conditions: branch.conditions,
         lifeDamage: Boolean(branch.occurs)
       }))],
-      "StatusSimulation.simulateCategoryUse:join"
+      "Simulator.simulateCategoryUse:join"
     );
     const firstUseProbability = totalBranchProbability(
       joined.filter((branch) => branch.cardUsed && !branch.categoryUsed)
@@ -2834,11 +3322,11 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
         amount: Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks,
           retained + (!branch.categoryUsed ? PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain : 0))
       };
-    }, "StatusSimulation.simulateCategoryUse:momentum");
+    }, "Simulator.simulateCategoryUse:momentum");
     const categoryOutcomes = this.projectProbabilityWork(
       joined,
       (branch) => ({ used: Boolean(branch.categoryUsed || branch.cardUsed) }),
-      "StatusSimulation.simulateCategoryUse:category"
+      "Simulator.simulateCategoryUse:category"
     );
     player.momentum = expectedBranchValue(momentumOutcomes);
     player.categoryUsedProbabilities[category] = totalBranchProbability(
@@ -2854,7 +3342,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   模拟「冒险」被动：首次战术牌触发后按定义概率决定是否获得摸牌收益。
   
   调用方
-  CardEffectSimulation.applyCardEffect。
+  Simulator.applyCardEffect。
   
   输入
   World、行动者、已使用卡牌与生效概率。
@@ -2913,7 +3401,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   按协同生效世界为有效目标结算团队资源增益。
 
   调用方
-  CardEffectSimulation、CombatSimulation 与 SkillEffectSimulation：在有效目标世界结算协同收益。
+  Simulator、Damage 与 Simulator：在有效目标世界结算协同收益。
 
   输入
   World、来源、有效目标列表与结算概率。
@@ -2957,7 +3445,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   按追猎命中世界写入来源绑定的猎物标记及其概率分支。
 
   调用方
-  CombatSimulation.simulateAssault：在突袭执行世界写入追猎标记。
+  Damage.simulateAssault：在突袭执行世界写入追猎标记。
 
   输入
   World、攻击来源、目标与突袭事件世界。
@@ -3001,11 +3489,11 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
     );
     const joined = this.intersectProbabilityWork(
       [existingBranches, limitedEventWorlds],
-      "StatusSimulation.simulateTracking:join"
+      "Simulator.simulateTracking:join"
     );
     const markState = this.projectProbabilityWork(joined, (branch) => ({
       marked: Boolean(branch.marked || branch.occurs)
-    }), "StatusSimulation.simulateTracking:project");
+    }), "Simulator.simulateTracking:project");
     const markProbability = totalBranchProbability(markState.filter((branch) => branch.marked));
     const gainedProbability = Math.max(0, markProbability - oldProbability);
     target.huntMarkProbabilities[source.id] = markProbability;
@@ -3023,7 +3511,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   在生命伤害世界中按真实钩子顺序结算受伤后的角色被动效果。
 
   调用方
-  CombatSimulation.applyDamage：生命伤害落地后按权威顺序触发角色被动。
+  Damage.applyDamage：生命伤害落地后按权威顺序触发角色被动。
 
   输入
   World、可空来源、目标、生命伤害概率/分支与伤害上下文。
@@ -3073,14 +3561,14 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
         }));
         const joined = this.intersectProbabilityWork(
           [baseEnergy, triggerWorlds],
-          "StatusSimulation.simulateAfterLifeDamage:ember-join"
+          "Simulator.simulateAfterLifeDamage:ember-join"
         );
         const energyOutcomes = this.projectProbabilityWork(joined, (branch) => ({
           amount: Math.max(0, Math.min(source.maxEnergy ?? Infinity,
             branch.baseEnergyAmount + (branch.occurs
               ? PASSIVE_SKILL_DEFINITIONS.ember.energyGain
               : 0)))
-        }), "StatusSimulation.simulateAfterLifeDamage:ember-project");
+        }), "Simulator.simulateAfterLifeDamage:ember-project");
         source.energy = expectedBranchValue(energyOutcomes);
       }
     }
@@ -3091,7 +3579,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   记录私密查看已发生，但把未观测前的身份结果立即边缘化回当前 Probability。
 
   调用方
-  CardEffectSimulation 的窥探结算与 simulateSpyGapAfterLifeDamage：推进私密信息状态。
+  Simulator 的窥探结算与 simulateSpyGapAfterLifeDamage：推进私密信息状态。
 
   输入
   World、观察者、被观察者、期望揭示数量与触发条件世界。
@@ -3132,7 +3620,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   根据生命伤害概率结算影客窥隙：推进一次性额度并把新观察身份写入后续可消费状态。
 
   调用方
-  CombatSimulation.applyDamage：在生命伤害与濒死结果落地后触发。
+  Damage.applyDamage：在生命伤害与濒死结果落地后触发。
 
   输入
   World、伤害来源、受伤目标与生命伤害概率。
@@ -3180,7 +3668,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   把权威格挡需求数量映射为按顺序排列的多次雷达联合判定分区。
 
   调用方
-  CombatSimulation.applyDamage。
+  Damage.applyDamage。
 
   输入
   World、格挡需求数量、可选统一概率覆盖与可选逐需求概率覆盖。
@@ -3228,7 +3716,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   结算闪电命中目标的伤害与延迟状态移除，并保持状态分支一致。
 
   调用方
-  ValueSimulationQuery：推进一枚闪电在指定持有者命中的模拟世界。
+  Simulator/Evaluator composition：推进一枚闪电在指定持有者命中的模拟世界。
 
   输入
   独立 World 与命中目标 ID。
@@ -3269,7 +3757,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   清除指定来源创建的全部追猎标记，避免死亡或失效来源继续触发。
 
   调用方
-  CombatSimulation.resolveFatal 与追猎消费路径：让失效来源不再保留标记。
+  Damage.resolveFatal 与追猎消费路径：让失效来源不再保留标记。
 
   输入
   World 与标记来源 ID。
@@ -3306,7 +3794,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   把闪电或封印卡牌的条件生效世界合并进目标延迟状态分支。
 
   调用方
-  CardEffectSimulation.applyCardEffect：在延迟牌已通过反制门控后写入状态。
+  Simulator.applyCardEffect：在延迟牌已通过反制门控后写入状态。
 
   输入
   World、行动者、目标、statusId 与条件生效世界。
@@ -3334,11 +3822,11 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
       : statusPresence(holder, "sealed").branches;
     const joined = this.intersectProbabilityWork(
       [oldBranches, effectEventWorlds],
-      `StatusSimulation.applyDelayedStatusCard:${statusId}:join`
+      `Simulator.applyDelayedStatusCard:${statusId}:join`
     );
     const projected = this.projectProbabilityWork(joined, (branch) => ({
       present: Boolean(branch.present || branch.occurs)
-    }), `StatusSimulation.applyDelayedStatusCard:${statusId}:project`);
+    }), `Simulator.applyDelayedStatusCard:${statusId}:project`);
     const probability = totalBranchProbability(projected.filter((branch) => branch.present));
     if (statusId === "lightning") {
       holder.lightningStatusProbability = probability;
@@ -3361,3 +3849,55 @@ export class Simulator extends withStatusTransition(
     )
   )
 ) {}
+
+/*
+功能
+计算一个已枚举战术 Action 在当前响应容量下的结算比例。
+
+调用方
+Searcher candidate evaluation 与直接模拟测试。
+
+输入
+canonical Action、World、行动者 ID 与负责响应 transition 的 Simulator。
+
+输出
+零到一的战术结算比例；非可反制战术为一。
+
+读取状态
+Action 卡牌定义、存活目标与 Simulator 已解析的响应概率。
+
+写入状态
+无。
+
+调用函数
+Simulator.targetResolutionChance、evaluateCardScopeCounterResponses。
+
+边界与不变量
+只读取已解析响应 World，不决定反制意愿；target scope 按存活目标等权平均，运算顺序保持冻结。
+*/
+export function tacticResolutionScale(action, state, actorId, simulator) {
+  const card = CARD_DEFINITIONS[action.cardId] ?? null;
+  if (card?.category !== "tactic" || card.counterable === false) return 1;
+  const actor = state.players.find((entry) => entry.id === actorId);
+  if (!actor) return 1;
+  if (card.counterScope === "target") {
+    const targetIds = new Set(action.targetIds ?? []);
+    const aliveTargets = state.players.filter(
+      (entry) => targetIds.has(entry.id) && entry.alive
+    );
+    if (!aliveTargets.length) return 0;
+    const total = aliveTargets.reduce((sum, target) => (
+      sum + simulator.targetResolutionChance(state, actor, card, target)
+    ), 0);
+    return total / aliveTargets.length;
+  }
+  const mappedTargets = (action.targetIds ?? [])
+    .map((targetId) => state.players.find((entry) => entry.id === targetId))
+    .filter(Boolean);
+  return simulator.evaluateCardScopeCounterResponses(
+    state,
+    actor,
+    card,
+    mappedTargets
+  ).resolutionChance;
+}

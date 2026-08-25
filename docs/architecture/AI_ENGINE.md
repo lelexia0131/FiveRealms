@@ -1,11 +1,11 @@
 # FiveRealms AI Engine 2.0
 
-当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE；Step 5.6 Core Semantic + Physical Collapse 已进入最终工作树。
-架构结论：Event、Simulator、Evaluator core 已按最终 semantic authority 收敛；Search/Runtime closure 仍属于 Step 5.7。
-本轮整理基线：`b8b32dc STEP 5.5B`
+当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE；Step 5.7 Final AI Architecture Collapse 已进入最终工作树。
+架构结论：AI core 已收敛为 18 个 JavaScript 文件；Search、Controller、Worker、Generator 与 Step 5.6 core residue 全部关闭。
+本轮整理基线：`87d1819 STEP 5.6C-A — Simulator Sibling Closure`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
-最新校验日期：2026-08-24
-范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；下方 Current Architecture Snapshot 与第 35 节描述当前物理架构，第 2 至 32 节保留历史阶段审计与落地证据，第 33 至 34 节的语义事实按第 35 节的新 owner 路径解释。
+最新校验日期：2026-08-25
+范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；下方 Current Architecture Snapshot 与第 36 节描述当前物理架构，第 2 至 35 节保留历史阶段审计与落地证据，第 33 节的语义事实按第 36 节的最终 owner 路径解释。
 仓库级三层目标架构以 `FR_ARCHITECTURE.md` 为唯一 authority；本文件只拥有 AI 内部架构与历史证据。
 
 ## 1. 文档职责
@@ -18,9 +18,47 @@
 - 当前最终边界，以及 AI-ARCH-2 至 AI-ARCH-10 的历史迁移顺序；
 - 每个阶段的行为冻结、验证和回滚契约。
 
-代码风格与函数头只在 `CODE_STANDARD.md` 定义。Current Architecture Snapshot 与第 35 节是当前物理事实；历史章节中的“当前”“目标”“后续”和旧目录名只描述对应阶段当时的状态，不覆盖最终架构。
+代码风格与函数头只在 `CODE_STANDARD.md` 定义。Current Architecture Snapshot 与第 36 节是当前物理事实；历史章节中的“当前”“目标”“后续”和旧目录名只描述对应阶段当时的状态，不覆盖最终架构。
 
 ## Current Architecture Snapshot
+
+当前生产 AI 严格为 18 个 JavaScript 模块：
+
+| Authority | 当前正式 owner | 边界 |
+|---|---|---|
+| Real Game boundary | `Controller.js` | GameState → canonical World/Action request；接受 chosen Action 并重绑当前真实实体。 |
+| Legal Action | `Generator/Generator.js`、`Generator/Action.js` | Generator 只枚举合法 canonical Action；Action 是唯一动作 contract。 |
+| Search | `Searcher/Searcher.js` | 唯一拥有 traversal、budget、coverage、fallback、incumbent 与 comparison orchestration。 |
+| Search RNG / scheduling | `Searcher/Rng.js`、`Searcher/Pattern/Pattern.js` | Rng 是唯一搜索随机源；Pattern 只提出探索调度，不决定 winner。 |
+| Knowledge / uncertainty | `Event/Fact.js`、`Event/Probability/Probability.js` | Fact 只拥有确定知识；Probability 通过 internal `Branch.js` / `Pool.js` 拥有不确定性。 |
+| World / transition | `Simulator/World.js`、`Simulator/Simulator.js` | World 是唯一 canonical state；Simulator 是唯一 transition 编排器。 |
+| Transition internals | `Simulator/Damage.js`、`Resource.js`、`Response.js` | 三个 internal sibling 互不依赖，只由 Simulator 编排。 |
+| Utility / comparison | `Evaluator/Evaluator.js` | 唯一拥有 aggregation、willingness、Final Utility 与 candidate comparison。 |
+| Value primitives | `Evaluator/StateValue.js`、`CardValue.js` | 二者互不调用，也不反调 Evaluator；只输出各自 primitive。 |
+
+当前生产链为：
+
+```text
+REAL GAME
+  -> Controller
+  -> Generator
+  -> canonical Action[]
+  -> Searcher
+       -> Pattern / Rng
+       -> Simulator -> Damage / Resource / Response -> World
+       -> Evaluator -> StateValue / CardValue
+  -> chosen canonical Action
+  -> Controller
+  -> REAL GAME
+```
+
+`Controller` 与 Worker search 都调用 `Searcher.js` 导出的 `createRuntimeComposition`，因此 main-thread 同步决策与 Worker search 不再各自维护第二套 Evaluator/Simulator semantic graph。Worker 只从公开 `Controller.js` 和 `Searcher.js` 取得 serialization/outcome 与 search execution 能力。
+
+运行时方向已经固定为 `Simulator -> completed/alternative Worlds -> Evaluator`。Evaluator 不 import、构造、保存或回调 Simulator；StateValue/CardValue 不反调 Evaluator。counterfactual 的 World clone/mutation/action/damage construction 全部属于 Simulator，准备完成的 World comparison 属于 Evaluator，Searcher 只组织调用和预算。
+
+正式 deterministic legality、目标、距离、伤害、响应与状态判定仍以 `js/domain/rules/**` 与 `js/domain/definitions/**` 为 Repository authority；AI core 没有第二套 Game Rule authority。正式搜索不得读取敌方未知手牌的 `definitionId`，unknown identity 只通过 Probability/World 的合法条件世界表达。
+
+## Step 5.6 Snapshot (Historical)
 
 当前生产 AI 共 26 个 JavaScript 模块；Step 5.6 所负责的 12 个 core 文件已经进入最终物理位置：
 
@@ -1380,7 +1418,7 @@ B. historical magic number
 
 这些类别不得再次混入同一个 final 加法公式。
 
-## 34. Searcher / Pattern / Controller / Worker Closure 当前事实
+## 34. Searcher / Pattern / Controller / Worker Closure 历史记录
 
 生产主链现在是：
 
@@ -1400,7 +1438,7 @@ Worker canonical Action -> AiController acceptance -> REAL GAME
 - SearchRequest 不复制 World 或 Action；Worker outcome 与 Controller acceptance 始终传递 canonical Action。搜索侧不存在 SearchState、SearchAction、ActionDescriptor、RootSearchAction 或 candidate DTO chain。
 - SearchBudget、SearchPrior、CounterfactualTerms 与 Pattern 都保留独立算法或不变量：Budget 只管 accounting/checkpoint/root coverage；SearchPrior 只给 exploration hints；CounterfactualTerms 只做有界估计；Pattern 只给 scheduling hints。
 
-## 35. Step 5.6 Core Collapse 当前事实
+## 35. Step 5.6 Core Collapse 历史记录
 
 ### 当前物理树
 
@@ -1464,3 +1502,115 @@ Evaluator -> CardValue
 反方向、internal sibling 横向依赖与外部绕过 facade 均禁止。production consumer 只从 `Probability.js`、`Simulator.js`/`World.js`、`Evaluator.js` 引入跨 authority core 能力；测试可以直接 import internal owner 以锁定 primitive contract。
 
 `tools/check-code-quality.mjs` 对最终 core allowlist、legacy core 文件与 import、external→internal bypass、三组 sibling prohibition、Resource selection/value 边界、Domain fixed-fact mirror 与注释遮蔽执行 self-test 覆盖。该门禁不使用 LOC、函数数量或文件行数 KPI。
+
+## 36. Step 5.7 Final AI Architecture Collapse 当前事实
+
+### 最终物理树
+
+```text
+js/ai/
+├─ Controller.js
+├─ Generator/
+│  ├─ Generator.js
+│  └─ Action.js
+├─ Searcher/
+│  ├─ Searcher.js
+│  ├─ Rng.js
+│  └─ Pattern/
+│     └─ Pattern.js
+├─ Event/
+│  ├─ Fact.js
+│  └─ Probability/
+│     ├─ Probability.js
+│     ├─ Branch.js
+│     └─ Pool.js
+├─ Simulator/
+│  ├─ Simulator.js
+│  ├─ World.js
+│  ├─ Damage.js
+│  ├─ Resource.js
+│  └─ Response.js
+└─ Evaluator/
+   ├─ Evaluator.js
+   ├─ StateValue.js
+   └─ CardValue.js
+```
+
+不存在 compatibility forwarder、额外 Query/DTO/Policy/Service owner 或第十九个 AI JavaScript 文件。canonical Action 只在 `Generator/Action.js` 定义，canonical World 只在 `Simulator/World.js` 定义。
+
+### 最终 owner 与吸收结果
+
+| Step 5.6/5.7 residue | 最终 owner | 处理 |
+|---|---|---|
+| `AiController.js` | `Controller.js` | MOVE / RENAME |
+| `search/Action.js`、`ActionGenerator.js` | `Generator/Action.js`、`Generator/Generator.js` | MOVE / RENAME |
+| `search/Searcher.js`、`SearchRng.js` | `Searcher/Searcher.js`、`Searcher/Rng.js` | MOVE / INLINE |
+| `PatternMatcher.js`、`ProductionPatterns.js`、`SealPrior.js` | `Searcher/Pattern/Pattern.js` | INLINE |
+| `SearchBudget.js` | `Searcher/Searcher.js` | INLINE；预算 invariant 保留 |
+| `SearchPrior.js` | `Evaluator.js` 的 search-prior formulas + `Searcher.js` orchestration | SPLIT / INLINE |
+| `CounterfactualTerms.js` | `Simulator.js` construction + `Evaluator.js` comparison + `Searcher.js` orchestration | SPLIT / INLINE |
+| `SearchRequest.js`、`WorkerSearchOutcome.js` | `Controller.js` data-only boundary functions | INLINE |
+| `TacticResolutionQuery.js` | `Simulator/Response.js` 与 Probability facade | INLINE |
+| `AiRuntimePolicy.js` | `Controller.js` runtime boundary / Searcher config | INLINE |
+| Worker `SearchEngineFactory.js` | `Searcher.js#createSearchEngine` | DELETE；Worker 只调用 public Searcher facade |
+
+`transferPreference`、action-specific candidate metadata、旧 Query shell、runtime adapter duplicate、Value/Simulation wrapper 与 compatibility path 已删除。Generator 只生成 legal canonical Action；Search Prior、价值、资源选择和模拟不在 Generator 中。
+
+### Static 与 runtime direction
+
+允许的 AI internal import 主方向为：
+
+```text
+Controller -> Generator / Searcher public composition / Evaluator facade / World
+Searcher   -> Generator / Pattern / Rng / Probability facade / Simulator facade / Evaluator facade
+Simulator  -> World / Damage / Resource / Response / Probability facade
+Evaluator  -> StateValue / CardValue / Probability facade / Fact
+Probability -> Branch / Pool
+```
+
+禁止方向同时由源码与 checker 固定：
+
+```text
+Evaluator -X-> Simulator
+StateValue/CardValue -X-> Evaluator
+Damage/Resource/Response -X-> sibling
+Branch -X-> Pool
+Pool -X-> Branch
+Controller/Worker/Searcher -X-> internal implementation modules
+```
+
+`createRuntimeComposition` 是 main-thread Controller 与 `createSearchEngine` 共用的唯一 Evaluator/Simulator semantic composition。Simulator factory 向 transition 注入 Evaluator 的窄 boolean/resource decisions；Evaluator 本身不 import、构造、保存、接收或调用 Simulator。静态 cycle 与 runtime authority cycle 都为零。
+
+### Counterfactual ownership
+
+所有 counterfactual 均严格分为 transition construction 与 value comparison：
+
+| 场景 | Simulator construction | Evaluator comparison | Search/Controller orchestration |
+|---|---|---|---|
+| Root flip | `buildRootFlipWorlds` 构造 base/resolved Worlds | `dynamicRootFlipGain` 比较已准备 Worlds | Controller response context 只组织窄查询 |
+| Guardian | `buildGuardianAidWorlds` 构造 stay/aid Worlds | `guardianAidValues` / `shouldUseGuardianAid` 比较 | Controller 只提供真实响应边界 |
+| Response | `buildResponseCounterfactualWorlds` 构造 actual/removed-response Worlds | `evaluateResponseCounterfactual` 生成归属和值差 | Searcher 负责预算、配对与诊断 |
+| Lightning | Probability 只给分布；`buildLightningOutcomeWorlds/Sets` 与 `buildTransferredLightningWorld` 构造 outcome Worlds | lifecycle delta、team burden 与 transferred burden 只比较 outcome Worlds | Searcher/Controller 只传递准备结果 |
+
+因此最终方向是：
+
+```text
+Probability -> outcome distribution
+Simulator   -> canonical outcome Worlds
+Evaluator   -> utility / willingness / comparison
+StateValue  -> pure current-state primitives
+```
+
+### Search / Controller / Worker closure
+
+- Searcher 唯一拥有 traversal、root scheduling、budget、coverage、beam/frontier、incumbent、TIME/NODE/COMPLETE 与 fallback mechanics。
+- Evaluator 唯一拥有 root scheduling score、action utility/search credit、seal timing/use、threat/card/resource prior 与 final candidate comparison semantics；Searcher 只编排这些结果。
+- Pattern 只提出 canonical Action 的探索顺序和 continuation，不调 Simulator/Evaluator/Probability，也不修改 final winner。
+- Controller 只做 GameState/World、Generator、SearchRequest/outcome、当前实体重绑与真实运行边界；不模拟候选或重复选择。
+- Worker 只做 serialization、dispatch 与 runtime isolation；`WorkerSearchRuntime` 只 import public `Controller.js` / `Searcher.js`，main/headless/Worker 共用 `executeSearchRequest`。
+
+### Complexity 与门禁
+
+当前没有 Evaluator nested simulation、跨 transition branch genealogy、hidden identity 指数展开、无界 Cartesian probability expansion、新 DTO hierarchy、重复 candidate materialization、重复 World conversion或 action-specific search metadata。Probability 的 response consumer 仍保持既有有界 `O(W × H)`，本阶段没有重写概率公式。
+
+`tools/check-code-quality.mjs --ai-all` 对精确 18 文件 allowlist、legacy path、facade bypass、sibling import/`this.*` bypass、Evaluator runtime injection（包括参数注入）、primitive backreference、Searcher business residue、Worker internal import 与 `transferPreference` 回流执行源码检查；self-test 同时包含合法和非法夹具。

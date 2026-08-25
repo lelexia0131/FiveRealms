@@ -18,7 +18,7 @@ Application、Domain、AI 与 concrete adapters。
 不得重新拥有动作、响应、濒死、判定、资源或规则公式；不得增加第二套业务 boundary 或 Game shell class。
 */
 import { RUNTIME_POLICY } from "../application/policy/RuntimePolicy.js";
-import { AI_RUNTIME_POLICY } from "../ai/policy/AiRuntimePolicy.js";
+import { AI_RUNTIME_POLICY } from "../ai/Controller.js";
 import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js";
 import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js";
 import { createId } from "../utils/helpers.js";
@@ -32,8 +32,8 @@ import { ActionLegality } from "../application/action/ActionLegality.js";
 import { createResponseWorkflow } from "../application/response/ResponseWorkflow.js";
 import { MatchLogAdapter } from "../adapters/ui/MatchLogAdapter.js";
 import { canUseActiveSkill, getActiveSkill, getActiveSkillCost } from "../application/action/SkillRuntime.js";
-import { AIController } from "../ai/AiController.js";
-import { hashSearchSeed, SearchRng } from "../ai/search/SearchRng.js";
+import { Controller } from "../ai/Controller.js";
+import { hashSearchSeed, Rng } from "../ai/Searcher/Rng.js";
 import { createSearchExecutor } from "../adapters/ai/worker/createSearchExecutor.js";
 import { CleanupManager } from "../utils/CleanupManager.js";
 import {
@@ -457,12 +457,12 @@ class MatchApplication {
     this.choiceContexts = new Map();
     this.teamRules = createTeamRuleQueries(() => this.state);
     this.cardKnowledge = createCardKnowledgeAdapter(() => this.state.players);
-    this.aiRandom = new SearchRng(options.aiSearchSeed ?? hashSearchSeed(this.state.gameId));
+    this.aiRandom = new Rng(options.aiSearchSeed ?? hashSearchSeed(this.state.gameId));
     this.searchExecutor = createSearchExecutor({
       explicitExecutor: options.searchExecutor ?? null,
       forceLocal: options.forceLocalSearch === true
     });
-    this.aiController = new AIController({
+    this.aiController = new Controller({
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
       getMaxEnergy: (player) => this.teamRules.getMaxEnergy(player),

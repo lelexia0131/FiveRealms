@@ -162,7 +162,7 @@ function radarJudgmentPoolCounts(remainingCardCounts = null) {
 计算一次雷达判定落入战术、装备或各基础牌定义的条件概率。
 
 调用方
-Status/Combat simulation 上游、ValueSimulationQuery、Evaluator、ValueLedger 与直接概率测试。
+Status/Combat simulation 上游、Simulator/Evaluator composition、Evaluator、Evaluator diagnostics 与直接概率测试。
 
 输入
 可选当前剩余牌计数，以及 block、otherBasic、equipment 的显式概率覆盖。
@@ -407,7 +407,7 @@ function radarOutcomeDistribution(
 按当前无放回牌池或显式逐槽覆盖计算多个雷达判定的联合结果分区。
 
 调用方
-StatusSimulation.buildRadarOutcomeSequencePartition 与直接概率测试。
+Simulator.buildRadarOutcomeSequencePartition 与直接概率测试。
 
 输入
 当前剩余牌计数、非负判定次数、可选逐槽概率覆盖与可选统一概率覆盖。
@@ -468,7 +468,7 @@ export function buildRadarJudgmentSequenceProbabilities(
 返回一个公开 status 的确定/概率存在分区与总存在概率。
 
 调用方
-ActionGenerator、CardEffectSimulation、StatusSimulation、ValueSimulationQuery 与直接 contract tests。
+Generator、Simulator、Simulator、Simulator/Evaluator composition 与直接 contract tests。
 
 输入
 过滤玩家与 canonical status ID。
@@ -554,7 +554,7 @@ function judgmentCategoryCounts(remainingCardCounts = null, category) {
 把 Simulator 提供的合法闪电传播环与当前有限判定池组合成最终命中分布。
 
 调用方
-ValueSimulationQuery 与 direct probability tests。
+Simulator/Evaluator composition 与 direct probability tests。
 
 输入
 含 ProbabilityState 的 World 与按生命周期规则排列的 holder ID 数组。
@@ -1143,7 +1143,7 @@ export function createProbabilityState(fact) {
 把当前桶确定无目标定义的观察写入 ProbabilityState 后验。
 
 调用方
-RootResolutionQuery 与 ValueSimulationQuery。
+Simulator root outcome builder 与 Simulator/Evaluator composition。
 
 输入
 ProbabilityState 与 maximum=0 的业务 condition。
@@ -1277,7 +1277,7 @@ export function probabilityAnyAvailable(resources = []) {
 惰性查询一名玩家当前手牌中某定义的完整数量分布。
 
 调用方
-Response/Combat/Card Simulation、SearchPrior 与 Value 的真实未知消费点。
+Response/Combat/Card Simulation、Evaluator search prior 与 Value 的真实未知消费点。
 
 输入
 ProbabilityState、玩家匿名 bucketId、当前确定身份资源、definitionId 与数量阈值。
@@ -1337,7 +1337,7 @@ export function queryHandProbability(state, query = {}) {
 从 canonical World 玩家和唯一 ProbabilityState 惰性查询当前手牌定义数量。
 
 调用方
-Simulation、SearchPrior、Policy 与 Value 的响应/资源消费点。
+Simulation、Evaluator search prior、Policy 与 Value 的响应/资源消费点。
 
 输入
 ProbabilityState、World 玩家、definitionId 与最小数量。
@@ -1374,7 +1374,7 @@ export function queryPlayerHandProbability(state, player, definitionId, minimum 
 按给定响应顺序直接计算首个拥有目标资源的响应者概率。
 
 调用方
-ResponseSimulation 的 card-scope Counter 链。
+Response 的 card-scope Counter 链。
 
 输入
 ProbabilityState、definitionId，以及按顺序提供的 bucketId/knownResources 响应者。
@@ -1430,7 +1430,7 @@ export function queryOrderedFirstResponder(
 从根 ProbabilityState 采样有限个 Monte Carlo 隐藏手牌估计。
 
 调用方
-CounterfactualTerms 的根搜索上下文。
+Searcher counterfactual terms 的根搜索上下文。
 
 输入
 观察者 ID、当前 ProbabilityState、过滤玩家、样本数与 Search RNG。

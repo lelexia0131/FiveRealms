@@ -3,7 +3,7 @@
 唯一保存 AI 当前确定知道的公开事实、自身私有事实、合法实体记忆与由这些事实推出的当前牌池计数。
 
 上游
-AiController、World、Generator、Simulator、Evaluator 与直接事实测试。
+Controller、World、Generator、Simulator、Evaluator 与直接事实测试。
 
 下游
 Domain Definitions/Status/Turn Rules 与 canonical seat roster contract。

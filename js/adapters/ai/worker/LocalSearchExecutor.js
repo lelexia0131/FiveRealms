@@ -53,7 +53,7 @@ export function createLocalSearchExecutor() {
     以 local transport 执行一次 WorkerSearchRuntime.search。
 
     调用方
-    AIController 与测试。
+    Controller 与测试。
 
     输入
     SearchRequest 与可选 signal。
@@ -106,7 +106,7 @@ export function createLocalSearchExecutor() {
     取消当前 in-flight local search。
 
     调用方
-    AIController 生命周期。
+    Controller 生命周期。
 
     输入
     无。

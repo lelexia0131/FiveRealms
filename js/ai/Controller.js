@@ -6,7 +6,7 @@
 MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与测试。
 
 下游
-状态组合、Fact、选择、响应、动作生成、评估与 Worker 搜索边界。
+状态组合、Fact、动作生成、Searcher 运行组合与 Worker 搜索边界。
 
 状态边界
 只在门面入口读取当前 GameState；价值与搜索组件仅接收 World 与显式能力。
@@ -15,7 +15,7 @@ MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与�
 确定信息只能经 Fact 进入边界；未知信息只能经 Probability 局部查询进入决策。
 
 架构约束
-子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
+子组件不得回指 Controller；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
 import { createInitialWorld } from "./Simulator/World.js";
 import {
@@ -25,17 +25,11 @@ import {
   projectCanonicalSeatRoster
 } from "./Event/Fact.js";
 import {
-  ActionGenerator,
+  Generator,
   deduplicateSearchEquivalentActions
-} from "./search/ActionGenerator.js";
-import { Simulator } from "./Simulator/Simulator.js";
-import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILE } from "./policy/AiRuntimePolicy.js";
-import { actionIntentKey, sameAction } from "./search/Action.js";
-import { createSearchRequest } from "./search/SearchRequest.js";
-import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js";
+} from "./Generator/Generator.js";
+import { actionIntentKey, sameAction } from "./Generator/Action.js";
 import {
-  Evaluator,
-  StateValue,
   buildResourceCandidates,
   chooseBestResourceHandCandidate,
   chooseContextualResourceCandidate,
@@ -44,10 +38,207 @@ import {
   chooseLowestRoleCardId,
   choosePublicCardId
 } from "./Evaluator/Evaluator.js";
+import { createRuntimeComposition } from "./Searcher/Searcher.js";
 import { inAttackRange } from "./Event/Probability/Probability.js";
 import {
   nextLightningReceiverId as nextDomainLightningReceiverId
 } from "../domain/rules/status/StatusRules.js";
+
+export const AI_RUNTIME_POLICY = Object.freeze({
+  forceAiRescueHuman:true,
+  maxActionsPerTurn:16,
+  searchDepth:4,
+  beamWidth:10,
+  hiddenStateSamples:10,
+  searchTimeBudgetMs:900,
+  replanAfterEveryAction:true,
+  searchYieldEvery:48,
+  nearTieRange:0.35,
+  enableRandomness:true,
+  randomnessRange:0.035,
+  difficultyMultiplier:1
+});
+
+export const AI_SEARCH_PROFILE = Object.freeze({
+  mode:"NORMAL",
+  softTargetMs:null,
+  hardWatchdogMs:10000
+});
+
+/*
+功能
+冻结 search request 中的数组或浅层 plain object 值。
+
+调用方
+createSearchRequest、createWorkerSearchOutcome。
+
+输入
+任意可序列化值。
+
+输出
+数组或对象的冻结浅副本；primitive 原样返回。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Object.freeze。
+
+边界与不变量
+canonical World/Action 已在入口验证冻结；本 helper 不深拷贝或创建第二 canonical model。
+*/
+function freezeValue(value) {
+  if (Array.isArray(value)) return Object.freeze([...value]);
+  if (value && typeof value === "object") return Object.freeze({ ...value });
+  return value;
+}
+/*
+功能
+创建一次 AI search request。
+
+调用方
+Controller.selectAction 与 SearchRequest 契约测试。
+
+输入
+requestId、gameId、stateVersion、actorId、phase、currentRound、canonical World、searchConfig、rng 与 rootActions。
+
+输出
+冻结 data-only SearchRequest。
+
+读取状态
+只读输入。
+
+写入状态
+无。
+
+调用函数
+freezeValue、Object.freeze。
+
+边界与不变量
+不接受函数；world 与 rootActions 必须直接使用 canonical frozen World/Action，不做 DTO materialization。
+*/
+export function createSearchRequest({
+  requestId,
+  gameId,
+  stateVersion,
+  actorId,
+  phase,
+  currentRound,
+  world,
+  searchConfig,
+  rng,
+  rootActions
+}) {
+  if (typeof requestId !== "string" || !requestId) throw new TypeError("SearchRequest 需要 requestId");
+  if (typeof gameId !== "string" || !gameId) throw new TypeError("SearchRequest 需要 gameId");
+  if (!Number.isInteger(stateVersion) || stateVersion < 0) throw new TypeError("SearchRequest 需要非负整数 stateVersion");
+  if (typeof actorId !== "string" || !actorId) throw new TypeError("SearchRequest 需要 actorId");
+  if (!world || typeof world !== "object") throw new TypeError("SearchRequest 需要 world");
+  if (!Object.isFrozen(world)) throw new TypeError("SearchRequest 需要 canonical frozen World");
+  if (!searchConfig || typeof searchConfig !== "object") throw new TypeError("SearchRequest 需要 searchConfig");
+  if (!rng || typeof rng !== "object" || typeof rng.seed !== "number"
+    || typeof rng.state !== "number" || rng.algorithm !== "lcg") {
+    throw new TypeError("SearchRequest 需要 lcg rng continuation（seed/state/draws）");
+  }
+  if (!Array.isArray(rootActions)) throw new TypeError("SearchRequest 需要 rootActions");
+  if (rootActions.some((action) => !action || !Object.isFrozen(action))) {
+    throw new TypeError("SearchRequest 需要 canonical frozen Actions");
+  }
+  return Object.freeze({
+    requestId,
+    gameId,
+    stateVersion,
+    actorId,
+    phase,
+    currentRound,
+    world,
+    searchConfig:freezeValue(searchConfig),
+    rng:freezeValue(rng),
+    rootActions:Object.freeze([...rootActions])
+  });
+}
+
+/*
+功能
+把 Worker search result 补齐 request identity 并冻结为 plain payload。
+
+调用方
+WorkerSearchRuntime 与 Controller transport-failure fallback。
+
+输入
+Request 与 canonical Action、计划、stats、RNG continuation、取消或错误字段。
+
+输出
+Structured-clone-safe plain object。
+
+读取状态
+Request identity 与结果普通值。
+
+写入状态
+无。
+
+调用函数
+Object.freeze。
+
+边界与不变量
+Payload 不是第二 Action/World model；Action 与 plannedActions 保持 canonical identity。
+*/
+export function createWorkerSearchOutcome({ request, ...result }) {
+  return Object.freeze({
+    requestId:request.requestId,
+    gameId:request.gameId,
+    stateVersion:request.stateVersion,
+    actorId:request.actorId,
+    action:result.action ?? null,
+    plannedActions:Object.freeze([...(result.plannedActions ?? [])]),
+    stats:result.stats ? Object.freeze({ ...result.stats }) : null,
+    searchStopReason:result.searchStopReason ?? null,
+    rngAfter:result.rngAfter ? Object.freeze({ ...result.rngAfter }) : null,
+    cancelled:Boolean(result.cancelled),
+    workerError:result.workerError ?? null
+  });
+}
+
+/*
+功能
+验证 outcome 是否可被 Main Thread 安全处理。
+
+调用方
+Worker transport 与测试。
+
+输入
+outcome 与 request。
+
+输出
+data-only/request identity violations 数组。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Object.entries。
+
+边界与不变量
+未知 requestId、缺失 rngAfter、实体字段或函数字段均 fail safe。
+*/
+export function workerOutcomeViolations(outcome, request = null) {
+  const violations = [];
+  if (!outcome || typeof outcome !== "object") return ["outcome-not-object"];
+  if (request && outcome.requestId !== request.requestId) violations.push("requestId mismatch");
+  if (request && outcome.gameId !== request.gameId) violations.push("gameId mismatch");
+  if (request && outcome.stateVersion !== request.stateVersion) violations.push("stateVersion mismatch");
+  if (!outcome.rngAfter || typeof outcome.rngAfter.state !== "number") violations.push("rngAfter missing");
+  for (const [key, value] of Object.entries(outcome)) {
+    if (typeof value === "function") violations.push(`function:${key}`);
+  }
+  return violations;
+}
 
 export const SEARCH_RESULT_STATUS = Object.freeze({
   ACCEPTED:"ACCEPTED",
@@ -65,7 +256,7 @@ export const SEARCH_RESULT_STATUS = Object.freeze({
 在 Controller acceptance boundary 内记录一次 canonical Action 搜索结果。
 
 调用方
-AIController.acceptSearchResult 与 acceptWorkerSearchOutcome。
+Controller.acceptSearchResult 与 acceptWorkerSearchOutcome。
 
 输入
 请求身份、canonical Action/sequence、stats、acceptance status 与可选 RNG continuation。
@@ -113,7 +304,7 @@ function createSearchResult({
 读取 main-thread decision diagnostics 使用的单调墙钟。
 
 调用方
-AIController.selectAction。
+Controller.selectAction。
 
 输入
 无。
@@ -142,7 +333,7 @@ function decisionNow() {
 把真实或过滤 Player 转成 Evaluator 可读的公开响应视图。
 
 调用方
-AIController.buildResponseDecisionContext。
+Controller.buildResponseDecisionContext。
 
 输入
 Player 或玩家快照。
@@ -197,7 +388,7 @@ function responsePlayerView(player) {
   };
 }
 
-export class AIController {
+export class Controller {
   /*
   功能
   按明确顺序构造 AI 组件，并把窄能力一次性注入依赖方。
@@ -209,7 +400,7 @@ export class AIController {
   显式 narrow dependencies（state/session/rule capability/search RNG/lifecycle/rebind）。
 
   输出
-  完成装配的 AIController；缺少必要运行能力时由子组件构造立即失败。
+  完成装配的 Controller；缺少必要运行能力时由子组件构造立即失败。
 
   读取状态
   无；依赖均为显式能力引用。
@@ -218,7 +409,7 @@ export class AIController {
   仅写控制器组件字段。
 
   调用函数
-  Value owners、Fact、正式 Policy、执行边界与 ActionGenerator 构造函数。
+  Value owners、Fact、正式 Policy、执行边界与 Generator 构造函数。
 
   边界与不变量
   装配无事后补丁；闭包只持有窄能力，不保存 Game，也不把 Controller 传给任何子组件。
@@ -231,15 +422,15 @@ export class AIController {
       "getForceAiRescueHuman", "yieldControl", "createId"
     ];
     for (const name of required) {
-      if (typeof dependencies[name] !== "function") throw new TypeError(`AIController 缺少依赖：${name}`);
+      if (typeof dependencies[name] !== "function") throw new TypeError(`Controller 缺少依赖：${name}`);
     }
     if (!dependencies.searchRng || typeof dependencies.searchRng.next !== "function"
       || typeof dependencies.searchRng.snapshot !== "function"
       || typeof dependencies.searchRng.commit !== "function") {
-      throw new TypeError("AIController 缺少依赖：searchRng");
+      throw new TypeError("Controller 缺少依赖：searchRng");
     }
     if (!dependencies.searchExecutor || typeof dependencies.searchExecutor.search !== "function") {
-      throw new TypeError("AIController 缺少依赖：searchExecutor.search");
+      throw new TypeError("Controller 缺少依赖：searchExecutor.search");
     }
     this.getState = dependencies.getState;
     this.isSessionValid = dependencies.isSessionValid;
@@ -276,50 +467,15 @@ export class AIController {
       WORKER_ERROR:0,
       FALLBACK:0
     };
-    this.actionGenerator = new ActionGenerator();
+    this.actionGenerator = new Generator();
 
-    this.stateEvaluator = new Evaluator({
+    const runtimeComposition = createRuntimeComposition({
       getMaxEnergy: (player) => this.getMaxEnergy(player),
       getTurnEnergyBreakdown: (player) => this.getTurnEnergyBreakdown(player),
       getDifficultyMultiplier:() => this.getDifficultyMultiplier()
     });
-    /*
-    功能
-    为 main-thread 组合根创建共享资源决策语义的独立 Simulator。
-
-    调用方
-    ValueSimulationQuery 与 Controller 的有界资源反事实编排。
-
-    输入
-    当前查询或搜索节点的 World，以及可选搜索工作诊断上下文。
-
-    输出
-    注入正式资源 Policy/query 的 Simulator。
-
-    读取状态
-    当前 AIController 的搜索预算上下文。
-
-    写入状态
-    无。
-
-    调用函数
-    Simulator 构造函数。
-
-    边界与不变量
-    不得回读 Game；资源价值查询只服务真实选择边界，不注入物理 Simulator。
-    */
-    const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
-      searchBudget:runtime.searchBudget ?? null,
-      decideCounter:(...args) => this.stateEvaluator.decidePlanningCounter(...args),
-      decideLeverageAssault:(...args) => this.stateEvaluator.decideLeverageAssault(...args),
-      decideBlock:(...args) => this.stateEvaluator.decidePlanningBlock(...args),
-      decideGuardianAid:(...args) => this.stateEvaluator.decidePlanningGuardianAid(...args),
-      decideDyingRescue:(...args) => this.stateEvaluator.decidePlanningDyingRescue(...args),
-      resolveDiscardCandidates:(...args) => this.stateEvaluator.resolveDiscardCandidates(...args)
-    });
-    this.simulatorFactory = simulatorFactory;
-    this.stateValue = new StateValue(this.stateEvaluator);
-    this.stateEvaluator.configureRuntime({ simulatorFactory, stateValue:this.stateValue });
+    this.evaluator = runtimeComposition.evaluator;
+    this.simulatorFactory = runtimeComposition.simulatorFactory;
   }
 
   /*
@@ -342,7 +498,7 @@ export class AIController {
   无。
 
   调用函数
-  ActionGenerator.generate。
+  Generator.generate。
 
   边界与不变量
   Domain Rules 定义确定性游戏合法性，ActionCandidatePolicy 只决定 AI 是否考虑候选；门面不得额外筛选或重排，也不得把策略拒绝解释为游戏非法。
@@ -362,7 +518,7 @@ export class AIController {
   记录一次浏览器主线程同步 AI 操作的起止时间与已有规模计数。
 
   调用方
-  selectAction 的 pre-worker 阶段与 AIController 的 Response/CardSelection 门面。
+  selectAction 的 pre-worker 阶段与 Controller 的 Response/CardSelection 门面。
 
   输入
   operation 名称、startMs，以及可选 candidate/world count。
@@ -592,7 +748,7 @@ export class AIController {
   searchRng state/draws 与 committedRngRequestIds。
 
   调用函数
-  isSessionValid、SearchRng.commit。
+  isSessionValid、Rng.commit。
 
   边界与不变量
   同一 requestId 只 commit 一次；invalid session 不 commit，新对局不继承旧 session RNG。
@@ -625,7 +781,7 @@ export class AIController {
   无。
 
   调用函数
-  ActionGenerator.createEndAction。
+  Generator.createEndAction。
 
   边界与不变量
   该路径不评分、不排序、不执行 Searcher/Simulator，也不尝试替代 AI 决策；
@@ -814,19 +970,19 @@ export class AIController {
     let operationStartedAt = decisionNow();
     const remainingCardCounts = deriveCurrentCardCounts(player, state);
     mainThreadOperations.push(this.recordMainThreadOperation(
-      "AiController.selectAction:remaining-counts",
+      "Controller.selectAction:remaining-counts",
       operationStartedAt
     ));
     operationStartedAt = decisionNow();
     const world = createInitialWorld(player.id, state, remainingCardCounts);
     mainThreadOperations.push(this.recordMainThreadOperation(
-      "AiController.selectAction:create-world",
+      "Controller.selectAction:create-world",
       operationStartedAt
     ));
     operationStartedAt = decisionNow();
     const rootActions = this.getActionCandidates(player, world);
     mainThreadOperations.push(this.recordMainThreadOperation(
-      "AiController.selectAction:root-candidates",
+      "Controller.selectAction:root-candidates",
       operationStartedAt,
       { candidateCount:rootActions.length }
     ));
@@ -853,8 +1009,7 @@ export class AIController {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const cancelled = /\bcancell?ed\b/iu.test(errorMessage);
-      outcome = createWorkerSearchOutcome({
-        request,
+      outcome = createWorkerSearchOutcome({ request,
         action:null,
         plannedActions:[],
         stats:null,
@@ -1110,22 +1265,24 @@ export class AIController {
       availableUnknownCount:unknownCards.length
     }));
     const simulator = this.simulatorFactory(world);
-    const evaluated = [];
-    for (const candidate of candidates) {
-      const after = simulator.clone(world);
-      const afterActor = after.players.find((player) => player.id === searchActor.id);
-      const afterOwner = after.players.find((player) => player.id === searchOwner.id);
-      const appliedProbability = simulator.applyForcedResourceSelection(
-        after,
-        afterActor,
-        afterOwner,
-        purpose,
-        candidate
-      );
+    const beforeLightningOutcomeSets = simulator.buildLightningOutcomeSets(world);
+    const evaluated = simulator.buildResourceSelectionWorlds(
+      world,
+      searchActor.id,
+      searchOwner.id,
+      purpose,
+      candidates
+    ).map(({ candidate, after, appliedProbability }) => {
       const rawStateDelta = appliedProbability > 0
-        ? this.stateValue.transitionDelta(world, after, searchActor.id)
+        ? this.evaluator.transitionDelta(
+            world,
+            after,
+            searchActor.id,
+            beforeLightningOutcomeSets,
+            simulator.buildLightningOutcomeSets(after)
+          )
         : 0;
-      evaluated.push(this.stateEvaluator.evaluateResourceTransitionCandidate({
+      return this.evaluator.evaluateResourceTransitionCandidate({
         before:world,
         after,
         actorId:searchActor.id,
@@ -1133,8 +1290,8 @@ export class AIController {
         candidate,
         appliedProbability,
         rawStateDelta
-      }));
-    }
+      });
+    });
     const selection = chooseContextualResourceCandidate(evaluated);
     if (selection?.zone === "equipment" && owner.equipment) {
       return { card:owner.equipment, zone:"equipment" };
@@ -1182,7 +1339,7 @@ export class AIController {
     const stranded = enemies.length > 0 && !enemies.some(
       (enemy) => inAttackRange({ state }, player, enemy)
     );
-    const cards = this.stateEvaluator.resolveDiscardCandidates(
+    const cards = this.evaluator.resolveDiscardCandidates(
       player,
       player.hand,
       count,
@@ -1207,7 +1364,7 @@ export class AIController {
   为转移牌选择来源、接收者和资源类别。
 
   调用方
-  CardIntentRuntime 转移准备与 ActionGenerator 注入能力。
+  CardIntentRuntime 转移准备与 Generator 注入能力。
 
   输入
   转移行动者、卡牌、合法来源及可选接收者和排除集合。
@@ -1222,7 +1379,7 @@ export class AIController {
   无。
 
   调用函数
-  createInitialWorld、ActionGenerator.generate、Evaluator.chooseTransferAction。
+  createInitialWorld、Generator.generate、Evaluator.chooseTransferAction。
 
   边界与不变量
   Controller 只绑定当前 runtime 候选；不生成合法方向、不写评分公式，也不移动实体牌。
@@ -1248,7 +1405,7 @@ export class AIController {
       && (!excludedCardIds?.has(action.selection?.cardId))
     ));
     const worldActor = world.players.find((player) => player.id === actor.id) ?? actor;
-    const selection = this.stateEvaluator.chooseTransferAction(
+    const selection = this.evaluator.chooseTransferAction(
       transferActions,
       worldActor,
       world
@@ -1303,7 +1460,7 @@ export class AIController {
       const exclusions = new Set(excludedCardIds ?? []);
       const remainingCardCounts = resourceCounts ?? deriveCurrentCardCounts(actor, this.getState());
       while (selected.length < count && candidates.length) {
-        const choice = this.stateEvaluator.chooseTransferHandCandidate(
+        const choice = this.evaluator.chooseTransferHandCandidate(
           actor,
           owner,
           context?.receiver,
@@ -1379,7 +1536,7 @@ export class AIController {
       selected.push(candidates.splice(index, 1)[0]);
     }
     this.recordMainThreadOperation(
-      "AIController.resolveHiddenCards",
+      "Controller.resolveHiddenCards",
       startedAt,
       { candidateCount:owner?.hand?.length ?? "unavailable" }
     );
@@ -1450,7 +1607,7 @@ export class AIController {
     }
     const handCount = Array.isArray(owner?.hand) ? owner.hand.length : Number.NaN;
     this.recordMainThreadOperation(
-      "AIController.resolveZoneCard",
+      "Controller.resolveZoneCard",
       startedAt,
       { candidateCount:Number.isFinite(handCount) ? handCount + (owner?.equipment ? 1 : 0) : "unavailable" }
     );
@@ -1514,7 +1671,7 @@ export class AIController {
   只有被调用的未知位置/状态查询可能写 query 私有缓存；真实状态不变。
 
   调用函数
-  responsePlayerView、createInitialWorld、ValueSimulationQuery 与既有 Domain/Value 辅助函数。
+  responsePlayerView、createInitialWorld、Simulator/Evaluator composition 与既有 Domain/Value 辅助函数。
 
   边界与不变量
   Controller 只负责 runtime entity/context binding；所有价值比较由同一 Evaluator 完成，昂贵查询惰性且每分支至多一次。
@@ -1587,7 +1744,7 @@ export class AIController {
       leverageMetrics:() => {
         const target = rawContext.target ?? responder;
         const world = createInitialWorld(responder.id, this.getState());
-        return this.stateEvaluator.leverageResponseMetrics(
+        return this.evaluator.leverageResponseMetrics(
           responderView,
           byId.get(target.id),
           responder.aiMemory,
@@ -1602,13 +1759,22 @@ export class AIController {
           this.getState(),
           getRemainingCardCounts()
         );
-        return this.stateEvaluator.guardianAidValues(
+        const simulator = this.simulatorFactory(world);
+        const worlds = simulator.buildGuardianAidWorlds(
           world,
           responder.id,
           target.id,
           rawContext.source?.id ?? null,
-          Math.max(0, Number(rawContext.amount) || 0),
-          this.stateValue
+          Math.max(0, Number(rawContext.amount) || 0)
+        );
+        return this.evaluator.guardianAidValues(
+          world,
+          responder.id,
+          target.id,
+          worlds.stayWorld,
+          worlds.aidWorld,
+          simulator.buildLightningOutcomeSets(worlds.stayWorld),
+          simulator.buildLightningOutcomeSets(worlds.aidWorld)
         );
       },
       lightningCounterTerms:() => {
@@ -1631,10 +1797,22 @@ export class AIController {
           holder.id
         );
         const worldReceiver = world.players.find((player) => player.id === receiverId);
-        return this.stateEvaluator.lightningCounterTerms(
+        const simulator = this.simulatorFactory(world);
+        const stayOutcomeSet = simulator.buildLightningOutcomeWorlds(
           world,
-          worldHolder,
-          worldReceiver,
+          worldHolder
+        );
+        const transferred = worldReceiver
+          ? simulator.buildTransferredLightningWorld(world, worldHolder, worldReceiver)
+          : null;
+        const transferredOutcomeSet = transferred
+          ? simulator.buildLightningOutcomeWorlds(transferred.world, transferred.holder, 1)
+          : null;
+        return this.evaluator.lightningCounterTerms(
+          world,
+          stayOutcomeSet,
+          transferred?.world ?? null,
+          transferredOutcomeSet,
           responder.id
         );
       },
@@ -1653,7 +1831,7 @@ export class AIController {
           getRemainingCardCounts()
         );
         const probabilityHolder = world.players.find((player) => player.id === holder.id);
-        return this.stateEvaluator.sealCounterTerms(
+        return this.evaluator.sealCounterTerms(
           probabilityHolder,
           world,
           getRemainingCardCounts()
@@ -1679,12 +1857,21 @@ export class AIController {
           { publicTransferContext:rawContext.publicTransferContext ?? null }
         );
         if (!rootAction) return null;
-        return this.stateEvaluator.dynamicRootFlipGain(
+        const simulator = this.simulatorFactory(world);
+        const rootWorlds = simulator.buildRootFlipWorlds(
           world,
-          responder.id,
           rootAction,
-          rawContext.counterDepth ?? 0,
-          this.stateValue
+          rawContext.counterDepth ?? 0
+        );
+        return this.evaluator.dynamicRootFlipGain(
+          rootWorlds,
+          responder.id,
+          rootWorlds
+            ? simulator.buildLightningOutcomeSets(rootWorlds.baseWorld)
+            : [],
+          rootWorlds
+            ? simulator.buildLightningOutcomeSets(rootWorlds.resolvedWorld)
+            : []
         );
       }
     };
@@ -1717,11 +1904,11 @@ export class AIController {
   */
   shouldRespond(player, type, context, cards = []) {
     const startedAt = decisionNow();
-    const decision = this.stateEvaluator.shouldRespond(
+    const decision = this.evaluator.shouldRespond(
       this.buildResponseDecisionContext(player, type, context, cards)
     );
     this.recordMainThreadOperation(
-      "AIController.shouldRespond",
+      "Controller.shouldRespond",
       startedAt,
       { candidateCount:Array.isArray(cards) ? cards.length : "unavailable" }
     );
@@ -1761,7 +1948,7 @@ export class AIController {
       { target },
       []
     );
-    const assessment = this.stateEvaluator.assessDyingRescue({
+    const assessment = this.evaluator.assessDyingRescue({
       responder:decision.responder,
       target:decision.context.target,
       rescueOrder:decision.rescueOrder,
@@ -1771,7 +1958,7 @@ export class AIController {
       remainingCardCounts:decision.remainingCardCounts
     });
     this.recordMainThreadOperation(
-      "AIController.assessDyingRescue",
+      "Controller.assessDyingRescue",
       startedAt,
       { candidateCount:this.getState()?.players?.length }
     );

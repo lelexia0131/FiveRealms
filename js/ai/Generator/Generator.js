@@ -3,7 +3,7 @@
 从 canonical World 枚举合法目标与选择，并创建 canonical Action。
 
 上游
-AIController 与 Searcher。
+Controller 与 Searcher。
 
 下游
 Domain Card/Skill/Status Rules、Domain Definitions、Event Fact/Probability facade 与既有策略评分模块。
@@ -15,7 +15,7 @@ Domain Card/Skill/Status Rules、Domain Definitions、Event Fact/Probability fac
 候选只使用 World 的确定事实、合法记忆与 Probability bounded query。
 
 架构约束
-不得依赖 AIController；不得组合概率分支、构造执行世界或模拟 transition。
+不得依赖 Controller；不得组合概率分支、构造执行世界或模拟 transition。
 */
 import {
   canPlayCard,
@@ -90,19 +90,19 @@ export function deduplicateSearchEquivalentActions(actions) {
   return unique;
 }
 
-export class ActionGenerator {
+export class Generator {
   /*
   功能
   创建唯一合法动作生成器。
 
   调用方
-  AIController 组合根与直接独立性测试。
+  Controller 组合根与直接独立性测试。
 
   输入
   无。
 
   输出
-  可生成根与深层动作的 ActionGenerator；缺少依赖时立即抛错。
+  可生成根与深层动作的 Generator；缺少依赖时立即抛错。
 
   读取状态
   无。
@@ -123,7 +123,7 @@ export class ActionGenerator {
   创建取消、拒绝或无候选路径共同使用的 canonical END Action。
 
   调用方
-  generate 与 AIController 的安全终止路径。
+  generate 与 Controller 的安全终止路径。
 
   输入
   当前行动者 ID。
@@ -681,7 +681,7 @@ export class ActionGenerator {
   从 canonical World 枚举完整合法 Action。
 
   调用方
-  AIController 根候选与 Searcher 深层展开。
+  Controller 根候选与 Searcher 深层展开。
 
   输入
   World、当前行动者 ID 与可选 SearchBudget 诊断能力。

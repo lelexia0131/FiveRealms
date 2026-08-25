@@ -3,10 +3,10 @@
 唯一拥有 World 上的 beam search、Pattern 调度、frontier、root coverage、预算检查与 incumbent 维护。
 
 上游
-Worker SearchEngineFactory 与搜索回归测试。
+Controller、WorkerSearchRuntime 与搜索回归测试。
 
 下游
-注入的 Pattern、Simulator/SearchBudget 工厂、Evaluator facade、搜索先验与动作生成/让步能力。
+注入的 Pattern、Simulator/SearchBudget 工厂、Evaluator facade 与动作生成/让步能力。
 
 状态边界
 只读输入 World，所有分支写入由 simulatorFactory 创建的独立 Simulator 承担。
@@ -17,9 +17,19 @@ Searcher 不读取 GameState 或领域隐藏事实；合法候选与全部数值
 架构约束
 不得定义合法性、transition、Final Utility 或最终偏好；只能调用 Evaluator comparator 机械维护 incumbent。
 */
-import { statePointsToUtility } from "../Evaluator/Evaluator.js";
-import { actionIntentKey, actionSearchKey } from "./Action.js";
-import { STATE_UTILITY_PRIOR_WEIGHT } from "./SearchPrior.js";
+import { Evaluator } from "../Evaluator/Evaluator.js";
+import {
+  PROBABILITY_CLASSIFICATION,
+  PROBABILITY_EPSILON,
+  clampProbability,
+  sampleProbabilityWorlds,
+  totalBranchProbability
+} from "../Event/Probability/Probability.js";
+import { actionIntentKey, actionSearchKey } from "../Generator/Action.js";
+import { Generator, deduplicateSearchEquivalentActions } from "../Generator/Generator.js";
+import { Simulator, tacticResolutionScale } from "../Simulator/Simulator.js";
+import { Pattern } from "./Pattern/Pattern.js";
+import { Rng } from "./Rng.js";
 
 export class Searcher {
   /*
@@ -27,10 +37,10 @@ export class Searcher {
   创建只依赖正式搜索归属模块与窄运行能力的 Searcher。
 
   调用方
-  Worker SearchEngineFactory 与正式边界。
+  共享搜索组合 与正式边界。
 
   输入
-  Evaluator/StateValue/ValueLedger、SearchPrior、CounterfactualTerms、Pattern、搜索配置、
+  Evaluator、Pattern、搜索配置、
   Simulator/SearchBudget factory、候选去重、深层生成与可取消让步能力。
 
   输出
@@ -50,10 +60,6 @@ export class Searcher {
   */
   constructor({
     evaluator,
-    stateValue,
-    valueLedger,
-    searchPrior,
-    counterfactualTerms,
     patternMatcher,
     getResolutionScale,
     config,
@@ -61,14 +67,11 @@ export class Searcher {
     searchBudgetFactory,
     deduplicateActions,
     generateActions,
+    sampleUnknownHands,
     yieldControl
   } = {}) {
     const services = {
       evaluator,
-      stateValue,
-      valueLedger,
-      searchPrior,
-      counterfactualTerms,
       patternMatcher
     };
     const capabilities = {
@@ -77,6 +80,7 @@ export class Searcher {
       searchBudgetFactory,
       deduplicateActions,
       generateActions,
+      sampleUnknownHands,
       yieldControl
     };
     for (const [name, service] of Object.entries(services)) {
@@ -93,8 +97,11 @@ export class Searcher {
     Object.assign(this, services);
     Object.assign(this, capabilities);
     this.config = Object.freeze({ ...config });
+    this.hiddenSampleCount = this.config.hiddenSamples;
     this.lastSearchStats = null;
     this.lastSequence = [];
+    this.comparisonActor = null;
+    this.comparisonWorld = null;
   }
 
   /*
@@ -188,7 +195,12 @@ export class Searcher {
   bestCandidate(candidates) {
     return (candidates ?? []).reduce((best, node) => {
       if (!best) return node;
-      return this.evaluator.compareCandidates(node, best) > 0 ? node : best;
+      return this.evaluator.compareCandidates(
+        node,
+        best,
+        this.comparisonActor,
+        this.comparisonWorld
+      ) > 0 ? node : best;
     }, null);
   }
 
@@ -278,19 +290,19 @@ export class Searcher {
   有限调度分数。
 
   读取状态
-  SearchPrior。
+  Evaluator 的搜索调度值。
 
   写入状态
   无。
 
   调用函数
-  SearchPrior.rootSchedulingScore。
+  Evaluator.rootSchedulingScore。
 
   边界与不变量
   只改变探索顺序，不进入 Final Utility 或候选 prior。
   */
   schedulingScore(action, player, state) {
-    const score = this.searchPrior.rootSchedulingScore?.(action, player, state) ?? 0;
+    const score = this.evaluator.rootSchedulingScore(action, player, state);
     return Number.isFinite(score) || score === Number.NEGATIVE_INFINITY ? score : 0;
   }
 
@@ -305,22 +317,22 @@ export class Searcher {
   行动者、根 World 与 canonical root Actions。
 
   输出
-  CounterfactualTerms 创建的上下文。
+  本次搜索共用的反事实上下文。
 
   读取状态
-  CounterfactualTerms。
+  Searcher 的隐藏采样与 provenance 配置。
 
   写入状态
   只消费既有 Search RNG 采样序列。
 
   调用函数
-  CounterfactualTerms.createContext。
+  createCounterfactualContext。
 
   边界与不变量
   每次 search 只创建一次，不作为线性 World middle layer。
   */
   createContext(player, state, rootActions) {
-    return this.counterfactualTerms.createContext(player, state, rootActions);
+    return this.createCounterfactualContext(player, state, rootActions);
   }
 
   /*
@@ -357,6 +369,66 @@ export class Searcher {
 
   /*
   功能
+  为 diagnostics 中已识别的响应消费构造配对 World，并交给 Evaluator 计算归属价值。
+
+  调用方
+  evaluateCandidate 的显式 diagnostics 路径。
+
+  输入
+  before/after World、canonical Action、viewer、Simulator 与响应 attribution 描述。
+
+  输出
+  带纯 evaluation 结果的 attribution 数组。
+
+  读取状态
+  Evaluator 描述的移除项与 Simulator transition。
+
+  写入状态
+  只写 Simulator 返回的独立反事实 World。
+
+  调用函数
+  Simulator.buildResponseCounterfactualWorlds/buildLightningOutcomeSets、Evaluator.evaluateResponseCounterfactual。
+
+  边界与不变量
+  Searcher 只编排 transition/value owner；响应价值只作诊断，不参与 final value。
+  */
+  evaluateResponseAttributions(before, action, after, viewerId, simulator) {
+    const descriptions = this.evaluator.describeResponseAttributions(
+      before,
+      action,
+      after,
+      viewerId
+    );
+    return descriptions.map((description) => {
+      const worlds = simulator.buildResponseCounterfactualWorlds(
+        before,
+        action,
+        description.responderId,
+        description.remove,
+        after
+      );
+      const actualLightningOutcomeSets = simulator.buildLightningOutcomeSets(
+        worlds.actualWorld
+      );
+      const counterfactualLightningOutcomeSets = simulator.buildLightningOutcomeSets(
+        worlds.counterfactualWorld
+      );
+      return {
+        ...description,
+        evaluation:this.evaluator.evaluateResponseCounterfactual(
+          worlds.actualWorld,
+          worlds.counterfactualWorld,
+          description.responderId,
+          viewerId,
+          actualLightningOutcomeSets,
+          counterfactualLightningOutcomeSets
+        )
+      };
+    });
+  }
+
+  /*
+  功能
   把一次已经模拟完成的 canonical Action 组装为完整可比较搜索候选。
 
   调用方
@@ -369,13 +441,13 @@ export class Searcher {
   完整候选；反事实中断时返回 null。
 
   读取状态
-  CounterfactualTerms、Evaluator、StateValue、ValueLedger 与 SearchPrior。
+  Searcher 反事实项、Evaluator 与搜索上下文。
 
   写入状态
   只写独立候选记录和显式诊断。
 
   调用函数
-  CounterfactualTerms.candidateTerms/hiddenPrior、Evaluator.evaluateTransition/frontierResidual、SearchPrior。
+  candidateTerms/hiddenPrior、Evaluator.evaluateTransition/frontierResidual/composeEvaluator search prior。
 
   边界与不变量
   Searcher 只机械组装各 owner 的结果；不定义 value formula，partial candidate 不得返回。
@@ -392,7 +464,7 @@ export class Searcher {
     collectDiagnostics = false,
     searchBudget = null
   }) {
-    const terms = this.counterfactualTerms.candidateTerms({
+    const terms = this.candidateTerms({
       beforeState,
       afterState,
       action,
@@ -404,8 +476,9 @@ export class Searcher {
       searchBudget
     });
     if (terms === null) return null;
+    const beforeLightningOutcomeSets = simulator.buildLightningOutcomeSets(beforeState);
+    const afterLightningOutcomeSets = simulator.buildLightningOutcomeSets(afterState);
     const baseTerms = this.evaluator.evaluateTransition({
-      stateValue:this.stateValue,
       action,
       player,
       beforeState,
@@ -418,16 +491,28 @@ export class Searcher {
         player.id,
         simulator
       ),
-      searchBudget
+      beforeLightningOutcomeSets,
+      afterLightningOutcomeSets
     });
+    const responseAttributions = collectDiagnostics
+      ? this.evaluateResponseAttributions(
+          beforeState,
+          action,
+          afterState,
+          player.id,
+          simulator
+        )
+      : [];
     const candidateLedger = collectDiagnostics
-      ? this.valueLedger.computeCandidateLedger(
+      ? this.evaluator.computeCandidateLedger(
           beforeState,
           action,
           afterState,
           player.id,
           true,
-          searchBudget
+          beforeLightningOutcomeSets,
+          afterLightningOutcomeSets,
+          responseAttributions
         )
       : null;
     const responseNet = (candidateLedger?.responses ?? [])
@@ -437,21 +522,30 @@ export class Searcher {
       ? this.evaluator.frontierResidual(afterState, player.id)
       : null;
     const frontierValue = this.evaluator.terminalFrontierValue(frontierResidual, terminal);
-    const domainPrior = statePointsToUtility(
-      terms.exposeMarginal + terms.assaultStacksCredit
-    ) * STATE_UTILITY_PRIOR_WEIGHT;
-    const searchCredit = this.searchPrior.actionSearchPrior(action, player, beforeState);
-    const prior = this.counterfactualTerms.hiddenPrior(action, context)
-      + this.searchPrior.actionUtility(action, player, beforeState, { searchBudget })
-      + searchCredit
-      + domainPrior;
+    const lightningOutcomeWorlds = action.cardId === "lightning"
+      ? simulator.buildLightningOutcomeWorlds(
+          beforeState,
+          beforeState.players.find((entry) => entry.id === player.id) ?? player,
+          1
+        )
+      : [];
+    const searchPrior = this.evaluator.composeSearchPrior({
+      action,
+      player,
+      state:beforeState,
+      lightningOutcomeWorlds,
+      searchBudget,
+      hiddenPrior:this.hiddenPrior(action, context),
+      exposeMarginal:terms.exposeMarginal,
+      assaultStacksCredit:terms.assaultStacksCredit
+    });
+    const { domainPrior, searchCredit, prior } = searchPrior;
     return {
       action,
       state:afterState,
       terminal,
       baseTerms,
       baseTransition:baseTerms.baseTransition,
-      transferPreference:baseTerms.transferPreference,
       exposeMarginal:terms.exposeMarginal,
       assaultStacksCredit:terms.assaultStacksCredit,
       spyGapInformationValue:terms.spyGapInformationValue ?? 0,
@@ -511,7 +605,7 @@ export class Searcher {
   search diagnostics path。
 
   输入
-  含 ValueLedger 的完整候选。
+  含 Evaluator 诊断 的完整候选。
 
   输出
   canonical Action、投影、响应与 frontier 数值。
@@ -645,7 +739,6 @@ export class Searcher {
       state:candidate.state,
       terminal:candidate.terminal,
       valueScore,
-      transferPreference:node.transferPreference,
       pruneScore:this.pruneScore(valueScore, candidate.prior, depth),
       searchCredit:candidate.searchCredit,
       sequence:[...node.sequence, candidate.action],
@@ -712,7 +805,7 @@ export class Searcher {
 
   /*
   功能
-  把 Pattern-guided roots 与既有 SearchPrior root 顺序进行公平交错。
+  把 Pattern-guided roots 与既有 搜索先验 root 顺序进行公平交错。
 
   调用方
   search 的 root scheduling 阶段。
@@ -721,10 +814,10 @@ export class Searcher {
   已去重合法 roots、行动者、根 World 与有界 proposals。
 
   输出
-  最多提升一个最高优先级 guided root，其余 roots 保持现有 SearchPrior 顺序。
+  最多提升一个最高优先级 guided root，其余 roots 保持现有 搜索先验 顺序。
 
   读取状态
-  SearchPrior score 与 canonical Action keys。
+  搜索先验 score 与 canonical Action keys。
 
   写入状态
   无。
@@ -764,7 +857,7 @@ export class Searcher {
 
   /*
   功能
-  在昂贵深层物化前按现有 SearchPrior 与 semantic key 稳定排列 legal children。
+  在昂贵深层物化前按现有 搜索先验 与 semantic key 稳定排列 legal children。
 
   调用方
   materializeChildCandidates。
@@ -774,10 +867,10 @@ export class Searcher {
   以及当前零基 step index。
 
   输出
-  guided intent 优先、其余动作按现有 SearchPrior/coarse intent/search-semantic secondary key 排列的新数组。
+  guided intent 优先、其余动作按现有 搜索先验/coarse intent/search-semantic secondary key 排列的新数组。
 
   读取状态
-  SearchPrior score 与 canonical Action keys。
+  搜索先验 score 与 canonical Action keys。
 
   写入状态
   无。
@@ -951,7 +1044,7 @@ export class Searcher {
   可恢复 expansion cache，以及会话是否在 yield 时取消。
 
   读取状态
-  注入的深层动作生成、Evaluator、CounterfactualTerms、SearchBudget 与 yieldControl。
+  注入的深层动作生成、Evaluator、Searcher 反事实项、SearchBudget 与 yieldControl。
 
   写入状态
   SearchBudget 工作计数、搜索上下文诊断与 workDiagnostics 深度/分支/Pattern 中断计数。
@@ -1027,7 +1120,7 @@ export class Searcher {
     while (nextActionIndex < followActions.length && newCandidateCount < candidateLimit) {
       if (budget.shouldStop()) break;
       const action = followActions[nextActionIndex];
-      this.counterfactualTerms.observeCandidate(action, context);
+      this.observeCounterfactualCandidate(action, context);
       const prepared = this.prepareCandidate(budget, depth, () => {
         budget.observeSimulation();
         const state = simulator.apply(parentState, action);
@@ -1243,7 +1336,7 @@ export class Searcher {
   在固定时间或节点预算内执行有限深度束搜索并选择根动作。
 
   调用方
-  AIController.selectAction 与搜索回归测试。
+  Controller.selectAction 与搜索回归测试。
 
   输入
   行动者、根 World、根候选动作与可选会话/诊断上下文。
@@ -1262,7 +1355,7 @@ export class Searcher {
   Searcher mechanics、generate、yieldControl。
 
   边界与不变量
-  root 在昂贵物化前按 SearchPrior 廉价分数和稳定语义键排序，不得依赖 card instance ID 或 hand index；
+  root 在昂贵物化前按 搜索先验 廉价分数和稳定语义键排序，不得依赖 card instance ID 或 hand index；
   Pattern 只可正向安排 guided root/continuation，ordinary challenger 必须先获得 root coverage；
   每个 continuation 从当前 post-state legal actions 解析，Pattern metadata 不进入 value 或 final incumbent rule；
   progressive 只缓存完整子候选；常规逐层 beam 必须复用或补齐原有展开，COMPLETE 仍只从标准 final beam 选择；
@@ -1276,6 +1369,8 @@ export class Searcher {
   安全阶段不得继续束搜索、深层扩展或随机选择。
   */
   async search(player, visibleState, rootActions, options = {}) {
+    this.comparisonActor = player;
+    this.comparisonWorld = visibleState;
     this.lastSequence = [];
     const collectDiagnostics = Boolean(options.collectAiDecisionDiagnostics);
     const budget = this.searchBudgetFactory();
@@ -1591,7 +1686,6 @@ export class Searcher {
         state:candidate.state,
         terminal:candidate.terminal,
         valueScore,
-        transferPreference:candidate.transferPreference,
         pruneScore:this.pruneScore(valueScore, candidate.prior, 1),
         searchCredit:candidate.searchCredit,
         sequence:[candidate.action],
@@ -1867,4 +1961,1833 @@ export class Searcher {
       workDiagnostics
     });
   }
+
+  /*
+  功能
+  在昂贵反事实的原子工作边界查询 cooperative search abort。
+
+  调用方
+  后续动作、隐藏世界、破势配对模拟循环。
+
+  输入
+  可选 SearchBudget。
+
+  输出
+  TIME/NODE/CANCELLED 要求当前工作回退时返回 true。
+
+  读取状态
+  SearchBudget stop reason、时间或节点状态。
+
+  写入状态
+  尚未停止时可由 SearchBudget 首次观察并写入停止原因。
+
+  调用函数
+  SearchBudget.shouldAbortCurrentWork/shouldStop。
+
+  边界与不变量
+  无预算的直接价值测试保持完整计算；本模块不自行解释预算数值或修改候选价值。
+  */
+  isInterrupted(searchBudget) {
+    if (!searchBudget) return false;
+    if (typeof searchBudget.shouldAbortCurrentWork === "function") {
+      return searchBudget.shouldAbortCurrentWork();
+    }
+    return typeof searchBudget.shouldStop === "function" && searchBudget.shouldStop();
+  }
+
+  /*
+  功能
+  为一次根搜索记录当前 Probability 查询输入、已有破势层来源与动态目标诊断基线。
+
+  调用方
+  Searcher.createContext。
+
+  输入
+  行动者、根 World 与根动作集合。
+
+  输出
+  当前搜索唯一的领域 transition context；匿名手牌样本尚未计算。
+
+  读取状态
+  行动者过滤状态与当前 ProbabilityState。
+
+  写入状态
+  只创建当前查询输入和独立诊断 Set。
+
+  调用函数
+  无。
+
+  边界与不变量
+  进入搜索前不得预采样；首次真实隐藏查询才创建一次本 calculation memo。
+  */
+  createCounterfactualContext(player, visibleState, rootActions) {
+    const rootActor = visibleState.players.find((entry) => entry.id === player.id);
+    const rootAssaultTargets = new Set(
+      rootActions
+        .filter((action) => action.cardId === "assault")
+        .map((action) => action.targetIds?.[0])
+    );
+    return {
+      viewer:player,
+      probabilityState:visibleState.probabilityState,
+      probabilityPlayers:visibleState.players,
+      unknownHandEstimate:null,
+      rootProvenance:rootActor?.exposeWeaknessStacks ?? 0,
+      rootAssaultTargets,
+      discoveredDynamicTarget:false
+    };
+  }
+
+  /*
+  功能
+  在第一个真实隐藏牌查询点惰性创建并复用本次 calculation 的匿名手牌样本。
+
+  调用方
+  hiddenPrior、evaluateSpyGapInformationValue。
+
+  输入
+  当前搜索领域 context。
+
+  输出
+  显式 MONTE_CARLO_ESTIMATE 契约。
+
+  读取状态
+  context 当前 ProbabilityState、过滤玩家与注入采样能力。
+
+  写入状态
+  只写 context.unknownHandEstimate 计算缓存。
+
+  调用函数
+  sampleUnknownHands。
+
+  边界与不变量
+  缓存生命周期只覆盖一次 plan；不得进入 World、ProbabilityState 或跨决策持久树。
+  */
+  getUnknownHandEstimate(context) {
+    if (!context.unknownHandEstimate) {
+      const estimate = this.sampleUnknownHands({
+        viewerId:context.viewer.id,
+        probabilityState:context.probabilityState,
+        players:context.probabilityPlayers,
+        sampleCount:this.hiddenSampleCount
+      });
+      if (estimate?.classification !== PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE
+        || !Array.isArray(estimate.worlds)
+        || estimate.sampleCount !== estimate.worlds.length) {
+        throw new TypeError("匿名手牌采样必须返回显式 MONTE CARLO ESTIMATE 契约");
+      }
+      context.unknownHandEstimate = estimate;
+    }
+    return context.unknownHandEstimate;
+  }
+
+  /*
+  功能
+  记录深层生成是否发现根集合以外的突袭目标。
+
+  调用方
+  Searcher candidate diagnostics。
+
+  输入
+  候选动作与当前搜索领域 context。
+
+  输出
+  无。
+
+  读取状态
+  动作定义与首目标标识。
+
+  写入状态
+  只可能把 discoveredDynamicTarget 从 false 置为 true。
+
+  调用函数
+  无。
+
+  边界与不变量
+  该字段只用于诊断，不参与分数、排序或裁剪。
+  */
+  observeCounterfactualCandidate(action, context) {
+    if (action.cardId === "assault"
+      && !context.rootAssaultTargets.has(action.targetIds?.[0])) {
+      context.discoveredDynamicTarget = true;
+    }
+  }
+
+  /*
+  功能
+  惰性估算匿名手牌格挡对突袭候选的既有搜索先验调整。
+
+  调用方
+  Searcher.evaluateCandidate。
+
+  输入
+  候选动作与当前搜索领域 context。
+
+  输出
+  仅用于 pruneScore 的数值 prior。
+
+  读取状态
+  当前 Probability 查询输入与目标标识。
+
+  写入状态
+  getUnknownHandEstimate。
+
+  调用函数
+  无。
+
+  边界与不变量
+  系数 -1.5、样本分母与零样本行为保持不变，不进入 final value。
+  */
+  hiddenPrior(action, context) {
+    if (action.cardId !== "assault") return 0;
+    const handSamples = this.getUnknownHandEstimate(context).worlds;
+    if (!handSamples.length) return 0;
+    const targetId = action.targetIds?.[0];
+    if (!targetId) return 0;
+    return -1.5 * handSamples.filter(
+      (world) => world[targetId]?.includes("block")
+    ).length / handSamples.length;
+  }
+
+  /*
+  功能
+  判断一次模拟 transition 是否新触发了影客窥隙。
+
+  调用方
+  candidateTerms 的信息价值分支。
+
+  输入
+  before/after World 与候选动作。
+
+  输出
+  新触发时返回被观察者 ID，否则返回 null。
+
+  读取状态
+  双方 spyGapTriggeredProbability、characterId 与 lastSpyGapTargetId。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只有本回合尚未触发的边际概率才构成新信息；重复触发返回 null。
+  */
+  newlyTriggeredSpyGapTarget(beforeState, afterState, actorId) {
+    const beforeActor = beforeState?.players?.find((player) => player.id === actorId);
+    const afterActor = afterState?.players?.find((player) => player.id === actorId);
+    if (afterActor?.characterId !== "shade-agent") return null;
+    const beforeProbability = clampProbability(beforeActor?.spyGapTriggeredProbability
+      ?? (beforeActor?.spyGapTriggered ? 1 : 0));
+    const afterProbability = clampProbability(afterActor?.spyGapTriggeredProbability
+      ?? (afterActor?.spyGapTriggered ? 1 : 0));
+    if (afterProbability - beforeProbability <= PROBABILITY_EPSILON) return null;
+    return afterActor.lastSpyGapTargetId ?? null;
+  }
+
+  /*
+  功能
+  枚举一个状态的后续合法候选并返回其中最高的状态效用。
+
+  调用方
+  evaluateSpyGapInformationValue。
+
+  输入
+  World、viewer ID、复用 Simulator 与可选搜索预算。
+
+  输出
+  最佳后续状态效用；没有候选时返回当前状态效用。
+
+  读取状态
+  generate、Simulator.apply 与 evaluator.stateUtility。
+
+  写入状态
+  只写 Simulator 返回的独立后续状态。
+
+  调用函数
+  generate、simulator.apply、evaluator.stateUtility。
+
+  边界与不变量
+  每个候选从同一输入状态独立模拟；end 候选保持生成顺序参与同分；
+  nested State Value 查询继承同一 SearchBudget。
+  */
+  bestFollowUpUtility(state, actorId, simulator, searchBudget = null) {
+    if (this.isInterrupted(searchBudget)) return null;
+    const candidates = this.generateActions(state, actorId, searchBudget);
+    let best = -Infinity;
+    for (const candidate of candidates) {
+      if (this.isInterrupted(searchBudget)) return null;
+      searchBudget?.observeSimulation();
+      const after = simulator.apply(state, candidate);
+      if (this.isInterrupted(searchBudget)) return null;
+      const utility = this.evaluator.stateUtility(
+        after,
+        actorId,
+        simulator.buildLightningOutcomeSets(after)
+      );
+      if (utility > best) best = utility;
+    }
+    if (this.isInterrupted(searchBudget)) return null;
+    return Number.isFinite(best)
+      ? best
+      : this.evaluator.stateUtility(
+          state,
+          actorId,
+          simulator.buildLightningOutcomeSets(state)
+        );
+  }
+
+  /*
+  功能
+  用惰性匿名手牌采样估算窥隙信息的自适应选择价值。
+
+  调用方
+  candidateTerms 的根层信息价值分支。
+
+  输入
+  before/after、viewer ID、复用 Simulator、领域 context 与可选搜索预算。
+
+  输出
+  非负的 raw information option value；无样本或目标缺失时为零。
+
+  读取状态
+  context 当前 Probability 查询输入、afterState 后续候选与 stateUtility。
+
+  写入状态
+  只写 Simulator 返回的独立世界。
+
+  调用函数
+  specializeHiddenWorld、bestFollowUpUtility。
+
+  边界与不变量
+  E[max utility] - max E[utility] 只允许非负；该值描述“知道后可改选”的增量，不是固定窥探奖励。
+  */
+  evaluateSpyGapInformationValue(beforeState, afterState, action, actorId, simulator, context, searchBudget = null) {
+    const targetId = this.newlyTriggeredSpyGapTarget(beforeState, afterState, actorId);
+    if (!targetId) return 0;
+    const handSamples = this.getUnknownHandEstimate(context).worlds;
+    if (!handSamples.length) return 0;
+    if (this.isInterrupted(searchBudget)) return null;
+    const baselineBest = this.bestFollowUpUtility(afterState, actorId, simulator, searchBudget);
+    if (baselineBest === null) return null;
+    let informedTotal = 0;
+    for (const world of handSamples) {
+      if (this.isInterrupted(searchBudget)) return null;
+      const specializedBefore = simulator.specializeHiddenWorld(beforeState, world, actorId);
+      if (this.isInterrupted(searchBudget)) return null;
+      searchBudget?.observeSimulation();
+      const specializedAfter = simulator.apply(specializedBefore, action);
+      if (this.isInterrupted(searchBudget)) return null;
+      const informedBest = this.bestFollowUpUtility(
+        specializedAfter,
+        actorId,
+        simulator,
+        searchBudget
+      );
+      if (informedBest === null) return null;
+      informedTotal += informedBest;
+    }
+    return Math.max(0, informedTotal / handSamples.length - baselineBest);
+  }
+
+  /*
+  功能
+  用真实模拟计算新增一层破势对下一次合法突袭的最大正边际。
+
+  调用方
+  candidateTerms 与领域边际测试。
+
+  输入
+  动作前后 World、行动者 ID、复用 Simulator 与可选 SearchBudget。
+
+  输出
+  下一次突袭的最大非负效用增量。
+
+  读取状态
+  输入 World、深层动作生成能力与 evaluator。
+
+  写入状态
+  只写 Simulator 返回的独立反事实状态。
+
+  调用函数
+  generate、Simulator.apply、evaluator.stateUtility。
+
+  边界与不变量
+  baseline 只回退本动作新增层数；同一合法突袭的 paired worlds 仅改变被测层数；
+  nested State Value 查询继承同一 SearchBudget。
+  */
+  evaluateExposeMarginal(beforeState, afterState, actorId, simulator, searchBudget = null) {
+    const beforeActor = beforeState.players.find((entry) => entry.id === actorId);
+    const afterActor = afterState.players.find((entry) => entry.id === actorId);
+    const addedStacks = (afterActor?.exposeWeaknessStacks ?? 0)
+      - (beforeActor?.exposeWeaknessStacks ?? 0);
+    if (!(addedStacks > 0)) return 0;
+    if (this.isInterrupted(searchBudget)) return null;
+    const { baselineWorld, boostedWorld } = simulator.buildExposeMarginalWorlds(
+      afterState,
+      actorId,
+      addedStacks
+    );
+    const candidates = this.generateActions(afterState, actorId, searchBudget);
+    let best = 0;
+    for (const candidate of candidates) {
+      if (candidate.cardId !== "assault") continue;
+      if (this.isInterrupted(searchBudget)) return null;
+      searchBudget?.observeSimulation();
+      const base = simulator.apply(baselineWorld, candidate);
+      if (this.isInterrupted(searchBudget)) return null;
+      searchBudget?.observeSimulation();
+      const boosted = simulator.apply(boostedWorld, candidate);
+      if (this.isInterrupted(searchBudget)) return null;
+      searchBudget?.observeCounterfactual(2);
+      const marginal = this.evaluator.transitionDelta(
+        base,
+        boosted,
+        actorId,
+        simulator.buildLightningOutcomeSets(base),
+        simulator.buildLightningOutcomeSets(boosted)
+      );
+      if (marginal > best) best = marginal;
+    }
+    return best;
+  }
+
+  /*
+  功能
+  计算回合开始时已有破势层在同一突袭动作上的消费侧配对反事实边际。
+
+  调用方
+  candidateTerms 与领域边际测试。
+
+  输入
+  当前 World、突袭动作、行动者 ID、剩余旧层、复用 Simulator 与可选 SearchBudget。
+
+  输出
+  非负旧层消费信用。
+
+  读取状态
+  当前过滤状态与回合开始时已有层的来源记录。
+
+  写入状态
+  只写两个独立克隆及 Simulator 返回状态。
+
+  调用函数
+  Simulator.apply、evaluator.stateUtility。
+
+  边界与不变量
+  paired worlds 只改变 exposeWeaknessStacks；负边际仍截为零；
+  nested State Value 查询继承同一 SearchBudget。
+  */
+  evaluateAssaultStacksMarginal(
+    currentState,
+    action,
+    actorId,
+    remainingRootExposeStacks,
+    simulator,
+    searchBudget = null
+  ) {
+    if (!(remainingRootExposeStacks > 0)) return 0;
+    if (this.isInterrupted(searchBudget)) return null;
+    const { baselineWorld, boostedWorld } = simulator.buildAssaultStackWorlds(
+      currentState,
+      actorId,
+      remainingRootExposeStacks
+    );
+    searchBudget?.observeSimulation();
+    const boosted = simulator.apply(boostedWorld, action);
+    if (this.isInterrupted(searchBudget)) return null;
+    searchBudget?.observeSimulation();
+    const baseline = simulator.apply(baselineWorld, action);
+    if (this.isInterrupted(searchBudget)) return null;
+    searchBudget?.observeCounterfactual(2);
+    const marginal = this.evaluator.transitionDelta(
+      baseline,
+      boosted,
+      actorId,
+      simulator.buildLightningOutcomeSets(baseline),
+      simulator.buildLightningOutcomeSets(boosted)
+    );
+    return marginal > 0 ? marginal : 0;
+  }
+
+  /*
+  功能
+  按真实模拟前后层数保留比例推进回合开始时已有层的来源记录。
+
+  调用方
+  candidateTerms 与 provenance 回归测试。
+
+  输入
+  before/after World、行动者 ID 与当前剩余旧层。
+
+  输出
+  下一节点的剩余旧层期望量。
+
+  读取状态
+  行动者前后 exposeWeaknessStacks。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只由消费动作调用；新获得层数不进入回合开始时已有层的来源记录。
+  */
+  advanceRemainingRootExposeStacks(
+    beforeState,
+    afterState,
+    actorId,
+    remainingRootStacks
+  ) {
+    if (!(remainingRootStacks > 0)) return 0;
+    const beforeActor = beforeState.players.find((entry) => entry.id === actorId);
+    const afterActor = afterState.players.find((entry) => entry.id === actorId);
+    const beforeStacks = beforeActor?.exposeWeaknessStacks ?? 0;
+    const afterStacks = afterActor?.exposeWeaknessStacks ?? 0;
+    if (!(beforeStacks > 0)) return 0;
+    const retainRatio = Math.max(0, afterStacks / beforeStacks);
+    return Math.max(0, remainingRootStacks * retainRatio);
+  }
+
+  /*
+  功能
+  为单个候选产生领域边际与下一节点 provenance。
+
+  调用方
+  Searcher.evaluateCandidate。
+
+  输入
+  before/after、动作、行动者、搜索深度、回合开始时已有层的来源记录与 Simulator。
+
+  输出
+  exposeMarginal、assaultStacksCredit 与 remainingProvenance。
+
+  读取状态
+  候选动作定义及配对反事实所需过滤状态。
+
+  写入状态
+  仅通过反事实辅助函数写独立状态。
+
+  调用函数
+  evaluateExposeMarginal、evaluateAssaultStacksMarginal、advanceRemainingRootExposeStacks。
+
+  边界与不变量
+  破势边际只作为 Search Prior 的原始状态效用差，不进入 final value；
+  窥隙信息项是有限隐藏世界采样得到的 Monte Carlo 价值估计，不得解释为 continuation 概率；
+  只在真实执行后会立即重规划的根动作估算该选择价值，避免深层反事实递归枚举隐藏世界。
+  */
+  candidateTerms({
+    beforeState,
+    afterState,
+    action,
+    actorId,
+    depth,
+    remainingProvenance,
+    simulator,
+    context = null,
+    searchBudget = null
+  }) {
+    const exposeMarginal = action.cardId === "exposeWeakness"
+      ? this.evaluateExposeMarginal(
+          beforeState,
+          afterState,
+          actorId,
+          simulator,
+          searchBudget
+        )
+      : 0;
+    if (exposeMarginal === null) return null;
+    const assaultStacksCredit = action.cardId === "assault"
+      ? this.evaluateAssaultStacksMarginal(
+          beforeState,
+          action,
+          actorId,
+          remainingProvenance,
+          simulator,
+          searchBudget
+        )
+      : 0;
+    if (assaultStacksCredit === null) return null;
+    const nextProvenance = action.cardId === "assault"
+      ? this.advanceRemainingRootExposeStacks(
+          beforeState,
+          afterState,
+          actorId,
+          remainingProvenance
+        )
+      : remainingProvenance;
+    const spyGapInformationValue = depth === 1
+      ? this.evaluateSpyGapInformationValue(
+          beforeState,
+          afterState,
+          action,
+          actorId,
+          simulator,
+          context,
+          searchBudget
+        )
+      : 0;
+    if (spyGapInformationValue === null) return null;
+    return {
+      exposeMarginal,
+      assaultStacksCredit,
+      spyGapInformationValue,
+      nextProvenance
+    };
+  }
+}
+
+const DEFAULT_SEARCH_TIME_BUDGET_MS = 900;
+
+// COMPLETE 表示自然完成；TIME/NODE 分别表示时间或完整节点预算耗尽；
+// CANCELLED 表示会话让步检测到取消。停止原因只决定收束方式，不修改候选价值。
+export const SEARCH_STOP_REASON = Object.freeze({
+  COMPLETE:"COMPLETE",
+  TIME:"TIME",
+  NODE:"NODE",
+  CANCELLED:"CANCELLED"
+});
+
+export class SearchBudget {
+  /*
+  功能
+  创建一次搜索独占的预算状态与结构计数器。
+
+  调用方
+  共享搜索组合 与直接预算测试。
+
+  输入
+  可选时间预算、节点预算和单调时钟能力。
+
+  输出
+  尚未停止的 SearchBudget 实例。
+
+  读取状态
+  RUNTIME_POLICY 默认时间预算和注入时钟。
+
+  写入状态
+  初始化开始时间、预算、计数与空 stopReason。
+
+  调用函数
+  now。
+
+  边界与不变量
+  只有大于等于一的有限节点预算生效；节点模式不以墙钟终止。
+  */
+  constructor({ timeBudget = null, nodeBudget = null, now = null } = {}) {
+    this.probabilityDiagnosticDeadlineComparable = typeof now !== "function";
+    this.now = typeof now === "function"
+      ? now
+      : () => globalThis.performance?.now?.() ?? Date.now();
+    const configuredTime = timeBudget == null ? Number.NaN : Number(timeBudget);
+    this.timeBudget = Number.isFinite(configuredTime)
+      ? Math.max(0, configuredTime)
+      : DEFAULT_SEARCH_TIME_BUDGET_MS;
+    const configuredNodes = Number(nodeBudget);
+    this.nodeBudget = Number.isFinite(configuredNodes) && configuredNodes >= 1
+      ? Math.floor(configuredNodes)
+      : null;
+    this.started = this.now();
+    this.expandedNodes = 0;
+    this.simulationCalls = 0;
+    this.cloneCalls = 0;
+    this.probabilityOperations = 0;
+    this.cooperativeProbabilityOperations = 0;
+    this.rawProbabilityOperations = 0;
+    this.rawProbabilityOperationsAfterTime = 0;
+    this.abortedCooperativeProbabilityOperations = 0;
+    this.probabilityWorldBranches = 0;
+    this.largestCooperativeProbabilityOperation = null;
+    this.largestRawProbabilityOperation = null;
+    this.lastProbabilityOperation = null;
+    this.rawProbabilityDeadlineCrossings = [];
+    this.responseBranches = 0;
+    this.counterfactualCalls = 0;
+    this.stateUtilityCalls = 0;
+    this.actionGenerationPhysicalCandidates = 0;
+    this.actionGenerationUniqueCandidates = 0;
+    this.yieldCount = 0;
+    this.stopReason = null;
+    this.rootSafetyCompletion = null;
+    this.rootSafetyCandidateActive = false;
+    this.rootSafetyExpandedNodes = 0;
+    this.rootSafetySimulationCalls = 0;
+    this.lastObservedAt = this.started;
+    this.deadlineCrossedAt = null;
+    this.deadlineCrossedWork = null;
+    this.activePreparation = null;
+    this.preparations = [];
+    this.currentWorkInterruption = new Error("AI search current work interrupted");
+    this.lastFinishedPreparation = null;
+    this.partialCandidateRegistered = 0;
+    this.rootCandidatesStarted = 0;
+    this.rootCandidatesStartedAfterTime = 0;
+  }
+
+  /*
+  功能
+  截取当前搜索工作计数，供单次候选 preparation 诊断计算增量。
+
+  调用方
+  beginPreparation、finishPreparation 与 deadline 首次观察点。
+
+  输入
+  无。
+
+  输出
+  simulation/response/probability work 的普通对象。
+
+  读取状态
+  当前 SearchBudget 结构计数。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  快照只描述已发生工作，不读取动作语义，也不参与预算或候选选择。
+  */
+  workSnapshot() {
+    return {
+      simulationCalls:this.simulationCalls,
+      cloneCalls:this.cloneCalls,
+      probabilityOperations:this.probabilityOperations,
+      probabilityWorldBranches:this.probabilityWorldBranches,
+      responseBranches:this.responseBranches
+    };
+  }
+
+  /*
+  功能
+  计算两个工作快照之间的非负计数增量。
+
+  调用方
+  finishPreparation。
+
+  输入
+  较早与较晚的 SearchBudget work snapshot。
+
+  输出
+  各工作计数的非负差值。
+
+  读取状态
+  无。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  诊断计数只能递增；非法或缺失字段按零处理。
+  */
+  workDelta(before = {}, after = {}) {
+    const delta = {};
+    for (const key of [
+      "simulationCalls",
+      "cloneCalls",
+      "probabilityOperations",
+      "probabilityWorldBranches",
+      "responseBranches"
+    ]) {
+      delta[key] = Math.max(0, (Number(after[key]) || 0) - (Number(before[key]) || 0));
+    }
+    return delta;
+  }
+
+  /*
+  功能
+  记录一个候选 preparation 开始时的预算时间与工作基线。
+
+  调用方
+  Searcher 在 Simulator.apply 前。
+
+  输入
+  当前搜索深度。
+
+  输出
+  preparation 的一基索引。
+
+  读取状态
+  lastObservedAt、当前工作计数与已有 preparation 数。
+
+  写入状态
+  activePreparation。
+
+  调用函数
+  workSnapshot。
+
+  边界与不变量
+  同时只允许一个 Searcher candidate preparation；不读取动作或 World。
+  */
+  beginPreparation(depth) {
+    if (this.activePreparation) {
+      throw new Error("SearchBudget preparation 已经开始");
+    }
+    this.activePreparation = {
+      index:this.preparations.length + 1,
+      depth,
+      startedAt:this.nodeBudget === null ? this.lastObservedAt : null,
+      work:this.workSnapshot()
+    };
+    this.lastFinishedPreparation = null;
+    return this.activePreparation.index;
+  }
+
+  /*
+  功能
+  完成当前候选 preparation 诊断，并在候选边界观察 TIME。
+
+  调用方
+  Searcher 在完整候选登记或 partial work 丢弃前。
+
+  输入
+  preparation 是否完整完成。
+
+  输出
+  本次 preparation 的只读诊断记录；没有活动 preparation 时返回 null。
+
+  读取状态
+  activePreparation、预算时钟、deadline 与工作计数。
+
+  写入状态
+  lastObservedAt、TIME 首次观察、preparations 与 activePreparation。
+
+  调用函数
+  now、workSnapshot、workDelta。
+
+  边界与不变量
+  该时钟读取替代下一个候选前的同一预算检查；完整候选即使轻微越界仍可登记，partial work 永不登记。
+  */
+  finishPreparation(completed) {
+    const active = this.activePreparation;
+    if (!active) return null;
+    const endedAt = this.nodeBudget === null ? this.now() : null;
+    if (endedAt !== null) {
+      this.lastObservedAt = endedAt;
+      if (this.stopReason === null && endedAt - this.started >= this.timeBudget) {
+        this.stopReason = SEARCH_STOP_REASON.TIME;
+        this.deadlineCrossedAt = endedAt;
+        this.deadlineCrossedWork = this.workSnapshot();
+      }
+    }
+    const finishedWork = this.workSnapshot();
+    const deadline = this.nodeBudget === null ? this.started + this.timeBudget : null;
+    const record = Object.freeze({
+      index:active.index,
+      depth:active.depth,
+      completed:Boolean(completed),
+      startedAt:active.startedAt,
+      endedAt,
+      durationMs:endedAt === null || active.startedAt === null
+        ? null
+        : Math.max(0, endedAt - active.startedAt),
+      deadlineCrossed:Boolean(
+        deadline !== null
+        && active.startedAt < deadline
+        && endedAt >= deadline
+      ),
+      deadlineCrossedElapsedMs:this.deadlineCrossedAt === null
+        ? null
+        : Math.max(0, this.deadlineCrossedAt - this.started),
+      deadlineOverrunMs:deadline === null || endedAt < deadline
+        ? 0
+        : Math.max(0, endedAt - deadline),
+      work:this.workDelta(active.work, finishedWork),
+      workAfterDeadlineObservation:this.deadlineCrossedWork
+        ? this.workDelta(this.deadlineCrossedWork, finishedWork)
+        : this.workDelta(finishedWork, finishedWork)
+    });
+    this.preparations.push(record);
+    this.activePreparation = null;
+    this.lastFinishedPreparation = record;
+    return record;
+  }
+
+  /*
+  功能
+  在已证实的长同步循环内执行 TIME/NODE/CANCEL cooperative checkpoint。
+
+  调用方
+  Simulation 与概率世界联合的细粒度工作边界。
+
+  输入
+  无。
+
+  输出
+  未中断时返回 true；中断时抛出本 SearchBudget 独占的 unwind signal。
+
+  读取状态
+  当前预算、停止原因与根安全授权。
+
+  写入状态
+  首次过期时写入 TIME/NODE stopReason。
+
+  调用函数
+  shouldAbortCurrentWork。
+
+  边界与不变量
+  signal 只允许由拥有该 SearchBudget 的 Searcher 捕获；不得把 partial action 或 World 登记为候选。
+  */
+  checkpointCurrentWork() {
+    if (!this.shouldAbortCurrentWork()) return true;
+    throw this.currentWorkInterruption;
+  }
+
+  /*
+  功能
+  判断异常是否为本次搜索的 cooperative unwind signal。
+
+  调用方
+  Searcher candidate preparation boundary。
+
+  输入
+  捕获的任意异常。
+
+  输出
+  仅对象身份与当前 signal 相同时返回 true。
+
+  读取状态
+  currentWorkInterruption。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不按 message/code 吞掉真实错误；不同 SearchBudget 的 signal 不能互相匹配。
+  */
+  isCurrentWorkInterruption(error) {
+    return error === this.currentWorkInterruption;
+  }
+
+  /*
+  功能
+  在继续展开前判断是否触发当前搜索预算。
+
+  调用方
+  Searcher 根动作、节点、深度循环的继续边界。
+
+  输入
+  无。
+
+  输出
+  已停止返回 true，否则返回 false。
+
+  读取状态
+  nodeBudget、expandedNodes、timeBudget、started 与当前时钟。
+
+  写入状态
+  首次触发时写入 NODE 或 TIME stopReason。
+
+  调用函数
+  now。
+
+  边界与不变量
+  节点模式不读取时钟；已开始的不可中断物化可以轻微越过时间预算，并在下一检查点以 TIME 保留完整 best-seen。
+  */
+  shouldStop() {
+    if (this.stopReason !== null) return true;
+    if (this.nodeBudget !== null) {
+      if (this.expandedNodes < this.nodeBudget) return false;
+      this.stopReason = SEARCH_STOP_REASON.NODE;
+      return true;
+    }
+    this.lastObservedAt = this.now();
+    if (this.lastObservedAt - this.started < this.timeBudget) return false;
+    this.stopReason = SEARCH_STOP_REASON.TIME;
+    this.deadlineCrossedAt = this.lastObservedAt;
+    this.deadlineCrossedWork = this.workSnapshot();
+    return true;
+  }
+
+  /*
+  功能
+  在一次候选内部的可中断工作边界判断是否应立即回退。
+
+  调用方
+  Searcher 反事实项 的隐藏世界、后续动作与配对模拟循环。
+
+  输入
+  无。
+
+  输出
+  时间/取消已停止时返回 true；NODE 根安全候选仍在正式授权内时返回 false。
+
+  读取状态
+  stopReason 与 rootSafetyCandidateActive。
+
+  写入状态
+  尚未停止时可通过 shouldStop 首次写入 TIME/NODE。
+
+  调用函数
+  shouldStop。
+
+  边界与不变量
+  TIME 一经观察必须穿透当前昂贵循环；NODE 的显式 depth-1 根安全授权保持既有结构语义。
+  */
+  shouldAbortCurrentWork() {
+    if (this.rootSafetyCandidateActive && this.stopReason === SEARCH_STOP_REASON.NODE) {
+      return false;
+    }
+    return this.shouldStop();
+  }
+
+  /*
+  功能
+  在主搜索已因 NODE 停止后，申请一次有界的根安全补评估。
+
+  调用方
+  Searcher 根候选首轮收束。
+
+  输入
+  评估深度与当前尚未完成的根候选数。
+
+  输出
+  SearchBudget 允许该阶段返回 true，否则返回 false。
+
+  读取状态
+  stopReason 与已有 rootSafetyCompletion。
+
+  写入状态
+  最多写入一次 depth=1 的候选数上限。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只有已观察到的 NODE 可授权；只授权一次 depth=1，上限冻结为申请时的剩余根数。
+  TIME 只允许返回 deadline 前已经完整物化的 incumbent，绝不授权新的 root simulation。
+  SearchBudget 不读取根动作内容，也不授权深层、beam 或隐藏采样。
+  */
+  requestRootSafetyCompletion({ depth, candidateCount } = {}) {
+    const requestedCount = Number(candidateCount);
+    if (this.stopReason !== SEARCH_STOP_REASON.NODE || depth !== 1 || this.rootSafetyCompletion
+      || !Number.isFinite(requestedCount) || requestedCount < 1) return false;
+    this.rootSafetyCompletion = {
+      depth:1,
+      candidateLimit:Math.floor(requestedCount),
+      startedCandidates:0,
+      completedCandidates:0
+    };
+    return true;
+  }
+
+  /*
+  功能
+  从已授权的根安全阶段领取一个 depth-1 候选物化名额。
+
+  调用方
+  Searcher 在每个剩余根动作的 apply 之前。
+
+  输入
+  当前候选深度。
+
+  输出
+  尚有 depth-1 名额时返回 true，否则返回 false。
+
+  读取状态
+  rootSafetyCompletion 授权与当前活动候选。
+
+  写入状态
+  startedCandidates 加一并标记当前候选正在物化。
+
+  调用函数
+  无。
+
+  边界与不变量
+  同时只能有一个候选占用名额；深度不等于一或已达冻结上限时拒绝。
+  */
+  beginRootSafetyCandidate(depth) {
+    const completion = this.rootSafetyCompletion;
+    if (!completion || this.rootSafetyCandidateActive || depth !== completion.depth
+      || completion.startedCandidates >= completion.candidateLimit) return false;
+    completion.startedCandidates += 1;
+    this.rootSafetyCandidateActive = true;
+    return true;
+  }
+
+  /*
+  功能
+  释放未完成的根安全候选名额，避免异常或中断后残留活动状态。
+
+  调用方
+  Searcher 的候选 evaluation 中断路径。
+
+  输入
+  无。
+
+  输出
+  先前存在活动候选时返回 true，否则返回 false。
+
+  读取状态
+  rootSafetyCandidateActive。
+
+  写入状态
+  只把 rootSafetyCandidateActive 复位为 false。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不把未完整物化的候选计为 completed/expanded，也不返还已经领取的名额。
+  */
+  abortRootSafetyCandidate() {
+    if (!this.rootSafetyCandidateActive) return false;
+    this.rootSafetyCandidateActive = false;
+    return true;
+  }
+
+  /*
+  功能
+  记录一个候选已完成全部物化并可登记为 SearchNode。
+
+  调用方
+  Searcher 在完整候选 evaluation 返回后。
+
+  输入
+  无。
+
+  输出
+  更新后的 expandedNodes。
+
+  读取状态
+  当前 expandedNodes。
+
+  写入状态
+  expandedNodes 加一。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不完整 apply、base transition 或尚未返回的反事实不得计为节点。
+  */
+  observeNode() {
+    if (this.lastFinishedPreparation && !this.lastFinishedPreparation.completed) {
+      this.partialCandidateRegistered += 1;
+    }
+    this.lastFinishedPreparation = null;
+    this.expandedNodes += 1;
+    if (this.rootSafetyCandidateActive) {
+      this.rootSafetyExpandedNodes += 1;
+      this.rootSafetyCompletion.completedCandidates += 1;
+      this.rootSafetyCandidateActive = false;
+    }
+    return this.expandedNodes;
+  }
+
+  /*
+  功能
+  记录一次 Simulator apply 调用。
+
+  调用方
+  Searcher 主 evaluation 与 Searcher 反事实项 配对模拟。
+
+  输入
+  可选调用次数。
+
+  输出
+  更新后的 simulationCalls。
+
+  读取状态
+  当前 simulationCalls。
+
+  写入状态
+  增加非负有限调用次数。
+
+  调用函数
+  无。
+
+  边界与不变量
+  该计数只作诊断，不参与 node budget 或候选评分。
+  */
+  observeSimulation(count = 1) {
+    const observed = Math.max(0, Number(count) || 0);
+    this.simulationCalls += observed;
+    if (this.rootSafetyCandidateActive) this.rootSafetySimulationCalls += observed;
+    return this.simulationCalls;
+  }
+
+  /*
+  功能
+  记录一次完整 World 克隆实际开始执行。
+
+  调用方
+  Simulator 构造与 clone 的 SearchBudget checkpoint 之后。
+
+  输入
+  可选克隆次数。
+
+  输出
+  更新后的 cloneCalls。
+
+  读取状态
+  当前 cloneCalls。
+
+  写入状态
+  累加有限非负克隆次数。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只能在 clone 前预算检查通过后记录；诊断不改变停止、状态或候选选择。
+  */
+  observeClone(count = 1) {
+    this.cloneCalls += Math.max(0, Number(count) || 0);
+    return this.cloneCalls;
+  }
+
+  /*
+  功能
+  记录一次已完整返回的 cooperative probability join/project/merge 及其输出世界数。
+
+  调用方
+  Generator 与 Simulator 的高分支概率工作边界。
+
+  输入
+  本次完整输出的世界数量，以及可选 cooperative/raw timing 诊断记录。
+
+  输出
+  更新后的 probabilityOperations。
+
+  读取状态
+  当前 probability work 计数。
+
+  写入状态
+  probabilityOperations 与 cooperative/raw 对应计数加一，累加非负输出世界数并保留最大操作。
+
+  调用函数
+  无。
+
+  边界与不变量
+  cooperative abort 的 partial 结果不得进入完整计数；计数不改变概率代数、预算或搜索排序。
+  */
+  observeProbabilityWork(worldCount = 0, details = null) {
+    this.probabilityOperations += 1;
+    this.probabilityWorldBranches += Math.max(0, Number(worldCount) || 0);
+    const mode = details?.mode === "raw" ? "raw" : "cooperative";
+    if (mode === "raw") this.rawProbabilityOperations += 1;
+    else this.cooperativeProbabilityOperations += 1;
+    if (details) this.recordProbabilityOperation(details);
+    return this.probabilityOperations;
+  }
+
+  /*
+  功能
+  建立一次概率操作的纯数字诊断起点，不推进 SearchBudget 的预算时钟。
+
+  调用方
+  Simulator 的 cooperative 与严格有界 raw probability wrapper。
+
+  输入
+  operation 名称、输入世界数与 cooperative/raw 模式。
+
+  输出
+  供 finishProbabilityOperation 使用的普通诊断 token。
+
+  读取状态
+  当前 deadline、lastObservedAt 与 stopReason。
+
+  写入状态
+  raw 操作在已观察 TIME 后仍被启动时累加违规计数。
+
+  调用函数
+  performance.now 或 Date.now。
+
+  边界与不变量
+  诊断时钟不得调用注入的预算 now，避免改变确定性测试或 TIME 观察次数；不记录 state/world 内容。
+  */
+  beginProbabilityOperation(operation, inputWorldCount = 0, mode = "cooperative") {
+    const normalizedMode = mode === "raw" ? "raw" : "cooperative";
+    if (normalizedMode === "raw" && this.stopReason === SEARCH_STOP_REASON.TIME) {
+      this.rawProbabilityOperationsAfterTime += 1;
+    }
+    const startMs = globalThis.performance?.now?.() ?? Date.now();
+    return Object.freeze({
+      operation:String(operation || "probability"),
+      mode:normalizedMode,
+      startMs,
+      deadlineRemainingMs:this.nodeBudget === null
+        && this.probabilityDiagnosticDeadlineComparable
+        ? Math.max(0, this.started + this.timeBudget - this.lastObservedAt)
+        : null,
+      inputWorldCount:Math.max(0, Number(inputWorldCount) || 0),
+      startedAfterTime:this.stopReason === SEARCH_STOP_REASON.TIME
+    });
+  }
+
+  /*
+  功能
+  完成一次概率操作诊断，并只为完整结果登记正式 probability work。
+
+  调用方
+  Simulator probability wrapper 的正常返回与 cooperative interruption 路径。
+
+  输入
+  begin token、输出世界数与本次操作是否完整完成。
+
+  输出
+  只含 operation/timing/count 的冻结诊断记录。
+
+  读取状态
+  当前预算模式与 token。
+
+  写入状态
+  完整操作计数、最大操作记录、raw deadline crossing 或 cooperative abort 计数。
+
+  调用函数
+  observeProbabilityWork、recordProbabilityOperation、performance.now 或 Date.now。
+
+  边界与不变量
+  partial cooperative 结果不得增加 probabilityOperations/worldBranches；诊断不参与取消、概率或搜索排序。
+  */
+  finishProbabilityOperation(token, outputWorldCount = 0, completed = true) {
+    if (!token) return null;
+    const endMs = globalThis.performance?.now?.() ?? Date.now();
+    const durationMs = Math.max(0, endMs - token.startMs);
+    const record = Object.freeze({
+      operation:token.operation,
+      mode:token.mode,
+      startMs:token.startMs,
+      endMs,
+      deadlineRemainingMs:token.deadlineRemainingMs,
+      durationMs,
+      crossedDeadline:Boolean(
+        token.deadlineRemainingMs !== null
+        && token.deadlineRemainingMs > 0
+        && durationMs >= token.deadlineRemainingMs
+      ),
+      inputWorldCount:token.inputWorldCount,
+      outputWorldCount:Math.max(0, Number(outputWorldCount) || 0),
+      completed:Boolean(completed)
+    });
+    if (completed) this.observeProbabilityWork(record.outputWorldCount, record);
+    else {
+      this.abortedCooperativeProbabilityOperations += token.mode === "cooperative" ? 1 : 0;
+      this.recordProbabilityOperation(record);
+    }
+    return record;
+  }
+
+  /*
+  功能
+  保留 cooperative/raw 各自耗时最大的数字诊断，并单列 raw deadline crossing。
+
+  调用方
+  observeProbabilityWork 与 finishProbabilityOperation 的中断路径。
+
+  输入
+  完整概率操作诊断记录。
+
+  输出
+  无返回值。
+
+  读取状态
+  当前最大操作与 raw crossing 列表。
+
+  写入状态
+  最大操作引用与 rawProbabilityDeadlineCrossings。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只保留数字和 operation 名称，不保留 state/world；同耗时保持先出现的记录。
+  */
+  recordProbabilityOperation(record) {
+    this.lastProbabilityOperation = record;
+    const property = record.mode === "raw"
+      ? "largestRawProbabilityOperation"
+      : "largestCooperativeProbabilityOperation";
+    if (!this[property] || record.durationMs > this[property].durationMs) {
+      this[property] = record;
+    }
+    if (record.mode === "raw" && record.crossedDeadline) {
+      this.rawProbabilityDeadlineCrossings.push(record);
+    }
+  }
+
+  /*
+  功能
+  记录 Searcher 实际开始 evaluation 一个新的根候选。
+
+  调用方
+  Searcher 在每个 root candidate preparation 之前。
+
+  输入
+  无。
+
+  输出
+  更新后的 rootCandidatesStarted。
+
+  读取状态
+  当前 stopReason。
+
+  写入状态
+  根启动总数；若 TIME 已被观察则同时记录违规诊断。
+
+  调用函数
+  无。
+
+  边界与不变量
+  本方法只观察 Searcher 已决定开始的 root；不得自行授权 root 或改变 stopReason。
+  */
+  observeRootCandidateStarted() {
+    this.rootCandidatesStarted += 1;
+    if (this.stopReason === SEARCH_STOP_REASON.TIME) {
+      this.rootCandidatesStartedAfterTime += 1;
+    }
+    return this.rootCandidatesStarted;
+  }
+
+  /*
+  功能
+  记录响应模拟实际产出的条件分支数量。
+
+  调用方
+  Response 的 card-scope、block 与 target-scope 响应边界。
+
+  输入
+  本次产生的非负分支数。
+
+  输出
+  更新后的 responseBranches。
+
+  读取状态
+  当前 responseBranches。
+
+  写入状态
+  累加有限非负分支数。
+
+  调用函数
+  无。
+
+  边界与不变量
+  仅作 work diagnostics，不改变概率、响应决策、预算或搜索排序。
+  */
+  observeResponseBranches(count = 0) {
+    this.responseBranches += Math.max(0, Number(count) || 0);
+    return this.responseBranches;
+  }
+
+  /*
+  功能
+  记录一次完整配对反事实查询及其 stateUtility 调用。
+
+  调用方
+  Searcher 反事实项。
+
+  输入
+  本次反事实内的 stateUtility 调用数。
+
+  输出
+  更新后的 counterfactualCalls。
+
+  读取状态
+  当前反事实与 stateUtility 计数。
+
+  写入状态
+  counterfactualCalls 加一并累加 stateUtilityCalls。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只观察既有 paired-world 查询，不改变调用次数或 value 公式。
+  */
+  observeCounterfactual(stateUtilityCalls = 0) {
+    this.counterfactualCalls += 1;
+    this.stateUtilityCalls += Math.max(0, Number(stateUtilityCalls) || 0);
+    return this.counterfactualCalls;
+  }
+
+  /*
+  功能
+  记录动作生成在等价去重前后的候选数。
+
+  调用方
+  Generator.generate。
+
+  输入
+  一次生成汇总的 physical/unique candidate 数。
+
+  输出
+  累计 unique candidate 数。
+
+  读取状态
+  当前动作生成诊断计数。
+
+  写入状态
+  累加动作生成候选计数。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只记录已经生成的动作数量，不参与 TIME/NODE、候选合法性、概率或排序；
+  Simulator 的局部 transition alternatives 由 probability operation 诊断单独计数。
+  */
+  observeActionGeneration({
+    physicalCandidates = 0,
+    uniqueCandidates = 0
+  } = {}) {
+    const physical = Math.max(0, Number(physicalCandidates) || 0);
+    const unique = Math.max(0, Number(uniqueCandidates) || 0);
+    this.actionGenerationPhysicalCandidates += physical;
+    this.actionGenerationUniqueCandidates += unique;
+    return this.actionGenerationUniqueCandidates;
+  }
+
+  /*
+  功能
+  记录 Searcher 为保持界面响应而执行的一次让步。
+
+  调用方
+  Searcher yield 边界。
+
+  输入
+  无。
+
+  输出
+  更新后的 yieldCount。
+
+  读取状态
+  当前 yieldCount。
+
+  写入状态
+  yieldCount 加一。
+
+  调用函数
+  无。
+
+  边界与不变量
+  计数不影响让步频率或取消判断。
+  */
+  observeYield() {
+    this.yieldCount += 1;
+    return this.yieldCount;
+  }
+
+  /*
+  功能
+  在搜索自然穷尽当前深度/前沿后标记正常完成。
+
+  调用方
+  Searcher 收束阶段。
+
+  输入
+  无。
+
+  输出
+  最终 stopReason。
+
+  读取状态
+  当前 stopReason。
+
+  写入状态
+  尚未停止时写入 COMPLETE。
+
+  调用函数
+  无。
+
+  边界与不变量
+  已经记录的 TIME、NODE 或 CANCELLED 不得被 COMPLETE 覆盖。
+  */
+  complete() {
+    if (this.stopReason === null) this.stopReason = SEARCH_STOP_REASON.COMPLETE;
+    return this.stopReason;
+  }
+
+  /*
+  功能
+  标记会话让步检测到的搜索取消。
+
+  调用方
+  Searcher yieldControl 返回 false 的路径。
+
+  输入
+  无。
+
+  输出
+  CANCELLED。
+
+  读取状态
+  无。
+
+  写入状态
+  stopReason 写为 CANCELLED。
+
+  调用函数
+  无。
+
+  边界与不变量
+  取消优先于此前尚未观察到的预算状态，且不再选择未完整物化的搜索前沿。
+  */
+  cancel() {
+    this.stopReason = SEARCH_STOP_REASON.CANCELLED;
+    return this.stopReason;
+  }
+
+  /*
+  功能
+  返回一次搜索预算与结构计数的只读诊断快照。
+
+  调用方
+  Searcher.lastSearchStats 组装与预算测试。
+
+  输入
+  无。
+
+  输出
+  包含 stopReason、预算、耗时和结构计数的普通对象。
+
+  读取状态
+  当前实例全部预算字段和时钟。
+
+  写入状态
+  无。
+
+  调用函数
+  now。
+
+  边界与不变量
+  expandedNodes 不是 CPU work units；各计数不参与搜索决策。
+  */
+  diagnostics() {
+    if (this.nodeBudget === null) this.lastObservedAt = this.now();
+    const finishedWork = this.workSnapshot();
+    return {
+      started:this.started,
+      deadline:this.nodeBudget === null ? this.started + this.timeBudget : null,
+      elapsedMs:this.lastObservedAt - this.started,
+      deadlineCrossedAt:this.deadlineCrossedAt,
+      deadlineOverrunMs:this.nodeBudget === null
+        ? Math.max(0, this.lastObservedAt - (this.started + this.timeBudget))
+        : 0,
+      timeBudget:this.timeBudget,
+      nodeBudget:this.nodeBudget,
+      expandedNodes:this.expandedNodes,
+      simulationCalls:this.simulationCalls,
+      cloneCalls:this.cloneCalls,
+      probabilityOperations:this.probabilityOperations,
+      cooperativeProbabilityOperations:this.cooperativeProbabilityOperations,
+      rawProbabilityOperations:this.rawProbabilityOperations,
+      rawProbabilityOperationsAfterTime:this.rawProbabilityOperationsAfterTime,
+      abortedCooperativeProbabilityOperations:this.abortedCooperativeProbabilityOperations,
+      probabilityWorldBranches:this.probabilityWorldBranches,
+      largestCooperativeProbabilityOperation:this.largestCooperativeProbabilityOperation,
+      largestRawProbabilityOperation:this.largestRawProbabilityOperation,
+      lastProbabilityOperation:this.lastProbabilityOperation,
+      rawProbabilityDeadlineCrossings:[...this.rawProbabilityDeadlineCrossings],
+      responseBranches:this.responseBranches,
+      counterfactualCalls:this.counterfactualCalls,
+      stateUtilityCalls:this.stateUtilityCalls,
+      actionGenerationPhysicalCandidates:this.actionGenerationPhysicalCandidates,
+      actionGenerationUniqueCandidates:this.actionGenerationUniqueCandidates,
+      yieldCount:this.yieldCount,
+      rootSafetyExpandedNodes:this.rootSafetyExpandedNodes,
+      rootSafetySimulationCalls:this.rootSafetySimulationCalls,
+      preparations:[...this.preparations],
+      workAfterDeadline:this.deadlineCrossedWork
+        ? this.workDelta(this.deadlineCrossedWork, finishedWork)
+        : this.workDelta(finishedWork, finishedWork),
+      partialCandidateRegistered:this.partialCandidateRegistered,
+      rootCandidatesStarted:this.rootCandidatesStarted,
+      rootCandidatesStartedAfterTime:this.rootCandidatesStartedAfterTime,
+      stopReason:this.stopReason
+    };
+  }
+}
+
+
+
+/*
+功能
+构造主线程与 Worker 共用的 Evaluator/Simulator 语义运行组合。
+
+调用方
+Controller 与 createSearchEngine。
+
+输入
+能量规则、难度倍率与可选 SearchBudget。
+
+输出
+共享同一 Evaluator 决策能力的 evaluator 与 simulatorFactory。
+
+读取状态
+只调用注入的稳定规则函数。
+
+写入状态
+无；Simulator 实例只在 factory 被调用时创建。
+
+调用函数
+Evaluator、Simulator。
+
+边界与不变量
+主线程和 Worker 必须通过此处获得相同决策注入；不得在调用方复制第二套 Simulator 语义图。
+*/
+export function createRuntimeComposition({
+  world = null,
+  getMaxEnergy: getMaxEnergyForPlayer = null,
+  getTurnEnergyBreakdown: getTurnEnergyBreakdownForPlayer = null,
+  getDifficultyMultiplier = () => 1
+} = {}) {
+  const evaluator = new Evaluator({
+    world,
+    getMaxEnergy:getMaxEnergyForPlayer,
+    getTurnEnergyBreakdown:getTurnEnergyBreakdownForPlayer,
+    getDifficultyMultiplier
+  });
+  /*
+  功能
+  为一次搜索或主线程同步价值查询创建注入同一 Evaluator 决策的 Simulator。
+
+  调用方
+  Searcher、Controller runtime boundary。
+
+  输入
+  canonical World 与可选 SearchBudget runtime。
+
+  输出
+  只修改独立 World 的 Simulator。
+
+  读取状态
+  闭包中的 Evaluator 与显式 SearchBudget。
+
+  写入状态
+  仅新 Simulator 实例内部状态。
+
+  调用函数
+  Simulator、Evaluator response/resource decision methods。
+
+  边界与不变量
+  所有环境共用完全相同的决策注入；Evaluator 不保存或反向调用 Simulator。
+  */
+  const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
+    searchBudget:runtime.searchBudget ?? null,
+    decideCounter:(...args) => evaluator.decidePlanningCounter(...args),
+    decideLeverageAssault:(...args) => evaluator.decideLeverageAssault(...args),
+    decideBlock:(...args) => evaluator.decidePlanningBlock(...args),
+    decideGuardianAid:(...args) => evaluator.decidePlanningGuardianAid(...args),
+    decideDyingRescue:(...args) => evaluator.decidePlanningDyingRescue(...args),
+    resolveDiscardCandidates:(...args) => evaluator.resolveDiscardCandidates(...args)
+  });
+  return { evaluator, simulatorFactory };
+}
+
+/*
+功能
+从 canonical search request 构造唯一 Searcher 运行图。
+
+调用方
+executeSearchRequest 与搜索 composition 测试。
+
+输入
+Search request、已恢复 Rng 与 Worker-safe runtime control。
+
+输出
+共享同一 Evaluator、Simulator、Generator、Pattern 与 Searcher 的运行图。
+
+读取状态
+request.world 与 request.searchConfig。
+
+写入状态
+无；Search 执行时才写实例诊断。
+
+调用函数
+Domain TeamRules、createRuntimeComposition、Generator、Pattern 与 SearchBudget。
+
+边界与不变量
+这是 main/local/Worker 唯一 composition；所有随机只来自传入 Rng，不读取 Game 或 main-thread mutable state。
+*/
+export function createSearchEngine(request, rng, runtimeControl = {}) {
+  const rootWorld = request.world;
+  const config = request.searchConfig;
+  const { evaluator, simulatorFactory } = createRuntimeComposition({
+    world:rootWorld,
+    getDifficultyMultiplier:() => config.difficultyMultiplier
+  });
+  const generator = new Generator();
+  const searcher = new Searcher({
+    evaluator,
+    patternMatcher:new Pattern(),
+    getResolutionScale:tacticResolutionScale,
+    config,
+    simulatorFactory,
+    searchBudgetFactory:() => new SearchBudget({
+      timeBudget:config.timeBudgetMs,
+      nodeBudget:config.nodeBudget,
+      now:typeof runtimeControl.now === "function" ? runtimeControl.now : null
+    }),
+    deduplicateActions:deduplicateSearchEquivalentActions,
+    generateActions:(...args) => generator.generate(...args),
+    sampleUnknownHands:(query) => sampleProbabilityWorlds({
+      ...query,
+      random:() => rng.next()
+    }),
+    yieldControl:typeof runtimeControl.yieldControl === "function"
+      ? runtimeControl.yieldControl
+      : async () => true
+  });
+  return { searcher, rng };
+}
+
+/*
+功能
+恢复请求 RNG 并通过唯一 Searcher composition 执行一次搜索。
+
+调用方
+WorkerSearchRuntime 的 local 与 Dedicated Worker dispatch。
+
+输入
+Canonical request 与 Worker-safe runtime control。
+
+输出
+Canonical Action、计划、stats、stop reason、RNG continuation 与取消标记。
+
+读取状态
+request 的 World、Action、config 与 RNG snapshot。
+
+写入状态
+只写本次 Searcher、Simulator 与 Rng 实例。
+
+调用函数
+Rng.restore、createSearchEngine、Searcher.search。
+
+边界与不变量
+不创建 transport DTO；返回值直接引用 canonical Action，Worker 只补 request identity 并序列化。
+*/
+export async function executeSearchRequest(request, runtimeControl = {}) {
+  const rng = Rng.restore(request.rng);
+  const actor = request.world.players.find((player) => player.id === request.actorId) ?? null;
+  if (!actor) throw new Error(`Worker World 缺少 actor：${request.actorId}`);
+  const engine = createSearchEngine(request, rng, runtimeControl);
+  const action = await engine.searcher.search(
+    actor,
+    request.world,
+    request.rootActions,
+    {
+      gameId:request.gameId,
+      rootCandidateCount:request.rootActions.length
+    }
+  );
+  const cancelled = engine.searcher.lastSearchStats?.stopReason === "CANCELLED";
+  return {
+    action:cancelled ? null : action,
+    plannedActions:cancelled ? [] : engine.searcher.lastSequence,
+    stats:engine.searcher.lastSearchStats,
+    searchStopReason:engine.searcher.lastSearchStats?.stopReason ?? null,
+    rngAfter:rng.snapshot(),
+    cancelled
+  };
 }

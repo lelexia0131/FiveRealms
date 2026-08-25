@@ -733,7 +733,7 @@ export const withResource = (Base) => class Resource extends Base {
     if (!player || !cardIdentity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
     const acquired = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
       available:Boolean(branch.occurs)
-    }), "CardEffectSimulation.addSimulatedCardToHand:acquired");
+    }), "Simulator.addSimulatedCardToHand:acquired");
     const acquisitionProbability = totalBranchProbability(acquired.filter((branch) => branch.available));
     if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
     const id = cardIdentity.id ?? this.nextSimulatedCardId(state, cardIdentity.definitionId);
@@ -848,7 +848,7 @@ export const withResource = (Base) => class Resource extends Base {
     if (!player || !identity?.cardId || !identity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
     const acquired = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
       available:Boolean(branch.occurs)
-    }), "CardEffectSimulation.addSimulatedKnownCard:acquired");
+    }), "Simulator.addSimulatedKnownCard:acquired");
     const acquisitionProbability = totalBranchProbability(acquired.filter((branch) => branch.available));
     if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
     const sameCardId = (player.knownCards ?? []).find((entry) => entry?.cardId === identity.cardId) ?? null;
@@ -867,14 +867,14 @@ export const withResource = (Base) => class Resource extends Base {
       const oldProbability = this.cardAvailability(existing);
       const newState = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
         newAvailable:Boolean(branch.occurs)
-      }), "CardEffectSimulation.addSimulatedKnownCard:new");
+      }), "Simulator.addSimulatedKnownCard:new");
       const merged = this.intersectProbabilityWork(
         [oldState, newState],
-        "CardEffectSimulation.addSimulatedKnownCard:join"
+        "Simulator.addSimulatedKnownCard:join"
       );
       const mergedState = this.projectProbabilityWork(merged, (branch) => ({
         available:Boolean(branch.available || branch.newAvailable)
-      }), "CardEffectSimulation.addSimulatedKnownCard:merged");
+      }), "Simulator.addSimulatedKnownCard:merged");
       existing.availability = totalBranchProbability(
         mergedState.filter((branch) => branch.available)
       );
@@ -899,7 +899,7 @@ export const withResource = (Base) => class Resource extends Base {
   用同一联合条件世界从来源移除并向接收者增加确定牌身份。
 
   调用方
-  CardEffectSimulation 的转移牌结算：在同一世界搬运一张确定身份。
+  Simulator 的转移牌结算：在同一世界搬运一张确定身份。
 
   输入
   World、来源/接收者、牌身份、效果世界、接收者可见性与排除集合。
@@ -931,14 +931,14 @@ export const withResource = (Base) => class Resource extends Base {
     );
     const joined = this.intersectProbabilityWork(
       [effectWorlds, availabilityState],
-      "CardEffectSimulation.transferKnownCardIdentity:join"
+      "Simulator.transferKnownCardIdentity:join"
     );
     const remainingState = this.projectProbabilityWork(joined, (branch) => ({
       available:Boolean(branch.available && !branch.occurs)
-    }), "CardEffectSimulation.transferKnownCardIdentity:remaining");
+    }), "Simulator.transferKnownCardIdentity:remaining");
     const acquisitionWorlds = this.projectProbabilityWork(joined, (branch) => ({
       occurs:Boolean(branch.available && branch.occurs)
-    }), "CardEffectSimulation.transferKnownCardIdentity:acquired");
+    }), "Simulator.transferKnownCardIdentity:acquired");
     const transferProbability = this.eventProbability(acquisitionWorlds);
     if (transferProbability <= PROBABILITY_EPSILON) return 0;
     const remainingProbability = totalBranchProbability(
@@ -1140,11 +1140,11 @@ export const withResource = (Base) => class Resource extends Base {
         `response-card:${player.id}:${card.id}`);
       const joined = this.intersectProbabilityWork(
         [availabilityState, spendWorlds],
-        "CardEffectSimulation.consumeKnownCardsFromHand:join"
+        "Simulator.consumeKnownCardsFromHand:join"
       );
       const remainingState = this.projectProbabilityWork(joined, (branch) => ({
         available:Boolean(branch.available && !branch.occurs)
-      }), "CardEffectSimulation.consumeKnownCardsFromHand:remaining");
+      }), "Simulator.consumeKnownCardsFromHand:remaining");
       card.availability = totalBranchProbability(
         remainingState.filter((branch) => branch.available)
       );
@@ -1334,7 +1334,7 @@ export const withResource = (Base) => class Resource extends Base {
     const joined = this.intersectProbabilityWork([
       removalWorlds,
       anonymousPartition
-    ], "CardEffectSimulation.removeOneRandomCardFromHand:candidate-worlds");
+    ], "Simulator.removeOneRandomCardFromHand:candidate-worlds");
     const selectionKey = this.currentProbabilityEventKey(state, "random-hand-selection");
     const outcomes = [];
     for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
@@ -1539,7 +1539,7 @@ export const withResource = (Base) => class Resource extends Base {
   判断聚合手牌是否已被完整且确定的合法身份覆盖。
 
   调用方
-  ResponseSimulation.simulateGuardianAid：判断能否安全使用确定实体弃牌策略。
+  Response.simulateGuardianAid：判断能否安全使用确定实体弃牌策略。
 
   输入
   玩家手牌摘要。
@@ -1575,7 +1575,7 @@ export const withResource = (Base) => class Resource extends Base {
   按调用方已确定的实体 ID 顺序消费模拟手牌资源。
 
   调用方
-  ResponseSimulation.simulateGuardianAid 与 Simulator.applyMandatoryDiscard。
+  Response.simulateGuardianAid 与 Simulator.applyMandatoryDiscard。
 
   输入
   World、玩家、期望弃牌量与含 selectedCardId/selectedCardIds 的结果收集器和事件标签。
@@ -1638,11 +1638,11 @@ export const withResource = (Base) => class Resource extends Base {
       }));
       const joinedAvailability = this.intersectProbabilityWork(
         [availabilityState, removalPartition],
-        "CardEffectSimulation.consumeChosenHandCard:join"
+        "Simulator.consumeChosenHandCard:join"
       );
       const remainingState = this.projectProbabilityWork(joinedAvailability, (branch) => ({
         available: Boolean(branch.available && !branch.removed)
-      }), "CardEffectSimulation.consumeChosenHandCard:remaining");
+      }), "Simulator.consumeChosenHandCard:remaining");
       chosen.availability = totalBranchProbability(
         remainingState.filter((branch) => branch.available)
       );
@@ -1787,16 +1787,16 @@ export const withResource = (Base) => class Resource extends Base {
         );
         const joined = this.intersectProbabilityWork(
           [effectWorlds, availabilityState],
-          "CardEffectSimulation.destroyResource:join"
+          "Simulator.destroyResource:join"
         );
         const removalWorlds = this.projectProbabilityWork(joined, (branch) => ({
           occurs:Boolean(branch.available && branch.occurs)
-        }), "CardEffectSimulation.destroyResource:removal");
+        }), "Simulator.destroyResource:removal");
         const removalProbability = this.eventProbability(removalWorlds);
         if (removalProbability <= PROBABILITY_EPSILON) return 0;
         const remainingState = this.projectProbabilityWork(joined, (branch) => ({
           available:Boolean(branch.available && !branch.occurs)
-        }), "CardEffectSimulation.destroyResource:remaining");
+        }), "Simulator.destroyResource:remaining");
         entry.availability = totalBranchProbability(
           remainingState.filter((branch) => branch.available)
         );
@@ -1848,7 +1848,7 @@ export const withResource = (Base) => class Resource extends Base {
     if (!actor || !cardIdentity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
     const acquired = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
       available:Boolean(branch.occurs ?? branch.available)
-    }), "CardEffectSimulation.addStolenIdentityToHand:acquired");
+    }), "Simulator.addStolenIdentityToHand:acquired");
     const acquisitionProbability = totalBranchProbability(
       acquired.filter((branch) => branch.available)
     );
@@ -1874,12 +1874,12 @@ export const withResource = (Base) => class Resource extends Base {
       }));
       const joined = this.intersectProbabilityWork(
         [oldState, newState],
-        "CardEffectSimulation.addStolenIdentityToHand:join"
+        "Simulator.addStolenIdentityToHand:join"
       );
       const mergedState = this.projectProbabilityWork(
         joined,
         (branch) => ({ available:Boolean(branch.available || branch.newAvailable) }),
-        "CardEffectSimulation.addStolenIdentityToHand:merged"
+        "Simulator.addStolenIdentityToHand:merged"
       );
       existing.availability = totalBranchProbability(
         mergedState.filter((branch) => branch.available)
@@ -1929,7 +1929,7 @@ export const withResource = (Base) => class Resource extends Base {
         occurs:branch.outcome === outcome
           && (cardId == null || branch.cardId === cardId)
       }),
-      "CardEffectSimulation.projectStealOutcome"
+      "Simulator.projectStealOutcome"
     );
   }
 
@@ -1938,7 +1938,7 @@ export const withResource = (Base) => class Resource extends Base {
   镜像窃取技能：把目标手牌与装备合并为单一等概率候选，并将所得身份写入施术者手牌。
 
   调用方
-  SkillEffectSimulation 的窃取技能。
+  Simulator 的窃取技能。
 
   输入
   World、行动者、目标与执行概率。
@@ -2002,7 +2002,7 @@ export const withResource = (Base) => class Resource extends Base {
     });
     const selectionPartition = this.mergeProbabilityWork(
       outcomeBranches,
-      "CardEffectSimulation.stealResourceToHand:selection"
+      "Simulator.stealResourceToHand:selection"
     );
     if (equipmentLossProbability > PROBABILITY_EPSILON && target.equipmentDefinitionId) {
       const stolenEquipmentDefinitionId = target.equipmentDefinitionId;
@@ -2094,7 +2094,7 @@ export const withResource = (Base) => class Resource extends Base {
   把确定或条件化的能量增减交给统一分支更新流程。
 
   调用方
-  CardEffectSimulation 与 SkillEffectSimulation：结算确定或条件化能量增减。
+  Simulator 与 Simulator：结算确定或条件化能量增减。
 
   输入
   World、目标玩家、能量 delta 与可选事件世界。
@@ -2168,7 +2168,7 @@ export const withResource = (Base) => class Resource extends Base {
   把确定或条件化的护盾增减交给统一分支更新流程。
 
   调用方
-  CardEffectSimulation 与 SkillEffectSimulation：结算确定或条件化护盾增减。
+  Simulator 与 Simulator：结算确定或条件化护盾增减。
 
   输入
   World、目标玩家、护盾 delta 与可选事件世界。
@@ -2200,7 +2200,7 @@ export const withResource = (Base) => class Resource extends Base {
   从正式槽位或次数摘要恢复本回合每次突袭的独立可用世界。
 
   调用方
-  consumeAttackUse、CardEffectSimulation 与破军技能：取得突袭次数资源的完整槽位。
+  consumeAttackUse、Simulator 与破军技能：取得突袭次数资源的完整槽位。
 
   输入
   行动者 World 摘要。
@@ -2347,7 +2347,7 @@ export const withResource = (Base) => class Resource extends Base {
   消费一次突袭槽位并同步攻击次数摘要，避免概率世界重复使用同一次数。
 
   调用方
-  CombatSimulation.simulateAssault：在伤害结算前消费一次攻击容量。
+  Damage.simulateAssault：在伤害结算前消费一次攻击容量。
 
   输入
   World、行动者与期望攻击世界。

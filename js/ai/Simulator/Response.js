@@ -15,7 +15,7 @@ Fact、canonical Probability facade、Domain response rules 与门面显式注�
 未知手牌只按合法 knownCards、handCount 与 remaining counts 建模。
 
 架构约束
-不得读取 Game/UI/Controller/Planner/Evaluator，不得复制 willingness、Value 或真实规则实现。
+不得读取 Game/UI/Controller/Searcher/Evaluator，不得复制 willingness、Value 或真实规则实现。
 */
 import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js";
 import { projectCanonicalSeatRoster } from "../Event/Fact.js";
@@ -28,7 +28,7 @@ import {
 
 /*
 功能
-把 Base class 与 ResponseSimulation 的无状态方法组合成单一 Simulator 类型。
+把 Base class 与 Response 的无状态方法组合成单一 Simulator 类型。
 
 调用方
 Simulator.js 文件末尾的组合表达式：在模块加载时把响应资源方法加入正式模拟门面。
@@ -279,7 +279,7 @@ export const withResponse = (Base) => class Response extends Base {
   将攻击世界与格挡容量和身份相交，返回命中与格挡后的互斥世界。
 
   调用方
-  CombatSimulation.applyDamage：把已确定攻击世界与格挡容量和雷达结果联合。
+  Damage.applyDamage：把已确定攻击世界与格挡容量和雷达结果联合。
 
   输入
   World、目标、攻击世界及可选判定前格挡/多个判定牌身份。
@@ -474,7 +474,7 @@ export const withResponse = (Base) => class Response extends Base {
       effectWorlds,
       decisionPartition,
       counterState
-    ], "ResponseSimulation.consumeTargetCounterResponseWorlds:candidate-worlds");
+    ], "Response.consumeTargetCounterResponseWorlds:candidate-worlds");
     const selectionKey = this.currentProbabilityEventKey(state, `counter-selection:${target.id ?? "unknown"}`);
     const outcomes = [];
     for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {

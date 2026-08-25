@@ -247,7 +247,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     向 Worker 发送一个 SEARCH 请求并返回 terminal outcome promise。
 
     调用方
-    AIController。
+    Controller。
 
     输入
     SearchRequest。
@@ -311,7 +311,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     返回最近一次 SEARCH 同步 postMessage 的 transport 诊断。
 
     调用方
-    AIController.selectAction diagnostics。
+    Controller.selectAction diagnostics。
 
     输入
     无。
@@ -372,7 +372,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     取消指定 in-flight Worker search。
 
     调用方
-    AIController/MatchApplication lifecycle。
+    Controller/MatchApplication lifecycle。
 
     输入
     requestId。

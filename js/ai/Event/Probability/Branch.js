@@ -54,7 +54,7 @@ export function clampProbability(value) {
 计算两个已确认独立的事件至少发生一次的概率。
 
 调用方
-StatusSimulation 的同一被动由两个独立触发来源推进时。
+Simulator 的同一被动由两个独立触发来源推进时。
 
 输入
 两个零到一的独立事件概率。

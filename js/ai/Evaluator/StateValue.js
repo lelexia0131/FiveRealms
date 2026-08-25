@@ -9,7 +9,7 @@ Evaluator public facade 与直接 primitive 契约测试。
 Domain Card Definitions 与 canonical Probability facade。
 
 状态边界
-只读 canonical World；闪电生命周期通过注入的 Evaluator runtime capability 查询，不写真实状态。
+只读 canonical World；不构造或修改任何 transition World。
 
 信息边界
 只使用公开字段、合法概率摘要与已过滤记忆，不读取敌方隐藏实体身份。
@@ -34,7 +34,7 @@ export const ENERGY_STATE_WEIGHT = 1.2;
 把内部 State Value 点数转换为最终 HP-equivalent utility。
 
 调用方
-TransitionValue、FrontierValue、ValueLedger、Search Prior 归一化与单位正式测试。
+Evaluator transition/frontier/diagnostics、搜索先验归一化与单位正式测试。
 
 输入
 以 HP_VALUE 点代表一生命值的有限 State Value 点数。
@@ -53,7 +53,7 @@ HP_VALUE。
 
 边界与不变量
 这是由 HP 基线推导的单位换算，不是经验缩放；Final Utility 项最多转换一次；
-Search Prior 若消费它，只能作为不进入 final 的 beam heuristic 输入归一化。
+搜索先验若消费它，只能作为不进入 final 的 beam heuristic 输入归一化。
 */
 export function statePointsToUtility(points) {
   return (Number(points) || 0) / HP_VALUE;
@@ -534,7 +534,7 @@ export class ThreatCalculator {
   计算一个存活敌人的公开目标威胁分。
 
   调用方
-  SearchPrior 与转移策略。
+  搜索先验 与转移策略。
 
   输入
   viewer、目标可见条目、合法记忆与当前行动预计伤害。
@@ -835,7 +835,7 @@ export function shieldStateValue(player, residualExposure) {
 从 viewer 阵营视角计算封印跳过出牌阶段的期望团队负担。
 
 调用方
-StateValue runtime、Evaluator diagnostics 与响应 willingness。
+Evaluator state aggregation、diagnostics 与响应 willingness。
 
 输入
 canonical World、封印持有者与 viewer 阵营。
@@ -958,107 +958,4 @@ export function statePlayerValueTerms(
       energyDeviceFuture:energyDeviceFutureUtility(energyRules, player)
     }
   };
-}
-
-export class StateValue {
-  /*
-  功能
-  绑定纯 Evaluator 与闪电查询能力。
-
-  调用方
-  AIController 组合根（统一组装依赖的位置）。
-
-  输入
-  value/Evaluator 与 ValueSimulationQuery 实例。
-
-  输出
-  稳定的运行时 State Value 查询服务。
-
-  读取状态
-  保存显式依赖引用。
-
-  写入状态
-  写入实例依赖字段。
-
-  调用函数
-  无。
-
-  边界与不变量
-  不接受 Game、Planner 或 Controller。
-  */
-  constructor(evaluator, simulationQuery = evaluator) {
-    this.evaluator = evaluator;
-    this.simulationQuery = simulationQuery;
-  }
-
-  /*
-  功能
-  计算包含闪电生命周期项的完整 State Value。
-
-  调用方
-  TransitionValue、ValueLedger、Search/Policy 查询入口与测试。
-
-  输入
-  过滤后的状态、viewer ID 与可选父 SearchBudget。
-
-  输出
-  value/Evaluator 返回的团队 State Value。
-
-  读取状态
-  只读传入状态；闪电查询只使用 World 克隆与缓存。
-
-  写入状态
-  无。
-
-  调用函数
-ValueSimulationQuery.lightningValues、sealTeamBurden、Evaluator.stateUtility。
-
-  边界与不变量
-领域结果先物化为纯值再交给 Evaluator；本层不复制任何估值公式；
-父搜索存在时必须把同一个 SearchBudget 传给 Lightning 与 Seal 查询。
-  */
-  stateUtility(state, viewerId, searchBudget = null) {
-    const lightningValues = this.simulationQuery.lightningValues(state, viewerId, searchBudget);
-    const viewer = state.players.find((player) => player.id === viewerId);
-    const sealValues = viewer
-      ? state.players.map((player) => sealTeamBurden(
-          state,
-          player,
-          viewer.battleTeam,
-          searchBudget
-        ))
-      : null;
-    return this.evaluator.stateUtility(state, viewerId, lightningValues, sealValues);
-  }
-
-  /*
-  功能
-  计算两个 World 在同一观察者视角下的唯一状态价值差。
-
-  调用方
-  TransitionValue、资源/响应/root 配对查询与搜索反事实项。
-
-  输入
-  before World、after World、viewer ID 与可选父 SearchBudget。
-
-  输出
-  after State Value points 减 before State Value points。
-
-  读取状态
-  两个输入 World 及其有界领域价值查询。
-
-  写入状态
-  无；底层查询只写自身缓存和独立模拟 clone。
-
-  调用函数
-  stateUtility。
-
-  边界与不变量
-  运算顺序固定为 after-before；调用方不得再次手写同一状态比较公式，
-  两侧 nested query 必须继承同一个 SearchBudget。
-  */
-  transitionDelta(before, after, viewerId, searchBudget = null) {
-    return this.stateUtility(after, viewerId, searchBudget)
-      - this.stateUtility(before, viewerId, searchBudget);
-  }
 }

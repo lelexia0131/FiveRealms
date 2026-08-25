@@ -3,7 +3,7 @@
 拥有 AI Search/Decision 专用可复现 RNG；与真实 Game RNG 完全分离，并可为 SearchRequest 提供稳定 seed 事实。
 
 上游
-MatchApplication composition root 与 AIController。
+MatchApplication composition root 与 Controller。
 
 下游
 Probability hidden-world sampling、Controller unknown-slot resolution 与其它明确 exploration consumer 的 AI 随机消费。
@@ -23,7 +23,7 @@ Probability hidden-world sampling、Controller unknown-slot resolution 与其它
 把任意字符串投影为 32 位 LCG seed。
 
 调用方
-createSearchRng 默认 seed 推导。
+createRng 默认 seed 推导。
 
 输入
 字符串。
@@ -52,19 +52,19 @@ export function hashSearchSeed(text) {
   return hash >>> 0;
 }
 
-export class SearchRng {
+export class Rng {
   /*
   功能
   创建与真实 Game RNG 隔离的 AI search RNG。
 
   调用方
-  MatchApplication composition root、AIController 与 RNG 隔离测试。
+  MatchApplication composition root、Controller 与 RNG 隔离测试。
 
   输入
   数值 seed。
 
   输出
-  可 next() 的 SearchRng 实例。
+  可 next() 的 Rng 实例。
 
   读取状态
   无。
@@ -89,7 +89,7 @@ export class SearchRng {
   返回下一个零到一之间的确定随机数。
 
   调用方
-  AIController 注入的 AI random 能力。
+  Controller 注入的 AI random 能力。
 
   输入
   无。
@@ -146,7 +146,7 @@ export class SearchRng {
 
   /*
   功能
-  从 snapshot 创建恢复同一 continuation 的 SearchRng。
+  从 snapshot 创建恢复同一 continuation 的 Rng。
 
   调用方
   Worker search runtime 与 RNG handoff 测试。
@@ -155,7 +155,7 @@ export class SearchRng {
   snapshot（seed/state/draws/algorithm）。
 
   输出
-  与 snapshot 后续序列一致的 SearchRng。
+  与 snapshot 后续序列一致的 Rng。
 
   读取状态
   无。
@@ -170,8 +170,8 @@ export class SearchRng {
   常数时间恢复；不创建全局 RNG 或读取旧 session。
   */
   static restore(snapshot) {
-    if (!snapshot || snapshot.algorithm !== "lcg") throw new TypeError("SearchRng snapshot 只接受 lcg continuation");
-    const rng = new SearchRng(snapshot.seed);
+    if (!snapshot || snapshot.algorithm !== "lcg") throw new TypeError("Rng snapshot 只接受 lcg continuation");
+    const rng = new Rng(snapshot.seed);
     rng.state = (Number(snapshot.state) || 0) >>> 0;
     rng.draws = Math.max(0, Number(snapshot.draws) || 0);
     return rng;
@@ -182,7 +182,7 @@ export class SearchRng {
   提交一次 Worker search 产生的 rngAfter continuation。
 
   调用方
-  main-thread AIController RNG commit boundary。
+  main-thread Controller RNG commit boundary。
 
   输入
   snapshot。
@@ -203,7 +203,7 @@ export class SearchRng {
   只允许 caller 显式 exactly-once commit；本方法不判断 request 重复。
   */
   commit(snapshot) {
-    if (!snapshot || snapshot.algorithm !== "lcg") throw new TypeError("SearchRng commit 只接受 lcg continuation");
+    if (!snapshot || snapshot.algorithm !== "lcg") throw new TypeError("Rng commit 只接受 lcg continuation");
     this.seed = (Number(snapshot.seed) || 0) >>> 0;
     this.state = (Number(snapshot.state) || 0) >>> 0;
     this.draws = Math.max(0, Number(snapshot.draws) || 0);

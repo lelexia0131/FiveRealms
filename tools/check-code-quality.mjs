@@ -48,9 +48,9 @@ const LEGACY_UTILS_PATTERN = /^js\/utils(?:\/|$)/i;
 const FORBIDDEN_ROOT_BUCKET_PATTERN = /^js\/(?:common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
 const LAYER_BUCKET_PATTERN = /^js\/(?:domain|application|adapters)\/(?:.*\/)?(?:utils|common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
 const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
-const SEARCHER_PATTERN = /^js\/ai\/search\/Searcher\.js$/i;
-const SEARCH_PRIOR_PATTERN = /^js\/ai\/search\/SearchPrior\.js$/i;
-const SEARCH_AI_PATTERN = /^js\/ai\/search\//i;
+const SEARCHER_PATTERN = /^js\/ai\/Searcher\/Searcher\.js$/i;
+const SEARCHER_INTERNAL_PATTERN = /^js\/ai\/Searcher\/(?:Rng\.js|Pattern\/Pattern\.js)$/i;
+const GENERATOR_FILE = "js/ai/Generator/Generator.js";
 const SIMULATOR_AI_PATTERN = /^js\/ai\/Simulator\//i;
 const AI_LEGACY_RULE_GUARD_PATTERN = /^(?:js\/ai\/(?:Event|Evaluator|Simulator|Searcher|search|policy)\/)/i;
 const CARD_EFFECT_RULES_FILE = "js/domain/rules/card/CardEffectRules.js";
@@ -67,7 +67,13 @@ const EVALUATOR_FILE = "js/ai/Evaluator/Evaluator.js";
 const STATE_VALUE_FILE = "js/ai/Evaluator/StateValue.js";
 const CARD_VALUE_FILE = "js/ai/Evaluator/CardValue.js";
 const FINAL_CORE_PATTERN = /^js\/ai\/(?:Event|Simulator|Evaluator)\//i;
-const FINAL_CORE_ALLOWLIST = Object.freeze(new Set([
+const FINAL_AI_ALLOWLIST = Object.freeze(new Set([
+  "js/ai/Controller.js",
+  GENERATOR_FILE,
+  "js/ai/Generator/Action.js",
+  "js/ai/Searcher/Searcher.js",
+  "js/ai/Searcher/Rng.js",
+  "js/ai/Searcher/Pattern/Pattern.js",
   "js/ai/Event/Fact.js",
   PROBABILITY_FILE,
   BRANCH_FILE,
@@ -81,9 +87,9 @@ const FINAL_CORE_ALLOWLIST = Object.freeze(new Set([
   STATE_VALUE_FILE,
   CARD_VALUE_FILE
 ]));
-const LEGACY_AI_CORE_PATH_PATTERN = /^(?:js\/ai\/(?:state|simulation|value)\/|js\/ai\/domain\/GlobalBenefitModel\.js$|js\/ai\/policy\/CharacterRoleMetadata\.js$)/i;
+const LEGACY_AI_CORE_PATH_PATTERN = /^(?:js\/ai\/(?:state|simulation|value|search|policy|domain)\/|js\/ai\/AiController\.js$)/i;
 const AI_ROOT_PATTERN = /^js\/ai\/[^/]+\.js$/i;
-const AI_ROOT_ALLOWLIST = new Set(["js/ai/AiController.js"]);
+const AI_ROOT_ALLOWLIST = new Set(["js/ai/Controller.js"]);
 const ACCIDENTAL_ROOT_ARTIFACTS = Object.freeze(new Set(["AI", "application", "transitions"]));
 const REMOVED_COMPATIBILITY_NAMES = Object.freeze([
   "AiSimulator",
@@ -141,6 +147,20 @@ const REMOVED_LEGACY_FILES = Object.freeze([
   "js/config/gameConfig.js",
   "js/config/cardConfig.js",
   "js/config/generalConfig.js",
+  "js/adapters/ai/worker/SearchEngineFactory.js",
+  "js/ai/AiController.js",
+  "js/ai/policy/AiRuntimePolicy.js",
+  "js/ai/search/Action.js",
+  "js/ai/search/ActionGenerator.js",
+  "js/ai/search/CounterfactualTerms.js",
+  "js/ai/search/SealPrior.js",
+  "js/ai/search/SearchBudget.js",
+  "js/ai/search/SearchPrior.js",
+  "js/ai/search/SearchRequest.js",
+  "js/ai/search/SearchRng.js",
+  "js/ai/search/Searcher.js",
+  "js/ai/search/TacticResolutionQuery.js",
+  "js/ai/search/WorkerSearchOutcome.js",
   "js/ai/search/Planner.js",
   "js/ai/search/SearchPolicy.js",
   "js/ai/search/TransitionValue.js",
@@ -374,6 +394,41 @@ fs.existsSync。
 */
 function removedLegacyArtifacts() {
   return REMOVED_LEGACY_FILES.filter((file) => fs.existsSync(path.join(ROOT, file)));
+}
+
+/*
+功能
+比较真实 js/ai JavaScript 树与最终十八文件契约。
+
+调用方
+main 与 runSelfTest。
+
+输入
+仓库相对 AI JavaScript 路径数组。
+
+输出
+缺失或额外路径的描述数组。
+
+读取状态
+FINAL_AI_ALLOWLIST。
+
+写入状态
+无。
+
+调用函数
+Set、Array.sort。
+
+边界与不变量
+只按规范化精确路径判断；文件内容、LOC 与测试文件不参与文件数门禁。
+*/
+function finalAiTreeViolations(files) {
+  const actual = new Set(files.map(normalizePath));
+  const missing = [...FINAL_AI_ALLOWLIST].filter((file) => !actual.has(file)).sort();
+  const unexpected = [...actual].filter((file) => !FINAL_AI_ALLOWLIST.has(file)).sort();
+  return [
+    ...missing.map((file) => `missing:${file}`),
+    ...unexpected.map((file) => `unexpected:${file}`)
+  ];
 }
 
 /*
@@ -1543,13 +1598,13 @@ function inspectSource(file, source, changed) {
       file,
       functionName:"<architecture>",
       line:1,
-      missing:["架构约束：AI 根目录只允许 composition root AiController.js"],
+      missing:["架构约束：AI 根目录只允许 Controller.js"],
     });
   }
 
   errors.push(...targetArchitectureErrors(file, importSource, maskedSource, source));
 
-  if (LEGACY_AI_CORE_PATH_PATTERN.test(file)) {
+  if (LEGACY_AI_CORE_PATH_PATTERN.test(file) && fs.existsSync(path.join(ROOT, file))) {
     errors.push({
       file,
       functionName:"<architecture>",
@@ -1558,12 +1613,12 @@ function inspectSource(file, source, changed) {
     });
   }
 
-  if (FINAL_CORE_PATTERN.test(file) && !FINAL_CORE_ALLOWLIST.has(file)) {
+  if (FINAL_CORE_PATTERN.test(file) && !FINAL_AI_ALLOWLIST.has(file)) {
     errors.push({
       file,
       functionName:"<architecture>",
       line:1,
-      missing:["架构约束：Event/Simulator/Evaluator 只允许最终 core 文件"]
+      missing:["架构约束：Event/Simulator/Evaluator 只允许最终十八文件契约中的 owner"]
     });
   }
 
@@ -1670,6 +1725,18 @@ function inspectSource(file, source, changed) {
         missing: ["架构约束：Worker search 禁止 Math.random"]
       });
     }
+    const internalAiImport = imports.find((dependency) => (
+      /^js\/ai\//i.test(dependency.target)
+      && !["js/ai/Controller.js", "js/ai/Searcher/Searcher.js"].includes(dependency.target)
+    ));
+    if (internalAiImport) {
+      errors.push({
+        file,
+        functionName:"<module>",
+        line:sourceLineAt(source, internalAiImport.index),
+        missing:["架构约束：Worker 只能 import public Controller.js 或 Searcher.js"]
+      });
+    }
   }
 
   if (file === CARD_EFFECT_RULES_FILE) {
@@ -1772,7 +1839,7 @@ function inspectSource(file, source, changed) {
 
   if (EVENT_AI_PATTERN.test(file)) {
     const orchestrationImport = imports.find((dependency) => (
-      /^js\/ai\/(?:AiController\.js|Simulator\/|Evaluator\/|search\/|Searcher\/)/i.test(dependency.target)
+      /^js\/ai\/(?:Controller\.js|Simulator\/|Evaluator\/|Searcher\/)/i.test(dependency.target)
     ));
     if (orchestrationImport) {
       errors.push({
@@ -1786,7 +1853,7 @@ function inspectSource(file, source, changed) {
 
   if (EVALUATOR_AI_PATTERN.test(file)) {
     const orchestrationImport = imports.find((dependency) => (
-      /^js\/ai\/(?:AiController\.js|Simulator\/|search\/|Searcher\/)/i.test(dependency.target)
+      /^js\/ai\/(?:Controller\.js|Simulator\/|Searcher\/)/i.test(dependency.target)
     ));
     if (orchestrationImport) {
       errors.push({
@@ -1803,6 +1870,40 @@ function inspectSource(file, source, changed) {
         functionName: "<architecture>",
         line: source.slice(0, concreteConstruction.index).split(/\r?\n/).length,
         missing: ["架构约束：Evaluator 禁止构造 concrete Simulator"],
+      });
+    }
+    const runtimeSimulationDependency = maskedSource.match(
+      /\b(?:configureRuntime|simulatorFactory|simulationQuery)\b|\bthis\.(?:simulator|simulation)\b|\b(?:options|runtime)\.simulator\b/,
+    );
+    if (runtimeSimulationDependency) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, runtimeSimulationDependency.index),
+        missing:["架构约束：Evaluator 禁止保存或注入 Simulator runtime dependency"]
+      });
+    }
+  }
+
+  if (file === STATE_VALUE_FILE || file === CARD_VALUE_FILE) {
+    const evaluatorBackreference = imports.find((dependency) => (
+      dependency.target.toLowerCase() === EVALUATOR_FILE.toLowerCase()
+    ));
+    if (evaluatorBackreference) {
+      errors.push({
+        file,
+        functionName:"<module>",
+        line:sourceLineAt(source, evaluatorBackreference.index),
+        missing:["架构约束：StateValue/CardValue primitive 禁止反向依赖 Evaluator"]
+      });
+    }
+    const storedEvaluator = maskedSource.match(/\bthis\.(?:evaluator|simulationQuery|simulatorFactory)\b/);
+    if (storedEvaluator) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, storedEvaluator.index),
+        missing:["架构约束：StateValue/CardValue primitive 禁止保存父 Evaluator 或 simulation runtime"]
       });
     }
   }
@@ -1900,57 +2001,67 @@ function inspectSource(file, source, changed) {
   }
 
   if (SEARCHER_PATTERN.test(file)) {
-    const forbiddenImport = importSource.match(
-      /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/core\/(?:Game|RuleEngine)\.js|\/config\/(?:cardConfig|gameConfig|generalConfig)\.js|\/generals\/skillRegistry\.js|\/policy\/|\/domain\/|\/Simulator\/(?:Simulator|Damage|Resource|Response)\.js|\/(?:AiController|AIController)\.js)(?:\?[^"']*)?["']/i,
-    );
+    const forbiddenImport = imports.find((dependency) => (
+      /^js\/(?:core|config|generals|domain)\//i.test(dependency.target)
+      || /^js\/ai\/(?:policy|domain)\//i.test(dependency.target)
+      || /^js\/ai\/Simulator\/(?:Damage|Resource|Response)\.js$/i.test(dependency.target)
+      || /^js\/ai\/Evaluator\/(?:StateValue|CardValue)\.js$/i.test(dependency.target)
+      || /^js\/ai\/Event\/Probability\/(?:Branch|Pool)\.js$/i.test(dependency.target)
+      || /^js\/ai\/(?:AiController|AIController)\.js$/i.test(dependency.target)
+    ));
     if (forbiddenImport) {
       errors.push({
         file,
         functionName: "<module>",
-        line: source.slice(0, forbiddenImport.index).split(/\r?\n/).length,
-        missing: ["架构约束：Searcher 禁止依赖 Game/Rule/Config/Policy/Domain/concrete Simulation"],
+        line: sourceLineAt(source, forbiddenImport.index),
+        missing: ["架构约束：Searcher 禁止依赖 Game/Rule/Config/Policy/Domain 或 internal implementation module"],
       });
     }
-    const concreteConstruction = maskNonCode(source).match(/\bnew\s+(?:Ai)?Simulator\s*\(/);
-    if (concreteConstruction) {
-      errors.push({
-        file,
-        functionName: "<architecture>",
-        line: source.slice(0, concreteConstruction.index).split(/\r?\n/).length,
-        missing: ["架构约束：Searcher 禁止构造 concrete Simulator"],
-      });
-    }
-  }
-
-  if (SEARCH_PRIOR_PATTERN.test(file)) {
-    const implicitStateCallback = maskNonCode(source).match(/\bgetCurrentState\b/);
-    if (implicitStateCallback) {
-      errors.push({
-        file,
-        functionName: "<architecture>",
-        line: source.slice(0, implicitStateCallback.index).split(/\r?\n/).length,
-        missing: ["架构约束：SearchPrior 禁止隐式 GameState callback"],
-      });
-    }
-  }
-
-  if (SEARCH_AI_PATTERN.test(file)) {
-    const concreteSimulationImport = importSource.match(
-      /(?:from\s*|import\s*\()\s*["'][^"']*\/Simulator\/(?:Simulator|Damage|Resource|Response)\.js(?:\?[^"']*)?["']/i,
+    const businessResidue = maskedSource.match(
+      /\b(?:transferPreference|CARD_DEFINITIONS|ACTIVE_SKILL_DEFINITIONS|sealUseValue|turnOpportunityValue|getRoleCardAiValue|ThreatCalculator)\b/,
     );
-    if (concreteSimulationImport) {
+    if (businessResidue) {
+      errors.push({
+        file,
+        functionName: "<architecture>",
+        line: sourceLineAt(source, businessResidue.index),
+        missing: ["架构约束：Searcher 禁止业务价值公式或 action-specific metadata"],
+      });
+    }
+  }
+
+  if (SEARCHER_INTERNAL_PATTERN.test(file)) {
+    const authorityImport = imports.find((dependency) => (
+      /^js\/ai\/(?:Simulator|Evaluator|Event)\//i.test(dependency.target)
+      || dependency.target.toLowerCase() === GENERATOR_FILE.toLowerCase()
+    ));
+    if (authorityImport) {
       errors.push({
         file,
         functionName:"<module>",
-        line:source.slice(0, concreteSimulationImport.index).split(/\r?\n/).length,
-        missing:["架构约束：search 禁止依赖 concrete Simulation"],
+        line:sourceLineAt(source, authorityImport.index),
+        missing:["架构约束：Rng/Pattern internal module 禁止依赖 Generator/Simulator/Evaluator/Event"]
+      });
+    }
+  }
+
+  if (file === GENERATOR_FILE) {
+    const nonLegalityImport = imports.find((dependency) => (
+      /^js\/ai\/(?:Searcher|Simulator|Evaluator)\//i.test(dependency.target)
+    ));
+    if (nonLegalityImport) {
+      errors.push({
+        file:GENERATOR_FILE,
+        functionName:"<module>",
+        line:sourceLineAt(source, nonLegalityImport.index),
+        missing:["架构约束：Generator 禁止依赖 Searcher/Simulator/Evaluator"],
       });
     }
   }
 
   if (SIMULATOR_AI_PATTERN.test(file)) {
     const orchestrationImport = imports.find((dependency) => (
-      /^js\/ai\/(?:AiController\.js|Evaluator\/|search\/|Searcher\/)/i.test(dependency.target)
+      /^js\/ai\/(?:Controller\.js|Evaluator\/|search\/|Searcher\/)/i.test(dependency.target)
         || /\/core\/Game\.js$/i.test(dependency.target)
     ));
     if (orchestrationImport) {
@@ -2304,6 +2415,38 @@ function identity(value) { return value; }`;
   if (valueCommentErrors.some((error) => error.missing.some((item) => item.includes("Evaluator 禁止")))) {
     throw new Error("Evaluator guard incorrectly scanned comment text");
   }
+  const evaluatorRuntimeErrors = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "this.simulatorFactory = value; return value;")}`,
+    null,
+  );
+  if (!evaluatorRuntimeErrors.some((error) => error.missing.some((item) => item.includes("runtime dependency")))) {
+    throw new Error("Evaluator fixture did not reject Simulator runtime injection");
+  }
+  const evaluatorParameterRuntimeErrors = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "return options.simulator.apply(value);")}`,
+    null,
+  );
+  if (!evaluatorParameterRuntimeErrors.some((error) => error.missing.some((item) => item.includes("runtime dependency")))) {
+    throw new Error("Evaluator fixture did not reject parameter-injected Simulator runtime");
+  }
+  const stateValueEvaluatorErrors = inspectSource(
+    STATE_VALUE_FILE,
+    `${moduleHeader}\nimport { Evaluator } from "./Evaluator.js";\n${pass}`,
+    null,
+  );
+  if (!stateValueEvaluatorErrors.some((error) => error.missing.some((item) => item.includes("primitive 禁止反向依赖")))) {
+    throw new Error("StateValue fixture did not reject Evaluator backreference");
+  }
+  const cardValueRuntimeErrors = inspectSource(
+    CARD_VALUE_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "this.evaluator = value; return value;")}`,
+    null,
+  );
+  if (!cardValueRuntimeErrors.some((error) => error.missing.some((item) => item.includes("primitive 禁止保存")))) {
+    throw new Error("CardValue fixture did not reject stored Evaluator");
+  }
   const validPolicyErrors = inspectSource(
     "js/ai/policy/GoodPolicy.js",
     `${moduleHeader}\n${pass}`,
@@ -2377,44 +2520,44 @@ function identity(value) { return value; }`;
     throw new Error("TransitionValue fixture did not detect AIController import");
   }
   const validSearcherErrors = inspectSource(
-    "js/ai/search/Searcher.js",
-    `${moduleHeader}\nimport { SearchBudget } from "./SearchBudget.js";\n${pass}`,
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\nimport { Simulator } from "../Simulator/Simulator.js";\nimport { Evaluator } from "../Evaluator/Evaluator.js";\n${pass.replace("return value;", "return new Simulator(value);")}`,
     null,
   );
   if (validSearcherErrors.length) {
     throw new Error(`valid Searcher fixture failed: ${JSON.stringify(validSearcherErrors)}`);
   }
-  const searcherSimulatorErrors = inspectSource(
-    "js/ai/search/Searcher.js",
-    `${moduleHeader}\nimport { Simulator } from "../Simulator/Simulator.js";\n${pass}`,
+  const searcherInternalErrors = inspectSource(
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\nimport { Resource } from "../Simulator/Resource.js";\n${pass}`,
     null,
   );
-  if (!searcherSimulatorErrors.some((error) => error.missing.some((item) => item.includes("Searcher 禁止依赖")))) {
-    throw new Error("Searcher fixture did not detect concrete Simulator import");
+  if (!searcherInternalErrors.some((error) => error.missing.some((item) => item.includes("internal implementation")))) {
+    throw new Error("Searcher fixture did not reject internal Simulator import");
   }
-  const searcherConstructionErrors = inspectSource(
-    "js/ai/search/Searcher.js",
-    `${moduleHeader}\n${pass.replace("return value;", "return new Simulator(value);")}`,
+  const searcherDomainErrors = inspectSource(
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\nimport { getMaxEnergy } from "../../domain/rules/team/TeamRules.js";\n${pass}`,
     null,
   );
-  if (!searcherConstructionErrors.some((error) => error.missing.some((item) => item.includes("Searcher 禁止构造")))) {
-    throw new Error("Searcher fixture did not detect concrete Simulator construction");
+  if (!searcherDomainErrors.some((error) => error.missing.some((item) => item.includes("Searcher 禁止依赖")))) {
+    throw new Error("Searcher fixture did not reject Domain import");
+  }
+  const searcherBusinessErrors = inspectSource(
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return transferPreference;")}`,
+    null,
+  );
+  if (!searcherBusinessErrors.some((error) => error.missing.some((item) => item.includes("action-specific metadata")))) {
+    throw new Error("Searcher fixture did not reject transferPreference");
   }
   const searcherCommentErrors = inspectSource(
-    "js/ai/search/Searcher.js",
-    `${moduleHeader}\n/* import { Simulator } from "../Simulator/Simulator.js"; new Simulator(); */\n${pass}`,
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\n/* transferPreference and internal Resource imports are forbidden. */\n${pass}`,
     null,
   );
   if (searcherCommentErrors.some((error) => error.missing.some((item) => item.includes("Searcher 禁止")))) {
     throw new Error("Searcher guard incorrectly scanned comment text");
-  }
-  const searchPriorCallbackErrors = inspectSource(
-    "js/ai/search/SearchPrior.js",
-    `${moduleHeader}\n${pass.replace("return value;", "return getCurrentState();")}`,
-    null,
-  );
-  if (!searchPriorCallbackErrors.some((error) => error.missing.some((item) => item.includes("GameState callback")))) {
-    throw new Error("SearchPrior fixture did not detect implicit GameState callback");
   }
   const simulationPlannerErrors = inspectSource(
     "js/ai/Simulator/Simulator.js",
@@ -2539,13 +2682,12 @@ function identity(value) { return value; }`;
     throw new Error("external fixture did not reject Probability internal import");
   }
 
-  const legacyCoreFileErrors = inspectSource(
-    "js/ai/state/Fact.js",
-    `${moduleHeader}\n${pass}`,
-    null,
-  );
-  if (!legacyCoreFileErrors.some((error) => error.missing.some((item) => item.includes("legacy state/simulation/value")))) {
-    throw new Error("legacy core fixture did not reject removed file path");
+  const legacyCoreFileErrors = finalAiTreeViolations([
+    ...FINAL_AI_ALLOWLIST,
+    "js/ai/state/Fact.js"
+  ]);
+  if (!legacyCoreFileErrors.includes("unexpected:js/ai/state/Fact.js")) {
+    throw new Error("final AI tree fixture did not reject legacy core file path");
   }
   const legacyCoreImportErrors = inspectSource(
     "js/ai/search/BadLegacyCoreImport.js",
@@ -3182,9 +3324,19 @@ function identity(value) { return value; }`;
   if (rootArtifactPositive.length !== 1 || rootArtifactPositive[0] !== "AI") {
     throw new Error("root artifact guard did not detect accidental AI file");
   }
-  const rootArtifactNegative = accidentalRootArtifacts(["js/ai/AiController.js", "js/core/Game.js"]);
+  const rootArtifactNegative = accidentalRootArtifacts(["js/ai/Controller.js", "js/core/Game.js"]);
   if (rootArtifactNegative.length !== 0) {
     throw new Error("root artifact guard incorrectly rejected valid root files");
+  }
+  if (finalAiTreeViolations([...FINAL_AI_ALLOWLIST]).length !== 0) {
+    throw new Error("final AI tree guard rejected the exact eighteen-file fixture");
+  }
+  const invalidFinalTree = [...FINAL_AI_ALLOWLIST].filter((file) => file !== CARD_VALUE_FILE);
+  invalidFinalTree.push("js/ai/search/SearchPrior.js");
+  const finalTreeErrors = finalAiTreeViolations(invalidFinalTree);
+  if (!finalTreeErrors.includes(`missing:${CARD_VALUE_FILE}`)
+    || !finalTreeErrors.includes("unexpected:js/ai/search/SearchPrior.js")) {
+    throw new Error("final AI tree guard did not report missing and legacy paths");
   }
 
   const goodAiGameBoundary = inspectSource(
@@ -3268,6 +3420,14 @@ function identity(value) { return value; }`;
   if (!badWorkerImport.some((error) => error.missing.some((item) => item.includes("Worker 禁止")))) {
     throw new Error("Worker guard did not reject core/Game import");
   }
+  const badWorkerAiInternalImport = inspectSource(
+    "js/adapters/ai/worker/BadWorkerAiInternalImport.js",
+    `${moduleHeader}\nimport { stateUtility } from "../../../ai/Evaluator/StateValue.js";\n${pass}`,
+    null,
+  );
+  if (!badWorkerAiInternalImport.some((error) => error.missing.some((item) => item.includes("public Controller.js 或 Searcher.js")))) {
+    throw new Error("Worker guard did not reject internal AI import");
+  }
   const badWorkerRandom = inspectSource(
     "js/adapters/ai/worker/BadWorkerRandom.js",
     `${moduleHeader}\n${pass.replace("return value;", "return Math.random();")}`,
@@ -3325,6 +3485,17 @@ function main() {
       process.stderr.write(`${artifact}:1 <architecture> missing: 架构约束：最终架构已删除路径不得重新出现\n`);
     }
     process.stderr.write(`code-quality failed: ${removedArtifacts.length} removed architecture artifact(s) returned\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const finalAiTreeErrors = finalAiTreeViolations(
+    allProductionFiles().filter((file) => AI_PATTERN.test(file))
+  );
+  if (finalAiTreeErrors.length) {
+    for (const error of finalAiTreeErrors) {
+      process.stderr.write(`js/ai:1 <architecture> missing: 架构约束：最终十八文件树不匹配（${error}）\n`);
+    }
+    process.stderr.write(`code-quality failed: ${finalAiTreeErrors.length} final AI tree violation(s)\n`);
     process.exitCode = 1;
     return;
   }
