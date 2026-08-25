@@ -59,7 +59,6 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     choosePublicCard,
     chooseDiscards,
     chooseHiddenCards,
-    chooseZoneCard,
     requestHiddenCards,
     requestZoneCard,
     resolveHiddenToken,
@@ -94,7 +93,6 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     choosePublicCard,
     chooseDiscards,
     chooseHiddenCards,
-    chooseZoneCard,
     isSessionValid
   }));
   const aiPort = createChoicePort(createAiResponseTimingDecorator(rawAiPort, {

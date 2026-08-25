@@ -158,7 +158,7 @@ export class Generator {
   当前 World、root 卡牌公开身份、来源 ID、原始目标 ID 与公开选择上下文。
 
   输出
-  target、selection 与重放 execution semantics 完整的 card Action；输入无效时返回 null。
+  target 与 selection 完整的 card Action；输入无效时返回 null。
 
   读取状态
   World 当前存活玩家、root 卡牌公开定义与公开选择上下文。
@@ -211,8 +211,7 @@ export class Generator {
       cardId:rootCard.definitionId,
       cardInstanceId:rootCard.id ?? rootCard.definitionId,
       targetIds,
-      selection,
-      execution:{ restoreActorHand:true, ignoreCounter:true }
+      selection
     });
   }
 

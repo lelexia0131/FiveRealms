@@ -18,7 +18,7 @@ Application、Domain、AI 与 concrete adapters。
 不得重新拥有动作、响应、濒死、判定、资源或规则公式；不得增加第二套业务 boundary 或 Game shell class。
 */
 import { RUNTIME_POLICY } from "../application/policy/RuntimePolicy.js";
-import { AI_RUNTIME_POLICY } from "../ai/Controller.js";
+import { AI_RUNTIME_POLICY, createSearchRng } from "../ai/Controller.js";
 import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js";
 import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js";
 import { createId } from "../utils/helpers.js";
@@ -33,7 +33,6 @@ import { createResponseWorkflow } from "../application/response/ResponseWorkflow
 import { MatchLogAdapter } from "../adapters/ui/MatchLogAdapter.js";
 import { canUseActiveSkill, getActiveSkill, getActiveSkillCost } from "../application/action/SkillRuntime.js";
 import { Controller } from "../ai/Controller.js";
-import { hashSearchSeed, Rng } from "../ai/Searcher/Rng.js";
 import { createSearchExecutor } from "../adapters/ai/worker/createSearchExecutor.js";
 import { CleanupManager } from "../utils/CleanupManager.js";
 import {
@@ -457,7 +456,7 @@ class MatchApplication {
     this.choiceContexts = new Map();
     this.teamRules = createTeamRuleQueries(() => this.state);
     this.cardKnowledge = createCardKnowledgeAdapter(() => this.state.players);
-    this.aiRandom = new Rng(options.aiSearchSeed ?? hashSearchSeed(this.state.gameId));
+    this.aiRandom = createSearchRng(options.aiSearchSeed ?? this.state.gameId);
     this.searchExecutor = createSearchExecutor({
       explicitExecutor: options.searchExecutor ?? null,
       forceLocal: options.forceLocalSearch === true
@@ -494,7 +493,6 @@ class MatchApplication {
       choosePublicCard: (player, cards) => this.aiController.choosePublicCard(player, cards),
       chooseDiscards: (player, count) => this.aiController.chooseDiscards(player, count),
       chooseHiddenCards: (...args) => this.aiController.chooseHiddenCards(...args),
-      chooseZoneCard: (...args) => this.aiController.chooseZoneCard(...args),
       requestHiddenCards: (...args) => this.ui.requestHiddenCards?.(...args),
       requestZoneCard: (...args) => this.ui.requestZoneCard?.(this, ...args),
       resolveHiddenToken: (...args) => this.hiddenCardSelection.resolveToken(...args),
@@ -538,7 +536,8 @@ class MatchApplication {
       isSessionValid: (gameId) => this.isSessionValid(gameId),
       hiddenSelection: this.hiddenCardSelection,
       choiceContexts: this.choiceContexts,
-      choiceCoordinator: this.choiceCoordinator
+      choiceCoordinator: this.choiceCoordinator,
+      bindCanonicalHiddenCards:(...args) => this.aiController.bindCanonicalHiddenCards(...args)
     });
     const aiObservation = createRecentAggressorsObservationAdapter();
     this.presentationPort = createGamePresentationAdapter({
@@ -782,7 +781,6 @@ class MatchApplication {
       getCardTargets: (source, card) => ActionLegality.getCardTargets(this, source, card),
       getLeverageFirstTargets: (source) => ActionLegality.getLeverageFirstTargets(this, source),
       getAssaultTargetCandidates: (source) => ActionLegality.getAssaultTargetCandidates(this, source),
-      chooseTransferCombination: (...args) => this.aiController.chooseTransferCombination(...args),
       chooseHiddenCards: (...args) => this.hiddenCardChoiceWorkflow.chooseHiddenCards(...args),
       choosePlayerZoneCard: (...args) => this.hiddenCardChoiceWorkflow.choosePlayerZoneCard(...args),
       choosePrivatePeekCards: (...args) => this.hiddenCardChoiceWorkflow.choosePrivateHandPeekCards(...args),

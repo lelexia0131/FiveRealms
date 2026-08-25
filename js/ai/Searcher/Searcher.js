@@ -17,19 +17,10 @@ Searcher 不读取 GameState 或领域隐藏事实；合法候选与全部数值
 架构约束
 不得定义合法性、transition、Final Utility 或最终偏好；只能调用 Evaluator comparator 机械维护 incumbent。
 */
-import { Evaluator } from "../Evaluator/Evaluator.js";
 import {
-  PROBABILITY_CLASSIFICATION,
-  PROBABILITY_EPSILON,
-  clampProbability,
-  sampleProbabilityWorlds,
-  totalBranchProbability
+  PROBABILITY_CLASSIFICATION
 } from "../Event/Probability/Probability.js";
 import { actionIntentKey, actionSearchKey } from "../Generator/Action.js";
-import { Generator, deduplicateSearchEquivalentActions } from "../Generator/Generator.js";
-import { Simulator, tacticResolutionScale } from "../Simulator/Simulator.js";
-import { Pattern } from "./Pattern/Pattern.js";
-import { Rng } from "./Rng.js";
 
 export class Searcher {
   /*
@@ -447,7 +438,7 @@ export class Searcher {
   只写独立候选记录和显式诊断。
 
   调用函数
-  candidateTerms/hiddenPrior、Evaluator.evaluateTransition/frontierResidual/composeEvaluator search prior。
+  materializeValueTerms、Evaluator.evaluateTransition/frontierResidual/composeSearchPrior。
 
   边界与不变量
   Searcher 只机械组装各 owner 的结果；不定义 value formula，partial candidate 不得返回。
@@ -464,7 +455,7 @@ export class Searcher {
     collectDiagnostics = false,
     searchBudget = null
   }) {
-    const terms = this.candidateTerms({
+    const terms = this.materializeValueTerms({
       beforeState,
       afterState,
       action,
@@ -478,6 +469,12 @@ export class Searcher {
     if (terms === null) return null;
     const beforeLightningOutcomeSets = simulator.buildLightningOutcomeSets(beforeState);
     const afterLightningOutcomeSets = simulator.buildLightningOutcomeSets(afterState);
+    const resolutionScale = this.getResolutionScale(
+      action,
+      beforeState,
+      player.id,
+      simulator
+    );
     const baseTerms = this.evaluator.evaluateTransition({
       action,
       player,
@@ -485,12 +482,7 @@ export class Searcher {
       afterState,
       depth,
       endOpportunityCost:0,
-      getResolutionScale:() => this.getResolutionScale(
-        action,
-        beforeState,
-        player.id,
-        simulator
-      ),
+      resolutionScale,
       beforeLightningOutcomeSets,
       afterLightningOutcomeSets
     });
@@ -522,7 +514,7 @@ export class Searcher {
       ? this.evaluator.frontierResidual(afterState, player.id)
       : null;
     const frontierValue = this.evaluator.terminalFrontierValue(frontierResidual, terminal);
-    const lightningOutcomeWorlds = action.cardId === "lightning"
+    const lightningOutcomeWorlds = this.evaluator.requiresActionLightningOutcomes(action)
       ? simulator.buildLightningOutcomeWorlds(
           beforeState,
           beforeState.players.find((entry) => entry.id === player.id) ?? player,
@@ -535,7 +527,9 @@ export class Searcher {
       state:beforeState,
       lightningOutcomeWorlds,
       searchBudget,
-      hiddenPrior:this.hiddenPrior(action, context),
+      hiddenWorlds:this.evaluator.requiresHiddenWorldPrior(action)
+        ? this.getUnknownHandEstimate(context).worlds
+        : [],
       exposeMarginal:terms.exposeMarginal,
       assaultStacksCredit:terms.assaultStacksCredit
     });
@@ -543,6 +537,12 @@ export class Searcher {
     return {
       action,
       state:afterState,
+      comparisonTerms:this.evaluator.resourceSelectionPreference?.(
+        action,
+        player,
+        beforeState,
+        afterState
+      ) ?? null,
       terminal,
       baseTerms,
       baseTransition:baseTerms.baseTransition,
@@ -737,6 +737,7 @@ export class Searcher {
     return {
       action:node.action,
       state:candidate.state,
+      comparisonTerms:node.comparisonTerms ?? null,
       terminal:candidate.terminal,
       valueScore,
       pruneScore:this.pruneScore(valueScore, candidate.prior, depth),
@@ -1684,6 +1685,7 @@ export class Searcher {
       return {
         action:candidate.action,
         state:candidate.state,
+        comparisonTerms:candidate.comparisonTerms,
         terminal:candidate.terminal,
         valueScore,
         pruneScore:this.pruneScore(valueScore, candidate.prior, 1),
@@ -2021,7 +2023,6 @@ export class Searcher {
   进入搜索前不得预采样；首次真实隐藏查询才创建一次本 calculation memo。
   */
   createCounterfactualContext(player, visibleState, rootActions) {
-    const rootActor = visibleState.players.find((entry) => entry.id === player.id);
     const rootAssaultTargets = new Set(
       rootActions
         .filter((action) => action.cardId === "assault")
@@ -2032,7 +2033,7 @@ export class Searcher {
       probabilityState:visibleState.probabilityState,
       probabilityPlayers:visibleState.players,
       unknownHandEstimate:null,
-      rootProvenance:rootActor?.exposeWeaknessStacks ?? 0,
+      rootProvenance:this.evaluator.initialTransitionProvenance(player, visibleState),
       rootAssaultTargets,
       discoveredDynamicTarget:false
     };
@@ -2043,7 +2044,7 @@ export class Searcher {
   在第一个真实隐藏牌查询点惰性创建并复用本次 calculation 的匿名手牌样本。
 
   调用方
-  hiddenPrior、evaluateSpyGapInformationValue。
+  Evaluator 声明需要 hidden Worlds 的 generic value-input orchestration。
 
   输入
   当前搜索领域 context。
@@ -2115,83 +2116,10 @@ export class Searcher {
 
   /*
   功能
-  惰性估算匿名手牌格挡对突袭候选的既有搜索先验调整。
-
-  调用方
-  Searcher.evaluateCandidate。
-
-  输入
-  候选动作与当前搜索领域 context。
-
-  输出
-  仅用于 pruneScore 的数值 prior。
-
-  读取状态
-  当前 Probability 查询输入与目标标识。
-
-  写入状态
-  getUnknownHandEstimate。
-
-  调用函数
-  无。
-
-  边界与不变量
-  系数 -1.5、样本分母与零样本行为保持不变，不进入 final value。
-  */
-  hiddenPrior(action, context) {
-    if (action.cardId !== "assault") return 0;
-    const handSamples = this.getUnknownHandEstimate(context).worlds;
-    if (!handSamples.length) return 0;
-    const targetId = action.targetIds?.[0];
-    if (!targetId) return 0;
-    return -1.5 * handSamples.filter(
-      (world) => world[targetId]?.includes("block")
-    ).length / handSamples.length;
-  }
-
-  /*
-  功能
-  判断一次模拟 transition 是否新触发了影客窥隙。
-
-  调用方
-  candidateTerms 的信息价值分支。
-
-  输入
-  before/after World 与候选动作。
-
-  输出
-  新触发时返回被观察者 ID，否则返回 null。
-
-  读取状态
-  双方 spyGapTriggeredProbability、characterId 与 lastSpyGapTargetId。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  只有本回合尚未触发的边际概率才构成新信息；重复触发返回 null。
-  */
-  newlyTriggeredSpyGapTarget(beforeState, afterState, actorId) {
-    const beforeActor = beforeState?.players?.find((player) => player.id === actorId);
-    const afterActor = afterState?.players?.find((player) => player.id === actorId);
-    if (afterActor?.characterId !== "shade-agent") return null;
-    const beforeProbability = clampProbability(beforeActor?.spyGapTriggeredProbability
-      ?? (beforeActor?.spyGapTriggered ? 1 : 0));
-    const afterProbability = clampProbability(afterActor?.spyGapTriggeredProbability
-      ?? (afterActor?.spyGapTriggered ? 1 : 0));
-    if (afterProbability - beforeProbability <= PROBABILITY_EPSILON) return null;
-    return afterActor.lastSpyGapTargetId ?? null;
-  }
-
-  /*
-  功能
   枚举一个状态的后续合法候选并返回其中最高的状态效用。
 
   调用方
-  evaluateSpyGapInformationValue。
+  evaluateAdaptiveInformationValue。
 
   输入
   World、viewer ID、复用 Simulator 与可选搜索预算。
@@ -2240,38 +2168,43 @@ export class Searcher {
 
   /*
   功能
-  用惰性匿名手牌采样估算窥隙信息的自适应选择价值。
+  编排一次由 Evaluator 声明的自适应信息价值查询。
 
   调用方
-  candidateTerms 的根层信息价值分支。
+  materializeValueTerms 的根层信息价值分支。
 
   输入
   before/after、viewer ID、复用 Simulator、领域 context 与可选搜索预算。
 
   输出
-  非负的 raw information option value；无样本或目标缺失时为零。
+  Evaluator 返回的非负 raw information option value；无样本或目标缺失时为零。
 
   读取状态
-  context 当前 Probability 查询输入、afterState 后续候选与 stateUtility。
+  context 当前 Probability 查询输入、afterState 后续候选与 Evaluator value requests。
 
   写入状态
   只写 Simulator 返回的独立世界。
 
   调用函数
-  specializeHiddenWorld、bestFollowUpUtility。
+  Evaluator.spyGapInformationTarget、specializeHiddenWorld、bestFollowUpUtility、Evaluator.spyGapInformationValue。
 
   边界与不变量
-  E[max utility] - max E[utility] 只允许非负；该值描述“知道后可改选”的增量，不是固定窥探奖励。
+  Searcher 只执行通用隐藏世界和后续候选遍历；身份识别与 E[max]-max(E) 公式只属于 Evaluator。
   */
-  evaluateSpyGapInformationValue(beforeState, afterState, action, actorId, simulator, context, searchBudget = null) {
-    const targetId = this.newlyTriggeredSpyGapTarget(beforeState, afterState, actorId);
+  evaluateAdaptiveInformationValue(beforeState, afterState, action, actorId, simulator, context, searchBudget = null) {
+    const targetId = this.evaluator.spyGapInformationTarget(
+      beforeState,
+      afterState,
+      action,
+      actorId
+    );
     if (!targetId) return 0;
     const handSamples = this.getUnknownHandEstimate(context).worlds;
     if (!handSamples.length) return 0;
     if (this.isInterrupted(searchBudget)) return null;
     const baselineBest = this.bestFollowUpUtility(afterState, actorId, simulator, searchBudget);
     if (baselineBest === null) return null;
-    let informedTotal = 0;
+    const informedBestValues = [];
     for (const world of handSamples) {
       if (this.isInterrupted(searchBudget)) return null;
       const specializedBefore = simulator.specializeHiddenWorld(beforeState, world, actorId);
@@ -2286,42 +2219,50 @@ export class Searcher {
         searchBudget
       );
       if (informedBest === null) return null;
-      informedTotal += informedBest;
+      informedBestValues.push(informedBest);
     }
-    return Math.max(0, informedTotal / handSamples.length - baselineBest);
+    return this.evaluator.spyGapInformationValue(baselineBest, informedBestValues);
   }
 
   /*
   功能
-  用真实模拟计算新增一层破势对下一次合法突袭的最大正边际。
+  遍历 Evaluator 指定的后续候选并比较 Simulator paired Worlds。
 
   调用方
-  candidateTerms 与领域边际测试。
+  materializeValueTerms 与领域边际测试。
 
   输入
-  动作前后 World、行动者 ID、复用 Simulator 与可选 SearchBudget。
+  动作前后 World、canonical Action、行动者 ID、复用 Simulator 与可选 SearchBudget。
 
   输出
-  下一次突袭的最大非负效用增量。
+  Evaluator 返回的最大非负效用增量。
 
   读取状态
-  输入 World、深层动作生成能力与 evaluator。
+  输入 Worlds、Generator、Simulator 与 Evaluator value requests。
 
   写入状态
   只写 Simulator 返回的独立反事实状态。
 
   调用函数
-  generate、Simulator.apply、evaluator.stateUtility。
+  Evaluator.exposeMarginalStackDelta/realizesExposeMarginal/positiveWorldMarginal、generate、Simulator.apply。
 
   边界与不变量
-  baseline 只回退本动作新增层数；同一合法突袭的 paired worlds 仅改变被测层数；
-  nested State Value 查询继承同一 SearchBudget。
+  Searcher 不识别具体牌；paired worlds 只改变被测层数，nested value 查询继承同一 SearchBudget。
   */
-  evaluateExposeMarginal(beforeState, afterState, actorId, simulator, searchBudget = null) {
-    const beforeActor = beforeState.players.find((entry) => entry.id === actorId);
-    const afterActor = afterState.players.find((entry) => entry.id === actorId);
-    const addedStacks = (afterActor?.exposeWeaknessStacks ?? 0)
-      - (beforeActor?.exposeWeaknessStacks ?? 0);
+  evaluateFollowUpMarginal(
+    beforeState,
+    afterState,
+    action,
+    actorId,
+    simulator,
+    searchBudget = null
+  ) {
+    const addedStacks = this.evaluator.exposeMarginalStackDelta(
+      action,
+      beforeState,
+      afterState,
+      actorId
+    );
     if (!(addedStacks > 0)) return 0;
     if (this.isInterrupted(searchBudget)) return null;
     const { baselineWorld, boostedWorld } = simulator.buildExposeMarginalWorlds(
@@ -2332,7 +2273,7 @@ export class Searcher {
     const candidates = this.generateActions(afterState, actorId, searchBudget);
     let best = 0;
     for (const candidate of candidates) {
-      if (candidate.cardId !== "assault") continue;
+      if (!this.evaluator.realizesExposeMarginal(candidate)) continue;
       if (this.isInterrupted(searchBudget)) return null;
       searchBudget?.observeSimulation();
       const base = simulator.apply(baselineWorld, candidate);
@@ -2341,7 +2282,7 @@ export class Searcher {
       const boosted = simulator.apply(boostedWorld, candidate);
       if (this.isInterrupted(searchBudget)) return null;
       searchBudget?.observeCounterfactual(2);
-      const marginal = this.evaluator.transitionDelta(
+      const marginal = this.evaluator.positiveWorldMarginal(
         base,
         boosted,
         actorId,
@@ -2355,31 +2296,30 @@ export class Searcher {
 
   /*
   功能
-  计算回合开始时已有破势层在同一突袭动作上的消费侧配对反事实边际。
+  为 Evaluator 声明的当前动作 provenance 构造并比较 paired Worlds。
 
   调用方
-  candidateTerms 与领域边际测试。
+  materializeValueTerms 与领域边际测试。
 
   输入
-  当前 World、突袭动作、行动者 ID、剩余旧层、复用 Simulator 与可选 SearchBudget。
+  当前 World、canonical Action、行动者 ID、剩余 provenance、复用 Simulator 与可选 SearchBudget。
 
   输出
-  非负旧层消费信用。
+  Evaluator 返回的非负 provenance 消费信用。
 
   读取状态
-  当前过滤状态与回合开始时已有层的来源记录。
+  当前过滤状态、Evaluator value request 与回合开始时的来源记录。
 
   写入状态
   只写两个独立克隆及 Simulator 返回状态。
 
   调用函数
-  Simulator.apply、evaluator.stateUtility。
+  Evaluator.assaultMarginalStackCount/positiveWorldMarginal、Simulator.apply。
 
   边界与不变量
-  paired worlds 只改变 exposeWeaknessStacks；负边际仍截为零；
-  nested State Value 查询继承同一 SearchBudget。
+  Searcher 不识别具体牌；paired worlds 只改变 exposeWeaknessStacks，nested value 查询继承同一 SearchBudget。
   */
-  evaluateAssaultStacksMarginal(
+  evaluateCurrentActionMarginal(
     currentState,
     action,
     actorId,
@@ -2387,12 +2327,16 @@ export class Searcher {
     simulator,
     searchBudget = null
   ) {
-    if (!(remainingRootExposeStacks > 0)) return 0;
+    const marginalStacks = this.evaluator.assaultMarginalStackCount(
+      action,
+      remainingRootExposeStacks
+    );
+    if (!(marginalStacks > 0)) return 0;
     if (this.isInterrupted(searchBudget)) return null;
     const { baselineWorld, boostedWorld } = simulator.buildAssaultStackWorlds(
       currentState,
       actorId,
-      remainingRootExposeStacks
+      marginalStacks
     );
     searchBudget?.observeSimulation();
     const boosted = simulator.apply(boostedWorld, action);
@@ -2401,60 +2345,18 @@ export class Searcher {
     const baseline = simulator.apply(baselineWorld, action);
     if (this.isInterrupted(searchBudget)) return null;
     searchBudget?.observeCounterfactual(2);
-    const marginal = this.evaluator.transitionDelta(
+    return this.evaluator.positiveWorldMarginal(
       baseline,
       boosted,
       actorId,
       simulator.buildLightningOutcomeSets(baseline),
       simulator.buildLightningOutcomeSets(boosted)
     );
-    return marginal > 0 ? marginal : 0;
   }
 
   /*
   功能
-  按真实模拟前后层数保留比例推进回合开始时已有层的来源记录。
-
-  调用方
-  candidateTerms 与 provenance 回归测试。
-
-  输入
-  before/after World、行动者 ID 与当前剩余旧层。
-
-  输出
-  下一节点的剩余旧层期望量。
-
-  读取状态
-  行动者前后 exposeWeaknessStacks。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  只由消费动作调用；新获得层数不进入回合开始时已有层的来源记录。
-  */
-  advanceRemainingRootExposeStacks(
-    beforeState,
-    afterState,
-    actorId,
-    remainingRootStacks
-  ) {
-    if (!(remainingRootStacks > 0)) return 0;
-    const beforeActor = beforeState.players.find((entry) => entry.id === actorId);
-    const afterActor = afterState.players.find((entry) => entry.id === actorId);
-    const beforeStacks = beforeActor?.exposeWeaknessStacks ?? 0;
-    const afterStacks = afterActor?.exposeWeaknessStacks ?? 0;
-    if (!(beforeStacks > 0)) return 0;
-    const retainRatio = Math.max(0, afterStacks / beforeStacks);
-    return Math.max(0, remainingRootStacks * retainRatio);
-  }
-
-  /*
-  功能
-  为单个候选产生领域边际与下一节点 provenance。
+  为单个候选物化 Evaluator 请求的领域价值输入与下一节点 provenance。
 
   调用方
   Searcher.evaluateCandidate。
@@ -2463,23 +2365,22 @@ export class Searcher {
   before/after、动作、行动者、搜索深度、回合开始时已有层的来源记录与 Simulator。
 
   输出
-  exposeMarginal、assaultStacksCredit 与 remainingProvenance。
+  exposeMarginal、assaultStacksCredit、information value 与 remainingProvenance。
 
   读取状态
-  候选动作定义及配对反事实所需过滤状态。
+  Evaluator value requests 及配对反事实所需过滤状态。
 
   写入状态
   仅通过反事实辅助函数写独立状态。
 
   调用函数
-  evaluateExposeMarginal、evaluateAssaultStacksMarginal、advanceRemainingRootExposeStacks。
+  evaluateFollowUpMarginal、evaluateCurrentActionMarginal、evaluateAdaptiveInformationValue 与 Evaluator provenance。
 
   边界与不变量
-  破势边际只作为 Search Prior 的原始状态效用差，不进入 final value；
-  窥隙信息项是有限隐藏世界采样得到的 Monte Carlo 价值估计，不得解释为 continuation 概率；
-  只在真实执行后会立即重规划的根动作估算该选择价值，避免深层反事实递归枚举隐藏世界。
+  Searcher 不读取具体牌或角色 identity；所有业务识别和价值公式都由 Evaluator 返回；
+  信息项只在根层物化，避免深层反事实递归枚举隐藏世界。
   */
-  candidateTerms({
+  materializeValueTerms({
     beforeState,
     afterState,
     action,
@@ -2490,37 +2391,33 @@ export class Searcher {
     context = null,
     searchBudget = null
   }) {
-    const exposeMarginal = action.cardId === "exposeWeakness"
-      ? this.evaluateExposeMarginal(
-          beforeState,
-          afterState,
-          actorId,
-          simulator,
-          searchBudget
-        )
-      : 0;
+    const exposeMarginal = this.evaluateFollowUpMarginal(
+      beforeState,
+      afterState,
+      action,
+      actorId,
+      simulator,
+      searchBudget
+    );
     if (exposeMarginal === null) return null;
-    const assaultStacksCredit = action.cardId === "assault"
-      ? this.evaluateAssaultStacksMarginal(
-          beforeState,
-          action,
-          actorId,
-          remainingProvenance,
-          simulator,
-          searchBudget
-        )
-      : 0;
+    const assaultStacksCredit = this.evaluateCurrentActionMarginal(
+      beforeState,
+      action,
+      actorId,
+      remainingProvenance,
+      simulator,
+      searchBudget
+    );
     if (assaultStacksCredit === null) return null;
-    const nextProvenance = action.cardId === "assault"
-      ? this.advanceRemainingRootExposeStacks(
-          beforeState,
-          afterState,
-          actorId,
-          remainingProvenance
-        )
-      : remainingProvenance;
+    const nextProvenance = this.evaluator.advanceTransitionProvenance(
+      action,
+      beforeState,
+      afterState,
+      actorId,
+      remainingProvenance
+    );
     const spyGapInformationValue = depth === 1
-      ? this.evaluateSpyGapInformationValue(
+      ? this.evaluateAdaptiveInformationValue(
           beforeState,
           afterState,
           action,
@@ -3607,187 +3504,4 @@ export class SearchBudget {
       stopReason:this.stopReason
     };
   }
-}
-
-
-
-/*
-功能
-构造主线程与 Worker 共用的 Evaluator/Simulator 语义运行组合。
-
-调用方
-Controller 与 createSearchEngine。
-
-输入
-能量规则、难度倍率与可选 SearchBudget。
-
-输出
-共享同一 Evaluator 决策能力的 evaluator 与 simulatorFactory。
-
-读取状态
-只调用注入的稳定规则函数。
-
-写入状态
-无；Simulator 实例只在 factory 被调用时创建。
-
-调用函数
-Evaluator、Simulator。
-
-边界与不变量
-主线程和 Worker 必须通过此处获得相同决策注入；不得在调用方复制第二套 Simulator 语义图。
-*/
-export function createRuntimeComposition({
-  world = null,
-  getMaxEnergy: getMaxEnergyForPlayer = null,
-  getTurnEnergyBreakdown: getTurnEnergyBreakdownForPlayer = null,
-  getDifficultyMultiplier = () => 1
-} = {}) {
-  const evaluator = new Evaluator({
-    world,
-    getMaxEnergy:getMaxEnergyForPlayer,
-    getTurnEnergyBreakdown:getTurnEnergyBreakdownForPlayer,
-    getDifficultyMultiplier
-  });
-  /*
-  功能
-  为一次搜索或主线程同步价值查询创建注入同一 Evaluator 决策的 Simulator。
-
-  调用方
-  Searcher、Controller runtime boundary。
-
-  输入
-  canonical World 与可选 SearchBudget runtime。
-
-  输出
-  只修改独立 World 的 Simulator。
-
-  读取状态
-  闭包中的 Evaluator 与显式 SearchBudget。
-
-  写入状态
-  仅新 Simulator 实例内部状态。
-
-  调用函数
-  Simulator、Evaluator response/resource decision methods。
-
-  边界与不变量
-  所有环境共用完全相同的决策注入；Evaluator 不保存或反向调用 Simulator。
-  */
-  const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
-    searchBudget:runtime.searchBudget ?? null,
-    decideCounter:(...args) => evaluator.decidePlanningCounter(...args),
-    decideLeverageAssault:(...args) => evaluator.decideLeverageAssault(...args),
-    decideBlock:(...args) => evaluator.decidePlanningBlock(...args),
-    decideGuardianAid:(...args) => evaluator.decidePlanningGuardianAid(...args),
-    decideDyingRescue:(...args) => evaluator.decidePlanningDyingRescue(...args),
-    resolveDiscardCandidates:(...args) => evaluator.resolveDiscardCandidates(...args)
-  });
-  return { evaluator, simulatorFactory };
-}
-
-/*
-功能
-从 canonical search request 构造唯一 Searcher 运行图。
-
-调用方
-executeSearchRequest 与搜索 composition 测试。
-
-输入
-Search request、已恢复 Rng 与 Worker-safe runtime control。
-
-输出
-共享同一 Evaluator、Simulator、Generator、Pattern 与 Searcher 的运行图。
-
-读取状态
-request.world 与 request.searchConfig。
-
-写入状态
-无；Search 执行时才写实例诊断。
-
-调用函数
-Domain TeamRules、createRuntimeComposition、Generator、Pattern 与 SearchBudget。
-
-边界与不变量
-这是 main/local/Worker 唯一 composition；所有随机只来自传入 Rng，不读取 Game 或 main-thread mutable state。
-*/
-export function createSearchEngine(request, rng, runtimeControl = {}) {
-  const rootWorld = request.world;
-  const config = request.searchConfig;
-  const { evaluator, simulatorFactory } = createRuntimeComposition({
-    world:rootWorld,
-    getDifficultyMultiplier:() => config.difficultyMultiplier
-  });
-  const generator = new Generator();
-  const searcher = new Searcher({
-    evaluator,
-    patternMatcher:new Pattern(),
-    getResolutionScale:tacticResolutionScale,
-    config,
-    simulatorFactory,
-    searchBudgetFactory:() => new SearchBudget({
-      timeBudget:config.timeBudgetMs,
-      nodeBudget:config.nodeBudget,
-      now:typeof runtimeControl.now === "function" ? runtimeControl.now : null
-    }),
-    deduplicateActions:deduplicateSearchEquivalentActions,
-    generateActions:(...args) => generator.generate(...args),
-    sampleUnknownHands:(query) => sampleProbabilityWorlds({
-      ...query,
-      random:() => rng.next()
-    }),
-    yieldControl:typeof runtimeControl.yieldControl === "function"
-      ? runtimeControl.yieldControl
-      : async () => true
-  });
-  return { searcher, rng };
-}
-
-/*
-功能
-恢复请求 RNG 并通过唯一 Searcher composition 执行一次搜索。
-
-调用方
-WorkerSearchRuntime 的 local 与 Dedicated Worker dispatch。
-
-输入
-Canonical request 与 Worker-safe runtime control。
-
-输出
-Canonical Action、计划、stats、stop reason、RNG continuation 与取消标记。
-
-读取状态
-request 的 World、Action、config 与 RNG snapshot。
-
-写入状态
-只写本次 Searcher、Simulator 与 Rng 实例。
-
-调用函数
-Rng.restore、createSearchEngine、Searcher.search。
-
-边界与不变量
-不创建 transport DTO；返回值直接引用 canonical Action，Worker 只补 request identity 并序列化。
-*/
-export async function executeSearchRequest(request, runtimeControl = {}) {
-  const rng = Rng.restore(request.rng);
-  const actor = request.world.players.find((player) => player.id === request.actorId) ?? null;
-  if (!actor) throw new Error(`Worker World 缺少 actor：${request.actorId}`);
-  const engine = createSearchEngine(request, rng, runtimeControl);
-  const action = await engine.searcher.search(
-    actor,
-    request.world,
-    request.rootActions,
-    {
-      gameId:request.gameId,
-      rootCandidateCount:request.rootActions.length
-    }
-  );
-  const cancelled = engine.searcher.lastSearchStats?.stopReason === "CANCELLED";
-  return {
-    action:cancelled ? null : action,
-    plannedActions:cancelled ? [] : engine.searcher.lastSequence,
-    stats:engine.searcher.lastSearchStats,
-    searchStopReason:engine.searcher.lastSearchStats?.stopReason ?? null,
-    rngAfter:rng.snapshot(),
-    cancelled
-  };
 }

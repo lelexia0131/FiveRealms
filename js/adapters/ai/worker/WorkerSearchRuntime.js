@@ -17,8 +17,10 @@ public Searcher facade。
 架构约束
 不得 import composition、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
 */
-import { executeSearchRequest } from "../../../ai/Searcher/Searcher.js";
-import { createWorkerSearchOutcome } from "../../../ai/Controller.js";
+import {
+  createWorkerSearchOutcome,
+  executeSearchRequest
+} from "../../../ai/Controller.js";
 
 /*
 功能

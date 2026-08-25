@@ -12,7 +12,7 @@ Generator、Searcher、Pattern、Controller、Worker search runtime 与 TurnWork
 只读传入的普通值并创建不可变 Action；不读取或修改 World/GameState。
 
 信息边界
-只保存 Generator 已确认的 actor、卡牌/技能、目标、选择与局部执行语义，不查询隐藏信息。
+只保存 Generator 已确认的 actor、卡牌/技能、目标与选择，不查询隐藏信息。
 
 架构约束
 不得创建 descriptor/search/simulation action 变体；生产模块必须直接传递和消费同一个 Action。
@@ -59,45 +59,13 @@ function freezeData(value) {
 
 /*
 功能
-规范 Action 中真正属于执行意图的局部语义。
-
-调用方
-createAction。
-
-输入
-root 配对反事实的资源恢复与跳过反制标记。
-
-输出
-冻结的 execution intent 数据。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-freezeData。
-
-边界与不变量
-不得保存概率、条件分支、次数槽或任何 Simulator preparation 结果。
-*/
-function normalizeExecution(execution = null) {
-  return freezeData({
-    restoreActorHand:Boolean(execution?.restoreActorHand),
-    ignoreCounter:Boolean(execution?.ignoreCounter)
-  });
-}
-
-/*
-功能
 创建所有生产模块共同消费的 canonical Action。
 
 调用方
 Generator 与安全终止路径。
 
 输入
-动作类型、actor ID、卡牌/技能身份、完整目标 ID、selection、能量费用与 execution intent。
+动作类型、actor ID、卡牌/技能身份、完整目标 ID、selection 与能量费用。
 
 输出
 冻结且 structured-clone-safe 的 Action。
@@ -109,7 +77,7 @@ Generator 与安全终止路径。
 无。
 
 调用函数
-normalizeExecution、freezeData。
+freezeData。
 
 边界与不变量
 card 需要 definition 与 instance identity；skill 需要 skillId；end 不携带目标或选择；
@@ -123,8 +91,7 @@ export function createAction({
   skillId = null,
   targetIds = [],
   selection = null,
-  energyCost = null,
-  execution = null
+  energyCost = null
 }) {
   if (!ACTION_TYPES.has(type)) throw new TypeError(`未知 Action type：${type}`);
   if (typeof actorId !== "string" || !actorId) throw new TypeError("Action 缺少 actorId");
@@ -145,14 +112,13 @@ export function createAction({
     selection:type === "end" ? null : freezeData(selection),
     energyCost:type === "skill" && Number.isFinite(Number(energyCost))
       ? Number(energyCost)
-      : null,
-    execution:normalizeExecution(type === "end" ? null : execution)
+      : null
   });
 }
 
 /*
 功能
-为 Action 或 Pattern step 生成不含实体 instance 和 execution 的稳定意图键。
+为 Action 或 Pattern step 生成不含实体 instance 的稳定意图键。
 
 调用方
 Pattern 与普通搜索调度。
@@ -173,7 +139,7 @@ canonical Action 或静态 Pattern step。
 JSON.stringify。
 
 边界与不变量
-Pattern 只比较意图；不得把 execution 概率或实体手牌顺序混入意图身份。
+Pattern 只比较意图；不得把实体手牌顺序混入意图身份。
 */
 export function actionIntentKey(action) {
   const type = action?.type ?? null;
@@ -191,7 +157,7 @@ export function actionIntentKey(action) {
 
 /*
 功能
-为搜索去重生成忽略 card instance、保留完整执行语义的稳定键。
+为搜索去重生成忽略 card instance、保留完整意图语义的稳定键。
 
 调用方
 Generator 与 Searcher 的 secondary scheduling。
@@ -212,7 +178,7 @@ Action 全部搜索语义。
 JSON.stringify。
 
 边界与不变量
-相同定义的物理卡实例可共享搜索代表；目标、selection、费用和 execution 不得丢失。
+相同定义的物理卡实例可共享搜索代表；目标、selection 与费用不得丢失。
 */
 export function actionSearchKey(action) {
   return JSON.stringify({
@@ -222,8 +188,7 @@ export function actionSearchKey(action) {
     skillId:action.skillId,
     targetIds:action.targetIds,
     selection:action.selection,
-    energyCost:action.energyCost,
-    execution:action.execution
+    energyCost:action.energyCost
   });
 }
 
@@ -250,7 +215,7 @@ Action 普通数据。
 JSON.stringify。
 
 边界与不变量
-比较包含 card instance 与 execution；不得进行部分 selection 匹配或重新生成合法动作。
+比较包含 card instance；不得进行部分 selection 匹配或重新生成合法动作。
 */
 export function sameAction(left, right) {
   return Boolean(left && right) && JSON.stringify(left) === JSON.stringify(right);

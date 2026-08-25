@@ -42,6 +42,7 @@ import {
   availableBranchesFromState,
   buildLightningHitDistribution,
   buildRadarJudgmentSequenceProbabilities,
+  cardAvailability,
   clampProbability,
   conditionProbability,
   currentProbabilitySignature,
@@ -92,16 +93,17 @@ class SimulatorCore {
   只读输入 World。
 
   写入状态
-  实例 initial、搜索预算、只读 willingness capabilities、概率摘要初始化结果与 root 递归守卫。
+  搜索预算、只读 willingness capabilities、概率摘要缓存与 root 递归守卫。
 
   调用函数
-  cloneWorld、各 Simulation 组件初始化器。
+  无。
 
   边界与不变量
   构造不得回读 GameState；Evaluator capability 只返回 boolean 且必须全部显式注入；
-  initial 与输入及其他实例不共享可变对象。
+  构造阶段不得复制 World；所有完整 World copy 必须由 clone 显式创建并计数。
   */
   constructor(visibleState, options = {}) {
+    void visibleState;
     this.searchBudget = options.searchBudget ?? null;
     const decisionCapabilities = [
       "decideCounter",
@@ -123,11 +125,7 @@ class SimulatorCore {
     this.selectGuardianAidDiscard = (player, cards, context) => (
       this.resolveDiscardCandidates(player, cards, 1, context)[0] ?? null
     );
-    this.checkpointSearchWork();
-    this.searchBudget?.observeClone?.();
-    this.initial = cloneWorld(visibleState);
     this.lightningOutcomeCache = new WeakMap();
-    this.initializeMomentumBranches(this.initial);
     // root 结算模拟守卫：目标级 root 的 apply 群伤循环会再次请求 counterDecision，避免递归。
     this._simulatingRootResolution = false;
   }
@@ -370,7 +368,7 @@ class SimulatorCore {
   Searcher、Simulator root outcome builder、Simulator/Evaluator composition 与组件内反事实分支：创建兄弟世界。
 
   输入
-  可选 World；缺省为实例 initial。内部 apply 可声明 checkpoint 已在同一原子边界完成。
+  必填 World。内部 apply 可声明 checkpoint 已在同一原子边界完成。
 
   输出
   完成必要摘要同步的独立可变 World。
@@ -385,10 +383,11 @@ class SimulatorCore {
   checkpointSearchWork、SearchBudget.observeClone、cloneWorld、组件初始化器与 syncActiveSkillCosts。
 
   边界与不变量
-  默认必须在 structuredClone 前观察同一个 SearchBudget；不得修改输入或 initial；
+  默认必须在 structuredClone 前观察同一个 SearchBudget；不得修改输入；
   每个概率分支和兄弟节点必须拥有独立可变状态。
   */
-  clone(state = this.initial, options = {}) {
+  clone(state, options = {}) {
+    if (!state || typeof state !== "object") throw new TypeError("Simulator.clone 需要 World");
     if (options.checkpoint !== false) this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
     const cloned = cloneWorld(state);
@@ -521,8 +520,7 @@ class SimulatorCore {
   */
   buildTransferredLightningWorld(state, previousHolder, receiver) {
     if (!state || !previousHolder || !receiver) return null;
-    this.checkpointSearchWork();
-    const world = structuredClone(state);
+    const world = this.clone(state);
     const previous = world.players.find((player) => player.id === previousHolder.id);
     const holder = world.players.find((player) => player.id === receiver.id);
     if (!previous || !holder) return null;
@@ -575,7 +573,10 @@ class SimulatorCore {
       canBlock:false,
       excludedGuardianIds:new Set([responderId])
     });
-    this.applyDamage(aidWorld, aidSource, aidTarget, amount, { canBlock:false });
+    this.applyDamage(aidWorld, aidSource, aidTarget, amount, {
+      canBlock:false,
+      forcedGuardianId:responderId
+    });
     return { stayWorld, aidWorld };
   }
 
@@ -647,7 +648,10 @@ class SimulatorCore {
     try {
       return {
         baseWorld,
-        resolvedWorld:this.apply(baseWorld, rootAction),
+        resolvedWorld:this.apply(baseWorld, rootAction, {
+          restoreActorHand:true,
+          ignoreCounter:true
+        }),
         resolvesAtStay:(counterDepth % 2) === 0
       };
     } finally {
@@ -715,50 +719,6 @@ class SimulatorCore {
 
   /*
   功能
-  为已枚举的资源候选分别构造强制 Destroy/Plunder transition World。
-
-  调用方
-  Controller 的真实资源实体选择边界。
-
-  输入
-  根 World、actor/owner ID、purpose 与 Evaluator 已建立的资源候选。
-
-  输出
-  每个候选的 after World 与实际应用概率。
-
-  读取状态
-  公开/known/anonymous 资源身份和候选描述。
-
-  写入状态
-  只写每个候选独立 clone。
-
-  调用函数
-  clone、applyForcedResourceSelection。
-
-  边界与不变量
-  每个候选恰好一次 clone 和强制 transition；本方法不生成候选、不评分也不决定胜者。
-  */
-  buildResourceSelectionWorlds(world, actorId, ownerId, purpose, candidates) {
-    return candidates.map((candidate) => {
-      const after = this.clone(world);
-      const actor = after.players.find((player) => player.id === actorId);
-      const owner = after.players.find((player) => player.id === ownerId);
-      return {
-        candidate,
-        after,
-        appliedProbability:this.applyForcedResourceSelection(
-          after,
-          actor,
-          owner,
-          purpose,
-          candidate
-        )
-      };
-    });
-  }
-
-  /*
-  功能
   把一个合法匿名手牌样本专化为敌方身份确定的独立 World。
 
   调用方
@@ -774,16 +734,16 @@ class SimulatorCore {
   根 World 的公开身份、合法 knownCards 与样本中的牌定义。
 
   写入状态
-  只写 structuredClone 及最终 clone。
+  只写一次完整 World clone。
 
   调用函数
-  mutateProbability、clone。
+  clone、mutateProbability。
 
   边界与不变量
   不回读真实未知手牌；viewer 手牌保持原样；确定 known 占位按原顺序保留。
   */
   specializeHiddenWorld(beforeState, hiddenWorld, actorId) {
-    const specialized = structuredClone(beforeState);
+    const specialized = this.clone(beforeState);
     for (const player of specialized.players ?? []) {
       if (player.id === actorId) continue;
       const definitions = hiddenWorld?.[player.id] ?? [];
@@ -806,7 +766,7 @@ class SimulatorCore {
       player.hand = undefined;
       player.handCount = definitions.length;
     }
-    return this.clone(specialized);
+    return specialized;
   }
 
   /*
@@ -826,16 +786,16 @@ class SimulatorCore {
   行动者当前 exposeWeaknessStacks。
 
   写入状态
-  只写 baseline structuredClone。
+  只写 baseline clone。
 
   调用函数
-  structuredClone。
+  clone。
 
   边界与不变量
   baseline 只回退本动作新增层数；boosted 直接复用只读 after World。
   */
   buildExposeMarginalWorlds(afterState, actorId, addedStacks) {
-    const baselineWorld = structuredClone(afterState);
+    const baselineWorld = this.clone(afterState);
     const actor = baselineWorld.players.find((entry) => entry.id === actorId);
     actor.exposeWeaknessStacks = Math.max(
       0,
@@ -861,17 +821,17 @@ class SimulatorCore {
   当前 canonical World。
 
   写入状态
-  只写两个独立 structuredClone 的 exposeWeaknessStacks。
+  只写两个独立 clone 的 exposeWeaknessStacks。
 
   调用函数
-  structuredClone。
+  clone。
 
   边界与不变量
   两侧除行动者破势层分别为零/旧层数外完全一致。
   */
   buildAssaultStackWorlds(currentState, actorId, remainingRootExposeStacks) {
-    const boostedWorld = structuredClone(currentState);
-    const baselineWorld = structuredClone(currentState);
+    const boostedWorld = this.clone(currentState);
+    const baselineWorld = this.clone(currentState);
     boostedWorld.players.find(
       (entry) => entry.id === actorId
     ).exposeWeaknessStacks = remainingRootExposeStacks;
@@ -1030,42 +990,13 @@ class SimulatorCore {
 
   /*
   功能
-  读取一张抽象牌当前剩余可用概率。
-
-  调用方
-  Damage、Resource、Response 与 Simulator 编排：读取已过滤卡牌仍可消费的概率。
-
-  输入
-  带当前 availability 标量或确定可用身份的卡牌摘要。
-
-  输出
-  卡牌当前可用概率；缺失标量时为一。
-
-  读取状态
-  只读卡牌 availability 状态。
-
-  写入状态
-  无。
-
-  调用函数
-  clampProbability。
-
-  边界与不变量
-  这是三个 Simulator sibling 共用的只读 primitive；不创建或保存 availability branch hierarchy。
-  */
-  cardAvailability(card) {
-    return clampProbability(card?.availability ?? 1);
-  }
-
-  /*
-  功能
   按动作类型把单个抽象动作分派给已组合的 Simulation 组件并推进独立世界。
 
   调用方
   Searcher、Searcher counterfactual terms 与有界 simulation query：推进一个已经合法枚举的抽象动作。
 
   输入
-  动作前 World、抽象动作与 viewer ID；动作已经由 Generator/Policy 选择。
+  动作前 World、抽象动作与可选 root replay 控制；动作已经由 Generator/Policy 选择。
 
   输出
   独立的动作后 World；输入状态保持不变。
@@ -1083,7 +1014,7 @@ class SimulatorCore {
   必须先通过当前 SearchBudget checkpoint 再 clone、支付和结算；卡牌级反制容量只消费一次，
   响应顺序和随机调用顺序不得改变；中断 signal 由 Searcher preparation boundary 统一收束。
   */
-  apply(state, action) {
+  apply(state, action, controls = {}) {
     this.checkpointSearchWork();
     const next = this.clone(state, { checkpoint:false });
     if (next.playPhaseEnded) return next;
@@ -1127,7 +1058,8 @@ class SimulatorCore {
       actor,
       action,
       card,
-      heldCard
+      heldCard,
+      controls
     );
     if (heldCard) {
       heldCard.availability = Math.max(
@@ -1141,14 +1073,14 @@ class SimulatorCore {
     const executionProbability = this.eventProbability(cardEventWorlds);
     // restoreActorHand：root 效果估值专用。当前状态中 root 卡牌已经打出（资源已沉没），
     // 结算模拟时把这张卡的打出成本还原再扣，使资源账目净变化为 0，只体现 root 效果价值。
-    const handRestore = action.execution?.restoreActorHand
+    const handRestore = controls.restoreActorHand
       && executionProbability > PROBABILITY_EPSILON ? 1 : 0;
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - executionProbability + handRestore);
     if (executionProbability <= 0) return next;
     // card-scope 的取消概率与容量消费必须使用同一份 responder 评估；两者之间没有
     // 状态变化，因此重复计算 counterDecision 只会增加开销，不会提供新信息。
     const cardScopeCounterEvaluation = card.category === "tactic"
-      && card.counterable !== false && !action.execution?.ignoreCounter
+      && card.counterable !== false && !controls.ignoreCounter
       && card.counterScope !== "target"
       ? this.evaluateCardScopeCounterResponses(
         next,
@@ -1184,7 +1116,7 @@ class SimulatorCore {
     // 这里兑现该评估的边际取消世界，使同一张反制不能既取消当前战术，又保留在
     // 当前 Counter query / sealCounterProbability 中成为未来可用容量。
     if (card.category === "tactic" && card.counterable !== false
-      && !action.execution?.ignoreCounter && card.counterScope !== "target") {
+      && !controls.ignoreCounter && card.counterScope !== "target") {
       this.consumeCountersForCardScope(
         next,
         actor,
@@ -1528,7 +1460,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
         || guardian.battleTeam !== target.battleTeam) continue;
       const oldUsedProbability = clampProbability(guardian.guardianAidUsedProbability
         ?? (guardian.guardianAidUsed ? 1 : 0));
-      const handAvailability = Math.min(1, Math.max(0, Number(guardian.handCount) || 0));
+      const handAvailability = clampProbability(guardian.handCount);
       const triggerProbability = remainingTriggerProbability * (1 - oldUsedProbability) * handAvailability;
       if (triggerProbability <= PROBABILITY_EPSILON) continue;
       const paymentContext = this.hasCompleteCertainHand(guardian)
@@ -1734,7 +1666,8 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       }
       const response = this.consumeBlockResponseWorlds(state, target, baseWorlds, {
         preJudgmentBlockState,
-        judgmentBlockCards
+        judgmentBlockCards,
+        incomingDamage:amount
       });
       attackOutcomeWorlds = response.outcomeWorlds;
       blockedByCardChance = eventProbability > 0
@@ -1765,11 +1698,13 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
         [eventWorlds, requiredPartition],
         "Damage.applyDamage:block"
       ).map((branch) => ({ ...branch, responseAllowed:true }));
-      const response = this.consumeBlockResponseWorlds(state, target, responseWorlds);
+      const response = this.consumeBlockResponseWorlds(state, target, responseWorlds, {
+        incomingDamage:amount
+      });
       blockedByCardChance = eventProbability > 0
         ? Math.min(1, response.blockedProbability / eventProbability)
         : 0;
-      passChance = Math.max(0, Math.min(1, 1 - blockedByCardChance));
+      passChance = clampProbability(1 - blockedByCardChance);
     }
     let damagePassProbability = eventProbability * passChance;
     if (attackOutcomeWorlds) {
@@ -2184,7 +2119,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       const explicitExpected = [
         ...(Array.isArray(actor.hand) ? actor.hand : []),
         ...(Array.isArray(actor.knownCards) ? actor.knownCards : [])
-      ].reduce((sum, card) => sum + this.cardAvailability(card), 0);
+      ].reduce((sum, card) => sum + cardAvailability(card), 0);
       const anonymousCapacity = Math.max(
         0,
         Math.max(0, Number(actor.handCount) || 0) - explicitExpected
@@ -2267,7 +2202,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
   transfer 最多枚举三项距离装备变量，其余动作最多两项；当前规则下输出上界为八个条件世界，
   不写 Action、World 或第二种状态表示。root 配对反事实没有当前手牌实体，但由真实语义标记确认成本已沉没。
   */
-  buildCardExecutionWorlds(state, actor, action, card, heldCard) {
+  buildCardExecutionWorlds(state, actor, action, card, heldCard, controls = {}) {
     const targets = (action.targetIds ?? [])
       .map((id) => state.players.find((player) => player.id === id))
       .filter(Boolean);
@@ -2316,14 +2251,14 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
         range:card.effectRange
       });
     }
-    const cardAvailability = action.execution?.restoreActorHand && !heldCard
+    const availabilityBranches = controls.restoreActorHand && !heldCard
       ? [{ probability:1, conditions:{}, available:true }]
       : getAvailabilityStateBranches(
           heldCard,
           heldCard ? heldCard.availability ?? 1 : 0
         );
     const joined = this.intersectProbabilityWork(
-      [conditionBranches, cardAvailability],
+      [conditionBranches, availabilityBranches],
       "Simulator.buildCardExecutionWorlds:conditions"
     );
     return this.projectProbabilityWork(joined, (branch) => ({
@@ -2447,11 +2382,11 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
           const spent = Math.min(eventProbability, response);
           const knownBefore = (Array.isArray(player.hand) ? player.hand : [])
             .filter((entry) => entry.definitionId === "assault")
-            .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+            .reduce((sum, entry) => sum + cardAvailability(entry), 0);
           this.consumeKnownCardsFromHand(next, player, "assault", spent);
           const knownAfter = (Array.isArray(player.hand) ? player.hand : [])
             .filter((entry) => entry.definitionId === "assault")
-            .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+            .reduce((sum, entry) => sum + cardAvailability(entry), 0);
           const anonymousSpent = Math.max(0, spent - (knownBefore - knownAfter));
           if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(next.probabilityState, {
             type:"REMOVE",
@@ -2508,11 +2443,11 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
         );
         const knownBefore = (Array.isArray(first.hand) ? first.hand : [])
           .filter((entry) => entry.definitionId === "assault")
-          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+          .reduce((sum, entry) => sum + cardAvailability(entry), 0);
         this.consumeKnownCardsFromHand(next, first, "assault", assaultSpent);
         const knownAfter = (Array.isArray(first.hand) ? first.hand : [])
           .filter((entry) => entry.definitionId === "assault")
-          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+          .reduce((sum, entry) => sum + cardAvailability(entry), 0);
         const anonymousSpent = Math.max(0, assaultSpent - (knownBefore - knownAfter));
         if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(next.probabilityState, {
           type:"REMOVE",
@@ -2807,18 +2742,18 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
     }), "Damage.applyDuel:target-remaining");
     const actorKnownBefore = (Array.isArray(actor.hand) ? actor.hand : [])
       .filter((entry) => entry.definitionId === "assault")
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+      .reduce((sum, entry) => sum + cardAvailability(entry), 0);
     const targetKnownBefore = (Array.isArray(target.hand) ? target.hand : [])
       .filter((entry) => entry.definitionId === "assault")
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+      .reduce((sum, entry) => sum + cardAvailability(entry), 0);
     this.consumeKnownCardsFromHand(state, actor, "assault", expectedActorSpent);
     this.consumeKnownCardsFromHand(state, target, "assault", expectedTargetSpent);
     const actorKnownAfter = (Array.isArray(actor.hand) ? actor.hand : [])
       .filter((entry) => entry.definitionId === "assault")
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+      .reduce((sum, entry) => sum + cardAvailability(entry), 0);
     const targetKnownAfter = (Array.isArray(target.hand) ? target.hand : [])
       .filter((entry) => entry.definitionId === "assault")
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+      .reduce((sum, entry) => sum + cardAvailability(entry), 0);
     const actorAnonymousSpent = Math.max(
       0, expectedActorSpent - (actorKnownBefore - actorKnownAfter)
     );
@@ -3605,7 +3540,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
     const triggerProbability = this.eventProbability(triggerWorlds);
     if (triggerProbability <= PROBABILITY_EPSILON) return 0;
     const knownOccupancy = (target.knownCards ?? []).reduce(
-      (sum, entry) => sum + this.cardAvailability(entry),
+      (sum, entry) => sum + cardAvailability(entry),
       0
     );
     const revealSlots = Math.min(

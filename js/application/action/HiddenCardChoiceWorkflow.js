@@ -146,10 +146,16 @@ export function createHiddenCardChoiceWorkflow(runtime) {
       return [];
     }
     if (selection?.selectionKind === "known" && selection.cardId) {
+      if (runtime.bindCanonicalHiddenCards) {
+        return runtime.bindCanonicalHiddenCards(owner, selection, maximum, excludedCardIds);
+      }
       const card = eligibleCards.find((entry) => entry.id === selection.cardId) ?? null;
       return card ? [card] : [];
     }
     if (selection?.selectionKind === "unknown") {
+      if (runtime.bindCanonicalHiddenCards) {
+        return runtime.bindCanonicalHiddenCards(owner, selection, maximum, excludedCardIds);
+      }
       const knownCardIds = new Set(selection.knownCardIds ?? []);
       const card = eligibleCards.find((entry) => !knownCardIds.has(entry.id)) ?? null;
       return card ? [card] : [];

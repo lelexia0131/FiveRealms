@@ -1,8 +1,8 @@
 # FiveRealms AI Engine 2.0
 
-当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE；Step 5.7 Final AI Architecture Collapse 已进入最终工作树。
-架构结论：AI core 已收敛为 18 个 JavaScript 文件；Search、Controller、Worker、Generator 与 Step 5.6 core residue 全部关闭。
-本轮整理基线：`87d1819 STEP 5.6C-A — Simulator Sibling Closure`
+当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE；Final Semantic Authority Closure COMPLETE，AI architecture FROZEN。
+架构结论：AI core 已收敛为 18 个 JavaScript 文件；runtime authority、Search、Controller、Worker、Generator 与 Step 5.6 core residue 全部关闭。
+本轮语义闭合基线：`6d9fcb8 STEP 5.7 — REMOTE VERIFIED`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 最新校验日期：2026-08-25
 范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；下方 Current Architecture Snapshot 与第 36 节描述当前物理架构，第 2 至 35 节保留历史阶段审计与落地证据，第 33 节的语义事实按第 36 节的最终 owner 路径解释。
@@ -29,8 +29,8 @@
 | Real Game boundary | `Controller.js` | GameState → canonical World/Action request；接受 chosen Action 并重绑当前真实实体。 |
 | Legal Action | `Generator/Generator.js`、`Generator/Action.js` | Generator 只枚举合法 canonical Action；Action 是唯一动作 contract。 |
 | Search | `Searcher/Searcher.js` | 唯一拥有 traversal、budget、coverage、fallback、incumbent 与 comparison orchestration。 |
-| Search RNG / scheduling | `Searcher/Rng.js`、`Searcher/Pattern/Pattern.js` | Rng 是唯一搜索随机源；Pattern 只提出探索调度，不决定 winner。 |
-| Knowledge / uncertainty | `Event/Fact.js`、`Event/Probability/Probability.js` | Fact 只拥有确定知识；Probability 通过 internal `Branch.js` / `Pool.js` 拥有不确定性。 |
+| Search RNG / scheduling | `Searcher/Rng.js`、`Searcher/Pattern.js` | Rng 是唯一搜索随机源；Pattern 只提出探索调度，不决定 winner。 |
+| Knowledge / uncertainty | `Event/Fact.js`、`Event/Probability/Probability.js` | Fact 只拥有确定知识；Probability 通过 internal `Branch.js` / `Pool.js` 拥有不确定性。`Branch.js` 唯一定义 `clampProbability` / `cardAvailability`，由 facade 重导出。 |
 | World / transition | `Simulator/World.js`、`Simulator/Simulator.js` | World 是唯一 canonical state；Simulator 是唯一 transition 编排器。 |
 | Transition internals | `Simulator/Damage.js`、`Resource.js`、`Response.js` | 三个 internal sibling 互不依赖，只由 Simulator 编排。 |
 | Utility / comparison | `Evaluator/Evaluator.js` | 唯一拥有 aggregation、willingness、Final Utility 与 candidate comparison。 |
@@ -52,9 +52,9 @@ REAL GAME
   -> REAL GAME
 ```
 
-`Controller` 与 Worker search 都调用 `Searcher.js` 导出的 `createRuntimeComposition`，因此 main-thread 同步决策与 Worker search 不再各自维护第二套 Evaluator/Simulator semantic graph。Worker 只从公开 `Controller.js` 和 `Searcher.js` 取得 serialization/outcome 与 search execution 能力。
+`Controller.js` 公开 `createRuntimeComposition`、`createSearchEngine` 与 `executeSearchRequest`，因此 main-thread 同步决策与 Worker search 不再各自维护第二套 Evaluator/Simulator semantic graph。Worker 只从公开 `Controller.js` 取得 serialization/outcome 与 search execution 能力；application/composition 不直接构造 internal `Rng`。
 
-运行时方向已经固定为 `Simulator -> completed/alternative Worlds -> Evaluator`。Evaluator 不 import、构造、保存或回调 Simulator；StateValue/CardValue 不反调 Evaluator。counterfactual 的 World clone/mutation/action/damage construction 全部属于 Simulator，准备完成的 World comparison 属于 Evaluator，Searcher 只组织调用和预算。
+运行时方向已经固定为 `Simulator -> completed/alternative Worlds -> Evaluator`。Evaluator 不 import、构造、保存、接收或回调 Simulator/transition capability；StateValue/CardValue 不反调 Evaluator。counterfactual 的 World clone/mutation/action/damage construction 全部属于 Simulator，准备完成的 World comparison 属于 Evaluator，Searcher 只组织调用和预算。Controller 的 response `DecisionContext` 只包含 canonical World/player、预物化 paired/outcome Worlds、普通数据与标量，不含 lazy query 或 service locator。
 
 正式 deterministic legality、目标、距离、伤害、响应与状态判定仍以 `js/domain/rules/**` 与 `js/domain/definitions/**` 为 Repository authority；AI core 没有第二套 Game Rule authority。正式搜索不得读取敌方未知手牌的 `definitionId`，unknown identity 只通过 Probability/World 的合法条件世界表达。
 
@@ -68,7 +68,7 @@ REAL GAME
 | Event | `Event/Fact.js` 是唯一 deterministic fact authority；`Event/Probability/Probability.js` 是唯一 probability facade；`Branch.js` 与 `Pool.js` 是 facade 私有且互不依赖的实现。 |
 | Simulator | `Simulator/World.js` 是唯一 canonical World contract；`Simulator/Simulator.js` 是唯一 Action→World transition facade；`Damage.js`、`Resource.js`、`Response.js` 是互不静态依赖的内部 transition owner。 |
 | Evaluator | `Evaluator/Evaluator.js` 是唯一 aggregation、willingness、final utility 与 comparison facade；`StateValue.js` 只拥有 non-card state primitives，`CardValue.js` 只拥有 card/equipment/resource primitives，二者互不依赖。 |
-| Search / Runtime | `search/**`、`Searcher/Pattern/Pattern.js` 与 `policy/AiRuntimePolicy.js` 保留既有算法和协议，等待 Step 5.7；本轮只改最终 core 的路径/API wiring。 |
+| Search / Runtime | `search/**`、`Searcher/Pattern.js` 与 `policy/AiRuntimePolicy.js` 保留既有算法和协议，等待 Step 5.7；本轮只改最终 core 的路径/API wiring。 |
 | Repository Domain Rules | `js/domain/rules/**` 是 Game Rule Authority；`js/domain/definitions/**` 是固定事实 Authority；AI 通过 canonical projection 直接消费这些 final owners。 |
 
 AI deterministic legality、目标、距离、伤害、响应与状态判定的 rule source 仍来自 `js/domain/rules/**` 与 `js/domain/definitions/**`。正式搜索不得读取敌方未知手牌的 `definitionId`；unknown identity 继续通过 Probability/World 中的合法条件世界表示。
@@ -1516,8 +1516,7 @@ js/ai/
 ├─ Searcher/
 │  ├─ Searcher.js
 │  ├─ Rng.js
-│  └─ Pattern/
-│     └─ Pattern.js
+│  └─ Pattern.js
 ├─ Event/
 │  ├─ Fact.js
 │  └─ Probability/
@@ -1545,14 +1544,14 @@ js/ai/
 | `AiController.js` | `Controller.js` | MOVE / RENAME |
 | `search/Action.js`、`ActionGenerator.js` | `Generator/Action.js`、`Generator/Generator.js` | MOVE / RENAME |
 | `search/Searcher.js`、`SearchRng.js` | `Searcher/Searcher.js`、`Searcher/Rng.js` | MOVE / INLINE |
-| `PatternMatcher.js`、`ProductionPatterns.js`、`SealPrior.js` | `Searcher/Pattern/Pattern.js` | INLINE |
+| `PatternMatcher.js`、`ProductionPatterns.js`、`SealPrior.js` | `Searcher/Pattern.js` | INLINE |
 | `SearchBudget.js` | `Searcher/Searcher.js` | INLINE；预算 invariant 保留 |
 | `SearchPrior.js` | `Evaluator.js` 的 search-prior formulas + `Searcher.js` orchestration | SPLIT / INLINE |
 | `CounterfactualTerms.js` | `Simulator.js` construction + `Evaluator.js` comparison + `Searcher.js` orchestration | SPLIT / INLINE |
 | `SearchRequest.js`、`WorkerSearchOutcome.js` | `Controller.js` data-only boundary functions | INLINE |
 | `TacticResolutionQuery.js` | `Simulator/Response.js` 与 Probability facade | INLINE |
 | `AiRuntimePolicy.js` | `Controller.js` runtime boundary / Searcher config | INLINE |
-| Worker `SearchEngineFactory.js` | `Searcher.js#createSearchEngine` | DELETE；Worker 只调用 public Searcher facade |
+| Worker `SearchEngineFactory.js` | `Controller.js#createSearchEngine/executeSearchRequest` | DELETE；Worker 只调用 public Controller facade |
 
 `transferPreference`、action-specific candidate metadata、旧 Query shell、runtime adapter duplicate、Value/Simulation wrapper 与 compatibility path 已删除。Generator 只生成 legal canonical Action；Search Prior、价值、资源选择和模拟不在 Generator 中。
 
@@ -1561,7 +1560,7 @@ js/ai/
 允许的 AI internal import 主方向为：
 
 ```text
-Controller -> Generator / Searcher public composition / Evaluator facade / World
+Controller -> Generator / Searcher / Pattern / Rng / Simulator / Evaluator facade / World
 Searcher   -> Generator / Pattern / Rng / Probability facade / Simulator facade / Evaluator facade
 Simulator  -> World / Damage / Resource / Response / Probability facade
 Evaluator  -> StateValue / CardValue / Probability facade / Fact
@@ -1576,10 +1575,11 @@ StateValue/CardValue -X-> Evaluator
 Damage/Resource/Response -X-> sibling
 Branch -X-> Pool
 Pool -X-> Branch
-Controller/Worker/Searcher -X-> internal implementation modules
+External/Worker -X-> Searcher/Rng/Pattern 与 AI internal implementation modules
+Searcher -X-> Simulator/Evaluator/Probability internal sibling modules
 ```
 
-`createRuntimeComposition` 是 main-thread Controller 与 `createSearchEngine` 共用的唯一 Evaluator/Simulator semantic composition。Simulator factory 向 transition 注入 Evaluator 的窄 boolean/resource decisions；Evaluator 本身不 import、构造、保存、接收或调用 Simulator。静态 cycle 与 runtime authority cycle 都为零。
+`Controller.js#createRuntimeComposition` 是 main-thread Controller 与 `createSearchEngine` 共用的唯一 Evaluator/Simulator semantic composition。Simulator factory 向 transition 注入 Evaluator 的窄 boolean/resource decisions；Evaluator 本身不 import、构造、保存、接收或调用 Simulator，也不接收任何可 clone/apply/构造 World 的 callback capability。静态 cycle 与 runtime authority cycle 都为零。
 
 ### Counterfactual ownership
 
@@ -1587,8 +1587,8 @@ Controller/Worker/Searcher -X-> internal implementation modules
 
 | 场景 | Simulator construction | Evaluator comparison | Search/Controller orchestration |
 |---|---|---|---|
-| Root flip | `buildRootFlipWorlds` 构造 base/resolved Worlds | `dynamicRootFlipGain` 比较已准备 Worlds | Controller response context 只组织窄查询 |
-| Guardian | `buildGuardianAidWorlds` 构造 stay/aid Worlds | `guardianAidValues` / `shouldUseGuardianAid` 比较 | Controller 只提供真实响应边界 |
+| Root flip | `buildRootFlipWorlds` 构造 base/resolved Worlds | `dynamicRootFlipGain` 比较已准备 Worlds | Controller 在真实响应边界预物化 Worlds，并写入 data-only context |
+| Guardian | `buildGuardianAidWorlds` 构造 stay/aid Worlds | `guardianAidValues` / `shouldUseGuardianAid` 比较 | Controller 在真实响应边界预物化 Worlds，并写入 data-only context |
 | Response | `buildResponseCounterfactualWorlds` 构造 actual/removed-response Worlds | `evaluateResponseCounterfactual` 生成归属和值差 | Searcher 负责预算、配对与诊断 |
 | Lightning | Probability 只给分布；`buildLightningOutcomeWorlds/Sets` 与 `buildTransferredLightningWorld` 构造 outcome Worlds | lifecycle delta、team burden 与 transferred burden 只比较 outcome Worlds | Searcher/Controller 只传递准备结果 |
 
@@ -1607,10 +1607,13 @@ StateValue  -> pure current-state primitives
 - Evaluator 唯一拥有 root scheduling score、action utility/search credit、seal timing/use、threat/card/resource prior 与 final candidate comparison semantics；Searcher 只编排这些结果。
 - Pattern 只提出 canonical Action 的探索顺序和 continuation，不调 Simulator/Evaluator/Probability，也不修改 final winner。
 - Controller 只做 GameState/World、Generator、SearchRequest/outcome、当前实体重绑与真实运行边界；不模拟候选或重复选择。
-- Worker 只做 serialization、dispatch 与 runtime isolation；`WorkerSearchRuntime` 只 import public `Controller.js` / `Searcher.js`，main/headless/Worker 共用 `executeSearchRequest`。
+- Worker 只做 serialization、dispatch 与 runtime isolation；`WorkerSearchRuntime` 只 import public `Controller.js`，main/headless/Worker 共用 `executeSearchRequest`。
+- Block、Counter、Guardian、Rescue 的 planning/runtime 路径分别复用 canonical willingness primitive；planning 允许有界输入近似，但不得复制阈值或另写 `return true` 路径。
+- canonical Action 只保存 executable intent；`restoreActorHand` / `ignoreCounter` 只作为 Simulator 局部 controls。完整 World deep clone 只经 `World.cloneWorld`，同一次 hidden specialization 不重复深拷贝。
+- `clampProbability` / `cardAvailability` 只在 `Event/Probability/Branch.js` 定义，并经 `Probability.js` facade 提供给业务消费者；Simulator、StateValue 与 CardValue 不保留第二套 normalization。
 
 ### Complexity 与门禁
 
 当前没有 Evaluator nested simulation、跨 transition branch genealogy、hidden identity 指数展开、无界 Cartesian probability expansion、新 DTO hierarchy、重复 candidate materialization、重复 World conversion或 action-specific search metadata。Probability 的 response consumer 仍保持既有有界 `O(W × H)`，本阶段没有重写概率公式。
 
-`tools/check-code-quality.mjs --ai-all` 对精确 18 文件 allowlist、legacy path、facade bypass、sibling import/`this.*` bypass、Evaluator runtime injection（包括参数注入）、primitive backreference、Searcher business residue、Worker internal import 与 `transferPreference` 回流执行源码检查；self-test 同时包含合法和非法夹具。
+`tools/check-code-quality.mjs --ai-all` 对精确 18 文件 allowlist、legacy path/`createStateContracts`、facade/Rng bypass、sibling import/`this.*` bypass、Evaluator runtime injection 与 function capability、DecisionContext capability、planning/runtime willingness contract、Searcher action-specific value owner、Controller candidate mini-search、Action replay metadata、raw World clone、Worker internal import 与 `transferPreference` 回流执行源码检查；self-test 同时包含合法和非法夹具。

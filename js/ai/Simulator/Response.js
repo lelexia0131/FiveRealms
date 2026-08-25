@@ -21,6 +21,7 @@ import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/
 import { projectCanonicalSeatRoster } from "../Event/Fact.js";
 import {
   PROBABILITY_EPSILON,
+  cardAvailability,
   queryOrderedFirstResponder,
   queryPlayerHandProbability,
   totalBranchProbability
@@ -86,12 +87,14 @@ export const withResponse = (Base) => class Response extends Base {
       paymentContext = null,
       options = {}
     } = responseContext;
-    const willing = this.decideGuardianAid(state, guardian, target, {
-      incomingDamage,
-      eventProbability,
-      triggerProbability,
-      options
-    }) === true;
+    const willing = options.forcedGuardianId === guardian.id
+      || this.decideGuardianAid(state, guardian, target, {
+        incomingDamage,
+        eventProbability,
+        triggerProbability,
+        conditionalReduction,
+        options
+      }) === true;
     if (!willing) return { accepted:false, expectedReduction:0, payment:null };
     if (paymentContext?.completeCertainHand) {
       const selected = this.selectGuardianAidDiscard(
@@ -464,10 +467,10 @@ export const withResponse = (Base) => class Response extends Base {
     ).distribution.map(({ count, ...branch }) => ({ ...branch, counterCount:count }));
     const candidates = [
       ...(Array.isArray(target.hand) ? target.hand
-        .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON && card.definitionId === "counter")
+        .filter((card) => cardAvailability(card) > PROBABILITY_EPSILON && card.definitionId === "counter")
         .map((card, index) => ({ key:`hand:${card.id ?? index}`, card, definitionId:"counter" })) : []),
       ...(Array.isArray(target.knownCards) ? target.knownCards
-        .filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON && entry.definitionId === "counter")
+        .filter((entry) => cardAvailability(entry) > PROBABILITY_EPSILON && entry.definitionId === "counter")
         .map((entry, index) => ({ key:`known:${entry.cardId ?? index}`, card:entry, definitionId:"counter" })) : [])
     ];
     const joined = this.intersectProbabilityWork([
@@ -483,7 +486,7 @@ export const withResponse = (Base) => class Response extends Base {
       const effectOccurs = Boolean(branch.occurs);
       const willing = Boolean(branch.willing);
       const counterCount = Math.max(0, Math.floor(Number(branch.counterCount) || 0));
-      const knownWeights = candidates.map((candidate) => this.cardAvailability(candidate.card));
+      const knownWeights = candidates.map((candidate) => cardAvailability(candidate.card));
       const knownCount = knownWeights.reduce((sum, weight) => sum + weight, 0);
       const anonymousCount = Math.max(0, counterCount - knownCount);
       const attempted = effectOccurs && willing && counterCount >= 1;

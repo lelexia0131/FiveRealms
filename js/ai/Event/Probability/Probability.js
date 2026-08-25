@@ -23,6 +23,7 @@ import { getDistance } from "../../../domain/rules/distance/DistanceRules.js";
 import { hasFactStatus, projectRulePlayers } from "../Fact.js";
 import {
   PROBABILITY_EPSILON,
+  cardAvailability,
   clampProbability,
   independentUnionProbability,
   mergeProbabilityBranches,
@@ -59,6 +60,7 @@ import {
 
 export {
   PROBABILITY_EPSILON,
+  cardAvailability,
   clampProbability,
   independentUnionProbability,
   mergeProbabilityBranches,
@@ -810,7 +812,7 @@ getEquipmentDefinitionId。
 export function getEquipmentEffectProbability(player, definitionId) {
   if (getEquipmentDefinitionId(player) !== definitionId) return 0;
   const probability = player?.equipmentRetentionProbability;
-  return probability == null ? 1 : Math.max(0, Math.min(1, Number(probability) || 0));
+  return probability == null ? 1 : clampProbability(probability);
 }
 
 /*
@@ -904,7 +906,7 @@ export function getRangeConditionBranches(game, requirements, options = {}) {
   }
   let branches = [{ probability:1, conditions:Object.fromEntries(forcedConditions) }];
   for (const [key, variable] of variables) {
-    const probability = Math.max(0, Math.min(1, Number(variable.probability) || 0));
+    const probability = clampProbability(variable.probability);
     const next = [];
     if (probability > 0) {
       for (const branch of branches) {
@@ -1042,68 +1044,6 @@ ignoresDistance 恒 true；概率大于零保持既有候选语义。
 export function inAttackRange(game, source, target, card = null) {
   if (card?.ignoresDistance) return true;
   return getRangeLegalityProbability(game, source, target, source?.attackRange ?? 1) > 0;
-}
-
-/*
-功能
-生成猎杀标记世界条件的稳定键。
-
-调用方
-Simulator 与猎杀相关评分。
-
-输入
-来源玩家 ID 与目标玩家 ID。
-
-输出
-稳定的条件字符串。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-相同来源目标组合必须生成相同键。
-*/
-export function huntMarkConditionKey(sourceId, targetId) {
-  return `huntMark:${sourceId}:${targetId}`;
-}
-
-/*
-功能
-读取资源数值字段的完整概率分支并提供确定性回退。
-
-调用方
-Simulator 与价值计算模块。
-
-输入
-资源对象、字段名与回退值。
-
-输出
-规范化数值状态分支数组。
-
-读取状态
-resource 对应 Branches 字段。
-
-写入状态
-无。
-
-调用函数
-mergeProbabilityStateBranches。
-
-边界与不变量
-缺失或空分支时返回一个概率为一的 amount 回退分支。
-*/
-export function getValueBranches(resource, field, fallbackValue = 0) {
-  return [{
-    probability:1,
-    conditions:{},
-    amount:Number(resource?.[field] ?? fallbackValue) || 0
-  }];
 }
 
 /*

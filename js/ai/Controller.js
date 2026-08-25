@@ -20,9 +20,7 @@ MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与�
 import { createInitialWorld } from "./Simulator/World.js";
 import {
   deriveCurrentCardCounts,
-  getCharacterRoleTags,
-  hasFactStatus,
-  projectCanonicalSeatRoster
+  hasFactStatus
 } from "./Event/Fact.js";
 import {
   Generator,
@@ -30,19 +28,19 @@ import {
 } from "./Generator/Generator.js";
 import { actionIntentKey, sameAction } from "./Generator/Action.js";
 import {
-  buildResourceCandidates,
-  chooseBestResourceHandCandidate,
-  chooseContextualResourceCandidate,
-  chooseDefaultZoneSelection,
+  Evaluator,
   chooseLowestKnownCardId,
   chooseLowestRoleCardId,
   choosePublicCardId
 } from "./Evaluator/Evaluator.js";
-import { createRuntimeComposition } from "./Searcher/Searcher.js";
-import { inAttackRange } from "./Event/Probability/Probability.js";
+import { SearchBudget, Searcher } from "./Searcher/Searcher.js";
+import { Pattern } from "./Searcher/Pattern.js";
+import { Rng, hashSearchSeed } from "./Searcher/Rng.js";
+import { Simulator, tacticResolutionScale } from "./Simulator/Simulator.js";
 import {
-  nextLightningReceiverId as nextDomainLightningReceiverId
-} from "../domain/rules/status/StatusRules.js";
+  inAttackRange,
+  sampleProbabilityWorlds
+} from "./Event/Probability/Probability.js";
 
 export const AI_RUNTIME_POLICY = Object.freeze({
   forceAiRescueHuman:true,
@@ -330,61 +328,216 @@ function decisionNow() {
 
 /*
 功能
-把真实或过滤 Player 转成 Evaluator 可读的公开响应视图。
+创建 application boundary 使用的 AI search RNG。
 
 调用方
-Controller.buildResponseDecisionContext。
+MatchApplication composition root 与 RNG 契约测试。
 
 输入
-Player 或玩家快照。
+数值 seed 或需要稳定散列的 session 字符串。
 
 输出
-不含 hand 实体和 Game 引用的公开响应视图。
+可快照、恢复与提交 continuation 的 Search Rng。
 
 读取状态
-公开生命、护盾、能量、阵营、角色、状态、装备和手牌数量。
-
-写入状态
 无。
 
+写入状态
+只初始化新 Rng 实例。
+
 调用函数
-getCharacterRoleTags。
+hashSearchSeed、Rng。
 
 边界与不变量
-其他玩家真实 hand definitionId 永不进入输出；响应者自己的合法定义另行显式提供。
+应用层不得直接 import Searcher/Rng.js；数值 seed 不重新散列，字符串 seed 使用固定 FNV-1a。
 */
-function responsePlayerView(player) {
-  if (!player) return null;
+export function createSearchRng(seed) {
+  const numericSeed = typeof seed === "number" && Number.isFinite(seed)
+    ? seed
+    : hashSearchSeed(seed);
+  return new Rng(numericSeed);
+}
+
+/*
+功能
+构造主线程与 Worker 共用的 Evaluator/Simulator 语义运行组合。
+
+调用方
+Controller constructor 与 createSearchEngine。
+
+输入
+能量规则、难度倍率与可选根 World。
+
+输出
+共享同一 Evaluator 决策能力的 evaluator 与 simulatorFactory。
+
+读取状态
+只调用注入的稳定规则函数。
+
+写入状态
+无；Simulator 实例只在 factory 被调用时创建。
+
+调用函数
+Evaluator、Simulator。
+
+边界与不变量
+Controller 是唯一 composition owner；Simulator 只接收 Evaluator 的 boolean/resource capabilities，Evaluator 不保存或反向调用 Simulator。
+*/
+export function createRuntimeComposition({
+  world = null,
+  getMaxEnergy: getMaxEnergyForPlayer = null,
+  getTurnEnergyBreakdown: getTurnEnergyBreakdownForPlayer = null,
+  getDifficultyMultiplier = () => 1,
+  forceAiRescueHuman = true
+} = {}) {
+  const evaluator = new Evaluator({
+    world,
+    getMaxEnergy:getMaxEnergyForPlayer,
+    getTurnEnergyBreakdown:getTurnEnergyBreakdownForPlayer,
+    getDifficultyMultiplier,
+    forceAiRescueHuman
+  });
+  /*
+  功能
+  为一次搜索或主线程同步价值查询创建注入同一 Evaluator 决策的 Simulator。
+
+  调用方
+  Searcher、Controller runtime boundary。
+
+  输入
+  canonical World 与可选 SearchBudget runtime。
+
+  输出
+  只修改独立 World 的 Simulator。
+
+  读取状态
+  闭包中的 Evaluator 与显式 SearchBudget。
+
+  写入状态
+  仅新 Simulator 实例内部状态。
+
+  调用函数
+  Simulator、Evaluator response/resource decision methods。
+
+  边界与不变量
+  所有环境共用完全相同的决策注入；Evaluator 不保存或反向调用 Simulator。
+  */
+  const simulatorFactory = (state, runtime = {}) => new Simulator(state, {
+    searchBudget:runtime.searchBudget ?? null,
+    decideCounter:(...args) => evaluator.decidePlanningCounter(...args),
+    decideLeverageAssault:(...args) => evaluator.decideLeverageAssault(...args),
+    decideBlock:(...args) => evaluator.decidePlanningBlock(...args),
+    decideGuardianAid:(...args) => evaluator.decidePlanningGuardianAid(...args),
+    decideDyingRescue:(...args) => evaluator.decidePlanningDyingRescue(...args),
+    resolveDiscardCandidates:(...args) => evaluator.resolveDiscardCandidates(...args)
+  });
+  return { evaluator, simulatorFactory };
+}
+
+/*
+功能
+从 canonical search request 构造唯一 Searcher 运行图。
+
+调用方
+executeSearchRequest 与搜索 composition 测试。
+
+输入
+Search request、已恢复 Rng 与 Worker-safe runtime control。
+
+输出
+共享同一 Evaluator、Simulator、Generator、Pattern 与 Searcher 的运行图。
+
+读取状态
+request.world 与 request.searchConfig。
+
+写入状态
+无；Search 执行时才写实例诊断。
+
+调用函数
+createRuntimeComposition、Generator、Pattern、Searcher 与 SearchBudget。
+
+边界与不变量
+这是 main/local/Worker 唯一 composition；所有随机只来自传入 Rng，不读取 Game 或 main-thread mutable state。
+*/
+export function createSearchEngine(request, rng, runtimeControl = {}) {
+  const rootWorld = request.world;
+  const config = request.searchConfig;
+  const { evaluator, simulatorFactory } = createRuntimeComposition({
+    world:rootWorld,
+    getDifficultyMultiplier:() => config.difficultyMultiplier
+  });
+  const generator = new Generator();
+  const searcher = new Searcher({
+    evaluator,
+    patternMatcher:new Pattern(),
+    getResolutionScale:tacticResolutionScale,
+    config,
+    simulatorFactory,
+    searchBudgetFactory:() => new SearchBudget({
+      timeBudget:config.timeBudgetMs,
+      nodeBudget:config.nodeBudget,
+      now:typeof runtimeControl.now === "function" ? runtimeControl.now : null
+    }),
+    deduplicateActions:deduplicateSearchEquivalentActions,
+    generateActions:(...args) => generator.generate(...args),
+    sampleUnknownHands:(query) => sampleProbabilityWorlds({
+      ...query,
+      random:() => rng.next()
+    }),
+    yieldControl:typeof runtimeControl.yieldControl === "function"
+      ? runtimeControl.yieldControl
+      : async () => true
+  });
+  return { searcher, rng };
+}
+
+/*
+功能
+恢复请求 RNG 并通过 Controller public composition 执行一次搜索。
+
+调用方
+WorkerSearchRuntime 的 local 与 Dedicated Worker dispatch。
+
+输入
+Canonical request 与 Worker-safe runtime control。
+
+输出
+Canonical Action、计划、stats、stop reason、RNG continuation 与取消标记。
+
+读取状态
+request 的 World、Action、config 与 RNG snapshot。
+
+写入状态
+只写本次 Searcher、Simulator 与 Rng 实例。
+
+调用函数
+Rng.restore、createSearchEngine、Searcher.search。
+
+边界与不变量
+不创建 transport DTO；返回值直接引用 canonical Action，Worker 只补 request identity 并序列化。
+*/
+export async function executeSearchRequest(request, runtimeControl = {}) {
+  const rng = Rng.restore(request.rng);
+  const actor = request.world.players.find((player) => player.id === request.actorId) ?? null;
+  if (!actor) throw new Error(`Worker World 缺少 actor：${request.actorId}`);
+  const engine = createSearchEngine(request, rng, runtimeControl);
+  const action = await engine.searcher.search(
+    actor,
+    request.world,
+    request.rootActions,
+    {
+      gameId:request.gameId,
+      rootCandidateCount:request.rootActions.length
+    }
+  );
+  const cancelled = engine.searcher.lastSearchStats?.stopReason === "CANCELLED";
   return {
-    id:player.id,
-    seatIndex:player.seatIndex,
-    alive:Boolean(player.alive),
-    battleTeam:player.battleTeam,
-    controllerType:player.controllerType,
-    characterId:player.characterId ?? player.character?.id ?? null,
-    roleTags:[...(player.roleTags ?? getCharacterRoleTags(
-      player.characterId ?? player.character?.id
-    ))],
-    tags:[...(player.tags ?? [])],
-    hp:Number(player.hp ?? 0),
-    maxHp:Number(player.maxHp ?? player.hp ?? 0),
-    shield:Number(player.shield ?? 0),
-    energy:Number(player.energy ?? 0),
-    handCount:Number(player.handCount ?? player.hand?.length ?? 0),
-    hasEquipment:Boolean(player.equipment ?? player.equipmentDefinitionId),
-    equipmentDefinitionId:player.equipment?.definitionId
-      ?? player.equipmentDefinitionId
-      ?? null,
-    statuses:Array.isArray(player.statuses)
-      ? [...player.statuses]
-      : { ...(player.statuses ?? {}) },
-    passiveSkillIds:[...(player.character?.passiveSkillIds ?? [])],
-    momentum:Number(player.turnFlags?.momentum ?? player.momentum ?? 0),
-    assaultBonus:Number(player.statuses?.allIn?.assaultBonus ?? player.assaultBonus ?? 0),
-    guardianAidUsed:Boolean(
-      player.turnFlags?.guardianAidUsed
-      ?? ((player.guardianAidUsedProbability ?? 0) >= 1)
-    )
+    action:cancelled ? null : action,
+    plannedActions:cancelled ? [] : engine.searcher.lastSequence,
+    stats:engine.searcher.lastSearchStats,
+    searchStopReason:engine.searcher.lastSearchStats?.stopReason ?? null,
+    rngAfter:rng.snapshot(),
+    cancelled
   };
 }
 
@@ -472,7 +625,8 @@ export class Controller {
     const runtimeComposition = createRuntimeComposition({
       getMaxEnergy: (player) => this.getMaxEnergy(player),
       getTurnEnergyBreakdown: (player) => this.getTurnEnergyBreakdown(player),
-      getDifficultyMultiplier:() => this.getDifficultyMultiplier()
+      getDifficultyMultiplier:() => this.getDifficultyMultiplier(),
+      forceAiRescueHuman:this.forceAiRescueHuman
     });
     this.evaluator = runtimeComposition.evaluator;
     this.simulatorFactory = runtimeComposition.simulatorFactory;
@@ -1211,104 +1365,6 @@ export class Controller {
 
   /*
   功能
-  编排 destroy/plunder 的有界反事实，并把 Evaluator 胜者解析为当前真实实体。
-
-  调用方
-  chooseZoneCard 的 resource purpose 分支。
-
-  输入
-  行动者、资源拥有者、purpose、排除 ID 与冻结的 remaining counts。
-
-  输出
-  `{card, zone}` 或 null。
-
-  读取状态
-  当前合法实体、World 投影、Simulator transition、StateValue 与 Evaluator comparison。
-
-  写入状态
-  只在 anonymous 胜出时推进 AI RNG；真实 GameState 不变。
-
-  调用函数
-  createInitialWorld、Simulator.applyForcedResourceSelection、StateValue.transitionDelta、Evaluator resource methods。
-
-  边界与不变量
-  Controller 不写价值公式；每个候选恰好一次 clone/forced transition/state delta，unknown 只在胜出后解析物理位置。
-  */
-  chooseContextualZoneCard(
-    actor,
-    owner,
-    purpose,
-    excludedCardIds,
-    remainingCardCounts
-  ) {
-    const world = createInitialWorld(actor.id, this.getState(), remainingCardCounts);
-    const searchActor = world.players.find((player) => player.id === actor.id);
-    const searchOwner = world.players.find((player) => player.id === owner.id);
-    if (!searchActor || !searchOwner) return null;
-    const eligibleCards = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
-    const eligibleIds = new Set(eligibleCards.map((card) => card.id));
-    const knownCards = (searchOwner.knownCards ?? []).filter(
-      (entry) => eligibleIds.has(entry.cardId)
-    );
-    const knownIds = new Set(knownCards.map((entry) => entry.cardId));
-    const unknownCards = eligibleCards.filter((card) => !knownIds.has(card.id));
-    const candidates = buildResourceCandidates({
-      purpose,
-      actor:searchActor,
-      owner:searchOwner,
-      knownCards,
-      unknownCount:unknownCards.length,
-      equipmentDefinitionId:owner.equipment?.definitionId ?? null,
-      remainingCardCounts
-    }).map((candidate) => ({
-      ...candidate,
-      availableUnknownCount:unknownCards.length
-    }));
-    const simulator = this.simulatorFactory(world);
-    const beforeLightningOutcomeSets = simulator.buildLightningOutcomeSets(world);
-    const evaluated = simulator.buildResourceSelectionWorlds(
-      world,
-      searchActor.id,
-      searchOwner.id,
-      purpose,
-      candidates
-    ).map(({ candidate, after, appliedProbability }) => {
-      const rawStateDelta = appliedProbability > 0
-        ? this.evaluator.transitionDelta(
-            world,
-            after,
-            searchActor.id,
-            beforeLightningOutcomeSets,
-            simulator.buildLightningOutcomeSets(after)
-          )
-        : 0;
-      return this.evaluator.evaluateResourceTransitionCandidate({
-        before:world,
-        after,
-        actorId:searchActor.id,
-        purpose,
-        candidate,
-        appliedProbability,
-        rawStateDelta
-      });
-    });
-    const selection = chooseContextualResourceCandidate(evaluated);
-    if (selection?.zone === "equipment" && owner.equipment) {
-      return { card:owner.equipment, zone:"equipment" };
-    }
-    if (selection?.selectionKind === "known") {
-      const card = eligibleCards.find((entry) => entry.id === selection.cardId) ?? null;
-      return card ? { card, zone:"hand" } : null;
-    }
-    if (selection?.selectionKind === "unknown" && unknownCards.length) {
-      const index = Math.floor(this.searchRng.next() * unknownCards.length);
-      return { card:unknownCards[index] ?? unknownCards[0], zone:"hand" };
-    }
-    return null;
-  }
-
-  /*
-  功能
   选择需要弃置的实体牌。
 
   调用方
@@ -1361,65 +1417,6 @@ export class Controller {
 
   /*
   功能
-  为转移牌选择来源、接收者和资源类别。
-
-  调用方
-  CardIntentRuntime 转移准备与 Generator 注入能力。
-
-  输入
-  转移行动者、卡牌、合法来源及可选接收者和排除集合。
-
-  输出
-  最佳正收益选择描述；无正收益时为 null。
-
-  读取状态
-  当前 GameState、canonical World、Generator 合法候选与 Evaluator 转移 preference。
-
-  写入状态
-  无。
-
-  调用函数
-  createInitialWorld、Generator.generate、Evaluator.chooseTransferAction。
-
-  边界与不变量
-  Controller 只绑定当前 runtime 候选；不生成合法方向、不写评分公式，也不移动实体牌。
-  */
-  chooseTransferCombination(
-    actor,
-    card,
-    sources,
-    allowedReceiverIds = null,
-    excludedCardIds = null
-  ) {
-    const startedAt = decisionNow();
-    const state = this.getState();
-    const remainingCardCounts = deriveCurrentCardCounts(actor, state);
-    const world = createInitialWorld(actor.id, state, remainingCardCounts);
-    const sourceIds = new Set((sources ?? []).map((source) => source.id));
-    const transferActions = this.actionGenerator.generate(world, actor.id).filter((action) => (
-      action.type === "card"
-      && action.cardId === "transfer"
-      && (!card?.id || action.cardInstanceId === card.id)
-      && sourceIds.has(action.selection?.sourceId)
-      && (!allowedReceiverIds || allowedReceiverIds.has(action.selection?.receiverId))
-      && (!excludedCardIds?.has(action.selection?.cardId))
-    ));
-    const worldActor = world.players.find((player) => player.id === actor.id) ?? actor;
-    const selection = this.evaluator.chooseTransferAction(
-      transferActions,
-      worldActor,
-      world
-    );
-    this.recordMainThreadOperation(
-      "Evaluator.chooseTransferAction",
-      startedAt,
-      { candidateCount:transferActions.length }
-    );
-    return selection;
-  }
-
-  /*
-  功能
   从合法隐藏手牌位置中选择实体牌。
 
   调用方
@@ -1432,94 +1429,34 @@ export class Controller {
   合法实体牌数组。
 
   读取状态
-  观察者合法记忆、剩余牌计数与随机源。
+  观察者合法记忆与随机源。
 
   写入状态
   随机源序列。
 
   调用函数
-  Evaluator card/resource comparison 与 search RNG。
+  Evaluator card comparison 与 search RNG。
 
   边界与不变量
-  未知牌只能按位置采样；价值比较只发生在 Evaluator，Controller 只解析胜出的实体位置。
+  canonical Action 已拥有 Transfer/Destroy/Plunder 选择；本入口只处理独立隐藏选择，不得重跑这些战略决策。
   */
   chooseHiddenCards(
     actor,
     owner,
     count,
     excludedCardIds = null,
-    context = null,
-    resourceCounts = null
+    context = null
   ) {
     const startedAt = decisionNow();
     const candidates = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
     const candidateCount = candidates.length;
     const purpose = context?.purpose ?? null;
-    if (purpose === "transfer") {
-      const selected = [];
-      const exclusions = new Set(excludedCardIds ?? []);
-      const remainingCardCounts = resourceCounts ?? deriveCurrentCardCounts(actor, this.getState());
-      while (selected.length < count && candidates.length) {
-        const choice = this.evaluator.chooseTransferHandCandidate(
-          actor,
-          owner,
-          context?.receiver,
-          exclusions,
-          remainingCardCounts
-        );
-        if (!choice) break;
-        let index = choice.selectionKind === "known"
-          ? candidates.findIndex((card) => card.id === choice.cardId)
-          : -1;
-        if (choice.selectionKind === "unknown") {
-          const knownCardIds = new Set(choice.knownCardIds ?? []);
-          const unknownIndices = candidates.map((card, index) => (
-            knownCardIds.has(card.id) ? -1 : index
-          )).filter((index) => index >= 0);
-          index = unknownIndices[
-            Math.floor(this.searchRng.next() * unknownIndices.length)
-          ] ?? -1;
-        }
-        if (index < 0) break;
-        const [chosen] = candidates.splice(index, 1);
-        selected.push(chosen);
-        exclusions.add(chosen.id);
-      }
-      this.recordMainThreadOperation(
-        "Evaluator.chooseTransferHandCandidate",
-        startedAt,
-        { candidateCount }
-      );
-      return selected;
-    }
     const selected = [];
     const known = actor.aiMemory?.knownCardsByPlayer?.[owner.id] ?? {};
-    const remainingCardCounts = resourceCounts !== null
-      ? resourceCounts
-      : ((purpose === "destroy" || purpose === "plunder")
-        ? deriveCurrentCardCounts(actor, this.getState())
-        : null);
     while (selected.length < count && candidates.length) {
       let selectedId = null;
       if (actor.id === owner.id) {
         selectedId = chooseLowestRoleCardId(actor, candidates);
-      } else if (purpose === "destroy" || purpose === "plunder") {
-        const knownCards = candidates
-          .map((card) => ({ cardId:card.id, definitionId:known[card.id] }))
-          .filter((entry) => entry.definitionId);
-        const choice = chooseBestResourceHandCandidate({
-          purpose,
-          actor,
-          owner,
-          knownCards,
-          unknownCount:candidates.length - knownCards.length,
-          remainingCardCounts
-        });
-        if (choice?.selectionKind === "known") selectedId = choice.cardId;
-        else if (choice?.selectionKind === "unknown") {
-          const unknown = candidates.filter((card) => !known[card.id]);
-          selectedId = unknown[Math.floor(this.searchRng.next() * unknown.length)]?.id ?? null;
-        }
       } else if (purpose === "scout" || purpose === "spy-gap") {
         const unknown = candidates.filter((card) => !known[card.id]);
         selectedId = unknown.length
@@ -1545,73 +1482,45 @@ export class Controller {
 
   /*
   功能
-  在目标手牌与装备区之间选择资源实体。
+  把 canonical hidden-card selection 绑定到当前真实手牌实体。
 
   调用方
-  AiChoiceAdapter hiddenCard zone 请求。
+  HiddenCardChoiceWorkflow 的 AI canonical selection 路径。
 
   输入
-  行动者、资源持有者、用途上下文与排除集合。
+  资源拥有者、known/unknown selection、数量与可选排除实体 ID。
 
   输出
-  带实体牌和区域的选择；无资源时为 null。
+  仍位于手牌且符合选择位置的真实 Card 数组。
 
   读取状态
-  合法记忆、公开装备与资源选择价值。
+  当前真实手牌位置与 search RNG。
 
   写入状态
-  可能消费随机源序列。
+  unknown 绑定时推进 RNG；不修改 GameState。
 
   调用函数
-  chooseContextualZoneCard、chooseHiddenCards、Evaluator.chooseDefaultZoneSelection。
+  Rng.next。
 
   边界与不变量
-  不读取未知牌定义，真实执行仍按实体身份复核。
+  不生成、模拟、评价或重新选择战略候选；known 只按 cardId 绑定，unknown 只在
+  canonical knownCardIds 排除后的匿名位置中随机绑定，且不读取候选 definitionId。
   */
-  chooseZoneCard(actor, owner, context = null, excludedCardIds = null) {
-    const startedAt = decisionNow();
-    if (!owner?.alive) return null;
-    const purpose = context?.purpose ?? null;
-    const remainingCardCounts = purpose === "destroy" || purpose === "plunder"
-      ? deriveCurrentCardCounts(actor, this.getState())
-      : null;
-    let selection = null;
-    if (purpose === "destroy" || purpose === "plunder") {
-      selection = this.chooseContextualZoneCard(
-        actor,
-        owner,
-        purpose,
-        excludedCardIds,
-        remainingCardCounts
-      );
-    } else {
-      const [handCard] = this.chooseHiddenCards(
-        actor,
-        owner,
-        1,
-        excludedCardIds,
-        context,
-        remainingCardCounts
-      );
-      const descriptor = chooseDefaultZoneSelection({
-        actor,
-        owner,
-        handCard:handCard ?? null,
-        equipment:owner.equipment ?? null
-      });
-      if (descriptor?.zone === "equipment" && owner.equipment) {
-        selection = { card:owner.equipment, zone:"equipment" };
-      } else if (descriptor?.zone === "hand" && handCard?.id === descriptor.cardId) {
-        selection = { card:handCard, zone:"hand" };
-      }
+  bindCanonicalHiddenCards(owner, selection, count = 1, excludedCardIds = null) {
+    const eligible = owner.hand.filter((card) => !excludedCardIds?.has(card.id));
+    if (selection?.selectionKind === "known" && selection.cardId) {
+      const card = eligible.find((entry) => entry.id === selection.cardId) ?? null;
+      return card ? [card] : [];
     }
-    const handCount = Array.isArray(owner?.hand) ? owner.hand.length : Number.NaN;
-    this.recordMainThreadOperation(
-      "Controller.resolveZoneCard",
-      startedAt,
-      { candidateCount:Number.isFinite(handCount) ? handCount + (owner?.equipment ? 1 : 0) : "unavailable" }
-    );
-    return selection;
+    if (selection?.selectionKind !== "unknown") return [];
+    const knownCardIds = new Set(selection.knownCardIds ?? []);
+    const anonymous = eligible.filter((card) => !knownCardIds.has(card.id));
+    const selected = [];
+    while (selected.length < count && anonymous.length) {
+      const index = Math.floor(this.searchRng.next() * anonymous.length);
+      selected.push(anonymous.splice(index, 1)[0]);
+    }
+    return selected;
   }
 
   /*
@@ -1671,210 +1580,167 @@ export class Controller {
   只有被调用的未知位置/状态查询可能写 query 私有缓存；真实状态不变。
 
   调用函数
-  responsePlayerView、createInitialWorld、Simulator/Evaluator composition 与既有 Domain/Value 辅助函数。
+  createInitialWorld、Simulator paired-world construction 与 Evaluator data/value helpers。
 
   边界与不变量
-  Controller 只负责 runtime entity/context binding；所有价值比较由同一 Evaluator 完成，昂贵查询惰性且每分支至多一次。
+  Controller 只负责 runtime entity/context binding；所有价值比较由同一 Evaluator 完成，所需 Worlds/标量按响应类型预物化且每分支至多一次。
   */
   buildResponseDecisionContext(responder, type, rawContext, cards = []) {
-    const rawPlayers = this.getState().players;
-    const players = rawPlayers.map(responsePlayerView);
+    const state = this.getState();
+    const remainingCardCounts = deriveCurrentCardCounts(responder, state);
+    const world = createInitialWorld(responder.id, state, remainingCardCounts);
+    const players = world.players;
     const byId = new Map(players.map((player) => [player.id, player]));
     const responderView = byId.get(responder.id);
+    const rawCard = rawContext.card ?? null;
+    const rawRootCard = rawContext.rootCard ?? null;
+    const rawEquipment = rawContext.equipment ?? null;
     const publicContext = {
-      ...rawContext,
       target:byId.get(rawContext.target?.id) ?? null,
       source:byId.get(rawContext.source?.id) ?? null,
       rootSource:byId.get(rawContext.rootSource?.id) ?? null,
+      amount:Math.max(0, Number(rawContext.amount) || 0),
+      requiredCount:Math.max(1, Math.floor(Number(rawContext.requiredCount) || 1)),
+      counterDepth:Math.max(0, Math.floor(Number(rawContext.counterDepth) || 0)),
+      rootSourceId:rawContext.rootSourceId ?? rawContext.rootSource?.id ?? null,
+      rootTargetIds:Object.freeze([...(rawContext.rootTargetIds ?? [])]),
+      card:rawCard ? Object.freeze({
+        definitionId:rawCard.definitionId ?? null,
+        category:rawCard.category ?? null,
+        counterable:rawCard.counterable !== false,
+        counterScope:rawCard.counterScope ?? null
+      }) : null,
+      rootCard:rawRootCard ? Object.freeze({
+        definitionId:rawRootCard.definitionId ?? null,
+        category:rawRootCard.category ?? null,
+        counterable:rawRootCard.counterable !== false,
+        counterScope:rawRootCard.counterScope ?? null
+      }) : null,
+      equipment:rawEquipment ? Object.freeze({
+        definitionId:rawEquipment.definitionId ?? null
+      }) : null,
       statusCounterContext:rawContext.statusCounterContext
-        ? { ...rawContext.statusCounterContext }
+        ? Object.freeze({
+            holderId:rawContext.statusCounterContext.holderId ?? null,
+            statusId:rawContext.statusCounterContext.statusId ?? null
+          })
         : null
     };
-    let remainingCardCounts;
-    /*
-    功能
-    在一次响应决策内惰性读取并复用同一份 canonical remaining counts。
-
-    调用方
-    buildResponseDecisionContext 的状态、guardian 与 dynamic query 闭包。
-
-    输入
-    无；闭包捕获当前 responder。
-
-    输出
-    Fact 返回的当前确定牌池计数。
-
-    读取状态
-    当前 GameState 与观察者合法信息。
-
-    写入状态
-    只写本次 DecisionContext 的局部缓存。
-
-    调用函数
-    deriveCurrentCardCounts。
-
-    边界与不变量
-    同一响应窗口最多计算一次，不跨决策复用或暴露真实未知牌。
-    */
-    const getRemainingCardCounts = () => {
-      if (remainingCardCounts === undefined) {
-        remainingCardCounts = deriveCurrentCardCounts(responder, this.getState());
-      }
-      return remainingCardCounts;
-    };
-    const needsRemainingCounts = type === "counter" || type === "skill" || type === "dyingRescue";
-    if (needsRemainingCounts) getRemainingCardCounts();
     const rescueOrder = type === "dyingRescue"
       ? this.getDyingRescueOrder(rawContext.target ?? responder)
           .map((player) => byId.get(player.id))
           .filter(Boolean)
       : [];
-    return {
+    const decision = {
       responder:responderView,
       responseType:type,
-      context:publicContext,
-      cards,
+      context:Object.freeze(publicContext),
+      availableResponseCount:Array.isArray(cards) ? cards.length : 0,
       players,
       rescueOrder,
-      responderHandDefinitionIds:(responder.hand ?? []).map((card) => card.definitionId),
-      knownCardsByPlayer:responder.aiMemory.knownCardsByPlayer,
-      remainingCardCounts:needsRemainingCounts ? remainingCardCounts : null,
+      responderHandDefinitionIds:(responderView?.hand ?? []).map((card) => card.definitionId),
+      knownCardsByPlayer:Object.fromEntries(players.map((player) => [
+        player.id,
+        Object.fromEntries((player.knownCards ?? []).map((card) => [
+          card.cardId,
+          card.definitionId
+        ]))
+      ])),
+      remainingCardCounts,
       isSmallTeam:this.isSmallTeam(responder),
       forceAiRescueHuman:this.forceAiRescueHuman,
-      leverageMetrics:() => {
-        const target = rawContext.target ?? responder;
-        const world = createInitialWorld(responder.id, this.getState());
-        return this.evaluator.leverageResponseMetrics(
+      world,
+      leverageMetrics:null,
+      guardianAidWorlds:null,
+      lightningCounterWorlds:null,
+      sealCounterTerms:null,
+      rootFlipWorlds:null
+    };
+    if (type === "leverageAssault") {
+      const target = publicContext.target ?? responderView;
+      decision.leverageMetrics = this.evaluator.leverageResponseMetrics(
           responderView,
-          byId.get(target.id),
+          target,
           responder.aiMemory,
           world,
-          getRemainingCardCounts()
+          remainingCardCounts
         );
-      },
-      guardianAidValues:() => {
-        const target = rawContext.target;
-        const world = createInitialWorld(
-          responder.id,
-          this.getState(),
-          getRemainingCardCounts()
-        );
-        const simulator = this.simulatorFactory(world);
-        const worlds = simulator.buildGuardianAidWorlds(
+    } else if (type === "skill" && publicContext.target) {
+      const simulator = this.simulatorFactory(world);
+      const worlds = simulator.buildGuardianAidWorlds(
           world,
           responder.id,
-          target.id,
+          publicContext.target.id,
           rawContext.source?.id ?? null,
           Math.max(0, Number(rawContext.amount) || 0)
         );
-        return this.evaluator.guardianAidValues(
-          world,
-          responder.id,
-          target.id,
-          worlds.stayWorld,
-          worlds.aidWorld,
-          simulator.buildLightningOutcomeSets(worlds.stayWorld),
-          simulator.buildLightningOutcomeSets(worlds.aidWorld)
-        );
-      },
-      lightningCounterTerms:() => {
-        const holder = rawPlayers.find((player) => (
-          player.id === rawContext.statusCounterContext?.holderId && player.alive
-        ));
-        if (!holder
-          || !hasFactStatus(holder, "lightning")
-          || holder.battleTeam !== responder.battleTeam) {
-          return { valid:false, noCounterBurden:0, withCounterBurden:0 };
+      decision.guardianAidWorlds = {
+        stayWorld:worlds.stayWorld,
+        aidWorld:worlds.aidWorld,
+        stayLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.stayWorld),
+        aidLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.aidWorld)
+      };
+    } else if (type === "counter" && publicContext.statusCounterContext) {
+      const holder = players.find((player) => (
+        player.id === publicContext.statusCounterContext.holderId && player.alive
+      ));
+      if (holder && holder.battleTeam === responderView.battleTeam
+        && hasFactStatus(holder, publicContext.statusCounterContext.statusId)) {
+        if (publicContext.statusCounterContext.statusId === "sealed") {
+          decision.sealCounterTerms = this.evaluator.sealCounterTerms(
+            holder,
+            world,
+            remainingCardCounts
+          );
+        } else if (publicContext.statusCounterContext.statusId === "lightning") {
+          const simulator = this.simulatorFactory(world);
+          const receiverId = simulator.nextLightningReceiverId(players, holder);
+          const receiver = players.find((player) => player.id === receiverId) ?? null;
+          const transferred = receiver
+            ? simulator.buildTransferredLightningWorld(world, holder, receiver)
+            : null;
+          decision.lightningCounterWorlds = {
+            stayOutcomeSet:simulator.buildLightningOutcomeWorlds(
+              world,
+              holder
+            ),
+            transferredWorld:transferred?.world ?? null,
+            transferredOutcomeSet:transferred
+              ? simulator.buildLightningOutcomeWorlds(transferred.world, transferred.holder, 1)
+              : null
+          };
         }
-        const world = createInitialWorld(
-          responder.id,
-          this.getState(),
-          getRemainingCardCounts()
-        );
-        const worldHolder = world.players.find((player) => player.id === holder.id);
-        const receiverId = nextDomainLightningReceiverId(
-          projectCanonicalSeatRoster(rawPlayers),
-          holder.id
-        );
-        const worldReceiver = world.players.find((player) => player.id === receiverId);
+      }
+    } else if (type === "counter") {
+      const rootCard = rawRootCard ?? rawCard;
+      const rootSourceId = rawContext.rootSourceId
+        ?? rawContext.rootSource?.id
+        ?? rawContext.source?.id
+        ?? null;
+      const rootAction = this.actionGenerator.createRootResolutionAction(
+        world,
+        rootCard,
+        rootSourceId,
+        Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
+        { publicTransferContext:rawContext.publicTransferContext ?? null }
+      );
+      if (rootAction) {
         const simulator = this.simulatorFactory(world);
-        const stayOutcomeSet = simulator.buildLightningOutcomeWorlds(
-          world,
-          worldHolder
-        );
-        const transferred = worldReceiver
-          ? simulator.buildTransferredLightningWorld(world, worldHolder, worldReceiver)
-          : null;
-        const transferredOutcomeSet = transferred
-          ? simulator.buildLightningOutcomeWorlds(transferred.world, transferred.holder, 1)
-          : null;
-        return this.evaluator.lightningCounterTerms(
-          world,
-          stayOutcomeSet,
-          transferred?.world ?? null,
-          transferredOutcomeSet,
-          responder.id
-        );
-      },
-      sealCounterTerms:() => {
-        const holder = rawPlayers.find((player) => (
-          player.id === rawContext.statusCounterContext?.holderId && player.alive
-        ));
-        if (!holder
-          || !hasFactStatus(holder, "sealed")
-          || holder.battleTeam !== responder.battleTeam) {
-          return { valid:false, preventedBurden:0 };
-        }
-        const world = createInitialWorld(
-          responder.id,
-          this.getState(),
-          getRemainingCardCounts()
-        );
-        const probabilityHolder = world.players.find((player) => player.id === holder.id);
-        return this.evaluator.sealCounterTerms(
-          probabilityHolder,
-          world,
-          getRemainingCardCounts()
-        );
-      },
-      dynamicRootFlipGain:() => {
-        const rootCard = rawContext.rootCard ?? rawContext.card;
-        if (!rootCard?.definitionId || rootCard.category !== "tactic") return null;
-        const rootSourceId = rawContext.rootSourceId
-          ?? rawContext.rootSource?.id
-          ?? rawContext.source?.id
-          ?? null;
-        const world = createInitialWorld(
-          responder.id,
-          this.getState(),
-          getRemainingCardCounts()
-        );
-        const rootAction = this.actionGenerator.createRootResolutionAction(
-          world,
-          rootCard,
-          rootSourceId,
-          Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
-          { publicTransferContext:rawContext.publicTransferContext ?? null }
-        );
-        if (!rootAction) return null;
-        const simulator = this.simulatorFactory(world);
-        const rootWorlds = simulator.buildRootFlipWorlds(
+        const worlds = simulator.buildRootFlipWorlds(
           world,
           rootAction,
           rawContext.counterDepth ?? 0
         );
-        return this.evaluator.dynamicRootFlipGain(
-          rootWorlds,
-          responder.id,
-          rootWorlds
-            ? simulator.buildLightningOutcomeSets(rootWorlds.baseWorld)
-            : [],
-          rootWorlds
-            ? simulator.buildLightningOutcomeSets(rootWorlds.resolvedWorld)
-            : []
-        );
+        if (worlds) {
+          decision.rootFlipWorlds = {
+            ...worlds,
+            baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.baseWorld),
+            resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.resolvedWorld)
+          };
+        }
       }
-    };
+    }
+    return decision;
   }
 
   /*
@@ -1938,7 +1804,7 @@ export class Controller {
   buildResponseDecisionContext、Evaluator.assessDyingRescue。
 
   边界与不变量
-  Controller 只暴露窄查询；不得让 Application 直接访问 Policy 内部 owner。
+  Controller 只返回 data-only assessment；不得让 Application 直接访问 Evaluator 内部 owner。
   */
   assessDyingRescue(responder, target) {
     const startedAt = decisionNow();

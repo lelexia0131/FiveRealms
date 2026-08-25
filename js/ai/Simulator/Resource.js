@@ -19,6 +19,7 @@ canonical Probability facade。
 */
 import {
   PROBABILITY_EPSILON,
+  cardAvailability,
   clampProbability,
   expectedBranchValue,
   getAvailabilityStateBranches,
@@ -291,9 +292,9 @@ export const withResource = (Base) => class Resource extends Base {
       ...(Array.isArray(target.hand) ? target.hand : []),
       ...(Array.isArray(target.knownCards) ? target.knownCards : [])
     ].filter((card) => card?.definitionId === "block" && !excludedCardIds?.has(card.id ?? card.cardId));
-    const knownBefore = knownBlockCards.reduce((sum, card) => sum + this.cardAvailability(card), 0);
+    const knownBefore = knownBlockCards.reduce((sum, card) => sum + cardAvailability(card), 0);
     this.consumeBlockIdentities(state, target, identityWorlds, excludedCardIds);
-    const knownAfter = knownBlockCards.reduce((sum, card) => sum + this.cardAvailability(card), 0);
+    const knownAfter = knownBlockCards.reduce((sum, card) => sum + cardAvailability(card), 0);
     this.checkpointSearchWork();
     if (judgmentBlockCards.length && preJudgmentPartition) {
       let joinedJudgments = joined;
@@ -386,7 +387,7 @@ export const withResource = (Base) => class Resource extends Base {
     if (!target || !payment) return 0;
     const { candidates = [], selectionPartition = [], attemptedProbability = 0 } = payment;
     const knownBefore = candidates.reduce(
-      (sum, candidate) => sum + this.cardAvailability(candidate.card), 0
+      (sum, candidate) => sum + cardAvailability(candidate.card), 0
     );
     for (let index = 0; index < candidates.length; index += 1) {
       this.checkpointSearchWork();
@@ -396,7 +397,7 @@ export const withResource = (Base) => class Resource extends Base {
       );
       candidate.card.availability = Math.max(
         0,
-        this.cardAvailability(candidate.card) - selectedProbability
+        cardAvailability(candidate.card) - selectedProbability
       );
       if (candidate.card.availability <= PROBABILITY_EPSILON) {
         if (Array.isArray(target.hand)) target.hand = target.hand.filter((card) => card !== candidate.card);
@@ -404,7 +405,7 @@ export const withResource = (Base) => class Resource extends Base {
       }
     }
     const knownAfter = candidates.reduce(
-      (sum, candidate) => sum + this.cardAvailability(candidate.card), 0
+      (sum, candidate) => sum + cardAvailability(candidate.card), 0
     );
     const anonymousSpend = Math.max(0, attemptedProbability - (knownBefore - knownAfter));
     if (anonymousSpend > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
@@ -447,11 +448,11 @@ export const withResource = (Base) => class Resource extends Base {
     if (!player || spend <= PROBABILITY_EPSILON) return 0;
     const knownBefore = (Array.isArray(player.hand) ? player.hand : [])
       .filter((entry) => entry.definitionId === definitionId)
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+      .reduce((sum, entry) => sum + cardAvailability(entry), 0);
     this.consumeKnownCardsFromHand(state, player, definitionId, spend);
     const knownAfter = (Array.isArray(player.hand) ? player.hand : [])
       .filter((entry) => entry.definitionId === definitionId)
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+      .reduce((sum, entry) => sum + cardAvailability(entry), 0);
     const anonymousSpent = Math.max(0, spend - (knownBefore - knownAfter));
     if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
       type:"REMOVE",
@@ -571,7 +572,7 @@ export const withResource = (Base) => class Resource extends Base {
   概率为零或定义缺失时必须同时清空身份；不在此结算换装价值。
   */
   setSimulatedEquipment(player, definitionId, probability = 1) {
-    const normalized = Math.max(0, Math.min(1, Number(probability) || 0));
+    const normalized = clampProbability(probability);
     if (!definitionId || normalized === 0) {
       player.equipmentDefinitionId = null;
       player.equipmentRetentionProbability = 0;
@@ -608,7 +609,7 @@ export const withResource = (Base) => class Resource extends Base {
   */
   getSimulatedEquipmentProbability(player, definitionId = null) {
     if (!player?.equipmentDefinitionId || (definitionId && player.equipmentDefinitionId !== definitionId)) return 0;
-    return Math.max(0, Math.min(1, Number(player.equipmentRetentionProbability ?? 1) || 0));
+    return clampProbability(player.equipmentRetentionProbability ?? 1);
   }
 
   /*
@@ -638,7 +639,7 @@ export const withResource = (Base) => class Resource extends Base {
   */
   normalizeResourceEffectWorlds(state, resolution, label) {
     if (Array.isArray(resolution) && resolution.length) return resolution;
-    const probability = Math.max(0, Math.min(1, Number(resolution) || 0));
+    const probability = clampProbability(resolution);
     return this.getEventWorlds(state, probability, null, label);
   }
 
@@ -776,8 +777,8 @@ export const withResource = (Base) => class Resource extends Base {
     if (!player) return 0;
     if (Array.isArray(player.hand)) {
       const cards = player.hand.filter((card) => !excludedCardIds?.has(card.id));
-      const certainKnownCount = cards.filter((card) => this.cardAvailability(card) >= 1 - PROBABILITY_EPSILON).length;
-      const concreteExpected = cards.reduce((sum, card) => sum + this.cardAvailability(card), 0);
+      const certainKnownCount = cards.filter((card) => cardAvailability(card) >= 1 - PROBABILITY_EPSILON).length;
+      const concreteExpected = cards.reduce((sum, card) => sum + cardAvailability(card), 0);
       return Math.max(0, concreteExpected - certainKnownCount);
     }
     const { unknownCount } = this.buildSimulatedKnownCards(player);
@@ -864,7 +865,7 @@ export const withResource = (Base) => class Resource extends Base {
         existing,
         1
       );
-      const oldProbability = this.cardAvailability(existing);
+      const oldProbability = cardAvailability(existing);
       const newState = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
         newAvailable:Boolean(branch.occurs)
       }), "Simulator.addSimulatedKnownCard:new");
@@ -924,7 +925,7 @@ export const withResource = (Base) => class Resource extends Base {
     const entry = (!excludedCardIds?.has(identity.cardId))
       ? this.findTransferCardEntry(source, identity.cardId, identity.definitionId)
       : null;
-    if (!entry || this.cardAvailability(entry) <= PROBABILITY_EPSILON) return 0;
+    if (!entry || cardAvailability(entry) <= PROBABILITY_EPSILON) return 0;
     const availabilityState = getAvailabilityStateBranches(
       entry,
       1
@@ -1046,55 +1047,15 @@ export const withResource = (Base) => class Resource extends Base {
     const knownCards = Array.isArray(target.knownCards) ? target.knownCards : [];
     const handCount = Math.max(0, Number(target.handCount) || 0);
     const availableKnown = knownCards.filter(
-      (entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON
+      (entry) => cardAvailability(entry) > PROBABILITY_EPSILON
     );
     const knownOccupancy = knownCards.reduce(
-      (sum, entry) => sum + this.cardAvailability(entry), 0
+      (sum, entry) => sum + cardAvailability(entry), 0
     );
     if (knownOccupancy > handCount + PROBABILITY_EPSILON) {
       return { knownCards: [], unknownCount: 0 };
     }
     return { knownCards: availableKnown, unknownCount: Math.max(0, handCount - knownOccupancy) };
-  }
-
-  /*
-  功能
-  对一个已明确指定的资源候选执行 Destroy removal 或 Plunder ownership transfer。
-
-  调用方
-  Controller 资源反事实编排：为每个候选生成不会递归选择的 after-state。
-
-  输入
-  独立 World、其中的 actor/target、purpose 与确定候选描述。
-
-  输出
-  实际移除或转移的概率质量。
-
-  读取状态
-  候选公开/known/anonymous 身份与目标当前资源状态。
-
-  写入状态
-  只写传入的独立 World。
-
-  调用函数
-  takeResourceToHand、destroyResource 的 forcedSelection 入口。
-
-  边界与不变量
-  必须提供候选；本入口不产生选择，known 缺失时不得退化为匿名随机消费。
-  */
-  applyForcedResourceSelection(state, actor, target, purpose, selection) {
-    if (!selection || !actor || !target) return 0;
-    if (purpose === "plunder") {
-      return this.takeResourceToHand(
-        state, actor, target, 1, "resource-counterfactual-plunder", selection
-      );
-    }
-    if (purpose === "destroy") {
-      return this.destroyResource(
-        state, actor, target, 1, "resource-counterfactual-destroy", selection
-      );
-    }
-    throw new Error(`applyForcedResourceSelection 非法 purpose：${String(purpose)}`);
   }
 
   /*
@@ -1186,8 +1147,8 @@ export const withResource = (Base) => class Resource extends Base {
   downgradePartialKnownCardsAfterRandomLoss(player) {
     if (!Array.isArray(player?.knownCards)) return false;
     const retained = player.knownCards.filter((entry) => (
-      (entry.definitionId === "block" && this.cardAvailability(entry) > PROBABILITY_EPSILON)
-      || this.cardAvailability(entry) >= 1 - PROBABILITY_EPSILON
+      (entry.definitionId === "block" && cardAvailability(entry) > PROBABILITY_EPSILON)
+      || cardAvailability(entry) >= 1 - PROBABILITY_EPSILON
     ));
     const changed = retained.length !== player.knownCards.length;
     if (changed) {
@@ -1290,17 +1251,17 @@ export const withResource = (Base) => class Resource extends Base {
           ...(Array.isArray(player.knownCards) ? player.knownCards : [])
         ];
     const explicitExpected = explicitCards.reduce(
-      (sum, card) => sum + this.cardAvailability(card), 0
+      (sum, card) => sum + cardAvailability(card), 0
     );
     const expectedUnknown = Math.max(0, (Number(player.handCount) || 0) - explicitExpected);
     const candidates = options.anonymousOnly
       ? []
       : [
           ...(Array.isArray(player.hand) ? player.hand
-            .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON)
+            .filter((card) => cardAvailability(card) > PROBABILITY_EPSILON)
             .map((card, index) => ({ key:`hand:${card.id ?? index}`, card, definitionId:card.definitionId })) : []),
           ...(Array.isArray(player.knownCards) ? player.knownCards
-            .filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON)
+            .filter((entry) => cardAvailability(entry) > PROBABILITY_EPSILON)
             .map((entry, index) => ({ key:`known:${entry.cardId ?? index}`, card:entry, definitionId:entry.definitionId })) : [])
         ];
     if (!candidates.length && expectedUnknown <= PROBABILITY_EPSILON) return 0;
@@ -1341,7 +1302,7 @@ export const withResource = (Base) => class Resource extends Base {
       if (branchIndex % 32 === 0) this.checkpointSearchWork();
       const branch = joined[branchIndex];
       const occurs = Boolean(branch.occurs);
-      const knownWeights = candidates.map((candidate) => this.cardAvailability(candidate.card));
+      const knownWeights = candidates.map((candidate) => cardAvailability(candidate.card));
       const knownCount = knownWeights.reduce((sum, weight) => sum + weight, 0);
       const anonymousCount = Math.max(0, Number(branch.anonymousCount) || 0);
       const total = knownCount + anonymousCount;
@@ -1384,7 +1345,7 @@ export const withResource = (Base) => class Resource extends Base {
       );
       candidate.card.availability = Math.max(
         0,
-        this.cardAvailability(candidate.card) - selectedProbability
+        cardAvailability(candidate.card) - selectedProbability
       );
       if (candidate.card.availability <= PROBABILITY_EPSILON) {
         if (Array.isArray(player.hand)) player.hand = player.hand.filter((card) => card !== candidate.card);
@@ -1404,10 +1365,10 @@ export const withResource = (Base) => class Resource extends Base {
       probability:anonymousRemoved
     });
     if (Array.isArray(player.hand)) {
-      player.hand = player.hand.filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON);
+      player.hand = player.hand.filter((card) => cardAvailability(card) > PROBABILITY_EPSILON);
     }
     if (Array.isArray(player.knownCards)) {
-      player.knownCards = player.knownCards.filter((entry) => this.cardAvailability(entry) > PROBABILITY_EPSILON);
+      player.knownCards = player.knownCards.filter((entry) => cardAvailability(entry) > PROBABILITY_EPSILON);
     }
     player.handCount = Math.max(0, (player.handCount ?? 0) - amount);
     return amount;
@@ -1562,7 +1523,7 @@ export const withResource = (Base) => class Resource extends Base {
   hasCompleteCertainHand(player) {
     if (!Array.isArray(player?.hand) || !player.hand.length) return false;
     const allCertain = player.hand.every(
-      (card) => this.cardAvailability(card) >= 1 - PROBABILITY_EPSILON
+      (card) => cardAvailability(card) >= 1 - PROBABILITY_EPSILON
     );
     if (!allCertain) return false;
     return Math.abs(
@@ -1606,7 +1567,7 @@ export const withResource = (Base) => class Resource extends Base {
     let selectedIndex = 0;
     while (remaining > PROBABILITY_EPSILON && (player.handCount ?? 0) > PROBABILITY_EPSILON) {
       const candidates = player.hand
-        .filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON);
+        .filter((card) => cardAvailability(card) > PROBABILITY_EPSILON);
       if (!candidates.length) break;
       const selectedCardId = selectedCardIds[selectedIndex];
       if (!selectedCardId) break;
@@ -1615,7 +1576,7 @@ export const withResource = (Base) => class Resource extends Base {
       );
       if (!chosen) break;
       selectedIndex += 1;
-      const availableProbability = this.cardAvailability(chosen);
+      const availableProbability = cardAvailability(chosen);
       const spent = Math.min(1, remaining, availableProbability);
       const spendWorlds = this.getEventWorlds(
         state,
@@ -1647,7 +1608,7 @@ export const withResource = (Base) => class Resource extends Base {
         remainingState.filter((branch) => branch.available)
       );
       if (Array.isArray(player.hand)) {
-        player.hand = player.hand.filter((card) => this.cardAvailability(card) > PROBABILITY_EPSILON);
+        player.hand = player.hand.filter((card) => cardAvailability(card) > PROBABILITY_EPSILON);
       }
       player.handCount = Math.max(0, (player.handCount ?? 0) - spent);
       if (result) {
@@ -1780,7 +1741,7 @@ export const withResource = (Base) => class Resource extends Base {
       return removalProbability;
     } else if (selection.zone === "hand" && selection.selectionKind === "known") {
       const entry = this.findKnownCardEntry(target, selection.cardId, selection.definitionId);
-      if (entry && this.cardAvailability(entry) > PROBABILITY_EPSILON) {
+      if (entry && cardAvailability(entry) > PROBABILITY_EPSILON) {
         const availabilityState = getAvailabilityStateBranches(
           entry,
           1

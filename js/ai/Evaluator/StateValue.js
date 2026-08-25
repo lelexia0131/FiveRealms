@@ -116,38 +116,6 @@ export const HP_RISK_OPTION_WEIGHT = 0.05;
 
 /*
 功能
-汇总指定定义在已过滤卡牌条目中的期望可用数量。
-
-调用方
-expectedAssaultResources。
-
-输入
-可见/已知卡牌数组与定义 ID。
-
-输出
-非负期望可用数量。
-
-读取状态
-卡牌当前 availability 标量。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-缺少 availability 的合法已知条目按完整可用一张计算。
-*/
-const availableCardCount = (cards, definitionId) => (Array.isArray(cards) ? cards : [])
-  .filter((card) => card?.definitionId === definitionId)
-  .reduce((sum, card) => sum + Math.max(
-    0,
-    Math.min(1, Number(card?.availability ?? 1) || 0)
-  ), 0);
-
-/*
-功能
 读取玩家当前突袭库存的正式期望摘要，并在缺失时从合法已知卡牌回退。
 
 调用方
@@ -166,7 +134,7 @@ expectedAssaultCount、自己手牌与合法 knownCards。
 无。
 
 调用函数
-availableCardCount。
+queryPlayerHandProbability。
 
 边界与不变量
 不会用 handCount 猜测未知牌定义；正式摘要存在时保持其概率含义。

@@ -492,6 +492,7 @@ function projectFactPlayer(viewerId, player) {
     characterId:player.characterId,
     tags:freezeList([]),
     roleTags:freezeList(getCharacterRoleTags(player.characterId)),
+    passiveSkillIds:freezeList(player.character.passiveSkillIds ?? []),
     hp:player.hp,
     maxHp:player.maxHp,
     shield:player.shield,

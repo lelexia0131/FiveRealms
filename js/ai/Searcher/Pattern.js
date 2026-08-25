@@ -18,8 +18,8 @@ canonical Action intent 与 Domain CardDefinitions 的公开静态语义。
 Pattern 只提供探索顺序知识；不得定义合法性或价值、调用 Simulator/Probability/Evaluator、
 扩大搜索预算或深度、建立第二搜索树、删除候选或改变最终 winner。
 */
-import { CARD_DEFINITIONS } from "../../../domain/definitions/cards/CardDefinitions.js";
-import { actionIntentKey } from "../../Generator/Action.js";
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { actionIntentKey } from "../Generator/Action.js";
 
 const ATTACK_CARD_IDS = Object.freeze(
   Object.values(CARD_DEFINITIONS)

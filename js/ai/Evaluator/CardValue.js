@@ -18,13 +18,13 @@ Evaluator public facade 与直接 primitive 契约测试。
 不得选择最终候选、导入 Evaluator/Simulator 或执行资源 transition；静态值不得直接成为最终 Transition Value。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
-import { CHARACTER_BY_ID, CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js";
+import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { calculateHealAmount } from "../../domain/rules/combat/CombatRules.js";
+import { cardAvailability } from "../Event/Probability/Probability.js";
 
 export const RESOURCE_MATERIAL_SCALE = 0.25;
 export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
-const CARD_HP_VALUE = 5;
 export const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
 export const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
 // 该值只表示资源选择中的技能门槛策略选择权，不是概率、State/Final Utility 或单位换算。
@@ -467,69 +467,6 @@ export function getEquipmentKeepValueDeduction(
 
 /*
 功能
-校验稀疏角色卡牌差量表的引用和值域。
-
-调用方
-启动期配置检查与测试。
-
-输入
-待校验差量表及可选角色、卡牌配置。
-
-输出
-错误信息数组；空数组表示合法。
-
-读取状态
-只读稳定角色与卡牌配置。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-空表合法；未知引用和超出 -2..2 的非整数差量必须报告。
-*/
-export function validateRoleCardValueDeltas(deltas = ROLE_CARD_VALUE_DELTAS, options = {}) {
-  const {
-    cardDefinitions = CARD_DEFINITIONS,
-    characterDefinitions = CHARACTER_DEFINITIONS
-  } = options ?? {};
-  if (deltas === null || typeof deltas !== "object" || Array.isArray(deltas)) {
-    return ["角色差值表必须是对象"];
-  }
-  const characterIds = new Set(
-    Array.isArray(characterDefinitions) ? characterDefinitions.map((character) => character?.id) : []
-  );
-  const errors = [];
-  for (const [characterId, roleDeltas] of Object.entries(deltas)) {
-    if (!characterIds.has(characterId)) {
-      errors.push(`未知角色 ID：${characterId}`);
-      continue;
-    }
-    if (roleDeltas === null || typeof roleDeltas !== "object" || Array.isArray(roleDeltas)) {
-      errors.push(`角色 ${characterId} 的差值必须是对象`);
-      continue;
-    }
-    for (const [definitionId, delta] of Object.entries(roleDeltas)) {
-      if (!Object.hasOwn(cardDefinitions, definitionId)) {
-        errors.push(`未知卡牌 ID：${definitionId}（角色 ${characterId}）`);
-        continue;
-      }
-      if (!Number.isInteger(delta)) {
-        errors.push(`卡牌 ${definitionId}（角色 ${characterId}）的差值必须是有限整数，实际：${String(delta)}`);
-        continue;
-      }
-      if (delta < -2 || delta > 2) {
-        errors.push(`卡牌 ${definitionId}（角色 ${characterId}）的差值超出 -2..+2：${delta}`);
-      }
-    }
-  }
-  return errors;
-}
-
-/*
-功能
 计算角色卡牌价值相对全局基础值的身份差量。
 
 调用方
@@ -556,88 +493,6 @@ getRoleCardAiValue、getBaseCardAiValue。
 export function roleCardDelta(characterId, definitionId) {
   if (!characterId || !definitionId) return 0;
   return getRoleCardAiValue(characterId, definitionId) - getBaseCardAiValue(definitionId);
-}
-
-/*
-功能
-读取具体可见卡牌条目的剩余可用概率。
-
-调用方
-Evaluator、FrontierValue 与正式边界。
-
-输入
-可见卡牌或概率卡牌条目。
-
-输出
-零到一语义的现有概率总和；无分支时返回一。
-
-读取状态
-只读卡牌当前 availability 标量。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-不得读取未过滤的敌方手牌身份，也不得重建 availability branch hierarchy。
-*/
-export function cardAvailability(card) {
-  return Math.max(0, Math.min(1, Number(card?.availability ?? 1) || 0));
-}
-
-/*
-功能
-把打出一张牌的现有机会成本拆成互斥的诊断分量。
-
-调用方
-Value ownership 诊断、测试与正式边界。
-
-输入
-卡牌条目与其当前持有者的可见状态。
-
-输出
-generic、specific、futureOption 与 responseCapacity 分解。
-
-读取状态
-只读持有者生命、装备、手牌与设备使用次数。
-
-写入状态
-无。
-
-调用函数
-roleCardDelta。
-
-边界与不变量
-本结果仅作诊断，不进入最终 transition value；手牌减少已经由 state delta 计价。
-*/
-export function cardOpportunityCost(card, player) {
-  const definitionId = card?.definitionId ?? null;
-  const generic = 1.1;
-  const specific = definitionId ? roleCardDelta(player?.characterId, definitionId) : 0;
-  const recoverOption = definitionId === "recover"
-    ? Math.max(0, Math.min(1, Math.max(0, (player?.maxHp ?? 0) - (player?.hp ?? 0)))) * CARD_HP_VALUE
-    : 0;
-  const recycleOption = definitionId
-    && player?.equipmentDefinitionId === "recycleDevice"
-    && Array.isArray(player?.hand)
-    && player.hand.some((entry) => entry.definitionId === definitionId
-      && entry.category === "tactic" && entry.counterable !== false)
-    ? Math.max(0, 2 - (player.recycleDeviceUses ?? 0)) * 1.1
-      * Math.max(0, Number(player.equipmentRetentionProbability) || 1)
-    : 0;
-  return {
-    definitionId,
-    generic,
-    specific,
-    futureOption: { recover: recoverOption, recycle: recycleOption },
-    responseCapacity: {
-      block: definitionId === "block" ? 1 : 0,
-      counter: definitionId === "counter" ? 1 : 0,
-      recover: definitionId === "recover" ? 1 : 0
-    }
-  };
 }
 
 /*
@@ -859,41 +714,6 @@ export function skillThresholdOptionPolicyValue(actor, owner, equipmentDefinitio
   const localValue = Math.max(0, withAffordableUses - withoutAffordableUses)
     * SKILL_THRESHOLD_POLICY_BONUS;
   return owner.battleTeam === actor?.battleTeam ? -localValue : localValue;
-}
-
-/*
-功能
-计算观察者对自己或他人一张手牌的合法单卡期望价值。
-
-调用方
-Controller/测试的 card value 查询边界。
-
-输入
-观察者、资源拥有者与真实 Card token。
-
-输出
-自己手牌的角色值、合法记忆的基础值，或匿名固定期望。
-
-读取状态
-观察者自己的 definitionId 或合法 aiMemory。
-
-写入状态
-无。
-
-调用函数
-getRoleCardAiValue、getBaseCardAiValue。
-
-边界与不变量
-其他玩家未知实体的 definitionId 永不读取；unknown token 只返回聚合期望。
-*/
-export function getObservedCardValue(actor, owner, card) {
-  if (actor.id === owner.id) {
-    return getRoleCardAiValue(actor.characterId, card.definitionId);
-  }
-  const definitionId = actor.aiMemory?.knownCardsByPlayer?.[owner.id]?.[card.id] ?? null;
-  return definitionId
-    ? getBaseCardAiValue(definitionId)
-    : UNKNOWN_HAND_EXPECTED_VALUE;
 }
 
 /*

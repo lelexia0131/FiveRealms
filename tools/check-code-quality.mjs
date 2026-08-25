@@ -49,7 +49,7 @@ const FORBIDDEN_ROOT_BUCKET_PATTERN = /^js\/(?:common|helpers|misc|shared|legacy
 const LAYER_BUCKET_PATTERN = /^js\/(?:domain|application|adapters)\/(?:.*\/)?(?:utils|common|helpers|misc|shared|legacy|compat)(?:\/|$)/i;
 const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
 const SEARCHER_PATTERN = /^js\/ai\/Searcher\/Searcher\.js$/i;
-const SEARCHER_INTERNAL_PATTERN = /^js\/ai\/Searcher\/(?:Rng\.js|Pattern\/Pattern\.js)$/i;
+const SEARCHER_INTERNAL_PATTERN = /^js\/ai\/Searcher\/(?:Rng|Pattern)\.js$/i;
 const GENERATOR_FILE = "js/ai/Generator/Generator.js";
 const SIMULATOR_AI_PATTERN = /^js\/ai\/Simulator\//i;
 const AI_LEGACY_RULE_GUARD_PATTERN = /^(?:js\/ai\/(?:Event|Evaluator|Simulator|Searcher|search|policy)\/)/i;
@@ -73,7 +73,7 @@ const FINAL_AI_ALLOWLIST = Object.freeze(new Set([
   "js/ai/Generator/Action.js",
   "js/ai/Searcher/Searcher.js",
   "js/ai/Searcher/Rng.js",
-  "js/ai/Searcher/Pattern/Pattern.js",
+  "js/ai/Searcher/Pattern.js",
   "js/ai/Event/Fact.js",
   PROBABILITY_FILE,
   BRANCH_FILE,
@@ -870,6 +870,42 @@ function findFunctions(source) {
 
 /*
 功能
+返回一个具名函数或类方法的源码范围。
+
+调用方
+inspectSource 的语义 ownership guard。
+
+输入
+完整源码、函数名与可选的预计算函数记录。
+
+输出
+首个同名函数的源码文本和范围；不存在时返回 null。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+findFunctions、Array.slice。
+
+边界与不变量
+只用于已经由 functionRange 配对花括号的具名函数；匿名回调仍由调用方的窄语法检查负责。
+*/
+function namedFunctionSource(source, name, functions = null) {
+  const records = functions ?? findFunctions(source);
+  const fn = records.find((entry) => entry.name === name);
+  if (!fn) return null;
+  const lines = source.split(/\r?\n/);
+  return {
+    ...fn,
+    source:lines.slice(fn.startLine - 1, fn.endLine).join("\n")
+  };
+}
+
+/*
+功能
 读取函数正上方与文件开头的相邻块注释。
 
 调用方
@@ -1525,9 +1561,10 @@ function inspectSource(file, source, changed) {
   const importSource = maskComments(source);
   const maskedSource = maskNonCode(source);
   const maskedLines = maskedSource.split(/\r?\n/);
+  const functions = findFunctions(source);
   const errors = [];
   errors.push(...cacheBustImportErrors(file, source));
-  for (const fn of findFunctions(source)) {
+  for (const fn of functions) {
     if (!functionWasChanged(fn, changed, lines)) continue;
     const missing = missingHeaderFields(lines, fn.startLine, APPLICATION_LAYER_PATTERN.test(file));
     if (missing.length) errors.push({ file, functionName: fn.name, line: fn.startLine, missing });
@@ -1673,6 +1710,136 @@ function inspectSource(file, source, changed) {
     }
   }
 
+  const rngBypass = imports.find((dependency) => (
+    dependency.target.toLowerCase() === "js/ai/searcher/rng.js"
+    && !["js/ai/Controller.js", "js/ai/Searcher/Rng.js"].includes(file)
+  ));
+  if (rngBypass) {
+    errors.push({
+      file,
+      functionName:"<module>",
+      line:sourceLineAt(source, rngBypass.index),
+      missing:["架构约束：外部 composition/Worker 只能通过 Controller public RNG contract"]
+    });
+  }
+
+  for (const call of maskedSource.matchAll(/\b(?:this\.)?evaluator\.[A-Za-z_$][\w$]*\s*\(\s*\{/g)) {
+    const objectStart = call.index + call[0].lastIndexOf("{");
+    let depth = 0;
+    let objectEnd = -1;
+    for (let cursor = objectStart; cursor < maskedSource.length; cursor += 1) {
+      if (maskedSource[cursor] === "{") depth += 1;
+      else if (maskedSource[cursor] === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          objectEnd = cursor;
+          break;
+        }
+      }
+    }
+    if (objectEnd < 0) continue;
+    const argument = maskedSource.slice(objectStart, objectEnd + 1);
+    const capability = argument.match(
+      /\b[A-Za-z_$][\w$]*\s*:\s*(?:function\b|(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>)/
+    );
+    if (!capability) continue;
+    errors.push({
+      file,
+      functionName:"<architecture>",
+      line:sourceLineAt(source, objectStart + capability.index),
+      missing:["架构约束：Evaluator 只能接收 data/scalar/World，不得接收 function capability"]
+    });
+  }
+
+  if (file === "js/ai/Controller.js") {
+    const decisionContext = namedFunctionSource(
+      source,
+      "buildResponseDecisionContext",
+      functions
+    );
+    if (decisionContext) {
+      const capability = maskNonCode(decisionContext.source).match(
+        /(?:\bdecision\.[A-Za-z_$][\w$]*\s*=|\b[A-Za-z_$][\w$]*\s*:)[ \t]*(?:function\b|(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>)/
+      );
+      if (capability) {
+        errors.push({
+          file,
+          functionName:"buildResponseDecisionContext",
+          line:decisionContext.startLine
+            + sourceLineAt(decisionContext.source, capability.index) - 1,
+          missing:["架构约束：DecisionContext 必须 data-only，不得携带 function capability"]
+        });
+      }
+    }
+    for (const fn of functions) {
+      const scopedSource = lines.slice(fn.startLine - 1, fn.endLine).join("\n");
+      const scopedCode = maskNonCode(scopedSource);
+      const forbiddenOwner = /^(?:chooseContextualZoneCard|chooseTransferCombination)$/.test(fn.name);
+      const candidateSearch = /\b(?:candidate|candidates|winner|best)\b/.test(scopedCode)
+        && /\b(?:simulatorFactory|simulator\.apply|simulation\.apply)\s*\(/.test(scopedCode)
+        && /\b(?:evaluator\.|evaluateTransition\s*\(|stateUtility\s*\()/.test(scopedCode);
+      if (!forbiddenOwner && !candidateSearch) continue;
+      errors.push({
+        file,
+        functionName:fn.name,
+        line:fn.startLine,
+        missing:["架构约束：Controller 禁止 candidate simulation/strategic winner selection"]
+      });
+    }
+  }
+
+  if (file === "js/ai/Generator/Action.js") {
+    const replayMetadata = maskedSource.match(
+      /\b(?:restoreActorHand|ignoreCounter)\b|\bexecution\s*:/
+    );
+    if (replayMetadata) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, replayMetadata.index),
+        missing:["架构约束：canonical Action 禁止 simulation replay metadata"]
+      });
+    }
+  }
+
+  if (AI_PATTERN.test(file)) {
+    const legacyStateContracts = maskedSource.match(/\bcreateStateContracts\b/);
+    if (legacyStateContracts) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, legacyStateContracts.index),
+        missing:["架构约束：legacy createStateContracts semantic shell 已删除"]
+      });
+    }
+    if (file !== "js/ai/Simulator/World.js") {
+      const rawWorldClone = maskedSource.match(/\bstructuredClone\s*\(/);
+      if (rawWorldClone) {
+        errors.push({
+          file,
+          functionName:"<architecture>",
+          line:sourceLineAt(source, rawWorldClone.index),
+          missing:["架构约束：完整 World deep clone 必须通过 Simulator/World cloneWorld 统一计数"]
+        });
+      }
+    }
+    if (file !== BRANCH_FILE) {
+      const duplicateAvailability = maskedSource.match(
+        /\bfunction\s+cardAvailability\s*\(|^\s*cardAvailability\s*\([^)]*\)\s*\{/m
+      );
+      const availabilityBackdoor = maskedSource.match(/\bthis\.cardAvailability\s*\(/);
+      const residue = duplicateAvailability ?? availabilityBackdoor;
+      if (residue) {
+        errors.push({
+          file,
+          functionName:"<architecture>",
+          line:sourceLineAt(source, residue.index),
+          missing:["架构约束：cardAvailability normalization 只能由 Probability facade 公开唯一 primitive"]
+        });
+      }
+    }
+  }
+
   const siblingOwner = SIMULATOR_SIBLING_OWNERS[file];
   if (siblingOwner) {
     for (const [owner, methods] of Object.entries(SIMULATOR_SIBLING_CAPABILITIES)) {
@@ -1727,14 +1894,14 @@ function inspectSource(file, source, changed) {
     }
     const internalAiImport = imports.find((dependency) => (
       /^js\/ai\//i.test(dependency.target)
-      && !["js/ai/Controller.js", "js/ai/Searcher/Searcher.js"].includes(dependency.target)
+      && dependency.target !== "js/ai/Controller.js"
     ));
     if (internalAiImport) {
       errors.push({
         file,
         functionName:"<module>",
         line:sourceLineAt(source, internalAiImport.index),
-        missing:["架构约束：Worker 只能 import public Controller.js 或 Searcher.js"]
+        missing:["架构约束：Worker 只能 import public Controller.js facade"]
       });
     }
   }
@@ -1883,6 +2050,52 @@ function inspectSource(file, source, changed) {
         missing:["架构约束：Evaluator 禁止保存或注入 Simulator runtime dependency"]
       });
     }
+
+    const willingnessContracts = Object.freeze([
+      ["decidePlanningBlock", "blockWillingness"],
+      ["decidePlanningGuardianAid", "guardianAidWillingness"],
+      ["decidePlanningDyingRescue", "dyingRescueWillingness"],
+      ["decidePlanningCounter", "planningCounterDecision"]
+    ]);
+    for (const [owner, primitive] of willingnessContracts) {
+      const fn = namedFunctionSource(source, owner, functions);
+      if (!fn) continue;
+      if (new RegExp(`\\b${primitive}\\s*\\(`).test(maskNonCode(fn.source))) continue;
+      errors.push({
+        file,
+        functionName:owner,
+        line:fn.startLine,
+        missing:[`架构约束：planning/runtime willingness 必须复用 canonical ${primitive}`]
+      });
+    }
+    const runtimeResponse = namedFunctionSource(source, "shouldRespond", functions);
+    if (runtimeResponse) {
+      const runtimeBody = maskNonCode(runtimeResponse.source);
+      for (const primitive of [
+        "blockWillingness",
+        "dyingRescueWillingness",
+        "globalBenefitCounterDecision",
+        "dynamicCounterWillingness"
+      ]) {
+        if (new RegExp(`\\b${primitive}\\s*\\(`).test(runtimeBody)) continue;
+        errors.push({
+          file,
+          functionName:"shouldRespond",
+          line:runtimeResponse.startLine,
+          missing:[`架构约束：runtime willingness 必须复用 canonical ${primitive}`]
+        });
+      }
+    }
+    const runtimeGuardian = namedFunctionSource(source, "shouldUseGuardianAid", functions);
+    if (runtimeGuardian
+      && !/\bguardianAidWillingness\s*\(/.test(maskNonCode(runtimeGuardian.source))) {
+      errors.push({
+        file,
+        functionName:"shouldUseGuardianAid",
+        line:runtimeGuardian.startLine,
+        missing:["架构约束：runtime willingness 必须复用 canonical guardianAidWillingness"]
+      });
+    }
   }
 
   if (file === STATE_VALUE_FILE || file === CARD_VALUE_FILE) {
@@ -2026,6 +2239,22 @@ function inspectSource(file, source, changed) {
         functionName: "<architecture>",
         line: sourceLineAt(source, businessResidue.index),
         missing: ["架构约束：Searcher 禁止业务价值公式或 action-specific metadata"],
+      });
+    }
+    for (const fn of functions.filter((entry) => (
+      /(?:Value|Utility|Marginal|Prior|Score|Terms)/.test(entry.name)
+        || /^(?:evaluate|score|rank)Candidate/.test(entry.name)
+    ))) {
+      const scopedSource = lines.slice(fn.startLine - 1, fn.endLine).join("\n");
+      const actionSpecificFormula = maskComments(scopedSource).match(
+        /\b(?:action|candidate)\??\.(?:cardId|characterId)\s*(?:={2,3}|!={1,2})\s*["'][^"']+["']/
+      );
+      if (!actionSpecificFormula) continue;
+      errors.push({
+        file,
+        functionName:fn.name,
+        line:fn.startLine + sourceLineAt(scopedSource, actionSpecificFormula.index) - 1,
+        missing:["架构约束：Searcher value/prior/marginal owner 禁止按 cardId/characterId 定义业务价值"]
       });
     }
   }
@@ -2431,6 +2660,79 @@ function identity(value) { return value; }`;
   if (!evaluatorParameterRuntimeErrors.some((error) => error.missing.some((item) => item.includes("runtime dependency")))) {
     throw new Error("Evaluator fixture did not reject parameter-injected Simulator runtime");
   }
+  const evaluatorDataInputErrors = inspectSource(
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return evaluator.evaluateTransition({ world:value, resolutionScale:1 });")}`,
+    null,
+  );
+  if (evaluatorDataInputErrors.some((error) => error.missing.some((item) => item.includes("function capability")))) {
+    throw new Error("Evaluator capability guard rejected plain data/scalar input");
+  }
+  const evaluatorCapabilityErrors = inspectSource(
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return evaluator.evaluateTransition({ world:value, getResolutionScale:() => 1 });")}`,
+    null,
+  );
+  if (!evaluatorCapabilityErrors.some((error) => error.missing.some((item) => item.includes("function capability")))) {
+    throw new Error("Evaluator capability guard did not reject transition-producing callback input");
+  }
+  const planningContracts = [
+    ["decidePlanningBlock", "blockWillingness"],
+    ["decidePlanningGuardianAid", "guardianAidWillingness"],
+    ["decidePlanningDyingRescue", "dyingRescueWillingness"],
+    ["decidePlanningCounter", "planningCounterDecision"]
+  ];
+  for (const [owner, primitive] of planningContracts) {
+    const legal = pass
+      .replace("identity", owner)
+      .replace("return value;", `return ${primitive}({ responder:value });`);
+    const legalErrors = inspectSource(EVALUATOR_FILE, `${moduleHeader}\n${legal}`, null);
+    if (legalErrors.some((error) => error.missing.some((item) => item.includes("planning/runtime willingness")))) {
+      throw new Error(`${owner} guard rejected canonical ${primitive}`);
+    }
+    const duplicate = pass.replace("identity", owner).replace("return value;", "return true;");
+    const duplicateErrors = inspectSource(EVALUATOR_FILE, `${moduleHeader}\n${duplicate}`, null);
+    if (!duplicateErrors.some((error) => error.missing.some((item) => item.includes(`canonical ${primitive}`)))) {
+      throw new Error(`${owner} guard did not reject duplicated willingness`);
+    }
+  }
+  const runtimeWillingness = pass
+    .replace("identity", "shouldRespond")
+    .replace(
+      "return value;",
+      "blockWillingness({}); dyingRescueWillingness({}); globalBenefitCounterDecision(); return dynamicCounterWillingness(value);"
+    );
+  const runtimeWillingnessErrors = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${runtimeWillingness}`,
+    null,
+  );
+  if (runtimeWillingnessErrors.some((error) => error.missing.some((item) => item.includes("runtime willingness")))) {
+    throw new Error("runtime willingness guard rejected canonical primitives");
+  }
+  const duplicatedRuntimeWillingness = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${pass.replace("identity", "shouldRespond")}`,
+    null,
+  );
+  if (!duplicatedRuntimeWillingness.some((error) => error.missing.some((item) => item.includes("runtime willingness")))) {
+    throw new Error("runtime willingness guard did not reject a separate response path");
+  }
+  const guardianRuntime = pass
+    .replace("identity", "shouldUseGuardianAid")
+    .replace("return value;", "return guardianAidWillingness({ responder:value });");
+  const guardianRuntimeErrors = inspectSource(EVALUATOR_FILE, `${moduleHeader}\n${guardianRuntime}`, null);
+  if (guardianRuntimeErrors.some((error) => error.missing.some((item) => item.includes("runtime willingness")))) {
+    throw new Error("Guardian runtime guard rejected canonical primitive");
+  }
+  const duplicateGuardianRuntimeErrors = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${pass.replace("identity", "shouldUseGuardianAid")}`,
+    null,
+  );
+  if (!duplicateGuardianRuntimeErrors.some((error) => error.missing.some((item) => item.includes("guardianAidWillingness")))) {
+    throw new Error("Guardian runtime guard did not reject duplicated willingness");
+  }
   const stateValueEvaluatorErrors = inspectSource(
     STATE_VALUE_FILE,
     `${moduleHeader}\nimport { Evaluator } from "./Evaluator.js";\n${pass}`,
@@ -2550,6 +2852,28 @@ function identity(value) { return value; }`;
   );
   if (!searcherBusinessErrors.some((error) => error.missing.some((item) => item.includes("action-specific metadata")))) {
     throw new Error("Searcher fixture did not reject transferPreference");
+  }
+  const searcherDiagnosticIdentity = pass
+    .replace("function identity(value)", "function observeCounterfactualCandidate(action)")
+    .replace("return value;", "return action.cardId === \"assault\";");
+  const searcherDiagnosticIdentityErrors = inspectSource(
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\n${searcherDiagnosticIdentity}`,
+    null,
+  );
+  if (searcherDiagnosticIdentityErrors.some((error) => error.missing.some((item) => item.includes("value/prior/marginal owner")))) {
+    throw new Error("Searcher value guard rejected diagnostic Action identity");
+  }
+  const searcherValueIdentity = pass
+    .replace("function identity(value)", "function evaluateAssaultMarginal(action)")
+    .replace("return value;", "return action.cardId === \"assault\" ? 5 : 0;");
+  const searcherValueIdentityErrors = inspectSource(
+    "js/ai/Searcher/Searcher.js",
+    `${moduleHeader}\n${searcherValueIdentity}`,
+    null,
+  );
+  if (!searcherValueIdentityErrors.some((error) => error.missing.some((item) => item.includes("value/prior/marginal owner")))) {
+    throw new Error("Searcher value guard did not reject card-specific value formula");
   }
   const searcherCommentErrors = inspectSource(
     "js/ai/Searcher/Searcher.js",
@@ -3404,6 +3728,152 @@ function identity(value) { return value; }`;
     throw new Error("GameChoiceRouter guard did not reject aiController lookup");
   }
 
+  const dataOnlyDecisionContext = pass
+    .replace("function identity(value)", "function buildResponseDecisionContext(value)")
+    .replace("return value;", "return { world:value, resolutionScale:1 }; ");
+  const dataOnlyDecisionErrors = inspectSource(
+    "js/ai/Controller.js",
+    `${moduleHeader}\n${dataOnlyDecisionContext}`,
+    null,
+  );
+  if (dataOnlyDecisionErrors.some((error) => error.missing.some((item) => item.includes("DecisionContext 必须 data-only")))) {
+    throw new Error("DecisionContext guard rejected plain data");
+  }
+  const capabilityDecisionContext = pass
+    .replace("function identity(value)", "function buildResponseDecisionContext(value)")
+    .replace("return value;", "return { world:value, guardianAidValues:() => value }; ");
+  const capabilityDecisionErrors = inspectSource(
+    "js/ai/Controller.js",
+    `${moduleHeader}\n${capabilityDecisionContext}`,
+    null,
+  );
+  if (!capabilityDecisionErrors.some((error) => error.missing.some((item) => item.includes("DecisionContext 必须 data-only")))) {
+    throw new Error("DecisionContext guard did not reject function capability");
+  }
+
+  const controllerBoundaryErrors = inspectSource(
+    "js/ai/Controller.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (controllerBoundaryErrors.some((error) => error.missing.some((item) => item.includes("strategic winner")))) {
+    throw new Error("Controller mini-search guard rejected ordinary boundary code");
+  }
+  const controllerMiniSearch = pass
+    .replace("function identity(value)", "function selectCandidate(candidates)")
+    .replace(
+      "return value;",
+      "const simulator = this.simulatorFactory(candidates[0]); const after = simulator.apply(candidates[0], candidates[1]); return this.evaluator.stateUtility(after);"
+    );
+  const controllerMiniSearchErrors = inspectSource(
+    "js/ai/Controller.js",
+    `${moduleHeader}\n${controllerMiniSearch}`,
+    null,
+  );
+  if (!controllerMiniSearchErrors.some((error) => error.missing.some((item) => item.includes("strategic winner")))) {
+    throw new Error("Controller mini-search guard did not reject candidate simulation");
+  }
+  const legacyControllerChooser = pass.replace("identity", "chooseTransferCombination");
+  const legacyControllerChooserErrors = inspectSource(
+    "js/ai/Controller.js",
+    `${moduleHeader}\n${legacyControllerChooser}`,
+    null,
+  );
+  if (!legacyControllerChooserErrors.some((error) => error.missing.some((item) => item.includes("strategic winner")))) {
+    throw new Error("Controller mini-search guard did not reject legacy strategic owner");
+  }
+
+  const publicRngErrors = inspectSource(
+    "js/ai/Controller.js",
+    `${moduleHeader}\nimport { Rng } from "./Searcher/Rng.js";\n${pass}`,
+    null,
+  );
+  if (publicRngErrors.some((error) => error.missing.some((item) => item.includes("public RNG contract")))) {
+    throw new Error("RNG facade guard rejected Controller composition owner");
+  }
+  const rngBypassErrors = inspectSource(
+    "js/composition/BadRngBypass.js",
+    `${moduleHeader}\nimport { Rng } from "../ai/Searcher/Rng.js";\n${pass}`,
+    null,
+  );
+  if (!rngBypassErrors.some((error) => error.missing.some((item) => item.includes("public RNG contract")))) {
+    throw new Error("RNG facade guard did not reject external internal bypass");
+  }
+
+  const pureActionErrors = inspectSource(
+    "js/ai/Generator/Action.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (pureActionErrors.some((error) => error.missing.some((item) => item.includes("replay metadata")))) {
+    throw new Error("Action replay guard rejected pure intent");
+  }
+  const pollutedActionErrors = inspectSource(
+    "js/ai/Generator/Action.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return { execution:{ restoreActorHand:true } }; ")}`,
+    null,
+  );
+  if (!pollutedActionErrors.some((error) => error.missing.some((item) => item.includes("replay metadata")))) {
+    throw new Error("Action replay guard did not reject simulation controls");
+  }
+
+  const canonicalWorldCloneErrors = inspectSource(
+    "js/ai/Simulator/World.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return structuredClone(value);")}`,
+    null,
+  );
+  if (canonicalWorldCloneErrors.some((error) => error.missing.some((item) => item.includes("World deep clone")))) {
+    throw new Error("World clone guard rejected canonical clone owner");
+  }
+  const rawWorldCloneErrors = inspectSource(
+    "js/ai/Simulator/Simulator.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return structuredClone(value);")}`,
+    null,
+  );
+  if (!rawWorldCloneErrors.some((error) => error.missing.some((item) => item.includes("World deep clone")))) {
+    throw new Error("World clone guard did not reject raw clone bypass");
+  }
+  const legacyStateContractErrors = inspectSource(
+    "js/ai/Simulator/World.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return createStateContracts(value);")}`,
+    null,
+  );
+  if (!legacyStateContractErrors.some((error) => error.missing.some((item) => item.includes("createStateContracts")))) {
+    throw new Error("legacy StateContracts guard did not reject removed shell");
+  }
+  const canonicalAvailabilityErrors = inspectSource(
+    BRANCH_FILE,
+    `${moduleHeader}\n${pass.replace("function identity(value)", "function cardAvailability(card)")}`,
+    null,
+  );
+  if (canonicalAvailabilityErrors.some((error) => error.missing.some((item) => item.includes("cardAvailability normalization")))) {
+    throw new Error("cardAvailability guard rejected canonical Probability owner");
+  }
+  const availabilityConsumerErrors = inspectSource(
+    EVALUATOR_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "return cardAvailability(value);")}`,
+    null,
+  );
+  if (availabilityConsumerErrors.some((error) => error.missing.some((item) => item.includes("cardAvailability normalization")))) {
+    throw new Error("cardAvailability guard rejected direct canonical consumer");
+  }
+  const duplicateAvailabilityErrors = inspectSource(
+    SIMULATOR_FILE,
+    `${moduleHeader}\n${pass.replace("function identity(value)", "function cardAvailability(card)")}`,
+    null,
+  );
+  if (!duplicateAvailabilityErrors.some((error) => error.missing.some((item) => item.includes("cardAvailability normalization")))) {
+    throw new Error("cardAvailability guard did not reject duplicate primitive");
+  }
+  const availabilityBackdoorErrors = inspectSource(
+    SIMULATOR_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "return this.cardAvailability(value);")}`,
+    null,
+  );
+  if (!availabilityBackdoorErrors.some((error) => error.missing.some((item) => item.includes("cardAvailability normalization")))) {
+    throw new Error("cardAvailability guard did not reject legacy Simulator method call");
+  }
+
   const goodWorkerBoundary = inspectSource(
     "js/adapters/ai/worker/GoodWorker.js",
     `${moduleHeader}\n${pass}`,
@@ -3425,8 +3895,16 @@ function identity(value) { return value; }`;
     `${moduleHeader}\nimport { stateUtility } from "../../../ai/Evaluator/StateValue.js";\n${pass}`,
     null,
   );
-  if (!badWorkerAiInternalImport.some((error) => error.missing.some((item) => item.includes("public Controller.js 或 Searcher.js")))) {
+  if (!badWorkerAiInternalImport.some((error) => error.missing.some((item) => item.includes("public Controller.js facade")))) {
     throw new Error("Worker guard did not reject internal AI import");
+  }
+  const badWorkerSearcherImport = inspectSource(
+    "js/adapters/ai/worker/BadWorkerSearcherImport.js",
+    `${moduleHeader}\nimport { Searcher } from "../../../ai/Searcher/Searcher.js";\n${pass}`,
+    null,
+  );
+  if (!badWorkerSearcherImport.some((error) => error.missing.some((item) => item.includes("public Controller.js facade")))) {
+    throw new Error("Worker guard did not reject direct Searcher implementation import");
   }
   const badWorkerRandom = inspectSource(
     "js/adapters/ai/worker/BadWorkerRandom.js",

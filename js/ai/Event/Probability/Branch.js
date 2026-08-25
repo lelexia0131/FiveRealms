@@ -51,6 +51,35 @@ export function clampProbability(value) {
 
 /*
 功能
+读取可见或概率卡牌条目的当前可用概率。
+
+调用方
+Evaluator、Simulator、Resource、Response 与直接概率测试。
+
+输入
+带可选 availability 标量的卡牌摘要。
+
+输出
+零到一的可用概率；缺失标量时为一。
+
+读取状态
+只读卡牌 availability。
+
+写入状态
+无。
+
+调用函数
+clampProbability。
+
+边界与不变量
+这是唯一 card availability normalization；不读取隐藏实体或构造分支层级。
+*/
+export function cardAvailability(card) {
+  return clampProbability(card?.availability ?? 1);
+}
+
+/*
+功能
 计算两个已确认独立的事件至少发生一次的概率。
 
 调用方

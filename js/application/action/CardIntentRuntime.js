@@ -22,7 +22,7 @@ import { getScoutMaxRevealCount } from "../../domain/rules/card/CardEffectRules.
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "diagnostics", "responseWorkflow", "playCard",
   "moveEquipmentToHand", "getTransferSources", "getTransferReceivers", "getCardTargets",
-  "chooseTransferCombination", "chooseHiddenCards", "choosePlayerZoneCard", "choosePrivatePeekCards",
+  "chooseHiddenCards", "choosePlayerZoneCard", "choosePrivatePeekCards",
   "getLeverageFirstTargets", "getAssaultTargetCandidates",
   "requestHiddenCards", "createHiddenSelection", "resolveConfirmedTokens", "clearSelection"
 ];
@@ -79,7 +79,7 @@ export function createCardIntentRuntime(dependencies) {
   仅可能清理短期 hidden selection session。
 
   调用函数
-  getTransferSources、getTransferReceivers、chooseTransferCombination、chooseHiddenCards、resolveConfirmedTokens。
+  getTransferSources、getTransferReceivers、chooseHiddenCards、resolveConfirmedTokens。
 
   边界与不变量
   未知手牌不进入公开上下文；实体不得按名称替代。
@@ -91,9 +91,7 @@ export function createCardIntentRuntime(dependencies) {
     const excludedCardIds = new Set([card.id]);
     const sources = runtime.getTransferSources(source, card, excludedCardIds)
       .filter((from) => runtime.getTransferReceivers(source, from, card).length);
-    const planned = selection?.sourceId && selection?.receiverId
-      ? selection
-      : runtime.chooseTransferCombination(source, card, sources, null, excludedCardIds);
+    const planned = selection?.sourceId && selection?.receiverId ? selection : null;
     if (planned?.zone && planned.zone !== "hand") {
       if (planned.selectionId) runtime.clearSelection(planned.selectionId);
       return null;

@@ -50,7 +50,6 @@ export function createAiChoiceAdapter({
   choosePublicCard,
   chooseDiscards,
   chooseHiddenCards,
-  chooseZoneCard,
   isSessionValid
 }) {
   if (typeof getChoiceContext !== "function" || typeof shouldRespond !== "function"
@@ -90,18 +89,7 @@ export function createAiChoiceAdapter({
         if (!choiceContext?.actor || !choiceContext?.owner
           || !isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
         if (choiceRequest.constraints.mode === "zone") {
-          if (typeof chooseZoneCard !== "function") {
-            return createChoiceResult("cancelled", { reason:"hidden-zone-adapter-unavailable" });
-          }
-          const selection = chooseZoneCard(
-            choiceContext.actor,
-            choiceContext.owner,
-            choiceContext.aiContext,
-            choiceContext.excludedCardIds
-          );
-          return selection?.card?.id
-            ? createChoiceResult("selected", { selectedIds:[selection.card.id] })
-            : createChoiceResult("declined");
+          return createChoiceResult("declined", { reason:"canonical-zone-selection-required" });
         }
         if (typeof chooseHiddenCards !== "function") {
           return createChoiceResult("cancelled", { reason:"hidden-card-adapter-unavailable" });

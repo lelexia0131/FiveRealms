@@ -32,7 +32,7 @@ import { createProbabilityState } from "../Event/Probability/Probability.js";
 集中计算 canonical World 所需的领域派生字段。
 
 调用方
-createStateContracts。
+createInitialWorld。
 
 输入
 当前 GameState。
@@ -149,7 +149,7 @@ function createWorldPlayer(factPlayer, knownCards, viewerId, derivedPlayer) {
 创建 Searcher、Simulator、Policy 与 Value 共同消费的 canonical World 根快照。
 
 调用方
-createStateContracts 与状态契约测试。
+createInitialWorld 与状态契约测试。
 
 输入
 Fact、唯一 ProbabilityState 与按玩家 ID 注入的领域派生值。
@@ -224,39 +224,6 @@ export function cloneWorld(world) {
 
 /*
 功能
-在唯一 Game→World 边界组合确定 Fact、ProbabilityState 与 canonical World。
-
-调用方
-createInitialWorld、状态契约测试与 AI composition。
-
-输入
-观察者 ID、GameState 与可选合法剩余牌计数。
-
-输出
-冻结的 fact、probabilityState、world 集合。
-
-读取状态
-GameState、观察者合法记忆与公开领域规则。
-
-写入状态
-无。
-
-调用函数
-createFact、createProbabilityState、createWorld、createDerivedPlayersById。
-
-边界与不变量
-World 不保留 Game/Player 引用；未知信息只进入唯一 ProbabilityState。
-*/
-export function createStateContracts(viewerId, state, currentCardCounts = null) {
-  const fact = createFact(viewerId, state, currentCardCounts);
-  const probabilityState = createProbabilityState(fact);
-  const derivedPlayersById = createDerivedPlayersById(state);
-  const world = createWorld(fact, probabilityState, derivedPlayersById);
-  return Object.freeze({ fact, probabilityState, world });
-}
-
-/*
-功能
 从真实 GameState 创建唯一 canonical World。
 
 调用方
@@ -269,17 +236,19 @@ Controller、Worker request 构造、测试与 study harness。
 canonical World。
 
 读取状态
-由 createStateContracts 统一读取。
+由 createFact、createProbabilityState 与 createWorld 统一读取。
 
 写入状态
 无。
 
 调用函数
-createStateContracts。
+createFact、createProbabilityState、createWorld、createDerivedPlayersById。
 
 边界与不变量
 不得复制 Fact、Probability、Search 或 Evaluation 状态层级。
 */
 export function createInitialWorld(viewerId, state, currentCardCounts = null) {
-  return createStateContracts(viewerId, state, currentCardCounts).world;
+  const fact = createFact(viewerId, state, currentCardCounts);
+  const probabilityState = createProbabilityState(fact);
+  return createWorld(fact, probabilityState, createDerivedPlayersById(state));
 }

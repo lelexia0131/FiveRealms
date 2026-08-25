@@ -13,6 +13,8 @@
 > - INTELLIGENCE：关键行为 contract 不回归，同等 SearchBudget 下决策质量不得低于旧版
 >
 > **Contract 优先级：** 本文中各 canonical owner 的职责定义高于历史文件名、旧调用路径和第 7 节吸收表。任何旧函数都必须按真实 semantic 重新分类，不得因为“旧文件曾属于某模块”就整体搬迁。
+>
+> **当前状态：** Final Semantic Authority Closure COMPLETE；18-file AI architecture FROZEN。
 
 ---
 
@@ -163,8 +165,7 @@ js/ai/
 ├─ Searcher/
 │  ├─ Searcher.js
 │  ├─ Rng.js
-│  └─ Pattern/
-│     └─ Pattern.js
+│  └─ Pattern.js
 │
 ├─ Event/
 │  ├─ Fact.js
@@ -222,6 +223,11 @@ REAL GAME
 - 价值公式
 - Pattern 战略知识
 
+Controller 是唯一 runtime/composition public boundary：`createRuntimeComposition`、
+`createSearchEngine`、`executeSearchRequest` 与 Search RNG 初始化都从这里公开。
+真实响应边界可以请求 Simulator 预物化 paired/outcome Worlds，再把 data-only
+`DecisionContext` 交给 Evaluator；不得在 Controller 内枚举、模拟、评价并重选战略候选。
+
 ---
 
 ## 3.2 `Generator/`
@@ -257,6 +263,9 @@ Generator/
 
 整个 AI 唯一 canonical Action contract。
 
+Action 只保存 executable intent。root counterfactual replay 的 `restoreActorHand`、
+`ignoreCounter` 等控制只属于 Simulator 局部参数，不得进入 Action、search key 或 Worker payload。
+
 不得再产生：
 
 ```text
@@ -276,8 +285,7 @@ ActionDescriptor
 Searcher/
 ├─ Searcher.js
 ├─ Rng.js
-└─ Pattern/
-   └─ Pattern.js
+└─ Pattern.js
 ```
 
 ### `Searcher.js`
@@ -299,6 +307,9 @@ Searcher/
 - final candidate comparison orchestration
 
 搜索本身不得重新定义 value。
+
+Searcher 可以读取 Action identity 以完成合法搜索机械和诊断，但不得根据具体
+`cardId` / `characterId` 定义 prior、utility、information value 或 marginal value。
 
 ### `Rng.js`
 
@@ -366,6 +377,9 @@ Probability façade。
 
 唯一对外概率入口。
 
+重导出 `Branch.js` 唯一定义的 `clampProbability` / `cardAvailability` canonical primitive；
+Simulator、StateValue 与 CardValue 不得复制 availability normalization。
+
 负责协调：
 
 ```text
@@ -385,6 +399,8 @@ Pool
 - filter
 - compatible intersection
 - branch compression
+- `clampProbability`
+- `cardAvailability`
 
 不得拥有具体卡牌 / Seal / Radar / Lightning 业务语义。
 
@@ -612,8 +628,8 @@ Searcher 只消费 Evaluator 的结果，不自己建立第二套价值公式。
 | `search/ActionGenerator.js` | → `Generator/Generator.js` |
 | `search/Searcher.js` | → `Searcher/Searcher.js` |
 | `search/SearchRng.js` | → `Searcher/Rng.js` |
-| `search/PatternMatcher.js` | → `Searcher/Pattern/Pattern.js` |
-| `search/ProductionPatterns.js` | → `Searcher/Pattern/Pattern.js` |
+| `search/PatternMatcher.js` | → `Searcher/Pattern.js` |
+| `search/ProductionPatterns.js` | → `Searcher/Pattern.js` |
 | `search/SealPrior.js` | → `Pattern.js` |
 | `search/SearchPrior.js` | → `Searcher.js` |
 | `search/SearchBudget.js` | invariant 保留，文件吸收进 `Searcher.js` |
@@ -743,6 +759,11 @@ CardValue  → StateValue
 
 同一价值语义只能有一个 owner，禁止 double counting。
 
+Evaluator 只能消费 World、paired/outcome Worlds、普通数据与标量；不得接收能够
+构造 Simulator、clone/apply World 或回调 Controller/Searcher 的 function capability。
+Block、Counter、Guardian、Rescue 的 planning/runtime 判断必须复用同一 canonical
+willingness primitive；有界 planning approximation 只能改变输入精度，不能复制阈值。
+
 ---
 
 # 9. Cross-Authority Import Rule
@@ -772,7 +793,7 @@ Evaluator/Evaluator.js
 
 ```text
 Searcher/Rng.js
-Searcher/Pattern/Pattern.js
+Searcher/Pattern.js
 
 Event/Probability/Branch.js
 Event/Probability/Pool.js
@@ -786,6 +807,9 @@ Evaluator/CardValue.js
 ```
 
 默认规则：外部 authority **不得绕过 facade** 直接依赖 internal module。
+
+`Controller.js` 是 `Rng.js` / runtime composition 的唯一外部 facade；Worker、application
+与其他 composition module 不得直接 import `Searcher/Rng.js` 或构造第二套 search graph。
 
 例如禁止：
 
@@ -872,6 +896,10 @@ Candidate DTO
 
 > 数据结构能直接共享就共享；需要不同语义时增加只读 view/helper，而不是复制整套 DTO。
 
+Response `DecisionContext` 是 data-only boundary object，并直接复用 canonical World player
+representation；不得携带 lazy query、Simulator factory、counterfactual callback 或第二套 player DTO。
+完整 World deep clone 只经 `Simulator/World.js#cloneWorld`，由同一路径执行预算、诊断和 normalization。
+
 ---
 
 # 11. 最终架构总图
@@ -954,7 +982,7 @@ Pattern / 战略知识不丢
 无跨 transition branch genealogy
 无 generic Cartesian probability expansion
 局部 N×M 有界
-减少 clone
+所有完整 World clone 统一计数，单次 specialization 只做一次 deep clone
 减少 materialization
 减少 DTO conversion
 ```
@@ -974,6 +1002,7 @@ Pattern / 战略知识不丢
 
 ```text
 关键行为 contract 不回归
+planning/runtime Block、Counter、Guardian、Rescue 不产生关键语义分叉
 同等 SearchBudget 决策质量不低于旧版
 性能收益真实转化为更充分搜索
 ```
