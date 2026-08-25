@@ -1,12 +1,12 @@
 /*
 模块职责
-镜像 World 中的攻击、伤害、失去生命、治疗、濒死救援和死亡结算顺序。
+镜像 World 中的伤害、失去生命、治疗、濒死救援和死亡生命周期。
 
 上游
-Simulator 正式模拟门面及 Card/Skill/Status 模拟组件。
+Simulator 正式模拟门面。
 
 下游
-ResponseSimulation、Domain CardDefinitions、state/Probability 与共享 simulation runtime。
+Domain Combat/Response Rules、CardDefinitions 与 canonical Probability facade。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本，不持有真实 GameState。
@@ -29,7 +29,7 @@ import {
 } from "../../domain/rules/combat/CombatRules.js";
 import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js";
 import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js";
-import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../Event/Fact.js";
 import {
   PROBABILITY_CLASSIFICATION,
   PROBABILITY_EPSILON,
@@ -41,7 +41,7 @@ import {
   queryHandProbability,
   queryPlayerHandProbability,
   totalBranchProbability
-} from "../state/Probability/Probability.js";
+} from "../Event/Probability/Probability.js";
 
 const RADAR_BASIC_DEFINITION_IDS = Object.freeze(
   Object.values(DOMAIN_CARD_DEFINITIONS)
@@ -51,7 +51,7 @@ const RADAR_BASIC_DEFINITION_IDS = Object.freeze(
 
 /*
 功能
-把 Base class 与 CombatSimulation 的无状态方法组合成单一 Simulator 类型。
+把 Base class 与 Damage 生命周期方法组合成单一 Simulator 类型。
 
 调用方
 Simulator.js 文件末尾的组合表达式：在模块加载时把 CombatSimulation 方法加入正式模拟门面。
@@ -60,7 +60,7 @@ Simulator.js 文件末尾的组合表达式：在模块加载时把 CombatSimula
 已经包含上一层模拟能力的 Base class；传入的是类定义，不是搜索节点实例。
 
 输出
-继承 Base 并新增 攻击、伤害、濒死与治疗方法 的 class 定义；不创建 Simulator 实例。
+继承 Base 并新增伤害、濒死与治疗方法的 class 定义；不创建 Simulator 实例。
 
 读取状态
 无。
@@ -74,222 +74,7 @@ Simulator.js 文件末尾的组合表达式：在模块加载时把 CombatSimula
 边界与不变量
 只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
 */
-export const withCombatSimulation = (Base) => class CombatSimulation extends Base {
-  /*
-  功能
-  联合突袭执行、格挡响应与增伤世界，结算命中伤害并返回生命伤害概率。
-
-  调用方
-  CardEffectSimulation 与搜索模拟：结算一张突袭或等价攻击效果。
-
-  输入
-  独立 World、存活来源/目标、发生概率或事件世界，以及已消费槽位等选项。
-
-  输出
-  目标实际受到生命伤害的概率；状态原地推进。
-
-  读取状态
-  攻击槽、势能、破势层、装备概率、格挡容量与目标生存状态。
-
-  写入状态
-  攻击次数、追猎标记、伤害/响应资源、破势与类别使用摘要。
-
-  调用函数
-  consumeAttackUse、simulateTracking、applyDamage、simulateCategoryUse。
-
-  边界与不变量
-  次数槽先于伤害消费；破势层和突袭加成只按实际执行质量消费一次。
-  */
-  simulateAssault(state, source, target, resolution = 1, options = {}) {
-    const desiredWorlds = Array.isArray(resolution)
-      ? this.getEventWorlds(state, 1, resolution, `assault:${source.id}:${target.id}`)
-      : this.getEventWorlds(state, clampProbability(resolution), null, `assault:${source.id}:${target.id}`);
-    const tracksAttackSlots = Number.isFinite(Number(source.attackLimit));
-    const assaultWorlds = options.attackUseConsumed || !tracksAttackSlots
-      ? desiredWorlds
-      : this.consumeAttackUse(state, source, desiredWorlds).eventWorlds;
-    const chance = this.eventProbability(assaultWorlds);
-    if (!chance || !source?.alive || !target?.alive) return 0;
-    if (!tracksAttackSlots && !options.attackUseConsumed) {
-      source.attackUsed = (source.attackUsed ?? 0) + chance;
-    }
-    this.simulateTracking(state, source, target, assaultWorlds);
-    const momentumBranches = hasPassiveSkill(source, "momentum")
-      ? this.syncMomentumSummary(source)
-      : [{ probability:1, conditions:{}, amount:0 }];
-    const damageOutcome = {};
-    const baseDamage = DOMAIN_CARD_DEFINITIONS.assault.baseDamage
-      + (source.exposeWeaknessStacks ?? 0)
-      + (source.assaultBonus ?? 0);
-    const damageBranches = momentumBranches.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      amount:baseDamage + branch.amount
-    }));
-    const damage = expectedBranchValue(damageBranches);
-    this.applyDamage(state, source, target, damage, {
-      canBlock:true,
-      deviceAttack:true,
-      eventBranches:assaultWorlds,
-      amountBranches:damageBranches,
-      outcome:damageOutcome,
-      attackerEquipmentProbability:options.sourceEquipmentConditional ? 1 : undefined,
-      damageContext:options.damageContext ?? { cardDamage:true, emberTriggeredProbabilities:{} }
-    });
-    const lifeDamageChance = clampProbability(damageOutcome.lifeDamageChance ?? 0);
-    source.exposeWeaknessStacks = (source.exposeWeaknessStacks ?? 0) * (1 - chance);
-    source.assaultBonus = (source.assaultBonus ?? 0) * (1 - chance);
-    this.simulateCategoryUse(
-      state, source, "basic", assaultWorlds, damageOutcome.lifeDamageBranches ?? null
-    );
-    return lifeDamageChance;
-  }
-
-  /*
-  功能
-  按双方可用突袭身份和概率世界轮流结算对决，直至一方无法继续响应。
-
-  调用方
-  CardEffectSimulation.applyCardEffect：结算已经通过反制门控的对决。
-
-  输入
-  独立 World、对决双方、生效概率与伤害上下文。
-
-  输出
-  双方失败概率、期望突袭消耗和剩余数量分布的新摘要对象。
-
-  读取状态
-  双方突袭数量分布、手牌数量与合法已知突袭身份。
-
-  写入状态
-  双方突袭容量、手牌计数/身份及条件伤害结果。
-
-  调用函数
-  syncAssaultSummary、consumeKnownCardsFromHand、applyDamage。
-
-  边界与不变量
-  双方同一概率世界必须成对比较；先手多响应一次的既有顺序和分布质量不得改变。
-  */
-  applyDuel(state, actor, target, scale, damageContext = { cardDamage:true, emberTriggeredProbabilities:{} }) {
-    const resolutionProbability = clampProbability(scale);
-    const actorDistribution = queryPlayerHandProbability(
-      state.probabilityState, actor, "assault"
-    ).distribution;
-    const targetDistribution = queryPlayerHandProbability(
-      state.probabilityState, target, "assault"
-    ).distribution;
-    const actorState = actorDistribution.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      actorCount:branch.count
-    }));
-    const targetState = targetDistribution.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions ?? {},
-      targetCount:branch.count
-    }));
-    const resolutionState = probabilityEventPartition(
-      this.currentProbabilityEventKey(state, `duel-resolution:${actor.id}:${target.id}`),
-      resolutionProbability,
-      "resolves"
-    );
-    const joinedOutcomeWorlds = this.intersectProbabilityWork(
-      [actorState, targetState, resolutionState],
-      "CombatSimulation.applyDuel:outcomes"
-    );
-    const outcomeWorlds = this.projectProbabilityWork(joinedOutcomeWorlds, (branch) => {
-      const targetLoses = branch.resolves && branch.targetCount <= branch.actorCount;
-      const actorLoses = branch.resolves && !targetLoses;
-      return {
-        ...branch,
-        targetLoses,
-        actorLoses,
-        actorSpent:branch.resolves ? Math.min(branch.actorCount, branch.targetCount) : 0,
-        targetSpent:branch.resolves ? Math.min(branch.targetCount, branch.actorCount + 1) : 0
-      };
-    }, "CombatSimulation.applyDuel:resolved-outcomes");
-    let actorLoseProbability = 0;
-    let targetLoseProbability = 0;
-    let expectedActorSpent = 0;
-    let expectedTargetSpent = 0;
-    for (let index = 0; index < outcomeWorlds.length; index += 1) {
-      if (index % 32 === 0) this.checkpointSearchWork();
-      const branch = outcomeWorlds[index];
-      if (branch.actorLoses) actorLoseProbability += Math.max(0, Number(branch.probability) || 0);
-      if (branch.targetLoses) targetLoseProbability += Math.max(0, Number(branch.probability) || 0);
-      expectedActorSpent += branch.probability * branch.actorSpent;
-      expectedTargetSpent += branch.probability * branch.targetSpent;
-    }
-    const actorRemainingDistribution = this.projectProbabilityWork(outcomeWorlds, (branch) => ({
-      count:branch.actorCount - branch.actorSpent
-    }), "CombatSimulation.applyDuel:actor-remaining");
-    const targetRemainingDistribution = this.projectProbabilityWork(outcomeWorlds, (branch) => ({
-      count:branch.targetCount - branch.targetSpent
-    }), "CombatSimulation.applyDuel:target-remaining");
-    const actorKnownBefore = (Array.isArray(actor.hand) ? actor.hand : [])
-      .filter((entry) => entry.definitionId === "assault")
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-    const targetKnownBefore = (Array.isArray(target.hand) ? target.hand : [])
-      .filter((entry) => entry.definitionId === "assault")
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-    this.consumeKnownCardsFromHand(state, actor, "assault", expectedActorSpent);
-    this.consumeKnownCardsFromHand(state, target, "assault", expectedTargetSpent);
-    const actorKnownAfter = (Array.isArray(actor.hand) ? actor.hand : [])
-      .filter((entry) => entry.definitionId === "assault")
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-    const targetKnownAfter = (Array.isArray(target.hand) ? target.hand : [])
-      .filter((entry) => entry.definitionId === "assault")
-      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-    const actorAnonymousSpent = Math.max(
-      0, expectedActorSpent - (actorKnownBefore - actorKnownAfter)
-    );
-    const targetAnonymousSpent = Math.max(
-      0, expectedTargetSpent - (targetKnownBefore - targetKnownAfter)
-    );
-    for (const [player, spent] of [
-      [actor, actorAnonymousSpent],
-      [target, targetAnonymousSpent]
-    ]) {
-      const whole = Math.floor(spent);
-      if (whole > 0) mutateProbability(state.probabilityState, {
-        type:"REMOVE",
-        sourceBucketId:player.id,
-        definitionId:"assault",
-        count:whole
-      });
-      if (spent - whole > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
-        type:"REMOVE",
-        sourceBucketId:player.id,
-        definitionId:"assault",
-        probability:spent - whole
-      });
-    }
-    actor.handCount = Math.max(0, actor.handCount - expectedActorSpent);
-    target.handCount = Math.max(0, target.handCount - expectedTargetSpent);
-    this.applyDamage(state, target, actor, DOMAIN_CARD_DEFINITIONS.duel.failDamage, {
-      canBlock:false,
-      eventBranches:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
-        occurs:branch.actorLoses
-      }), "CombatSimulation.applyDuel:actor-loses"),
-      damageContext
-    });
-    this.applyDamage(state, actor, target, DOMAIN_CARD_DEFINITIONS.duel.failDamage, {
-      canBlock:false,
-      eventBranches:this.projectProbabilityWork(outcomeWorlds, (branch) => ({
-        occurs:branch.targetLoses
-      }), "CombatSimulation.applyDuel:target-loses"),
-      damageContext
-    });
-    return {
-      actorLoseProbability,
-      targetLoseProbability,
-      expectedActorSpent,
-      expectedTargetSpent,
-      actorRemainingDistribution,
-      targetRemainingDistribution
-    };
-  }
-
+export const withDamage = (Base) => class Damage extends Base {
   /*
   功能
   把伤害条件世界投影为 HP/存活分支，并明确标记标量 HP 是否只是期望摘要。

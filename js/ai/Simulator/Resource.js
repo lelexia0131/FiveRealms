@@ -1,12 +1,12 @@
 /*
 模块职责
-镜像卡牌效果、装备与手牌资源身份在 World 中的变化。
+执行已解析的手牌、装备、能量、护盾、槽位与支付等物理资源变化。
 
 上游
-Simulator 正式模拟门面、CombatSimulation 与 SkillEffectSimulation。
+Simulator 正式模拟门面。
 
 下游
-Response/Combat/Status 组件、Domain CardRules 与 Probability。
+canonical Probability facade。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本。
@@ -15,14 +15,8 @@ Response/Combat/Status 组件、Domain CardRules 与 Probability。
 未知手牌只按位置、数量与概率身份处理，不读取真实 definitionId。
 
 架构约束
-不生成动作、不搜索、不拥有规则合法性或最终价值公式。
+只执行已选择的资源身份；不生成动作、不排序资源、不拥有价值公式或跨子系统结算顺序。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
-import {
-  findPlayerFact,
-  getCardTargetIds
-} from "../../domain/rules/card/CardRules.js";
-import { hasPassiveSkill, projectRulePlayers } from "../state/RuleProjection.js";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
@@ -31,18 +25,13 @@ import {
   mutateProbability,
   probabilityEventPartition,
   queryAnonymousSlotDistribution,
-  queryPlayerHandProbability,
-  statusPresence,
-  totalBranchProbability
-} from "../state/Probability/Probability.js";
-import {
-  getRangeConditionBranches,
+  totalBranchProbability,
   inAttackRange
-} from "../state/DistanceProbabilityBranches.js";
+} from "../Event/Probability/Probability.js";
 
 /*
 功能
-把 Base class 与 CardEffectSimulation 的无状态方法组合成单一 Simulator 类型。
+把 Base class 与物理资源 transition 方法组合成单一 Simulator 类型。
 
 调用方
 Simulator.js 文件末尾的组合表达式：在模块加载时把卡牌效果方法加入正式模拟门面。
@@ -51,7 +40,7 @@ Simulator.js 文件末尾的组合表达式：在模块加载时把卡牌效果�
 已经包含响应与战斗能力的 Base class；传入的是类定义，不是搜索节点实例。
 
 输出
-继承 Base 并新增卡牌、装备与资源方法的 class 定义；不创建 Simulator 实例。
+继承 Base 并新增资源 mutation 方法的 class 定义；不创建 Simulator 实例。
 
 读取状态
 无。
@@ -65,420 +54,7 @@ Simulator.js 文件末尾的组合表达式：在模块加载时把卡牌效果�
 边界与不变量
 只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
 */
-export const withCardEffectSimulation = (Base) => class CardEffectSimulation extends Base {
-  /*
-  功能
-  在当前 transition 调用栈内解析卡牌身份、距离与延迟状态条件。
-
-  调用方
-  Simulator.apply 的卡牌分派。
-
-  输入
-  独立 World、行动者、canonical Action、正式卡牌定义与当前手牌身份。
-
-  输出
-  本次卡牌实际发生/不发生的有界局部分区。
-
-  读取状态
-  当前牌 availability、目标、距离装备概率与闪电/封印存在概率。
-
-  写入状态
-  无；返回分区只存在于本次 apply 调用栈。
-
-  调用函数
-  getAvailabilityStateBranches、getRangeConditionBranches、Lightning/Seal 状态查询与概率运行时。
-
-  边界与不变量
-  transfer 最多枚举三项距离装备变量，其余动作最多两项；当前规则下输出上界为八个条件世界，
-  不写 Action、World 或第二种状态表示。root 配对反事实没有当前手牌实体，但由真实语义标记确认成本已沉没。
-  */
-  buildCardExecutionWorlds(state, actor, action, card, heldCard) {
-    const targets = (action.targetIds ?? [])
-      .map((id) => state.players.find((player) => player.id === id))
-      .filter(Boolean);
-    let conditionBranches = [{ probability:1, conditions:{}, matches:true }];
-    if (card.definitionId === "lightning") {
-      conditionBranches = statusPresence(actor, "lightning").branches.map((branch) => ({
-        ...branch,
-        matches:!branch.present
-      }));
-    } else if (card.definitionId === "seal") {
-      conditionBranches = statusPresence(targets[0], "sealed").branches.map((branch) => ({
-        ...branch,
-        matches:!branch.present
-      }));
-    } else if (card.definitionId === "transfer") {
-      const source = state.players.find((player) => player.id === action.selection?.sourceId);
-      const receiver = state.players.find((player) => player.id === action.selection?.receiverId);
-      conditionBranches = getRangeConditionBranches({ state }, [
-        { source:actor, target:source, range:card.effectRange },
-        { source:actor, target:receiver, range:card.effectRange }
-      ]);
-    } else if (card.definitionId === "leverage") {
-      const first = state.players.find((player) => player.id === action.selection?.firstTargetId);
-      const second = state.players.find((player) => player.id === action.selection?.secondTargetId);
-      conditionBranches = getRangeConditionBranches({ state }, {
-        source:first,
-        target:second,
-        range:first?.attackRange ?? 1
-      }, {
-        equipmentRequirements:[{
-          player:first,
-          definitionId:action.selection?.equipmentDefinitionId,
-          present:true
-        }]
-      });
-    } else if (card.definitionId === "assault" && targets[0]) {
-      conditionBranches = getRangeConditionBranches({ state }, {
-        source:actor,
-        target:targets[0],
-        range:actor.attackRange ?? 1
-      });
-    } else if (!card.ignoresDistance && card.effectRange != null && targets[0]) {
-      conditionBranches = getRangeConditionBranches({ state }, {
-        source:actor,
-        target:targets[0],
-        range:card.effectRange
-      });
-    }
-    const cardAvailability = action.execution?.restoreActorHand && !heldCard
-      ? [{ probability:1, conditions:{}, available:true }]
-      : getAvailabilityStateBranches(
-          heldCard,
-          heldCard ? heldCard.availability ?? 1 : 0
-        );
-    const joined = this.intersectProbabilityWork(
-      [conditionBranches, cardAvailability],
-      "CardEffectSimulation.buildCardExecutionWorlds:conditions"
-    );
-    return this.projectProbabilityWork(joined, (branch) => ({
-      occurs:Boolean(branch.matches && branch.available)
-    }), "CardEffectSimulation.buildCardExecutionWorlds:execution");
-  }
-
-  /*
-  功能
-  执行一张已完成动作支付与 card-scope 响应门控的卡牌效果。
-
-  调用方
-  Simulator.apply 唯一动作分派入口。
-
-  输入
-  独立 World、行动者、抽象动作，以及 Simulator 门面计算出的共享事件世界、
-  响应前状态和目标摘要。
-
-  输出
-  同一独立 World。
-
-  读取状态
-  卡牌定义、目标、效果世界与组件共享资源摘要。
-
-  写入状态
-  仅输入 World 的卡牌效果、资源和触发摘要。
-
-  调用函数
-  CombatSimulation、ResponseSimulation、Skill/Status 后置钩子与资源辅助函数。
-
-  边界与不变量
-  不重新计算动作支付或 card-scope 响应；响应前摘要只供窥探 option value 读取，
-  不能作为结算目标；switch 顺序与既有后置触发顺序保持不变。
-  */
-  applyCardEffect(next, actor, abstractAction, context) {
-    const {
-      card,
-      target,
-      cardEventWorlds,
-      effectEventWorlds,
-      executionProbability,
-      scale
-    } = context;
-    const cardDamageContext = { cardDamage:true, emberTriggeredProbabilities:{} };
-    let coordinationProbability = 0;
-    let coordinationTargets = [];
-
-    switch (card.definitionId) {
-      case "recover":
-        this.healFrom(next, actor, actor, DOMAIN_CARD_DEFINITIONS.recover.healAmount * scale);
-        actor.recoverUsed = (actor.recoverUsed ?? 0) + executionProbability;
-        break;
-      case "charge": this.changeEnergy(next, actor, DOMAIN_CARD_DEFINITIONS.charge.energyGain, effectEventWorlds); break;
-      case "shield":
-        if (target?.alive && target.battleTeam === actor.battleTeam) {
-          this.changeShield(next, target, DOMAIN_CARD_DEFINITIONS.shield.shieldAmount, effectEventWorlds);
-          coordinationProbability = scale;
-          coordinationTargets = [target];
-        }
-        break;
-      case "harvest":
-        this.gainUnknownCardsWithCounterState(
-          next, actor, DOMAIN_CARD_DEFINITIONS.harvest.drawCount, effectEventWorlds, "harvest-draw"
-        );
-        break;
-      case "exposeWeakness": actor.exposeWeaknessStacks = (actor.exposeWeaknessStacks ?? 0)
-        + DOMAIN_CARD_DEFINITIONS.exposeWeakness.stacksGain * scale; break;
-      case "lightning":
-        this.applyDelayedStatusCard(next, actor, null, "lightning", effectEventWorlds);
-        break;
-      case "seal":
-        this.applyDelayedStatusCard(next, actor, target, "sealed", effectEventWorlds);
-        break;
-      case "scout": {
-        if (!target?.alive) break;
-        this.recordSimulatedPrivatePeek(
-          next,
-          actor,
-          target,
-          DOMAIN_CARD_DEFINITIONS.scout.maxRevealCount,
-          effectEventWorlds
-        );
-        coordinationProbability = scale;
-        coordinationTargets = [target];
-        break;
-      }
-      case "assault":
-        if (target) this.simulateAssault(next, actor, target, cardEventWorlds, {
-          damageContext:cardDamageContext
-        });
-        break;
-      case "shockwave":
-        for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) {
-          const counterResponse = this.consumeTargetCounterResponseWorlds(
-            next,
-            player,
-            effectEventWorlds,
-            this.counterDecision(next, player, actor, card, [player])
-          );
-          this.applyDamage(next, actor, player, DOMAIN_CARD_DEFINITIONS.shockwave.perTargetDamage, {
-            canBlock:true,
-            deviceAttack:true,
-            eventBranches:counterResponse.effectPassWorlds,
-            damageContext:cardDamageContext
-          });
-        }
-        break;
-      case "provoke":
-        for (const player of next.players) if (player.alive && player.battleTeam !== actor.battleTeam) {
-          const counterResponse = this.consumeTargetCounterResponseWorlds(
-            next,
-            player,
-            effectEventWorlds,
-            this.counterDecision(next, player, actor, card, [player])
-          );
-          const targetWorlds = counterResponse.effectPassWorlds;
-          const response = queryPlayerHandProbability(
-            next.probabilityState, player, "assault"
-          ).probability;
-          const eventProbability = this.eventProbability(targetWorlds);
-          const spent = Math.min(eventProbability, response);
-          const knownBefore = (Array.isArray(player.hand) ? player.hand : [])
-            .filter((entry) => entry.definitionId === "assault")
-            .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-          this.consumeKnownCardsFromHand(next, player, "assault", spent);
-          const knownAfter = (Array.isArray(player.hand) ? player.hand : [])
-            .filter((entry) => entry.definitionId === "assault")
-            .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-          const anonymousSpent = Math.max(0, spent - (knownBefore - knownAfter));
-          if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(next.probabilityState, {
-            type:"REMOVE",
-            sourceBucketId:player.id,
-            definitionId:"assault",
-            probability:anonymousSpent
-          });
-          player.handCount = Math.max(0, player.handCount - spent);
-          this.applyDamage(next, actor, player, DOMAIN_CARD_DEFINITIONS.provoke.failDamage, {
-            canBlock:false,
-            deviceAttack:false,
-            eventBranches:this.gateEventWorlds(next, targetWorlds,
-              1 - response, `provoke-response:${card.id}:${player.id}`),
-            damageContext:cardDamageContext
-          });
-        }
-        break;
-      case "leverage": {
-        const first = next.players.find((player) => player.id === abstractAction.selection?.firstTargetId)
-          ?? next.players.find((player) => player.id === abstractAction.targetIds?.[0]);
-        const second = next.players.find((player) => player.id === abstractAction.selection?.secondTargetId)
-          ?? next.players.find((player) => player.id === abstractAction.targetIds?.[1]);
-        if (!first?.alive || !second?.alive || !first.equipmentDefinitionId) break;
-        // 借势第二目标选择只按距离，但实际打出突袭必须满足普通突袭完整目标合法性。
-        const rulePlayers = projectRulePlayers(next.players);
-        const firstRuleFact = findPlayerFact(rulePlayers, first.id);
-        const canActuallyTargetWithAssault = getCardTargetIds(
-          rulePlayers,
-          firstRuleFact,
-          DOMAIN_CARD_DEFINITIONS.assault
-        ).includes(second.id);
-        // 候选组合从不因手牌估计或次数删除；实际使用必须消费第一目标自己的次数槽。
-        const firstAssault = queryPlayerHandProbability(
-          next.probabilityState, first, "assault"
-        );
-        const assaultAvailable = canActuallyTargetWithAssault
-          ? firstAssault.probability
-          : 0;
-        const willingToAssault = this.decideLeverageAssault(next, first, second);
-        const existenceProbability = this.getSimulatedEquipmentProbability(first);
-        const desiredUseWorlds = this.gateEventWorlds(next, effectEventWorlds,
-          assaultAvailable * (willingToAssault ? 1 : 0),
-          `leverage-assault:${card.id}:${first.id}`);
-        const actualUseWorlds = desiredUseWorlds;
-        const effectiveUseProbability = this.eventProbability(actualUseWorlds);
-        first.attackUsed = (first.attackUsed ?? 0) + effectiveUseProbability;
-        const effectiveDeclineProbability = Math.min(existenceProbability, Math.max(0, scale - effectiveUseProbability));
-        const assaultOpportunity = assaultAvailable > PROBABILITY_EPSILON
-          ? Math.min(1, effectiveUseProbability / assaultAvailable)
-          : 0;
-        const assaultSpent = Math.min(
-          assaultOpportunity,
-          firstAssault.probability
-        );
-        const knownBefore = (Array.isArray(first.hand) ? first.hand : [])
-          .filter((entry) => entry.definitionId === "assault")
-          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-        this.consumeKnownCardsFromHand(next, first, "assault", assaultSpent);
-        const knownAfter = (Array.isArray(first.hand) ? first.hand : [])
-          .filter((entry) => entry.definitionId === "assault")
-          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-        const anonymousSpent = Math.max(0, assaultSpent - (knownBefore - knownAfter));
-        if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(next.probabilityState, {
-          type:"REMOVE",
-          sourceBucketId:first.id,
-          definitionId:"assault",
-          probability:anonymousSpent
-        });
-        first.handCount = Math.max(0, first.handCount - assaultSpent);
-        // 借势实际打出突袭的分支必然处于“指定装备仍存在”条件下，避免装备效果再次乘存在概率。
-        this.simulateAssault(next, first, second, actualUseWorlds, {
-          sourceEquipmentConditional:true,
-          attackUseConsumed:true,
-          damageContext:cardDamageContext
-        });
-        actor.handCount += effectiveDeclineProbability;
-        this.setSimulatedEquipment(first, first.equipmentDefinitionId, existenceProbability - effectiveDeclineProbability);
-        coordinationProbability = scale;
-        coordinationTargets = [first, second];
-        break;
-      }
-      case "plunder": {
-        const plundered = target
-          ? this.takeResourceToHand(
-              next,
-              actor,
-              target,
-              effectEventWorlds,
-              `plunder:${card.id ?? card.definitionId}`,
-              abstractAction.selection
-            )
-          : 0;
-        if (plundered > PROBABILITY_EPSILON) {
-          coordinationProbability = plundered;
-          coordinationTargets = [target];
-        }
-        break;
-      }
-      case "transfer": {
-        const source = next.players.find((player) => player.id === abstractAction.selection?.sourceId)
-          ?? null;
-        const receiver = next.players.find((player) => player.id === abstractAction.selection?.receiverId)
-          ?? null;
-        if (source && receiver && (source.handCount ?? 0) > 0 && abstractAction.selection?.zone !== "equipment") {
-          const selection = abstractAction.selection ?? {};
-          const transferCardId = card?.id ?? null;
-          const excludedTransferCard = transferCardId ? new Set([transferCardId]) : null;
-          const transferred = selection.selectionKind === "known"
-            ? this.transferKnownCardIdentity(next, source, receiver, {
-                cardId:selection.cardId ?? null,
-                definitionId:selection.definitionId ?? null
-              }, effectEventWorlds, receiver.id === actor.id, excludedTransferCard)
-            : this.transferUnknownCardIdentity(next, source, receiver,
-                effectEventWorlds,
-                selection.availableUnknownCount != null && Number.isFinite(Number(selection.availableUnknownCount))
-                  ? Math.max(0, Number(selection.availableUnknownCount))
-                  : this.availableUnknownCountFor(source, excludedTransferCard));
-          coordinationProbability = transferred;
-          coordinationTargets = [source, receiver];
-        }
-        break;
-      }
-      case "counter":
-        coordinationProbability = scale;
-        coordinationTargets = (abstractAction.targetIds ?? [])
-          .map((id) => next.players.find((player) => player.id === id))
-          .filter(Boolean);
-        break;
-      case "destroy": {
-        const destroyed = target
-          ? this.destroyResource(
-              next,
-              actor,
-              target,
-              effectEventWorlds,
-              `destroy:${card.id ?? card.definitionId}`,
-              abstractAction.selection
-            )
-          : 0;
-        if (destroyed > PROBABILITY_EPSILON) {
-          coordinationProbability = destroyed;
-          coordinationTargets = [target];
-        }
-        break;
-      }
-      case "duel": if (target) this.applyDuel(next, actor, target, scale, cardDamageContext); break;
-      case "mutualBenefit": {
-        coordinationTargets = next.players.filter((player) => player.alive);
-        coordinationProbability = scale;
-        const perRecipientDrawCount = DOMAIN_CARD_DEFINITIONS.mutualBenefit.perRecipientDrawCount;
-        for (const player of coordinationTargets) {
-          this.gainUnknownCardsWithCounterState(
-            next, player, perRecipientDrawCount, effectEventWorlds, "mutual-benefit-draw"
-          );
-        }
-        break;
-      }
-      case "symbiosis": {
-        const targets = this.seatOrderFrom(next, actor, true);
-        coordinationTargets = targets.filter((player) => player.hp < player.maxHp);
-        coordinationProbability = scale;
-        for (const player of targets) {
-          this.healFrom(next, actor, player, DOMAIN_CARD_DEFINITIONS.symbiosis.healAmount * scale);
-        }
-        break;
-      }
-      default:
-        if (card.category === "equipment") this.setSimulatedEquipment(actor, card.definitionId, executionProbability);
-        break;
-    }
-    this.simulateGamble(next, actor, card, executionProbability);
-    this.simulateCoordination(next, actor, coordinationTargets, coordinationProbability);
-    const recycleProbability = executionProbability * this.getSimulatedEquipmentProbability(actor, "recycleDevice");
-    if (card.category === "tactic" && recycleProbability > 0) {
-      const remainingUses = Math.max(
-        0,
-        DOMAIN_CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - (actor.recycleDeviceUses ?? 0)
-      );
-      const triggerProbability = Math.min(recycleProbability, remainingUses);
-      actor.recycleDeviceUses = (actor.recycleDeviceUses ?? 0) + triggerProbability;
-      if (triggerProbability > PROBABILITY_EPSILON) {
-        const recycleWorlds = this.getEventWorlds(
-          next, triggerProbability, null, `recycle-draw:${card.id ?? card.definitionId}`
-        );
-        this.gainUnknownCardsWithCounterState(
-          next,
-          actor,
-          triggerProbability * DOMAIN_CARD_DEFINITIONS.recycleDevice.triggerDrawCount,
-          recycleWorlds,
-          "recycle-draw"
-        );
-      }
-    }
-    if (hasPassiveSkill(actor, "momentum") && actor.alive && card.definitionId !== "assault") {
-      const category = card.category ?? DOMAIN_CARD_DEFINITIONS[card.definitionId]?.category;
-      this.simulateCategoryUse(next, actor, category, cardEventWorlds);
-    }
-    this.syncActiveSkillCosts(next);
-
-    return next;
-  }
-
+export const withResource = (Base) => class Resource extends Base {
   /*
   功能
   在概率世界中写入玩家当前模拟装备，并同步价值、角色差量与保留概率。
@@ -1973,4 +1549,429 @@ clampProbability。
       actor.handCount = (actor.handCount ?? 0) + stolen;
     }
   }
-};
+
+  /*
+  功能
+  按条件世界变换能量分支，并同步玩家的期望能量摘要。
+
+  调用方
+  changeEnergy 与主动技能模拟：按同一条件世界更新能量。
+
+  输入
+  目标玩家、事件世界和以当前能量/分支为输入的 transformer。
+
+  输出
+  新的完整能量状态分支数组。
+
+  读取状态
+  玩家当前 energy。
+
+  写入状态
+  玩家当前 energy。
+
+  调用函数
+  intersectProbabilityStateBranches、projectProbabilityStateBranches、expectedBranchValue。
+
+  边界与不变量
+  transformer 只能改变当前分支能量；条件身份和概率质量必须保留。
+  */
+  updateEnergyFromWorlds(player, worldBranches, transformer) {
+    const energy = [{
+      probability:1,
+      conditions:{},
+      energyAmount:Number(player.energy) || 0
+    }];
+    const intersection = this.intersectProbabilityWork(
+      [energy, worldBranches],
+      "Simulator.updateEnergyFromWorlds:intersect"
+    );
+    const updated = this.projectProbabilityWork(intersection, (branch) => ({
+      amount:Math.max(0, Math.min(player.maxEnergy ?? Infinity,
+        Number(transformer(branch.energyAmount, branch)) || 0))
+    }), "Simulator.updateEnergyFromWorlds:project");
+    player.energy = expectedBranchValue(updated);
+    return intersection;
+  }
+
+  /*
+  功能
+  把确定或条件化的能量增减交给统一分支更新流程。
+
+  调用方
+  CardEffectSimulation 与 SkillEffectSimulation：结算确定或条件化能量增减。
+
+  输入
+  World、目标玩家、能量 delta 与可选事件世界。
+
+  输出
+  无返回值；玩家能量分支和摘要已推进。
+
+  读取状态
+  玩家当前能量与事件世界。
+
+  写入状态
+  玩家 energy。
+
+  调用函数
+  getEventWorlds、updateEnergyFromWorlds。
+
+  边界与不变量
+  能量不得小于零或超过 maxEnergy；未发生世界保持原值。
+  */
+  changeEnergy(state, player, delta, eventWorlds = null) {
+    const worlds = eventWorlds ?? this.getEventWorlds(state, 1, null, "energy");
+    return this.updateEnergyFromWorlds(player, worlds, (amount, branch) => (
+      branch.occurs ? amount + (typeof delta === "function" ? delta(amount, branch) : delta) : amount
+    ));
+  }
+
+  /*
+  功能
+  按条件世界变换护盾分支，并同步玩家的期望护盾摘要。
+
+  调用方
+  changeShield：按同一条件世界更新护盾。
+
+  输入
+  目标玩家、事件世界和以当前护盾/分支为输入的 transformer。
+
+  输出
+  新的完整护盾状态分支数组。
+
+  读取状态
+  玩家当前 shield。
+
+  写入状态
+  玩家当前 shield。
+
+  调用函数
+  intersectProbabilityStateBranches、projectProbabilityStateBranches、expectedBranchValue。
+
+  边界与不变量
+  条件身份与概率质量保持不变；transformer 不得修改其他战斗资源。
+  */
+  updateShieldFromWorlds(player, worldBranches, transformer) {
+    const shield = [{
+      probability:1,
+      conditions:{},
+      shieldAmount:Number(player.shield) || 0
+    }];
+    const intersection = this.intersectProbabilityWork(
+      [shield, worldBranches],
+      "Simulator.updateShieldFromWorlds:intersect"
+    );
+    const updated = this.projectProbabilityWork(intersection, (branch) => ({
+      amount:Math.max(0, Number(transformer(branch.shieldAmount, branch)) || 0)
+    }), "Simulator.updateShieldFromWorlds:project");
+    player.shield = expectedBranchValue(updated);
+    return intersection;
+  }
+
+  /*
+  功能
+  把确定或条件化的护盾增减交给统一分支更新流程。
+
+  调用方
+  CardEffectSimulation 与 SkillEffectSimulation：结算确定或条件化护盾增减。
+
+  输入
+  World、目标玩家、护盾 delta 与可选事件世界。
+
+  输出
+  无返回值；玩家护盾分支和摘要已推进。
+
+  读取状态
+  玩家当前护盾与事件世界。
+
+  写入状态
+  玩家 shield。
+
+  调用函数
+  getEventWorlds、updateShieldFromWorlds。
+
+  边界与不变量
+  护盾不得小于零；未发生世界保持原值。
+  */
+  changeShield(state, player, delta, eventWorlds = null) {
+    const worlds = eventWorlds ?? this.getEventWorlds(state, 1, null, "shield");
+    return this.updateShieldFromWorlds(player, worlds, (amount, branch) => (
+      branch.occurs ? amount + (typeof delta === "function" ? delta(amount, branch) : delta) : amount
+    ));
+  }
+
+  /*
+  功能
+  从正式槽位或次数摘要恢复本回合每次突袭的独立可用世界。
+
+  调用方
+  consumeAttackUse、CardEffectSimulation 与破军技能：取得突袭次数资源的完整槽位。
+
+  输入
+  行动者 World 摘要。
+
+  输出
+  每次突袭容量各自对应的可用状态分支数组。
+
+  读取状态
+  attackLimit 与 attackUsed 当前摘要。
+
+  写入状态
+  无；槽位只存在本次突袭 transition 调用栈。
+
+  调用函数
+  getAvailabilityStateBranches、availableBranchesFromState。
+
+  边界与不变量
+  标量次数只投影为本次 transition 的有界局部槽位；不得写回 World 或 Action。
+  */
+  ensureAttackUseSlots(player) {
+    const used = Math.max(0, Number(player.attackUsed) || 0);
+    const limit = Number.isFinite(Number(player.attackLimit))
+      ? Math.max(0, Number(player.attackLimit))
+      : used + 1;
+    const remaining = Math.max(0, limit - used);
+    return Array.from({ length:Math.ceil(remaining) }, (_, index) => probabilityEventPartition(
+      `attack-use:${player.id}:${index}`,
+      Math.min(1, remaining - index),
+      "available"
+    ));
+  }
+
+  /*
+  功能
+  从正式槽位或技能次数摘要恢复指定主动技能的独立可用世界。
+
+  调用方
+  apply：取得当前主动技能次数资源的完整槽位。
+
+  输入
+  行动者 World 摘要与正式技能定义。
+
+  输出
+  该技能每次容量对应的可用状态分支数组。
+
+  读取状态
+  当前技能次数、限制与使用摘要。
+
+  写入状态
+  无；槽位只存在本次技能 transition 调用栈。
+
+  调用函数
+  getAvailabilityStateBranches、availableBranchesFromState。
+
+  边界与不变量
+  技能限制为零时不得创建槽位；局部槽位不能增加期望可用次数或进入 World。
+  */
+  ensureSkillUseSlots(player, skill) {
+    const uses = Math.max(0, Number(player.activeSkillUses ?? (player.activeSkillUsed ? 1 : 0)) || 0);
+    const limit = Math.max(0, Number(player.activeSkillLimit ?? skill?.limitPerTurn ?? 1) || 0);
+    const remaining = Math.max(0, limit - uses);
+    return Array.from({ length:Math.ceil(remaining) }, (_, index) => probabilityEventPartition(
+      `skill-use:${player.id}:${skill?.id ?? "unknown"}:${index}`,
+      Math.min(1, remaining - index),
+      "available"
+    ));
+  }
+
+  /*
+  功能
+  将期望执行世界分配到一个可用槽位，并仅在相交世界中标记该槽已消费。
+
+  调用方
+  consumeAttackUse 与 apply 的技能分派：把执行世界绑定到一个次数槽。
+
+  输入
+  World、槽位数组、期望执行世界和标签。
+
+  输出
+  被消费的槽位下标、实际消费世界及其概率。
+
+  读取状态
+  各槽位可用状态与 desiredEventWorlds。
+
+  写入状态
+  只更新选中槽位在相交世界中的 available 状态。
+
+  调用函数
+  intersectProbabilityStateBranches、projectProbabilityStateBranches、currentProbabilityEventKey。
+
+  边界与不变量
+  每个世界最多消费一个槽位；不兼容条件不能交叉消费，未满足质量原样返回为未执行。
+  */
+  consumeSlot(state, slots, desiredEventWorlds, label = "slot") {
+    const indexes = slots.map((_, index) => index);
+    let best = null;
+    for (const index of indexes) {
+      const slot = slots[index];
+      if (!Array.isArray(slot)) continue;
+      const normalizedSlot = this.mergeProbabilityWork(
+        slot,
+        "Simulator.consumeSlot:slot"
+      );
+      const slotState = [];
+      for (let branchIndex = 0; branchIndex < normalizedSlot.length; branchIndex += 1) {
+        if (branchIndex % 32 === 0) this.checkpointSearchWork();
+        const branch = normalizedSlot[branchIndex];
+        slotState.push({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          slotAvailable:Boolean(branch.available)
+        });
+      }
+      const intersection = this.intersectProbabilityWork(
+        [desiredEventWorlds, slotState],
+        "Simulator.consumeSlot:intersect"
+      );
+      const actualWorlds = this.projectProbabilityWork(intersection, (branch) => ({
+        occurs:Boolean(branch.occurs && branch.slotAvailable)
+      }), "Simulator.consumeSlot:actual");
+      const executionProbability = this.eventProbability(actualWorlds);
+      if (executionProbability <= PROBABILITY_EPSILON
+        || (best && executionProbability <= best.executionProbability + PROBABILITY_EPSILON)) continue;
+      best = { index, intersection, eventWorlds:actualWorlds, executionProbability };
+    }
+    if (best) {
+      slots[best.index] = this.projectProbabilityWork(best.intersection, (branch) => ({
+        available:Boolean(branch.slotAvailable && !(branch.occurs && branch.slotAvailable))
+      }), "Simulator.consumeSlot:remaining");
+      return { index:best.index, eventWorlds:best.eventWorlds };
+    }
+    return {
+      index:null,
+      eventWorlds:this.projectProbabilityWork(
+        desiredEventWorlds,
+        () => ({ occurs:false }),
+        "Simulator.consumeSlot:unavailable"
+      )
+    };
+  }
+
+  /*
+  功能
+  消费一次突袭槽位并同步攻击次数摘要，避免概率世界重复使用同一次数。
+
+  调用方
+  CombatSimulation.simulateAssault：在伤害结算前消费一次攻击容量。
+
+  输入
+  World、行动者与期望攻击世界。
+
+  输出
+  实际攻击事件世界、消费概率和槽位下标。
+
+  读取状态
+  行动者 attackUseSlots 与攻击次数摘要。
+
+  写入状态
+  attackUsed 当前摘要。
+
+  调用函数
+  ensureAttackUseSlots、consumeSlot、eventProbability。
+
+  边界与不变量
+  同一槽位在同一条件世界只能使用一次；摘要必须由槽位重新投影而不能另行扣减。
+  */
+  consumeAttackUse(state, player, desiredEventWorlds) {
+    const slots = this.ensureAttackUseSlots(player);
+    const consumed = this.consumeSlot(
+      state,
+      slots,
+      desiredEventWorlds,
+      `attack-slot:${player.id}`
+    );
+    const probability = this.eventProbability(consumed.eventWorlds);
+    player.attackUsed = (player.attackUsed ?? 0) + probability;
+    return consumed;
+  }
+
+  /*
+  功能
+  在搜索世界的 end 动作后投影真实弃牌阶段的手牌上限结算。
+
+  调用方
+  apply 的 end 分支。
+
+  输入
+  独立 World 与行动者。
+
+  输出
+  无；行动者总手牌数量按生命上限压缩，并同步已知身份、匿名容量与概率摘要。
+
+  读取状态
+  行动者 hand/handCount、生命、匿名容量与公开装备上下文。
+
+  写入状态
+  手牌 availability、hand/handCount、匿名容量与突袭/格挡/反制/调息摘要。
+
+  调用函数
+  hasCompleteCertainHand、cardAvailability、consumeUnknownResourceCard、
+  consumeChosenHandCard、syncCardEstimates。
+
+  边界与不变量
+  总手牌数以 handCount 为准，不得用 hand.length 掩盖匿名容量；完整确定手牌先请求 Evaluator resolved IDs，
+  混合状态先消费匿名容量，再对剩余已知身份请求同一 resolved capability；不虚构 definitionId，
+  行动者未存活或手牌不超上限时为空操作。
+  */
+  applyMandatoryDiscard(state, actor) {
+    if (!actor?.alive) return;
+    const rawHandCount = Number(actor.handCount);
+    const handSize = Number.isFinite(rawHandCount)
+      ? Math.max(0, rawHandCount)
+      : (Array.isArray(actor.hand) ? actor.hand.length : 0);
+    const hp = Math.max(0, Number(actor.hp) || 0);
+    let remaining = Math.max(0, handSize - hp);
+    if (remaining <= PROBABILITY_EPSILON) return;
+    if (!Array.isArray(actor.hand)) {
+      // 无身份信息的摘要状态（测试夹具）无法按保留价值选牌，只投影数量上限。
+      actor.handCount = Math.min(handSize, hp);
+      return;
+    }
+    if (this.hasCompleteCertainHand(actor)) {
+      const selected = this.resolveDiscardCandidates(
+        actor,
+        actor.hand,
+        remaining,
+        this.buildDiscardKeepValueContext(state, actor)
+      );
+      this.consumeChosenHandCard(state, actor, remaining, {
+        label:"end-hand-limit-discard",
+        selectedCardIds:selected.map((card) => card.id ?? card.cardId).filter(Boolean)
+      });
+      return;
+    }
+    // 混合状态中的匿名容量没有可排序身份，先在匿名聚合内消费；
+    // 余量只落在已知身份上，再复用正式保留价值选择，避免给匿名牌虚构 definitionId。
+    while (remaining > PROBABILITY_EPSILON) {
+      const explicitExpected = [
+        ...(Array.isArray(actor.hand) ? actor.hand : []),
+        ...(Array.isArray(actor.knownCards) ? actor.knownCards : [])
+      ].reduce((sum, card) => sum + this.cardAvailability(card), 0);
+      const anonymousCapacity = Math.max(
+        0,
+        Math.max(0, Number(actor.handCount) || 0) - explicitExpected
+      );
+      if (anonymousCapacity <= PROBABILITY_EPSILON) break;
+      const removed = this.consumeUnknownResourceCard(
+        state,
+        actor,
+        Math.min(1, remaining, anonymousCapacity),
+        anonymousCapacity
+      );
+      if (removed <= PROBABILITY_EPSILON) break;
+      remaining = Math.max(0, Math.max(0, Number(actor.handCount) || 0) - hp);
+    }
+    remaining = Math.max(0, Math.max(0, Number(actor.handCount) || 0) - hp);
+    if (remaining > PROBABILITY_EPSILON) {
+      const selected = this.resolveDiscardCandidates(
+        actor,
+        actor.hand,
+        remaining,
+        this.buildDiscardKeepValueContext(state, actor)
+      );
+      this.consumeChosenHandCard(state, actor, remaining, {
+        label:"end-hand-limit-discard",
+        selectedCardIds:selected.map((card) => card.id ?? card.cardId).filter(Boolean)
+      });
+    }
+  }
+}

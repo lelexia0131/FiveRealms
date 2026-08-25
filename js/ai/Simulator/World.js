@@ -3,10 +3,10 @@
 把确定 Fact、唯一 ProbabilityState 与已注入领域派生值组合成 canonical World。
 
 上游
-StateContracts、ActionGenerator、Planner、Simulator、Policy 与 Value。
+AiController、ActionGenerator、Searcher、Simulator、Evaluator 与状态契约测试。
 
 下游
-无。
+Fact、Probability facade 与 Domain Team/Skill Rules。
 
 状态边界
 根 World 不可变；Simulator 只推进完全隔离的可变 clone。
@@ -17,6 +17,61 @@ StateContracts、ActionGenerator、Planner、Simulator、Policy 与 Value。
 架构约束
 不得保存 hp/shield/energy/availability/slot 等独立 branch arrays，不得复制 Probability sufficient state。
 */
+import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
+import { getSkillCost } from "../../domain/rules/skill/SkillRules.js";
+import {
+  getAttackLimitFromRules,
+  getTeamRules,
+  getTurnEnergyBreakdownFromRules
+} from "../../domain/rules/team/TeamRules.js";
+import { createFact } from "../Event/Fact.js";
+import { createProbabilityState } from "../Event/Probability/Probability.js";
+
+/*
+功能
+集中计算 canonical World 所需的领域派生字段。
+
+调用方
+createStateContracts。
+
+输入
+当前 GameState。
+
+输出
+按玩家 ID 索引的冻结派生值表。
+
+读取状态
+玩家回合标记、公开装备、角色技能与 Domain Team/Skill Rules。
+
+写入状态
+无。
+
+调用函数
+Domain TeamRules、SkillRules.getSkillCost。
+
+边界与不变量
+只在 Game→World 边界投影已存在的领域规则，不重写规则或价值语义。
+*/
+function createDerivedPlayersById(state) {
+  return Object.fromEntries(state.players.map((player) => {
+    const activeSkillId = player.character.activeSkillIds[0] ?? null;
+    const activeSkill = ACTIVE_SKILL_DEFINITIONS[activeSkillId] ?? null;
+    const teamRules = getTeamRules({ players:state.players }, player);
+    const energyBreakdown = getTurnEnergyBreakdownFromRules(
+      teamRules,
+      player.equipment?.definitionId ?? null
+    );
+    const energyDeviceBreakdown = getTurnEnergyBreakdownFromRules(teamRules, "energyDevice");
+    return [player.id, Object.freeze({
+      turnEnergyGainWithoutEquipment:energyBreakdown.baseAmount + energyBreakdown.teamBonus,
+      energyDeviceTurnEnergyGain:energyDeviceBreakdown.equipmentBonus,
+      nextTurnBaseAttackLimit:getAttackLimitFromRules(teamRules),
+      guardianAidUsed:Boolean(player.turnFlags.guardianAidUsed),
+      spyGapTriggered:Boolean(player.turnFlags.spyGapTriggered),
+      activeSkillCost:getSkillCost(activeSkill, player, state.players)
+    })];
+  }));
+}
 
 /*
 功能
@@ -165,4 +220,66 @@ structuredClone。
 */
 export function cloneWorld(world) {
   return structuredClone(world);
+}
+
+/*
+功能
+在唯一 Game→World 边界组合确定 Fact、ProbabilityState 与 canonical World。
+
+调用方
+createInitialWorld、状态契约测试与 AI composition。
+
+输入
+观察者 ID、GameState 与可选合法剩余牌计数。
+
+输出
+冻结的 fact、probabilityState、world 集合。
+
+读取状态
+GameState、观察者合法记忆与公开领域规则。
+
+写入状态
+无。
+
+调用函数
+createFact、createProbabilityState、createWorld、createDerivedPlayersById。
+
+边界与不变量
+World 不保留 Game/Player 引用；未知信息只进入唯一 ProbabilityState。
+*/
+export function createStateContracts(viewerId, state, currentCardCounts = null) {
+  const fact = createFact(viewerId, state, currentCardCounts);
+  const probabilityState = createProbabilityState(fact);
+  const derivedPlayersById = createDerivedPlayersById(state);
+  const world = createWorld(fact, probabilityState, derivedPlayersById);
+  return Object.freeze({ fact, probabilityState, world });
+}
+
+/*
+功能
+从真实 GameState 创建唯一 canonical World。
+
+调用方
+Controller、Worker request 构造、测试与 study harness。
+
+输入
+观察者 ID、GameState 与可选合法剩余牌计数。
+
+输出
+canonical World。
+
+读取状态
+由 createStateContracts 统一读取。
+
+写入状态
+无。
+
+调用函数
+createStateContracts。
+
+边界与不变量
+不得复制 Fact、Probability、Search 或 Evaluation 状态层级。
+*/
+export function createInitialWorld(viewerId, state, currentCardCounts = null) {
+  return createStateContracts(viewerId, state, currentCardCounts).world;
 }

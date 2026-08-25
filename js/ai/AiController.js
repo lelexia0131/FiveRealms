@@ -17,21 +17,25 @@ MatchApplication、ResponseWorkflow、PublicCardPoolWorkflow、角色技能与�
 架构约束
 子组件不得回指 AIController；公开 owner 字段只供显式诊断与专项测试，生产上游使用控制器边界。
 */
-import { createInitialWorld } from "./state/StateContracts.js";
-import { deriveCurrentCardCounts, hasFactStatus } from "./state/Fact.js";
+import { createInitialWorld } from "./Simulator/World.js";
+import {
+  deriveCurrentCardCounts,
+  getCharacterRoleTags,
+  hasFactStatus,
+  projectCanonicalSeatRoster
+} from "./Event/Fact.js";
 import {
   ActionGenerator,
   deduplicateSearchEquivalentActions
 } from "./search/ActionGenerator.js";
-import { StateValue } from "./value/StateValue.js";
-import { ValueSimulationQuery } from "./simulation/ValueSimulationQuery.js";
-import { Simulator } from "./simulation/Simulator.js";
+import { Simulator } from "./Simulator/Simulator.js";
 import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILE } from "./policy/AiRuntimePolicy.js";
 import { actionIntentKey, sameAction } from "./search/Action.js";
 import { createSearchRequest } from "./search/SearchRequest.js";
 import { createWorkerSearchOutcome, workerOutcomeViolations } from "./search/WorkerSearchOutcome.js";
 import {
   Evaluator,
+  StateValue,
   buildResourceCandidates,
   chooseBestResourceHandCandidate,
   chooseContextualResourceCandidate,
@@ -39,10 +43,8 @@ import {
   chooseLowestKnownCardId,
   chooseLowestRoleCardId,
   choosePublicCardId
-} from "./value/Evaluator.js";
-import { getCharacterRoleTags } from "./policy/CharacterRoleMetadata.js";
-import { projectCanonicalSeatRoster } from "./state/RuleProjection.js";
-import { inAttackRange } from "./state/DistanceProbabilityBranches.js";
+} from "./Evaluator/Evaluator.js";
+import { inAttackRange } from "./Event/Probability/Probability.js";
 import {
   nextLightningReceiverId as nextDomainLightningReceiverId
 } from "../domain/rules/status/StatusRules.js";
@@ -316,11 +318,8 @@ export class AIController {
       resolveDiscardCandidates:(...args) => this.stateEvaluator.resolveDiscardCandidates(...args)
     });
     this.simulatorFactory = simulatorFactory;
-    this.valueSimulationQuery = new ValueSimulationQuery(
-      this.stateEvaluator,
-      simulatorFactory
-    );
-    this.stateValue = new StateValue(this.stateEvaluator, this.valueSimulationQuery);
+    this.stateValue = new StateValue(this.stateEvaluator);
+    this.stateEvaluator.configureRuntime({ simulatorFactory, stateValue:this.stateValue });
   }
 
   /*
@@ -1603,7 +1602,7 @@ export class AIController {
           this.getState(),
           getRemainingCardCounts()
         );
-        return this.valueSimulationQuery.guardianAidValues(
+        return this.stateEvaluator.guardianAidValues(
           world,
           responder.id,
           target.id,
@@ -1632,7 +1631,7 @@ export class AIController {
           holder.id
         );
         const worldReceiver = world.players.find((player) => player.id === receiverId);
-        return this.valueSimulationQuery.lightningCounterTerms(
+        return this.stateEvaluator.lightningCounterTerms(
           world,
           worldHolder,
           worldReceiver,
@@ -1680,7 +1679,7 @@ export class AIController {
           { publicTransferContext:rawContext.publicTransferContext ?? null }
         );
         if (!rootAction) return null;
-        return this.valueSimulationQuery.dynamicRootFlipGain(
+        return this.stateEvaluator.dynamicRootFlipGain(
           world,
           responder.id,
           rootAction,

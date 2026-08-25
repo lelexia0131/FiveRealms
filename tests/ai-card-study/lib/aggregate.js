@@ -11,7 +11,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { CARD_DEFINITIONS } from "../../../js/domain/definitions/cards/CardDefinitions.js";
 import { CHARACTER_DEFINITIONS, CHARACTER_BY_ID } from "../../../js/domain/definitions/characters/CharacterDefinitions.js";
-import { ROLE_CARD_VALUE_DELTAS } from "../../../js/ai/value/CardValue.js";
+import { ROLE_CARD_VALUE_DELTAS } from "../../../js/ai/Evaluator/CardValue.js";
 import { runDirUrl } from "./runPaths.js";
 
 let DATA_DIR = new URL("../data/", import.meta.url);

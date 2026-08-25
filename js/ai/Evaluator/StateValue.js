@@ -1,30 +1,112 @@
 /*
 模块职责
-唯一拥有目标威胁、攻击暴露、雷达减免、护盾与低生命风险的价值 primitive（供上层组合的基础数值项）。
+唯一拥有非卡牌 World-state 价值 primitive，包括生命、生存、能量、护盾、状态、威胁与团队局面。
 
 上游
-Evaluator、SearchPrior、响应策略与转移策略。
+Evaluator public facade 与直接 primitive 契约测试。
 
 下游
-Domain Card Definitions、AI DistanceProbabilityBranches 与 value/Economics 的生命尺度。
+Domain Card Definitions 与 canonical Probability facade。
 
 状态边界
-只读传入的 Fact/World；不写状态，不启动模拟。
+只读 canonical World；闪电生命周期通过注入的 Evaluator runtime capability 查询，不写真实状态。
 
 信息边界
-只使用公开字段、概率摘要与合法的近期攻击者记忆，不读取敌方隐藏手牌身份。
+只使用公开字段、合法概率摘要与已过滤记忆，不读取敌方隐藏实体身份。
 
 架构约束
-威胁公式只能在本模块出现；基础数值项可被 Evaluator 组合进 State Value，但不得绕过它独立追加到最终 Transition Value。
+不得拥有卡牌资产价值、最终 utility 聚合或候选比较；不得 import CardValue 或 Simulator。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
-import { getRangeConditionBranches } from "../state/DistanceProbabilityBranches.js";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
-  queryPlayerHandProbability
-} from "../state/Probability/Probability.js";
-import { HP_VALUE } from "./Economics.js";
+  getRangeConditionBranches,
+  queryPlayerHandProbability,
+  sealOutcomeProbabilities
+} from "../Event/Probability/Probability.js";
+
+export const HP_VALUE = 5;
+export const ENERGY_STATE_WEIGHT = 1.2;
+
+/*
+功能
+把内部 State Value 点数转换为最终 HP-equivalent utility。
+
+调用方
+TransitionValue、FrontierValue、ValueLedger、Search Prior 归一化与单位正式测试。
+
+输入
+以 HP_VALUE 点代表一生命值的有限 State Value 点数。
+
+输出
+最终 utility；一单位严格等于一生命值的状态价值。
+
+读取状态
+HP_VALUE。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+这是由 HP 基线推导的单位换算，不是经验缩放；Final Utility 项最多转换一次；
+Search Prior 若消费它，只能作为不进入 final 的 beam heuristic 输入归一化。
+*/
+export function statePointsToUtility(points) {
+  return (Number(points) || 0) / HP_VALUE;
+}
+
+/*
+功能
+计算充能桩下一回合有效能量的状态价值。
+
+调用方
+value/Evaluator。
+
+输入
+显式注入的队伍能量规则能力与可见玩家。
+
+输出
+按装备保留概率折算的未来状态点数。
+
+读取状态
+只读玩家能量、装备、主动技能成本和显式规则查询结果。
+
+写入状态
+无。
+
+调用函数
+getMaxEnergy、getTurnEnergyBreakdown。
+
+边界与不变量
+只比较下一回合有无充能桩两个配对世界；除装备外的角色、队伍和当前能量必须相同。
+*/
+export function energyDeviceFutureUtility(rules = {}, player) {
+  if (player?.equipmentDefinitionId !== "energyDevice" || !player?.battleTeam) return 0;
+  if (typeof rules.getMaxEnergy !== "function" || typeof rules.getTurnEnergyBreakdown !== "function") return 0;
+  const retention = player.equipmentRetentionProbability
+    ?? (player.equipmentDefinitionId ? 1 : 0);
+  if (retention <= 0) return 0;
+  const ruleStub = { battleTeam: player.battleTeam };
+  const cap = Math.max(0, Number(rules.getMaxEnergy(ruleStub)) || 0);
+  const withoutBreakdown = rules.getTurnEnergyBreakdown(ruleStub);
+  const withBreakdown = rules.getTurnEnergyBreakdown({
+    ...ruleStub,
+    equipment: { definitionId: "energyDevice" }
+  });
+  const currentEnergy = Math.max(0, Number(player.energy) || 0);
+  const withoutGain = Number(withoutBreakdown.baseAmount) + Number(withoutBreakdown.teamBonus);
+  const withGain = Number(withBreakdown.baseAmount) + Number(withBreakdown.teamBonus)
+    + Number(withBreakdown.equipmentBonus);
+  const withoutEnergy = Math.min(cap, currentEnergy + withoutGain);
+  const withEnergy = Math.min(cap, currentEnergy + withGain);
+  const effectiveGain = Math.max(0, withEnergy - withoutEnergy);
+  const baseValue = effectiveGain * ENERGY_STATE_WEIGHT;
+  return retention * baseValue;
+}
 
 export const DANGER_VALUE = 7;
 export const DEATH_VALUE = 28;
@@ -746,4 +828,237 @@ export function shieldStateValue(player, residualExposure) {
       : 0;
   const lifeProtection = Math.min(1, absorbed) * lifePremium * SHIELD_PROTECTION_WEIGHT;
   return reserve + hpProtection + lifeProtection;
+}
+
+/*
+功能
+从 viewer 阵营视角计算封印跳过出牌阶段的期望团队负担。
+
+调用方
+StateValue runtime、Evaluator diagnostics 与响应 willingness。
+
+输入
+canonical World、封印持有者与 viewer 阵营。
+
+输出
+带阵营符号的期望负担值。
+
+读取状态
+封印结算概率与持有者非卡牌行动机会价值。
+
+写入状态
+无。
+
+调用函数
+sealOutcomeProbabilities、turnOpportunityValue。
+
+边界与不变量
+盟友负担为正、敌方负担为负；概率在消费点惰性查询且只计一次。
+*/
+export function sealTeamBurden(state, holder, viewerTeam) {
+  if (!holder?.alive) return 0;
+  const skipAction = sealOutcomeProbabilities(state, holder).skipAction;
+  if (skipAction <= PROBABILITY_EPSILON) return 0;
+  const sign = holder.battleTeam === viewerTeam ? 1 : -1;
+  return skipAction * turnOpportunityValue(holder, state) * sign;
+}
+
+/*
+功能
+生成单个存活玩家的非卡牌 World-state 价值分项。
+
+调用方
+Evaluator.playerValueTerms。
+
+输入
+过滤 World、玩家、viewer ID、雷达战术概率与稳定能量规则 capability。
+
+输出
+death 与不含 hand/equipment intrinsic asset 的 terms。
+
+读取状态
+生命、生存、能量、护盾、状态、威胁、队伍救援容量与装备产生的状态后果。
+
+写入状态
+无。
+
+调用函数
+Probability、Threat primitives 与 energyDeviceFutureUtility。
+
+边界与不变量
+不得计算手牌或装备资产价值；energyDeviceFuture 只表示装备造成的独立未来能量状态后果。
+*/
+export function statePlayerValueTerms(
+  state,
+  player,
+  viewerId,
+  radarTacticProbability,
+  energyRules = {}
+) {
+  if (!player.alive) return { death:-DEATH_VALUE, terms:{} };
+  const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
+  let rescueOutlook = 0;
+  if (player.hp <= 1) {
+    const rescueCapacity = state.players
+      .filter((rescuer) => rescuer.alive && rescuer.battleTeam === player.battleTeam)
+      .reduce((sum, rescuer) => (
+        sum + queryPlayerHandProbability(
+          state.probabilityState,
+          rescuer,
+          "recover"
+        ).expected
+      ), 0);
+    if (rescueCapacity > 0) {
+      const requiredRecovery = Math.max(1, 1 - player.hp);
+      const rescueCoverage = Math.min(1, rescueCapacity / requiredRecovery);
+      rescueOutlook = (rescueCoverage - 0.5) * 8;
+    }
+  }
+  const markThreat = Object.entries(player.huntMarkProbabilities ?? {}).reduce(
+    (sum, [sourceId, probability]) => {
+      const source = state.players.find((entry) => entry.id === sourceId);
+      return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
+    },
+    0
+  );
+  const {
+    currentThreat,
+    futureInventory,
+    energyPressure,
+    perEnemy
+  } = exposureComponents(state, player);
+  const exposure = currentThreat + futureInventory + energyPressure;
+  const radarMitigation = radarMitigationUtility(exposure, player, radarTacticProbability);
+  const residualExposure = Math.max(0, exposure - radarMitigation);
+  const shield = shieldStateValue(player, residualExposure);
+  const bufferExposure = (perEnemy ?? [])
+    .filter((entry) => entry.enemyId !== viewerId)
+    .reduce((sum, entry) => (
+      sum + entry.currentThreat + entry.futureInventory + entry.energyPressure
+    ), 0);
+  const bufferResidualExposure = Math.max(
+    0,
+    bufferExposure - radarMitigationUtility(bufferExposure, player, radarTacticProbability)
+  );
+  return {
+    death:0,
+    terms:{
+      danger,
+      hp2Risk:hp2ThreatRiskValue(player, bufferResidualExposure),
+      rescueOutlook,
+      hp:player.hp * HP_VALUE,
+      shield,
+      energy:Math.max(0, Number(player.energy) || 0) * ENERGY_STATE_WEIGHT,
+      stacks:(player.exposeWeaknessStacks ?? 0) * 1.5,
+      markThreat:-markThreat * 1.5,
+      currentThreat:-currentThreat,
+      futureInventory:-futureInventory,
+      energyPressure:-energyPressure,
+      radar:radarMitigation,
+      energyDeviceFuture:energyDeviceFutureUtility(energyRules, player)
+    }
+  };
+}
+
+export class StateValue {
+  /*
+  功能
+  绑定纯 Evaluator 与闪电查询能力。
+
+  调用方
+  AIController 组合根（统一组装依赖的位置）。
+
+  输入
+  value/Evaluator 与 ValueSimulationQuery 实例。
+
+  输出
+  稳定的运行时 State Value 查询服务。
+
+  读取状态
+  保存显式依赖引用。
+
+  写入状态
+  写入实例依赖字段。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不接受 Game、Planner 或 Controller。
+  */
+  constructor(evaluator, simulationQuery = evaluator) {
+    this.evaluator = evaluator;
+    this.simulationQuery = simulationQuery;
+  }
+
+  /*
+  功能
+  计算包含闪电生命周期项的完整 State Value。
+
+  调用方
+  TransitionValue、ValueLedger、Search/Policy 查询入口与测试。
+
+  输入
+  过滤后的状态、viewer ID 与可选父 SearchBudget。
+
+  输出
+  value/Evaluator 返回的团队 State Value。
+
+  读取状态
+  只读传入状态；闪电查询只使用 World 克隆与缓存。
+
+  写入状态
+  无。
+
+  调用函数
+ValueSimulationQuery.lightningValues、sealTeamBurden、Evaluator.stateUtility。
+
+  边界与不变量
+领域结果先物化为纯值再交给 Evaluator；本层不复制任何估值公式；
+父搜索存在时必须把同一个 SearchBudget 传给 Lightning 与 Seal 查询。
+  */
+  stateUtility(state, viewerId, searchBudget = null) {
+    const lightningValues = this.simulationQuery.lightningValues(state, viewerId, searchBudget);
+    const viewer = state.players.find((player) => player.id === viewerId);
+    const sealValues = viewer
+      ? state.players.map((player) => sealTeamBurden(
+          state,
+          player,
+          viewer.battleTeam,
+          searchBudget
+        ))
+      : null;
+    return this.evaluator.stateUtility(state, viewerId, lightningValues, sealValues);
+  }
+
+  /*
+  功能
+  计算两个 World 在同一观察者视角下的唯一状态价值差。
+
+  调用方
+  TransitionValue、资源/响应/root 配对查询与搜索反事实项。
+
+  输入
+  before World、after World、viewer ID 与可选父 SearchBudget。
+
+  输出
+  after State Value points 减 before State Value points。
+
+  读取状态
+  两个输入 World 及其有界领域价值查询。
+
+  写入状态
+  无；底层查询只写自身缓存和独立模拟 clone。
+
+  调用函数
+  stateUtility。
+
+  边界与不变量
+  运算顺序固定为 after-before；调用方不得再次手写同一状态比较公式，
+  两侧 nested query 必须继承同一个 SearchBudget。
+  */
+  transitionDelta(before, after, viewerId, searchBudget = null) {
+    return this.stateUtility(after, viewerId, searchBudget)
+      - this.stateUtility(before, viewerId, searchBudget);
+  }
 }

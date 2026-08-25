@@ -1,12 +1,11 @@
 # FiveRealms AI Engine 2.0
 
-当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE。
-架构结论：FiveRealms AI Engine 2.0 — MASTER ARCHITECTURE COMPLETE。
-本轮整理基线：`7f73a03 ARCH-9.10`
-当前浏览器构建标识：`20260817-architecture-closure-final`
+当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE；Step 5.6 Core Semantic + Physical Collapse 已进入最终工作树。
+架构结论：Event、Simulator、Evaluator core 已按最终 semantic authority 收敛；Search/Runtime closure 仍属于 Step 5.7。
+本轮整理基线：`b8b32dc STEP 5.5B`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
-最新校验日期：2026-08-15
-范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；下方 Current Architecture Snapshot 与第 32 节描述当前架构，第 2 至 31 节保留阶段审计、迁移设计和落地证据。
+最新校验日期：2026-08-24
+范围：`js/ai/**/*.js`、直接上游、规则权威源和相关测试；下方 Current Architecture Snapshot 与第 35 节描述当前物理架构，第 2 至 32 节保留历史阶段审计与落地证据，第 33 至 34 节的语义事实按第 35 节的新 owner 路径解释。
 仓库级三层目标架构以 `FR_ARCHITECTURE.md` 为唯一 authority；本文件只拥有 AI 内部架构与历史证据。
 
 ## 1. 文档职责
@@ -19,25 +18,26 @@
 - 当前最终边界，以及 AI-ARCH-2 至 AI-ARCH-10 的历史迁移顺序；
 - 每个阶段的行为冻结、验证和回滚契约。
 
-代码风格与函数头只在 `CODE_STANDARD.md` 定义。Current Architecture Snapshot 与第 32 节是当前事实；第 2 至 31 节中的“当前”“目标”“后续”等词只描述对应阶段当时的状态，不覆盖最终架构。
+代码风格与函数头只在 `CODE_STANDARD.md` 定义。Current Architecture Snapshot 与第 35 节是当前物理事实；历史章节中的“当前”“目标”“后续”和旧目录名只描述对应阶段当时的状态，不覆盖最终架构。
 
 ## Current Architecture Snapshot
 
-当前生产 AI 共 59 个 JavaScript 模块，最终责任边界如下：
+当前生产 AI 共 26 个 JavaScript 模块；Step 5.6 所负责的 12 个 core 文件已经进入最终物理位置：
 
 | 层 | 当前正式 owner |
 |---|---|
-| Composition / Execution | `AiController` 是 main-thread boundary/composition root；只保存显式 state/session/rule capability/search RNG/search executor/lifecycle/rebind 依赖，不保存 Game，也不构造第二套 search graph；生产搜索只由 Worker `SearchEngineFactory` 构造。 |
-| State | `Fact` 是确定事实入口，`Probability` 是唯一不确定性表示，`World` 是唯一搜索世界，`StateContracts` 只组装 canonical World；`RuleProjection` 与 `DistanceProbabilityBranches` 是 AI→Domain 的 canonical projection 与距离概率分区。 |
-| Search | `Action` 是唯一动作表示；`ActionGenerator` 是唯一合法候选 owner；`Searcher` 唯一拥有 traversal/beam/frontier/root coverage/incumbent/budget/Pattern scheduling；`SearchBudget` 管预算；`SearchPrior` 只提供 exploration hints；`SearchRequest` 与 `WorkerSearchOutcome` 只保留必要 serialization/identity validation。 |
-| Simulation | `Simulator` 管 clone、共享 runtime 与分派；Response、Combat、Card、Skill、Status 五个组件各自推进对应状态。 |
-| Value | `Evaluator` 唯一拥有 State/Transition/terminal frontier/final comparison semantics；`StateValue` 只补齐 bounded lifecycle query；`ValueLedger` 只诊断；Search Prior 与 Policy heuristic 不进入 Final Utility。 |
-| Policy / Domain | Policy 只做 AI 过滤、选择与 valuation；`js/ai/domain/**` 是 AI probabilistic/search model，不拥有 Repository Domain 规则。 |
+| Composition / Execution | `AiController` 是 main-thread boundary/composition root；Worker `SearchEngineFactory` 是生产 search composition。两者只从 `Simulator/Simulator.js`、`Simulator/World.js`、`Evaluator/Evaluator.js` 与 `Event` public facade 取 core 能力。 |
+| Event | `Event/Fact.js` 是唯一 deterministic fact authority；`Event/Probability/Probability.js` 是唯一 probability facade；`Branch.js` 与 `Pool.js` 是 facade 私有且互不依赖的实现。 |
+| Simulator | `Simulator/World.js` 是唯一 canonical World contract；`Simulator/Simulator.js` 是唯一 Action→World transition facade；`Damage.js`、`Resource.js`、`Response.js` 是互不静态依赖的内部 transition owner。 |
+| Evaluator | `Evaluator/Evaluator.js` 是唯一 aggregation、willingness、final utility 与 comparison facade；`StateValue.js` 只拥有 non-card state primitives，`CardValue.js` 只拥有 card/equipment/resource primitives，二者互不依赖。 |
+| Search / Runtime | `search/**`、`Searcher/Pattern/Pattern.js` 与 `policy/AiRuntimePolicy.js` 保留既有算法和协议，等待 Step 5.7；本轮只改最终 core 的路径/API wiring。 |
 | Repository Domain Rules | `js/domain/rules/**` 是 Game Rule Authority；`js/domain/definitions/**` 是固定事实 Authority；AI 通过 canonical projection 直接消费这些 final owners。 |
 
-AI deterministic legality、目标、距离、伤害、响应与状态判定的 rule source 来自 `js/domain/rules/**`；AI 只通过窄投影把 SearchState/Visible facts 适配为 canonical rule facts。`ActionCandidatePolicy` 只决定 AI 是否考虑某个规则合法动作，`TransferPolicy` 唯一拥有 AI 转移方向策略。正式搜索不得读取敌方未知手牌的 `definitionId`，只能消费 Visible / Knowledge / Belief 提供的合法信息或概率分支。旧 compatibility 文件与旧 owner 路径已删除；checker 中保留的旧名称仅是防止回归的正式 guard。
+AI deterministic legality、目标、距离、伤害、响应与状态判定的 rule source 仍来自 `js/domain/rules/**` 与 `js/domain/definitions/**`。正式搜索不得读取敌方未知手牌的 `definitionId`；unknown identity 继续通过 Probability/World 中的合法条件世界表示。
 
-FR-ARCH-12 current facts：
+以下 FR-ARCH-12 至 FR-ARCH-14 条目是 Step 5.6 之前的历史 closure 记录，其中旧物理路径不再代表当前 owner。
+
+FR-ARCH-12 historical facts：
 - `js/ai/search/**`、`js/ai/simulation/**`、`js/ai/domain/**` 的 production imports 对 `core/RuleEngine` 与 `core/DistanceSystem` 均为零；
 - root/deep `ActionGenerator` 通过 `js/ai/state/RuleProjection.js` 共同消费 `domain/rules/card`、`domain/rules/skill`、`domain/rules/status` 与 Domain Definitions；
 - 固定卡牌/技能效果数值 owner 为 `CardDefinitions` / `SkillDefinitions`；`CardEffectRules` 与 `SkillRules` 只保留动态决定；
@@ -45,7 +45,7 @@ FR-ARCH-12 current facts：
 - `js/ai/domain/**` 四个模块是 AI probabilistic/search model，不是 Repository Domain Rule authority；
 - AI simulation 保留所有概率、Belief、反事实 SearchState 模型，不调用 Application workflow 或 Domain Transitions 修改 SearchState。
 
-FR-ARCH-13 current facts：
+FR-ARCH-13 historical facts：
 - `AIController`、`Knowledge`、`ActionGenerator`、`CardSelectionBoundary`、`ResponseBoundary` 均不保存 raw Game；`js/ai/**` 的 `this.game` 与 `core/Game` import 为零；
 - `AIController.selectAction` 构造必要 Worker request shape（requestId/gameId/stateVersion/actor/phase/round/canonical World/config/rng/canonical root Actions），并在返回前执行 session、game identity、stateVersion、actor、phase 与 root Action acceptance；
 - queued planned sequence 的第二项不继承首项 requestVersion；`resolvePlannedAction` 继续 current-state rebind + Domain candidate revalidation；
@@ -54,7 +54,7 @@ FR-ARCH-13 current facts：
 - `createChoiceBoundary` 显式组合 Human/AI peer adapters、ChoicePort 与 coordinator；AI 不回读应用对象；
 - Main Thread 与 Dedicated Worker 只交换含 canonical World/Action 的必要 request/outcome serialization shape。
 
-FR-ARCH-14 current facts：
+FR-ARCH-14 historical facts：
 - `js/adapters/ai/worker/` 拥有 Dedicated Worker entry、Worker client、headless local transport 与 `WorkerSearchRuntime`/`SearchEngineFactory` 唯一 search execution composition；
 - 生产 `AIController.selectAction` 不直接调用 `planner.plan`；SearchRequest → search executor → WorkerSearchOutcome → main-thread acceptance → current entity rebind → Domain legality；
 - Worker 直接消费 `SearchRequest.rootActions` 的 canonical Actions；不存在 RootSearchAction/ActionDescriptor rehydrate 或 candidate DTO conversion；
@@ -66,11 +66,19 @@ FR-ARCH-14 current facts：
 - browser Worker client 初始实例与 watchdog 重建实例共用同一 wiring；postMessage/messageerror 失败会清空 pending 并重建，不在下一次合法搜索上产生 false in-flight；
 - AI 弃牌阶段有 runtime invariant guard：即使 ChoicePort 异常 cancelled/declined/selectedIds 不足，AI 回合结束仍收束到 `hand.length <= hp`；
 - presentation pacing 与 gameplay SFX 解耦；连续 gameplay SFX 不受 `SoundManager` 墙钟节流，仅 UI `select` 保留防误触节流；
-- FR-ARCH-14 与 repository FR-ARCH-15 均已 CLOSED / PASS；Dedicated Worker 是当前浏览器生产路径。
+- FR-ARCH-14 与 repository FR-ARCH-15 在该阶段均已 CLOSED / PASS；Dedicated Worker 仍是当前浏览器生产路径。
+
+Step 5.6 当前硬边界：
+
+- `js/ai/state/**`、旧 `js/ai/simulation/**` 与 `js/ai/value/**` 生产文件为零，不存在 compatibility forwarder；
+- production consumer 不直接 import `Branch`、`Pool`、`Damage`、`Resource`、`Response`、`StateValue` 或 `CardValue`；父 facade 是唯一跨 authority 入口；
+- 三组 internal sibling 静态依赖均为零，Simulator/Evaluator 之间只保留 composition 注入的窄 runtime capability；
+- SearchRequest、WorkerSearchOutcome、SearchBudget、SearchPrior、CounterfactualTerms、AiRuntimePolicy 与 Searcher candidate metadata 未在本轮重设计；
+- checker 对最终 core allowlist、legacy path/import、facade bypass、sibling dependency 与固定规则镜像执行真实源码检查。
 
 ## Historical Baseline and Migration Record
 
-以下第 2 至 31 节按时间保留最初审计、阶段约束、迁移表和验收证据。其阶段性路径、未来时态与 compatibility 描述属于历史记录；最终现状以本页顶部快照和第 32 节为准。
+以下第 2 至 32 节按时间保留最初审计、阶段约束、迁移表和验收证据。其阶段性路径、未来时态与 compatibility 描述属于历史记录；最终现状以本页顶部快照和第 35 节为准。
 
 ## 2. 基线与验证边界
 
@@ -1180,9 +1188,9 @@ RadarModel、LightningModel、SealModel、GlobalBenefitModel 仍只返回概率/
 - Architecture Guard 禁止 Planner 依赖具体游戏/模拟实现，并禁止 SearchPrior 保存 `getCurrentState` service locator；self-test 同时覆盖合法、非法及注释遮蔽夹具。
 - ARCH-9 独立验证出口仍保留 `AiPlanner` 临时组合层；该出口债务已由下一节的 ARCH-10 最终布局关闭，正式 Search Core 不得回迁算法。
 
-## 32. AI-ARCH-10 Engine Closure 最终事实
+## 32. AI-ARCH-10 Engine Closure 历史事实
 
-### 最终物理目录
+### 当时的物理目录
 
 `js/ai/` 根目录只保留 composition root：
 
@@ -1197,7 +1205,7 @@ js/ai/
 └─ domain/      # Radar / Lightning / Seal / GlobalBenefit 纯领域事实
 ```
 
-正式生产文件共 `59` 个。根目录 allowlist 为且仅为 `AiController.js`；任何新增根级 AI JavaScript 文件都会被 Architecture Guard 拒绝。
+该阶段正式生产文件共 `59` 个。根目录 allowlist 为且仅为 `AiController.js`；这份目录树已经被第 35 节的 Step 5.6 core collapse 取代。
 
 ### 物理移动与兼容路径删除
 
@@ -1248,9 +1256,9 @@ planning benchmark（seed `20260814`、node budget `200`、`planning` category�
 
 同一 planning 场景的结构计数为 constructor `64`、clone `1583`、apply `1583`、expanded `1325`、clones/node `1.1947169811320755`。Response `27686`、Combat `1860`、Skill `2905`、Status `12729`；Card raw `9340`，其中 `64` 是每个 Simulator 一次的 `initializeAssaultSummaries` 状态初始化，按 ARCH-8 可比 component 口径排除后为 `9276`，与冻结值一致。
 
-AI-ARCH-10 的阶段验证记录保留在 Git 历史与测试输出；当前验收以 `tests/run.mjs` 的 `AI 系统`、FR-ARCH、完整非 Balance suite、architecture checker 和真实浏览器 smoke 为准。浏览器模块图统一使用页首构建标识。
+AI-ARCH-10 的阶段验证记录保留在 Git 历史与测试输出；该阶段验收使用 `tests/run.mjs` 的 `AI 系统`、FR-ARCH、完整非 Balance suite、architecture checker 和真实浏览器 smoke。
 
-AI 架构不存在兼容算法或缺失 owner。后续功能必须在上述 final owner 内演进；Git 提交、推送与合并仍由维护者执行。
+该阶段没有 compatibility 算法或缺失 owner；其旧 owner 后续由 Step 5.6 直接吸入最终 Event/Simulator/Evaluator authority。
 
 ## 33. Probability Semantics 与 Final Utility 当前事实
 
@@ -1262,19 +1270,19 @@ AI 架构不存在兼容算法或缺失 owner。后续功能必须在上述 fina
 
 | 当前 symbol / field | Owner | Classification | 当前含义与约束 |
 |---|---|---|---|
-| 确定规则事件、单一 HP/alive 世界、确定 availability | `state/Probability`、Simulation | `EXACT` | 由规则、确定状态或完整条件世界严格推出；只有此类值可称 exact。 |
-| `recover/block/counter/assaultCountDistribution` | `state/BeliefState` | `BELIEF PROBABILITY` | 由合法 Remaining Knowledge 和未知槽位数条件化；不读取敌方真实未知牌面。 |
-| `blockProbability`、`twoBlockProbability`、`counterProbability`、`assaultResponseProbability` | `state/BeliefState` / Simulation projection | `BELIEF PROBABILITY` | 全部是相应 count distribution 的尾概率，不单独建模。 |
-| `equipmentRetentionProbability`、距离/状态/响应条件分支 | State / Domain / Simulation | `BELIEF PROBABILITY` | 与原始 condition key 共享同一世界；派生规则不得重新独立相乘。 |
-| `tacticResolutionChance`、`targetResolutionChance` | `simulation/ResponseSimulation` | `BELIEF PROBABILITY` | 确定 Policy decision 与反制容量 Belief 相交后的结算概率；不包含软 Policy 分数。 |
-| `sampleHiddenWorlds` 结果 | `state/BeliefState` | `MONTE CARLO ESTIMATE` | 返回 `{ classification, sampleCount, worlds }`；样本比例不是 exact probability。 |
+| 确定规则事件、单一 HP/alive 世界、确定 availability | `Event/Probability`、Simulator | `EXACT` | 由规则、确定状态或完整条件世界严格推出；只有此类值可称 exact。 |
+| `recover/block/counter/assaultCountDistribution` | `Event/Probability` | `BELIEF PROBABILITY` | 由合法 Remaining Knowledge 和未知槽位数条件化；不读取敌方真实未知牌面。 |
+| `blockProbability`、`twoBlockProbability`、`counterProbability`、`assaultResponseProbability` | `Event/Probability` / Simulator projection | `BELIEF PROBABILITY` | 全部是相应 count distribution 的尾概率，不单独建模。 |
+| `equipmentRetentionProbability`、距离/状态/响应条件分支 | Event / Domain / Simulator | `BELIEF PROBABILITY` | 与原始 condition key 共享同一世界；派生规则不得重新独立相乘。 |
+| `tacticResolutionChance`、`targetResolutionChance` | `Simulator/Response` | `BELIEF PROBABILITY` | 确定 Evaluator decision 与反制容量 Belief 相交后的结算概率；不包含软评分。 |
+| `sampleProbabilityWorlds` 结果 | `Event/Probability` | `MONTE CARLO ESTIMATE` | 返回有限 worlds；样本比例不是 exact probability。 |
 | 由有限 hidden worlds 平均得到的 hidden prior / information option | `search/CounterfactualTerms` | `MONTE CARLO ESTIMATE` | 是有限样本上的搜索/效用估计，不能通过 exact probability 接口消费。 |
-| `counterOpportunityCost`、`planningDynamicCounterGain`、Card/Response/Search Prior | Policy / Search | `POLICY HEURISTIC` | 用于确定选择或 beam 探索；不得乘入自然概率或 Final Utility。 |
-| `planningCounterDecision`、`counterDecision` | `policy/ResponsePolicy` / Simulation query | `POLICY HEURISTIC` | 输出确定 boolean；Policy 分数先比较阈值，再决定 respond / do not respond。 |
-| `expectedRecoverCount`、`expectedAssaultCount`、`expectedInformationGain`、`expectedEquipmentGain` | Belief / Simulation | `EXPECTED VALUE, NOT PROBABILITY` | 资源数量或价值期望；不能作为条件事件概率使用。 |
-| `hp`（跨分支摘要）、`hpSummaryClassification` | `simulation/CombatSimulation` | `EXPECTED VALUE, NOT PROBABILITY` | 多个 HP/alive 世界的标量摘要；不得声明为确定生命状态。 |
-| `rescueOutlook` | `value/Evaluator` | `EXPECTED VALUE, NOT PROBABILITY` | 由当前 World 的 HP/alive 与 ProbabilityState 调息容量直接派生；只参与 State Value，不写回 World。 |
-| `hpStateBranches`、`aliveProbability` | `simulation/CombatSimulation` | `BELIEF PROBABILITY` | 保留跨死亡边界的联合 HP/alive 世界；确定单世界仍标记 `EXACT`。 |
+| `counterOpportunityCost`、`planningDynamicCounterGain`、Card/Response/Search Prior | Evaluator / Search | `POLICY HEURISTIC` | 用于确定选择或 beam 探索；不得乘入自然概率或 Final Utility。 |
+| `planningCounterDecision`、`counterDecision` | `Evaluator/Evaluator` / Simulator query | `POLICY HEURISTIC` | 输出确定 boolean；评分先比较阈值，再决定 respond / do not respond。 |
+| `expectedRecoverCount`、`expectedAssaultCount`、`expectedInformationGain`、`expectedEquipmentGain` | Event / Simulator | `EXPECTED VALUE, NOT PROBABILITY` | 资源数量或价值期望；不能作为条件事件概率使用。 |
+| `hp`（跨分支摘要）、`hpSummaryClassification` | `Simulator/Damage` | `EXPECTED VALUE, NOT PROBABILITY` | 多个 HP/alive 世界的标量摘要；不得声明为确定生命状态。 |
+| `rescueOutlook` | `Evaluator/StateValue` | `EXPECTED VALUE, NOT PROBABILITY` | 由当前 World 的 HP/alive 与 ProbabilityState 调息容量直接派生；只参与 State Value，不写回 World。 |
+| `hpStateBranches`、`aliveProbability` | `Simulator/Damage` | `BELIEF PROBABILITY` | 保留跨死亡边界的联合 HP/alive 世界；确定单世界仍标记 `EXACT`。 |
 
 `joinProbabilityStateBranches` 只负责条件代数，不改变输入来源的语义分类。相同 condition key 表示同一事实：连接时按条件概率只条件化一次；不同 condition key 才表示可相乘的独立来源。
 
@@ -1292,7 +1300,7 @@ P(X = k) = C(K, k) C(N - K, n - k) / C(N, n)
 
 `hypergeometricCountDistribution` 从合法 `kMin = max(0, n - (N - K))` 开始递推，只维护每名玩家最多 `n + 1` 个 count 分支；`hypergeometricProbabilityAtLeast` 只从该分布求尾概率。动态整数未知槽位同样使用无放回分布，不使用 `Binomial(n, K/N)`。
 
-根 `BeliefState` 不枚举多人联合 allocation，也不创建 `hidden-card-allocation:<definitionId>` condition。每个 tracked definition 只保存：
+根 Probability state 不枚举多人联合 allocation，也不创建 `hidden-card-allocation:<definitionId>` condition。每个 tracked definition 只保存：
 
 - 每名玩家的精确超几何边际；
 - 一个紧凑 finite-pool factor：`N`、`K`、逐玩家 anonymous slots 与逐玩家 count weights；
@@ -1308,14 +1316,14 @@ P(X = k) = C(K, k) C(N - K, n - k) / C(N, n)
 
 反制响应分为两个独立步骤：
 
-1. `ResponsePolicy` 在确定输入世界中比较 gain 与 policy cost，输出 boolean decision；
-2. `ResponseSimulation` 把该 decision 与共享 `counterCountDistribution` 相交，得到实际响应/结算概率并消费同一条件世界中的容量、身份和 hand count。
+1. `Evaluator` 在确定输入世界中比较 gain 与 policy cost，输出 boolean decision；
+2. `Simulator/Response` 把该 decision 与共享 `counterCountDistribution` 相交，得到实际响应/结算概率并消费同一条件世界中的容量、身份和 hand count。
 
 任意小数 heuristic 都不能传给 Simulation 生成“愿意响应”的随机事件。card-scope effect resolution 与后续动作合法性互相独立：当前战术被反制不会自动降低下一张合法突袭的 execution probability。
 
 ### 33.4 HP / alive 边界
 
-伤害世界可能跨过 `alive/dead` 离散边界时，`CombatSimulation` 保留 `hpStateBranches`、`aliveProbability` 和语义分类；`Evaluator` 按分支分别计算死亡、危险和其他非线性 State Value 后再求期望。标量 `hp` 仅是期望摘要，正式测试锁定 `50% alive + 50% dead` 不得退化为 exact scalar。
+伤害世界可能跨过 `alive/dead` 离散边界时，`Simulator/Damage` 保留 `hpStateBranches`、`aliveProbability` 和语义分类；`Evaluator` 按分支分别计算死亡、危险和其他非线性 State Value 后再求期望。标量 `hp` 仅是期望摘要，正式测试锁定 `50% alive + 50% dead` 不得退化为 exact scalar。
 
 本阶段没有全面重写 Combat lifecycle。以下限制仍存在：
 
@@ -1335,7 +1343,7 @@ statePointsToUtility(points) = points / HP_VALUE
 1 Final Utility = 1 HP 的状态价值
 ```
 
-`Evaluator.stateUtility` 汇总后仍返回原始 state points，保证 Policy/CardValue consumer 不发生单位往返。换算只发生在明确的 Final Utility 边界：`TransitionValue` 的 state delta 与 SpyGap information option、`FrontierValue` 的 terminal held option，以及明确输出 Final Utility 诊断的 `ValueLedger.projectOwnerLedger`。当前最终公式为：
+`Evaluator.stateUtility` 汇总后仍返回原始 state points，保证 Search/CardValue consumer 不发生单位往返。换算只发生在 `Evaluator` 内明确的 Final Utility 边界：state delta、SpyGap information option、terminal held option 与 `projectOwnerLedger` 诊断。当前最终公式为：
 
 ```text
 RawStateDelta           = StateValuePoints(after) - StateValuePoints(before)
@@ -1378,7 +1386,7 @@ B. historical magic number
 
 ```text
 REAL GAME -> AiController -> ActionGenerator -> Worker Searcher
-                                    Searcher -> PatternMatcher
+                                    Searcher -> Pattern
                                     Searcher -> Simulator
                                     Searcher -> Evaluator
 Worker canonical Action -> AiController acceptance -> REAL GAME
@@ -1388,6 +1396,71 @@ Worker canonical Action -> AiController acceptance -> REAL GAME
 - `Evaluator.compareCandidates` 是唯一 final comparison；Searcher 只机械维护 incumbent。near-tie/randomness 不再改变 final winner。
 - Worker `SearchEngineFactory` 是唯一 production search composition；AiController 不构造第二套 Searcher graph。
 - Worker infrastructure fault 只返回 ActionGenerator 定义的 canonical `end`；Controller 不 score/rank/max actions。
-- Simulation 的 counter/leverage choice 由既有 `ResponsePolicy` 在 composition 中先产生 boolean，Simulator 只执行 transition；CardEffectSimulation/ResponseSimulation 不再反向 import 对应 Value/Policy owner。
+- Simulator 的 counter/leverage/resource choice 由 composition 注入的 `Evaluator` 窄能力先产生已解析 decision，`Response`/`Resource` 只执行 transition；Simulator internal 不反向 import Evaluator。
 - SearchRequest 不复制 World 或 Action；Worker outcome 与 Controller acceptance 始终传递 canonical Action。搜索侧不存在 SearchState、SearchAction、ActionDescriptor、RootSearchAction 或 candidate DTO chain。
-- SearchBudget、SearchPrior、CounterfactualTerms、PatternMatcher/ProductionPatterns 都保留独立算法或不变量：Budget 只管 accounting/checkpoint/root coverage；SearchPrior 只给 exploration hints；CounterfactualTerms 只做有界估计；Pattern 只给 scheduling hints。
+- SearchBudget、SearchPrior、CounterfactualTerms 与 Pattern 都保留独立算法或不变量：Budget 只管 accounting/checkpoint/root coverage；SearchPrior 只给 exploration hints；CounterfactualTerms 只做有界估计；Pattern 只给 scheduling hints。
+
+## 35. Step 5.6 Core Collapse 当前事实
+
+### 当前物理树
+
+```text
+js/ai/
+├─ AiController.js
+├─ Event/
+│  ├─ Fact.js
+│  └─ Probability/
+│     ├─ Probability.js
+│     ├─ Branch.js
+│     └─ Pool.js
+├─ Simulator/
+│  ├─ Simulator.js
+│  ├─ World.js
+│  ├─ Damage.js
+│  ├─ Resource.js
+│  └─ Response.js
+├─ Evaluator/
+│  ├─ Evaluator.js
+│  ├─ StateValue.js
+│  └─ CardValue.js
+├─ search/                  # Step 5.7 residue，语义未在 Step 5.6 重设计
+├─ Searcher/Pattern/        # Step 5.7 residue
+└─ policy/AiRuntimePolicy.js # Step 5.7 residue
+```
+
+当前生产 AI 为 26 个 JavaScript 模块。Step 5.6 的 Event/Simulator/Evaluator cluster 固定为上列 12 个文件；`js/ai/state/**`、旧 `js/ai/simulation/**`、旧 `js/ai/value/**`、`domain/GlobalBenefitModel.js` 与 `policy/CharacterRoleMetadata.js` 均无生产 residue 或 compatibility forwarder。
+
+### Semantic owner
+
+| Authority | Public owner | Internal owner |
+|---|---|---|
+| Deterministic knowledge | `Event/Fact.js` | 无 |
+| Uncertainty | `Event/Probability/Probability.js` | `Branch.js`、`Pool.js` |
+| Canonical World | `Simulator/World.js` | 无 |
+| World transition | `Simulator/Simulator.js` | `Damage.js`、`Resource.js`、`Response.js` |
+| Final utility / willingness / comparison | `Evaluator/Evaluator.js` | `StateValue.js`、`CardValue.js` |
+
+`Fact` 吸收 deterministic rule projection、transfer projection、canonical roster、passive skill、attack usage 与 role tags。`Probability` 吸收距离/装备概率查询并保留 Step 5.3 的 finite-pool/branch algebra。`World` 吸收 canonical construction、projection、normalization、clone 与 representation invariant。
+
+`Simulator` 统一 Action dispatch 与 card/skill/status/cross-subsystem sequencing；`Damage` 从 damage/HP/shield/heal/fatal/rescue-result/death lifecycle 起步；`Resource` 只执行已经解析的身份移动、支付、槽位与数值资源 transition；`Response` 只执行已经解析的 Counter/Block/Guardian response state machine。选择、排序、willingness 与 final comparison 仍由 `Evaluator` 决定。
+
+`StateValue` 只拥有 non-card World-state primitive，`CardValue` 只拥有 card/equipment/resource primitive。`Evaluator` 是二者唯一聚合点，并吸收旧 RootResolutionQuery、ValueSimulationQuery 与 ValueLedger diagnostics；有界反事实继续通过 `configureRuntime({ simulatorFactory, stateValue })` 注入，不形成静态 Simulator↔Evaluator 依赖。
+
+### Import boundary
+
+```text
+Probability -> Branch
+Probability -> Pool
+
+Simulator -> World
+Simulator -> Damage
+Simulator -> Resource
+Simulator -> Response
+
+Evaluator -> StateValue
+Evaluator -> CardValue
+```
+
+反方向、internal sibling 横向依赖与外部绕过 facade 均禁止。production consumer 只从 `Probability.js`、`Simulator.js`/`World.js`、`Evaluator.js` 引入跨 authority core 能力；测试可以直接 import internal owner 以锁定 primitive contract。
+
+`tools/check-code-quality.mjs` 对最终 core allowlist、legacy core 文件与 import、external→internal bypass、三组 sibling prohibition、Resource selection/value 边界、Domain fixed-fact mirror 与注释遮蔽执行 self-test 覆盖。该门禁不使用 LOC、函数数量或文件行数 KPI。

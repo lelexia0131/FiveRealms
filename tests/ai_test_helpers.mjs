@@ -12,7 +12,7 @@ import { Player } from "../js/application/match/Player.js";
 import { CHARACTER_BY_ID } from "../js/domain/definitions/characters/CharacterDefinitions.js";
 import { CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js";
 import { createId } from "../js/utils/helpers.js";
-import { deriveCurrentCardCounts } from "../js/ai/state/Fact.js";
+import { deriveCurrentCardCounts } from "../js/ai/Event/Fact.js";
 
 let cardSerial = 0;
 

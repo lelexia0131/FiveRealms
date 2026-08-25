@@ -24,9 +24,8 @@ const MODULE_FIELDS = Object.freeze([
 ]);
 const SOURCE_PATTERN = /^js\/.*\.(?:js|mjs|cjs)$/i;
 const AI_PATTERN = /^js\/ai\/.*\.(?:js|mjs|cjs)$/i;
-const LAYERED_AI_PATTERN = /^js\/ai\/(?:state|search|simulation|value|policy|domain)\//i;
-const STATE_AI_PATTERN = /^js\/ai\/state\//i;
-const VALUE_AI_PATTERN = /^js\/ai\/value\//i;
+const EVENT_AI_PATTERN = /^js\/ai\/Event\//i;
+const EVALUATOR_AI_PATTERN = /^js\/ai\/Evaluator\//i;
 const POLICY_AI_PATTERN = /^js\/ai\/policy\//i;
 const DOMAIN_AI_PATTERN = /^js\/ai\/domain\//i;
 const DOMAIN_LAYER_PATTERN = /^js\/domain\//i;
@@ -52,15 +51,36 @@ const TRANSITION_VALUE_PATTERN = /^js\/ai\/search\/TransitionValue\.js$/i;
 const SEARCHER_PATTERN = /^js\/ai\/search\/Searcher\.js$/i;
 const SEARCH_PRIOR_PATTERN = /^js\/ai\/search\/SearchPrior\.js$/i;
 const SEARCH_AI_PATTERN = /^js\/ai\/search\//i;
-const SIMULATION_AI_PATTERN = /^js\/ai\/simulation\//i;
-const AI_LEGACY_RULE_GUARD_PATTERN = /^(?:js\/ai\/(?:search|simulation|domain)\/)/i;
+const SIMULATOR_AI_PATTERN = /^js\/ai\/Simulator\//i;
+const AI_LEGACY_RULE_GUARD_PATTERN = /^(?:js\/ai\/(?:Event|Evaluator|Simulator|Searcher|search|policy)\/)/i;
 const CARD_EFFECT_RULES_FILE = "js/domain/rules/card/CardEffectRules.js";
 const SKILL_RULES_FILE = "js/domain/rules/skill/SkillRules.js";
 const WORKER_PATTERN = /^js\/adapters\/ai\/worker\//i;
-const CARD_EFFECT_SIMULATION_FILE = "js/ai/simulation/CardEffectSimulation.js";
-const COMBAT_SIMULATION_FILE = "js/ai/simulation/CombatSimulation.js";
-const SKILL_EFFECT_SIMULATION_FILE = "js/ai/simulation/SkillEffectSimulation.js";
-const STATUS_SIMULATION_FILE = "js/ai/simulation/StatusSimulation.js";
+const SIMULATOR_FILE = "js/ai/Simulator/Simulator.js";
+const DAMAGE_FILE = "js/ai/Simulator/Damage.js";
+const RESOURCE_FILE = "js/ai/Simulator/Resource.js";
+const PROBABILITY_FILE = "js/ai/Event/Probability/Probability.js";
+const BRANCH_FILE = "js/ai/Event/Probability/Branch.js";
+const POOL_FILE = "js/ai/Event/Probability/Pool.js";
+const EVALUATOR_FILE = "js/ai/Evaluator/Evaluator.js";
+const STATE_VALUE_FILE = "js/ai/Evaluator/StateValue.js";
+const CARD_VALUE_FILE = "js/ai/Evaluator/CardValue.js";
+const FINAL_CORE_PATTERN = /^js\/ai\/(?:Event|Simulator|Evaluator)\//i;
+const FINAL_CORE_ALLOWLIST = Object.freeze(new Set([
+  "js/ai/Event/Fact.js",
+  PROBABILITY_FILE,
+  BRANCH_FILE,
+  POOL_FILE,
+  SIMULATOR_FILE,
+  "js/ai/Simulator/World.js",
+  DAMAGE_FILE,
+  RESOURCE_FILE,
+  "js/ai/Simulator/Response.js",
+  EVALUATOR_FILE,
+  STATE_VALUE_FILE,
+  CARD_VALUE_FILE
+]));
+const LEGACY_AI_CORE_PATH_PATTERN = /^(?:js\/ai\/(?:state|simulation|value)\/|js\/ai\/domain\/GlobalBenefitModel\.js$|js\/ai\/policy\/CharacterRoleMetadata\.js$)/i;
 const AI_ROOT_PATTERN = /^js\/ai\/[^/]+\.js$/i;
 const AI_ROOT_ALLOWLIST = new Set(["js/ai/AiController.js"]);
 const ACCIDENTAL_ROOT_ARTIFACTS = Object.freeze(new Set(["AI", "application", "transitions"]));
@@ -193,6 +213,44 @@ String.replaceAll。
 */
 function normalizePath(value) {
   return String(value).replaceAll("\\", "/");
+}
+
+/*
+功能
+解析源码中的静态与动态 import，并投影为仓库相对目标路径。
+
+调用方
+inspectSource 的 AI 最终 facade、sibling 与 legacy path guard。
+
+输入
+当前仓库相对文件路径与已掩盖注释的源码。
+
+输出
+包含源码位置、原始 specifier 和规范化目标路径的 import 记录。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+path.posix.dirname、path.posix.join、path.posix.normalize、normalizePath。
+
+边界与不变量
+只解析显式 import specifier；移除 query 后解析相对路径，不访问文件系统。
+*/
+function resolvedImports(file, importSource) {
+  const imports = [];
+  const importPattern = /(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)["']([^"']+)["']/gi;
+  for (const match of importSource.matchAll(importPattern)) {
+    const specifier = match[1].split("?")[0];
+    const target = specifier.startsWith(".")
+      ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier))
+      : path.posix.normalize(specifier);
+    imports.push({ index:match.index, specifier, target:normalizePath(target) });
+  }
+  return imports;
 }
 
 /*
@@ -1426,6 +1484,75 @@ function inspectSource(file, source, changed) {
 
   errors.push(...targetArchitectureErrors(file, importSource, maskedSource, source));
 
+  if (LEGACY_AI_CORE_PATH_PATTERN.test(file)) {
+    errors.push({
+      file,
+      functionName:"<architecture>",
+      line:1,
+      missing:["架构约束：Step 5.6 已删除 legacy state/simulation/value core path"]
+    });
+  }
+
+  if (FINAL_CORE_PATTERN.test(file) && !FINAL_CORE_ALLOWLIST.has(file)) {
+    errors.push({
+      file,
+      functionName:"<architecture>",
+      line:1,
+      missing:["架构约束：Event/Simulator/Evaluator 只允许最终 core 文件"]
+    });
+  }
+
+  const imports = resolvedImports(file, importSource);
+  for (const dependency of imports) {
+    const current = file.toLowerCase();
+    const target = dependency.target.toLowerCase();
+    if (LEGACY_AI_CORE_PATH_PATTERN.test(dependency.target)) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, dependency.index),
+        missing:[`架构约束：禁止 import 已删除的 legacy AI core path（${dependency.specifier}）`]
+      });
+    }
+
+    let facade = null;
+    let family = null;
+    if (target === BRANCH_FILE.toLowerCase() || target === POOL_FILE.toLowerCase()) {
+      facade = PROBABILITY_FILE.toLowerCase();
+      family = "Probability Branch/Pool";
+    } else if ([
+      DAMAGE_FILE.toLowerCase(),
+      RESOURCE_FILE.toLowerCase(),
+      "js/ai/simulator/response.js"
+    ].includes(target)) {
+      facade = SIMULATOR_FILE.toLowerCase();
+      family = "Simulator Damage/Resource/Response";
+    } else if (target === STATE_VALUE_FILE.toLowerCase() || target === CARD_VALUE_FILE.toLowerCase()) {
+      facade = EVALUATOR_FILE.toLowerCase();
+      family = "Evaluator StateValue/CardValue";
+    }
+    if (facade && current !== facade) {
+      const sibling = (
+        family === "Probability Branch/Pool"
+          && [BRANCH_FILE.toLowerCase(), POOL_FILE.toLowerCase()].includes(current)
+      ) || (
+        family === "Simulator Damage/Resource/Response"
+          && [DAMAGE_FILE.toLowerCase(), RESOURCE_FILE.toLowerCase(), "js/ai/simulator/response.js"].includes(current)
+      ) || (
+        family === "Evaluator StateValue/CardValue"
+          && [STATE_VALUE_FILE.toLowerCase(), CARD_VALUE_FILE.toLowerCase()].includes(current)
+      );
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, dependency.index),
+        missing:[sibling
+          ? `架构约束：${family} internal sibling 禁止互相 import`
+          : `架构约束：外部模块禁止绕过 ${family} facade`]
+      });
+    }
+  }
+
   if (AI_LEGACY_RULE_GUARD_PATTERN.test(file)) {
     const legacyRuleImport = importSource.match(
       /(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/(?:RuleEngine|DistanceSystem)\.js)(?:\?[^"']*)?["']/i,
@@ -1435,7 +1562,7 @@ function inspectSource(file, source, changed) {
         file,
         functionName: "<architecture>",
         line: source.slice(0, legacyRuleImport.index).split(/\r?\n/).length,
-        missing: ["架构约束：AI search/simulation/domain 禁止依赖 legacy RuleEngine/DistanceSystem authority"]
+        missing: ["架构约束：AI final core/search 禁止依赖 legacy RuleEngine/DistanceSystem authority"]
       });
     }
   }
@@ -1491,7 +1618,7 @@ function inspectSource(file, source, changed) {
     }
   }
 
-  if (file === CARD_EFFECT_SIMULATION_FILE) {
+  if (file === SIMULATOR_FILE) {
     const migratedCardFactMirror = maskedSource.match(
       /\b(?:healFrom\(next,\s*actor,\s*actor,\s*1\b|changeEnergy\(next,\s*actor,\s*1\b|changeShield\(next,\s*target,\s*1\b|gainUnknownCardsWithCounterState\(next,\s*actor,\s*2\b|Math\.min\(\s*2\s*,|applyDamage\(next,\s*actor,\s*player,\s*1\b)/,
     );
@@ -1500,12 +1627,12 @@ function inspectSource(file, source, changed) {
         file,
         functionName: "<architecture>",
         line: source.slice(0, migratedCardFactMirror.index).split(/\r?\n/).length,
-        missing: ["架构约束：CardEffectSimulation 已迁移固定卡牌效果不得重新硬编码 1/2 literal"]
+        missing: ["架构约束：Simulator 固定卡牌效果不得重新硬编码 1/2 literal"]
       });
     }
   }
 
-  if (file === COMBAT_SIMULATION_FILE) {
+  if (file === DAMAGE_FILE) {
     const combatRuleMirror = maskedSource.match(
       /\b(?:baseDamage\s*=\s*1\s*\+|applyDamage\(state,\s*target,\s*actor,\s*1\b|applyDamage\(state,\s*actor,\s*target,\s*1\b|Math\.min\(target\.maxHp,\s*target\.hp\s*\+\s*amount\))/,
     );
@@ -1514,12 +1641,12 @@ function inspectSource(file, source, changed) {
         file,
         functionName: "<architecture>",
         line: source.slice(0, combatRuleMirror.index).split(/\r?\n/).length,
-        missing: ["架构约束：CombatSimulation 确定性伤害/治疗 arithmetic 必须消费 Domain CombatRules"]
+        missing: ["架构约束：Damage 确定性伤害/治疗 arithmetic 必须消费 Domain CombatRules"]
       });
     }
   }
 
-  if (file === SKILL_EFFECT_SIMULATION_FILE) {
+  if (file === SIMULATOR_FILE) {
     const skillEffectMirror = maskedSource.match(
       /\b(?:branch\.energyAmount\s*-\s*1\b|branch\.energyAmount\s*\*\s*\.25\b|changeShield\(state,\s*target,\s*1\b|healFrom\(state,\s*actor,\s*target,\s*chance\)|applyDamage\(state,\s*actor,\s*target,\s*2\b)/,
     );
@@ -1528,12 +1655,12 @@ function inspectSource(file, source, changed) {
         file,
         functionName: "<architecture>",
         line: source.slice(0, skillEffectMirror.index).split(/\r?\n/).length,
-        missing: ["架构约束：SkillEffectSimulation 固定技能效果/孤注公式必须消费 Domain Skill Definitions/Rules"]
+        missing: ["架构约束：Simulator 固定技能效果/孤注公式必须消费 Domain Skill Definitions/Rules"]
       });
     }
   }
 
-  if (file === STATUS_SIMULATION_FILE) {
+  if (file === SIMULATOR_FILE) {
     const lightningDamageMirror = maskedSource.match(
       /\bapplyDamage\(next,\s*null,\s*target,\s*3\s*,/,
     );
@@ -1542,7 +1669,7 @@ function inspectSource(file, source, changed) {
         file,
         functionName: "<architecture>",
         line: source.slice(0, lightningDamageMirror.index).split(/\r?\n/).length,
-        missing: ["架构约束：StatusSimulation 闪电命中伤害必须消费 Domain CardDefinitions"]
+        missing: ["架构约束：Simulator 闪电命中伤害必须消费 Domain CardDefinitions"]
       });
     }
   }
@@ -1561,39 +1688,62 @@ function inspectSource(file, source, changed) {
     });
   }
 
-  if (STATE_AI_PATTERN.test(file)) {
-    const orchestrationImport = importSource.match(
-      /(?:from\s*|import\s*\()\s*["'][^"']*\/(?:AiController|AiPlanner|AiSimulator|AiEvaluator)\.js(?:\?[^"']*)?["']/i,
-    );
+  if (EVENT_AI_PATTERN.test(file)) {
+    const orchestrationImport = imports.find((dependency) => (
+      /^js\/ai\/(?:AiController\.js|Simulator\/|Evaluator\/|search\/|Searcher\/)/i.test(dependency.target)
+    ));
     if (orchestrationImport) {
       errors.push({
         file,
         functionName: "<module>",
-        line: source.slice(0, orchestrationImport.index).split(/\r?\n/).length,
-        missing: ["架构约束：state 禁止依赖 Controller/Planner/Simulator/Evaluator"],
+        line: sourceLineAt(source, orchestrationImport.index),
+        missing: ["架构约束：Event 禁止依赖 Controller/Searcher/Simulator/Evaluator"],
       });
     }
   }
 
-  if (VALUE_AI_PATTERN.test(file)) {
-    const orchestrationImport = importSource.match(
-      /(?:from\s*|import\s*\()\s*["'][^"']*\/(?:AiController|AiPlanner|AiSimulator)\.js(?:\?[^"']*)?["']/i,
-    );
+  if (EVALUATOR_AI_PATTERN.test(file)) {
+    const orchestrationImport = imports.find((dependency) => (
+      /^js\/ai\/(?:AiController\.js|Simulator\/|search\/|Searcher\/)/i.test(dependency.target)
+    ));
     if (orchestrationImport) {
       errors.push({
         file,
         functionName: "<module>",
-        line: source.slice(0, orchestrationImport.index).split(/\r?\n/).length,
-        missing: ["架构约束：value 禁止依赖 Controller/Planner/concrete Simulator"],
+        line: sourceLineAt(source, orchestrationImport.index),
+        missing: ["架构约束：Evaluator 禁止依赖 Controller/Searcher/Simulator"],
       });
     }
-    const concreteConstruction = maskNonCode(source).match(/\bnew\s+AiSimulator\s*\(/);
+    const concreteConstruction = maskNonCode(source).match(/\bnew\s+(?:Ai)?Simulator\s*\(/);
     if (concreteConstruction) {
       errors.push({
         file,
         functionName: "<architecture>",
         line: source.slice(0, concreteConstruction.index).split(/\r?\n/).length,
-        missing: ["架构约束：value 禁止构造 concrete Simulator"],
+        missing: ["架构约束：Evaluator 禁止构造 concrete Simulator"],
+      });
+    }
+  }
+
+  if (file === RESOURCE_FILE) {
+    const valueImport = imports.find((dependency) => (
+      /^js\/ai\/(?:Evaluator|policy|value)\//i.test(dependency.target)
+    ));
+    if (valueImport) {
+      errors.push({
+        file,
+        functionName:"<module>",
+        line:sourceLineAt(source, valueImport.index),
+        missing:["架构约束：Resource 只执行已选择资源，禁止 import selection/value owner"]
+      });
+    }
+    const ranking = maskedSource.match(/\.(?:sort|toSorted)\s*\(/);
+    if (ranking) {
+      errors.push({
+        file,
+        functionName:"<architecture>",
+        line:sourceLineAt(source, ranking.index),
+        missing:["架构约束：Resource 禁止排序或排名资源，selection 属于 Evaluator"]
       });
     }
   }
@@ -1669,7 +1819,7 @@ function inspectSource(file, source, changed) {
 
   if (SEARCHER_PATTERN.test(file)) {
     const forbiddenImport = importSource.match(
-      /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/core\/(?:Game|RuleEngine)\.js|\/config\/(?:cardConfig|gameConfig|generalConfig)\.js|\/generals\/skillRegistry\.js|\/policy\/|\/domain\/|\/simulation\/(?:Simulator|CombatSimulation|ResponseSimulation|CardEffectSimulation|SkillEffectSimulation|StatusSimulation)\.js|\/(?:AiController|AIController)\.js)(?:\?[^"']*)?["']/i,
+      /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/core\/(?:Game|RuleEngine)\.js|\/config\/(?:cardConfig|gameConfig|generalConfig)\.js|\/generals\/skillRegistry\.js|\/policy\/|\/domain\/|\/Simulator\/(?:Simulator|Damage|Resource|Response)\.js|\/(?:AiController|AIController)\.js)(?:\?[^"']*)?["']/i,
     );
     if (forbiddenImport) {
       errors.push({
@@ -1704,7 +1854,7 @@ function inspectSource(file, source, changed) {
 
   if (SEARCH_AI_PATTERN.test(file)) {
     const concreteSimulationImport = importSource.match(
-      /(?:from\s*|import\s*\()\s*["'][^"']*\/simulation\/(?:Simulator|CombatSimulation|ResponseSimulation|CardEffectSimulation|SkillEffectSimulation|StatusSimulation)\.js(?:\?[^"']*)?["']/i,
+      /(?:from\s*|import\s*\()\s*["'][^"']*\/Simulator\/(?:Simulator|Damage|Resource|Response)\.js(?:\?[^"']*)?["']/i,
     );
     if (concreteSimulationImport) {
       errors.push({
@@ -1716,16 +1866,17 @@ function inspectSource(file, source, changed) {
     }
   }
 
-  if (SIMULATION_AI_PATTERN.test(file)) {
-    const orchestrationImport = importSource.match(
-      /(?:from\s*|import\s*\()\s*["'][^"']*(?:\/core\/Game\.js|\/(?:AiController|AIController)\.js|\/search\/Searcher\.js)(?:\?[^"']*)?["']/i,
-    );
+  if (SIMULATOR_AI_PATTERN.test(file)) {
+    const orchestrationImport = imports.find((dependency) => (
+      /^js\/ai\/(?:AiController\.js|Evaluator\/|search\/|Searcher\/)/i.test(dependency.target)
+        || /\/core\/Game\.js$/i.test(dependency.target)
+    ));
     if (orchestrationImport) {
       errors.push({
         file,
         functionName:"<module>",
-        line:source.slice(0, orchestrationImport.index).split(/\r?\n/).length,
-        missing:["架构约束：simulation 禁止依赖 Game/Controller/Planner/SearchPolicy"],
+        line:sourceLineAt(source, orchestrationImport.index),
+        missing:["架构约束：Simulator 禁止依赖 Game/Controller/Searcher/Evaluator"],
       });
     }
     const finalComposition = maskNonCode(source).match(/\b(?:composeCandidateValue|TransitionValue)\b/);
@@ -1734,7 +1885,7 @@ function inspectSource(file, source, changed) {
         file,
         functionName:"<architecture>",
         line:source.slice(0, finalComposition.index).split(/\r?\n/).length,
-        missing:["架构约束：simulation 禁止拥有 final value composition"],
+        missing:["架构约束：Simulator 禁止拥有 final value composition"],
       });
     }
   }
@@ -1999,7 +2150,7 @@ function identity(value) { return value; }`;
   }
 
   const validModuleErrors = inspectSource(
-    "js/ai/state/GoodState.js",
+    "js/ai/Event/Fact.js",
     `${moduleHeader}\n${pass}`,
     null,
   );
@@ -2032,15 +2183,15 @@ function identity(value) { return value; }`;
     throw new Error("failing fixture did not detect layered UI import");
   }
   const stateErrors = inspectSource(
-    "js/ai/state/BadState.js",
-    `${moduleHeader}\nimport { AiPlanner } from "../AiPlanner.js";\n${pass}`,
+    "js/ai/Event/Fact.js",
+    `${moduleHeader}\nimport { Simulator } from "../Simulator/Simulator.js";\n${pass}`,
     null,
   );
-  if (!stateErrors.some((error) => error.missing.some((item) => item.includes("state 禁止依赖")))) {
-    throw new Error("failing fixture did not detect state orchestration import");
+  if (!stateErrors.some((error) => error.missing.some((item) => item.includes("Event 禁止依赖")))) {
+    throw new Error("failing fixture did not detect Event orchestration import");
   }
   const validValueErrors = inspectSource(
-    "js/ai/value/GoodValue.js",
+    "js/ai/Evaluator/Evaluator.js",
     `${moduleHeader}\n${pass}`,
     null,
   );
@@ -2048,28 +2199,28 @@ function identity(value) { return value; }`;
     throw new Error(`valid value fixture failed: ${JSON.stringify(validValueErrors)}`);
   }
   const valueImportErrors = inspectSource(
-    "js/ai/value/BadValueImport.js",
-    `${moduleHeader}\nimport { AiSimulator } from "../AiSimulator.js";\n${pass}`,
+    "js/ai/Evaluator/Evaluator.js",
+    `${moduleHeader}\nimport { Simulator } from "../Simulator/Simulator.js";\n${pass}`,
     null,
   );
-  if (!valueImportErrors.some((error) => error.missing.some((item) => item.includes("concrete Simulator")))) {
-    throw new Error("value fixture did not detect concrete Simulator import");
+  if (!valueImportErrors.some((error) => error.missing.some((item) => item.includes("Evaluator 禁止依赖")))) {
+    throw new Error("Evaluator fixture did not detect Simulator import");
   }
   const valueConstructionErrors = inspectSource(
-    "js/ai/value/BadValueConstruction.js",
-    `${moduleHeader}\n${pass.replace("return value;", "return new AiSimulator(value);")}`,
+    "js/ai/Evaluator/Evaluator.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return new Simulator(value);")}`,
     null,
   );
-  if (!valueConstructionErrors.some((error) => error.missing.some((item) => item.includes("构造 concrete Simulator")))) {
-    throw new Error("value fixture did not detect concrete Simulator construction");
+  if (!valueConstructionErrors.some((error) => error.missing.some((item) => item.includes("Evaluator 禁止构造")))) {
+    throw new Error("Evaluator fixture did not detect concrete Simulator construction");
   }
   const valueCommentErrors = inspectSource(
-    "js/ai/value/ValueComment.js",
-    `${moduleHeader}\n/* import { AiSimulator } from "../AiSimulator.js"; new AiSimulator(); */\n${pass}`,
+    "js/ai/Evaluator/Evaluator.js",
+    `${moduleHeader}\n/* import { Simulator } from "../Simulator/Simulator.js"; new Simulator(); */\n${pass}`,
     null,
   );
-  if (valueCommentErrors.some((error) => error.missing.some((item) => item.includes("Simulator")))) {
-    throw new Error("value guard incorrectly scanned comment text");
+  if (valueCommentErrors.some((error) => error.missing.some((item) => item.includes("Evaluator 禁止")))) {
+    throw new Error("Evaluator guard incorrectly scanned comment text");
   }
   const validPolicyErrors = inspectSource(
     "js/ai/policy/GoodPolicy.js",
@@ -2105,7 +2256,7 @@ function identity(value) { return value; }`;
   }
   const domainValueErrors = inspectSource(
     "js/ai/domain/BadValueDomain.js",
-    `${moduleHeader}\nimport { Evaluator } from "../value/Evaluator.js";\n${pass}`,
+    `${moduleHeader}\nimport { Evaluator } from "../Evaluator/Evaluator.js";\n${pass}`,
     null,
   );
   if (!domainValueErrors.some((error) => error.missing.some((item) => item.includes("domain 禁止依赖")))) {
@@ -2153,7 +2304,7 @@ function identity(value) { return value; }`;
   }
   const searcherSimulatorErrors = inspectSource(
     "js/ai/search/Searcher.js",
-    `${moduleHeader}\nimport { Simulator } from "../simulation/Simulator.js";\n${pass}`,
+    `${moduleHeader}\nimport { Simulator } from "../Simulator/Simulator.js";\n${pass}`,
     null,
   );
   if (!searcherSimulatorErrors.some((error) => error.missing.some((item) => item.includes("Searcher 禁止依赖")))) {
@@ -2169,7 +2320,7 @@ function identity(value) { return value; }`;
   }
   const searcherCommentErrors = inspectSource(
     "js/ai/search/Searcher.js",
-    `${moduleHeader}\n/* import { Simulator } from "../simulation/Simulator.js"; new Simulator(); */\n${pass}`,
+    `${moduleHeader}\n/* import { Simulator } from "../Simulator/Simulator.js"; new Simulator(); */\n${pass}`,
     null,
   );
   if (searcherCommentErrors.some((error) => error.missing.some((item) => item.includes("Searcher 禁止")))) {
@@ -2184,29 +2335,131 @@ function identity(value) { return value; }`;
     throw new Error("SearchPrior fixture did not detect implicit GameState callback");
   }
   const simulationPlannerErrors = inspectSource(
-    "js/ai/simulation/BadSimulation.js",
+    "js/ai/Simulator/Simulator.js",
     `${moduleHeader}\nimport { Searcher } from "../search/Searcher.js";\n${pass}`,
     null,
   );
-  if (!simulationPlannerErrors.some((error) => error.missing.some((item) => item.includes("simulation 禁止依赖")))) {
-    throw new Error("simulation fixture did not detect SearchPolicy import");
+  if (!simulationPlannerErrors.some((error) => error.missing.some((item) => item.includes("Simulator 禁止依赖")))) {
+    throw new Error("Simulator fixture did not detect Searcher import");
   }
   const simulationCompositionErrors = inspectSource(
-    "js/ai/simulation/BadComposition.js",
+    "js/ai/Simulator/Simulator.js",
     `${moduleHeader}\n${pass.replace("return value;", "return composeCandidateValue(value);")}`,
     null,
   );
   if (!simulationCompositionErrors.some((error) => error.missing.some((item) => item.includes("final value composition")))) {
-    throw new Error("simulation fixture did not detect final value composition");
+    throw new Error("Simulator fixture did not detect final value composition");
   }
   const simulationCommentErrors = inspectSource(
-    "js/ai/simulation/CommentSimulation.js",
+    "js/ai/Simulator/Simulator.js",
     `${moduleHeader}\n/* composeCandidateValue and TransitionValue are forbidden here. */\n${pass}`,
     null,
   );
   if (simulationCommentErrors.some((error) => error.missing.some((item) => item.includes("final value composition")))) {
-    throw new Error("simulation guard incorrectly scanned comment text");
+    throw new Error("Simulator guard incorrectly scanned comment text");
   }
+
+  const finalFacadeFixtures = [
+    [
+      "js/ai/Event/Probability/Probability.js",
+      "import { branch } from \"./Branch.js\";\nimport { pool } from \"./Pool.js\";"
+    ],
+    [
+      "js/ai/Simulator/Simulator.js",
+      "import { damage } from \"./Damage.js\";\nimport { resource } from \"./Resource.js\";\nimport { response } from \"./Response.js\";"
+    ],
+    [
+      "js/ai/Evaluator/Evaluator.js",
+      "import { stateValue } from \"./StateValue.js\";\nimport { cardValue } from \"./CardValue.js\";"
+    ]
+  ];
+  for (const [fixturePath, fixtureImports] of finalFacadeFixtures) {
+    const fixtureErrors = inspectSource(
+      fixturePath,
+      `${moduleHeader}\n${fixtureImports}\n${pass}`,
+      null,
+    );
+    if (fixtureErrors.length) {
+      throw new Error(`valid final facade fixture failed: ${JSON.stringify(fixtureErrors)}`);
+    }
+  }
+
+  const siblingFixtures = [
+    ["js/ai/Event/Probability/Branch.js", "./Pool.js"],
+    ["js/ai/Event/Probability/Pool.js", "./Branch.js"],
+    ["js/ai/Simulator/Damage.js", "./Resource.js"],
+    ["js/ai/Simulator/Damage.js", "./Response.js"],
+    ["js/ai/Simulator/Resource.js", "./Damage.js"],
+    ["js/ai/Simulator/Resource.js", "./Response.js"],
+    ["js/ai/Simulator/Response.js", "./Damage.js"],
+    ["js/ai/Simulator/Response.js", "./Resource.js"],
+    ["js/ai/Evaluator/StateValue.js", "./CardValue.js"],
+    ["js/ai/Evaluator/CardValue.js", "./StateValue.js"]
+  ];
+  for (const [fixturePath, specifier] of siblingFixtures) {
+    const fixtureErrors = inspectSource(
+      fixturePath,
+      `${moduleHeader}\nimport { forbidden } from \"${specifier}\";\n${pass}`,
+      null,
+    );
+    if (!fixtureErrors.some((error) => error.missing.some((item) => item.includes("internal sibling")))) {
+      throw new Error(`final sibling fixture was not rejected: ${fixturePath} -> ${specifier}`);
+    }
+  }
+
+  const externalInternalErrors = inspectSource(
+    "js/ai/search/BadInternalImport.js",
+    `${moduleHeader}\nimport { branch } from \"../Event/Probability/Branch.js\";\n${pass}`,
+    null,
+  );
+  if (!externalInternalErrors.some((error) => error.missing.some((item) => item.includes("禁止绕过")))) {
+    throw new Error("external fixture did not reject Probability internal import");
+  }
+
+  const legacyCoreFileErrors = inspectSource(
+    "js/ai/state/Fact.js",
+    `${moduleHeader}\n${pass}`,
+    null,
+  );
+  if (!legacyCoreFileErrors.some((error) => error.missing.some((item) => item.includes("legacy state/simulation/value")))) {
+    throw new Error("legacy core fixture did not reject removed file path");
+  }
+  const legacyCoreImportErrors = inspectSource(
+    "js/ai/search/BadLegacyCoreImport.js",
+    `${moduleHeader}\nimport { Evaluator } from \"../value/Evaluator.js\";\n${pass}`,
+    null,
+  );
+  if (!legacyCoreImportErrors.some((error) => error.missing.some((item) => item.includes("legacy AI core path")))) {
+    throw new Error("legacy core fixture did not reject removed import path");
+  }
+  const finalCoreCommentErrors = inspectSource(
+    "js/ai/search/FinalCoreComment.js",
+    `${moduleHeader}\n/* import { old } from \"../value/Evaluator.js\"; import { branch } from \"../Event/Probability/Branch.js\"; */\n${pass}`,
+    null,
+  );
+  if (finalCoreCommentErrors.some((error) => error.missing.some((item) => (
+    item.includes("legacy AI core path") || item.includes("禁止绕过")
+  )))) {
+    throw new Error("final core import guards incorrectly scanned comment text");
+  }
+
+  const resourceValueErrors = inspectSource(
+    "js/ai/Simulator/Resource.js",
+    `${moduleHeader}\nimport { Evaluator } from \"../Evaluator/Evaluator.js\";\n${pass}`,
+    null,
+  );
+  if (!resourceValueErrors.some((error) => error.missing.some((item) => item.includes("selection/value owner")))) {
+    throw new Error("Resource fixture did not reject value owner import");
+  }
+  const resourceRankingErrors = inspectSource(
+    "js/ai/Simulator/Resource.js",
+    `${moduleHeader}\n${pass.replace("return value;", "return value.sort();")}`,
+    null,
+  );
+  if (!resourceRankingErrors.some((error) => error.missing.some((item) => item.includes("禁止排序")))) {
+    throw new Error("Resource fixture did not reject resource ranking");
+  }
+
   const validDomainTargetErrors = inspectSource(
     "js/domain/rules/distance/GoodDistance.js",
     `${moduleHeader}\n${pass}`,
@@ -2735,71 +2988,71 @@ function identity(value) { return value; }`;
   }
 
   const goodCardSimulationMirror = inspectSource(
-    "js/ai/simulation/CardEffectSimulation.js",
+    "js/ai/Simulator/Simulator.js",
     `${moduleHeader}\n${pass}`,
     null,
   );
-  if (goodCardSimulationMirror.some((error) => error.missing.some((item) => item.includes("CardEffectSimulation")))) {
-    throw new Error(`valid CardEffectSimulation fixture failed: ${JSON.stringify(goodCardSimulationMirror)}`);
+  if (goodCardSimulationMirror.some((error) => error.missing.some((item) => item.includes("固定卡牌效果")))) {
+    throw new Error(`valid Simulator card fixture failed: ${JSON.stringify(goodCardSimulationMirror)}`);
   }
   const badCardSimulationMirror = inspectSource(
-    "js/ai/simulation/CardEffectSimulation.js",
+    "js/ai/Simulator/Simulator.js",
     `${moduleHeader}\n${pass.replace("return value;", "this.healFrom(next, actor, actor, 1); return value;")}`,
     null,
   );
-  if (!badCardSimulationMirror.some((error) => error.missing.some((item) => item.includes("CardEffectSimulation")))) {
-    throw new Error("CardEffectSimulation mirror guard did not reject recover literal");
+  if (!badCardSimulationMirror.some((error) => error.missing.some((item) => item.includes("固定卡牌效果")))) {
+    throw new Error("Simulator card mirror guard did not reject recover literal");
   }
 
   const goodCombatSimulationMirror = inspectSource(
-    "js/ai/simulation/CombatSimulation.js",
+    "js/ai/Simulator/Damage.js",
     `${moduleHeader}\n${pass}`,
     null,
   );
-  if (goodCombatSimulationMirror.some((error) => error.missing.some((item) => item.includes("CombatSimulation")))) {
-    throw new Error(`valid CombatSimulation fixture failed: ${JSON.stringify(goodCombatSimulationMirror)}`);
+  if (goodCombatSimulationMirror.some((error) => error.missing.some((item) => item.includes("Damage 确定性")))) {
+    throw new Error(`valid Damage fixture failed: ${JSON.stringify(goodCombatSimulationMirror)}`);
   }
   const badCombatSimulationMirror = inspectSource(
-    "js/ai/simulation/CombatSimulation.js",
+    "js/ai/Simulator/Damage.js",
     `${moduleHeader}\n${pass.replace("return value;", "const baseDamage = 1 + source.exposeWeaknessStacks; return value;")}`,
     null,
   );
-  if (!badCombatSimulationMirror.some((error) => error.missing.some((item) => item.includes("CombatSimulation")))) {
-    throw new Error("CombatSimulation mirror guard did not reject assault base literal");
+  if (!badCombatSimulationMirror.some((error) => error.missing.some((item) => item.includes("Damage 确定性")))) {
+    throw new Error("Damage mirror guard did not reject assault base literal");
   }
 
   const goodSkillSimulationMirror = inspectSource(
-    "js/ai/simulation/SkillEffectSimulation.js",
+    "js/ai/Simulator/Simulator.js",
     `${moduleHeader}\n${pass}`,
     null,
   );
-  if (goodSkillSimulationMirror.some((error) => error.missing.some((item) => item.includes("SkillEffectSimulation")))) {
-    throw new Error(`valid SkillEffectSimulation fixture failed: ${JSON.stringify(goodSkillSimulationMirror)}`);
+  if (goodSkillSimulationMirror.some((error) => error.missing.some((item) => item.includes("固定技能效果")))) {
+    throw new Error(`valid Simulator skill fixture failed: ${JSON.stringify(goodSkillSimulationMirror)}`);
   }
   const badSkillSimulationMirror = inspectSource(
-    "js/ai/simulation/SkillEffectSimulation.js",
+    "js/ai/Simulator/Simulator.js",
     `${moduleHeader}\n${pass.replace("return value;", "return branch.energyAmount - 1;")}`,
     null,
   );
-  if (!badSkillSimulationMirror.some((error) => error.missing.some((item) => item.includes("SkillEffectSimulation")))) {
-    throw new Error("SkillEffectSimulation mirror guard did not reject allIn draw formula");
+  if (!badSkillSimulationMirror.some((error) => error.missing.some((item) => item.includes("固定技能效果")))) {
+    throw new Error("Simulator skill mirror guard did not reject allIn draw formula");
   }
 
   const goodStatusSimulationMirror = inspectSource(
-    "js/ai/simulation/StatusSimulation.js",
+    "js/ai/Simulator/Simulator.js",
     `${moduleHeader}\n${pass}`,
     null,
   );
-  if (goodStatusSimulationMirror.some((error) => error.missing.some((item) => item.includes("StatusSimulation")))) {
-    throw new Error(`valid StatusSimulation fixture failed: ${JSON.stringify(goodStatusSimulationMirror)}`);
+  if (goodStatusSimulationMirror.some((error) => error.missing.some((item) => item.includes("闪电命中伤害")))) {
+    throw new Error(`valid Simulator status fixture failed: ${JSON.stringify(goodStatusSimulationMirror)}`);
   }
   const badStatusSimulationMirror = inspectSource(
-    "js/ai/simulation/StatusSimulation.js",
+    "js/ai/Simulator/Simulator.js",
     `${moduleHeader}\n${pass.replace("return value;", "this.applyDamage(next, null, target, 3, { canBlock:false }); return value;")}`,
     null,
   );
-  if (!badStatusSimulationMirror.some((error) => error.missing.some((item) => item.includes("StatusSimulation")))) {
-    throw new Error("StatusSimulation mirror guard did not reject lightning damage literal");
+  if (!badStatusSimulationMirror.some((error) => error.missing.some((item) => item.includes("闪电命中伤害")))) {
+    throw new Error("Simulator status mirror guard did not reject lightning damage literal");
   }
 
   const rootArtifactPositive = accidentalRootArtifacts(["AI", "js/core/Game.js"]);

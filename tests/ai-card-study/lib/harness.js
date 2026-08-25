@@ -4,8 +4,8 @@ import { Deck } from "../../../js/application/match/Deck.js";
 import { CARD_DEFINITIONS } from "../../../js/domain/definitions/cards/CardDefinitions.js";
 import { CHARACTER_DEFINITIONS } from "../../../js/domain/definitions/characters/CharacterDefinitions.js";
 import { ActionLegality } from "../../../js/application/action/ActionLegality.js";
-import { inAttackRange } from "../../../js/ai/state/DistanceProbabilityBranches.js";
-import { createInitialWorld } from "../../../js/ai/state/StateContracts.js";
+import { inAttackRange } from "../../../js/ai/Event/Probability/Probability.js";
+import { createInitialWorld } from "../../../js/ai/Simulator/World.js";
 import { TrackedRng } from "./rng.js";
 import { createHeadlessUi } from "./ui.js";
 

@@ -6,7 +6,7 @@
 SearchPrior 与直接搜索先验测试。
 
 下游
-Fact、Probability facade、value/ThreatValue、Domain DistanceRules 与 AI 卡牌配置。
+Fact、Probability 与 Evaluator facades、Domain DistanceRules 与 AI 卡牌配置。
 
 状态边界
 只读过滤后的 World 与候选目标，不写状态。
@@ -18,11 +18,9 @@ Fact、Probability facade、value/ThreatValue、Domain DistanceRules 与 AI 卡�
 返回值只用于 SEARCH_PRIOR；不得进入 Evaluator Final Utility/comparison 或 sibling timing。
 */
 import { getAliveRing } from "../../domain/rules/distance/DistanceRules.js";
-import { projectRulePlayers } from "../state/RuleProjection.js";
-import { hasFactStatus } from "../state/Fact.js";
-import { sealOutcomeProbabilities } from "../state/Probability/Probability.js";
-import { getBaseCardAiValue } from "../value/CardValue.js";
-import { turnOpportunityValue } from "../value/ThreatValue.js";
+import { hasFactStatus, projectRulePlayers } from "../Event/Fact.js";
+import { sealOutcomeProbabilities } from "../Event/Probability/Probability.js";
+import { getBaseCardAiValue, turnOpportunityValue } from "../Evaluator/Evaluator.js";
 
 const FUTURE_DISCOUNT = 0.65;
 const MIN_TURN_TIMING_FACTOR = 0.7;

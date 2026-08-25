@@ -6,7 +6,7 @@
 Worker SearchEngineFactory 与搜索回归测试。
 
 下游
-注入的 Pattern、Simulator/SearchBudget 工厂、Evaluator/StateValue、搜索先验与动作生成/让步能力。
+注入的 Pattern、Simulator/SearchBudget 工厂、Evaluator facade、搜索先验与动作生成/让步能力。
 
 状态边界
 只读输入 World，所有分支写入由 simulatorFactory 创建的独立 Simulator 承担。
@@ -17,7 +17,7 @@ Searcher 不读取 GameState 或领域隐藏事实；合法候选与全部数值
 架构约束
 不得定义合法性、transition、Final Utility 或最终偏好；只能调用 Evaluator comparator 机械维护 incumbent。
 */
-import { statePointsToUtility } from "../value/Economics.js";
+import { statePointsToUtility } from "../Evaluator/Evaluator.js";
 import { actionIntentKey, actionSearchKey } from "./Action.js";
 import { STATE_UTILITY_PRIOR_WEIGHT } from "./SearchPrior.js";
 

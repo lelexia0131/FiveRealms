@@ -8,7 +8,6 @@ import { AI_RUNTIME_POLICY, AI_SEARCH_PROFILE } from "../js/ai/policy/AiRuntimeP
 import { PHASE_PRESENTATION as PHASE_NAMES, TEAM_PRESENTATION as TEAM_CONFIG } from "../js/adapters/ui/PresentationMetadata.js";
 import { CARD_PRESENTATION, presentCard } from "../js/adapters/ui/CardPresentationDefinitions.js";
 import { CHARACTER_PRESENTATION, presentCharacter } from "../js/adapters/ui/CharacterPresentationDefinitions.js";
-import { getCharacterRoleTags } from "../js/ai/policy/CharacterRoleMetadata.js";
 import { CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js";
 import { CHARACTER_BY_ID, CHARACTER_DEFINITIONS } from "../js/domain/definitions/characters/CharacterDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js";
@@ -54,10 +53,9 @@ import { Player } from "../js/application/match/Player.js";
 import { Deck } from "../js/application/match/Deck.js";
 import { TeamAssignment as TeamManager } from "../js/application/match/TeamAssignment.js";
 import { ActionLegality } from "../js/application/action/ActionLegality.js";
-import { getRangeConditionBranches, getRangeLegalityProbability, inAttackRange } from "../js/ai/state/DistanceProbabilityBranches.js";
-import { createInitialWorld, createStateContracts } from "../js/ai/state/StateContracts.js";
-import { createFact, deriveCurrentCardCounts, hasFactStatus } from "../js/ai/state/Fact.js";
-import { cloneWorld } from "../js/ai/state/World.js";
+import { getRangeConditionBranches, getRangeLegalityProbability, inAttackRange } from "../js/ai/Event/Probability/Probability.js";
+import { createInitialWorld, createStateContracts, cloneWorld } from "../js/ai/Simulator/World.js";
+import { createFact, deriveCurrentCardCounts, getCharacterRoleTags, hasFactStatus } from "../js/ai/Event/Fact.js";
 import {
   PROBABILITY_CLASSIFICATION,
   buildLightningHitDistribution as buildProbabilityLightningHitDistribution,
@@ -80,8 +78,8 @@ import {
   statusPresence,
   tacticJudgmentProbability,
   totalBranchProbability
-} from "../js/ai/state/Probability/Probability.js";
-import { Simulator as ProductionSimulator } from "../js/ai/simulation/Simulator.js";
+} from "../js/ai/Event/Probability/Probability.js";
+import { Simulator as ProductionSimulator } from "../js/ai/Simulator/Simulator.js";
 import { Searcher } from "../js/ai/search/Searcher.js";
 import { createSearchEngine } from "../js/adapters/ai/worker/SearchEngineFactory.js";
 import { Pattern as PatternMatcher } from "../js/ai/Searcher/Pattern/Pattern.js";
@@ -91,8 +89,8 @@ import { ActionGenerator } from "../js/ai/search/ActionGenerator.js";
 import { SearchRng } from "../js/ai/search/SearchRng.js";
 import { SEARCH_RESULT_STATUS } from "../js/ai/AiController.js";
 import { Action, createAction } from "../js/ai/search/Action.js";
-import { ThreatCalculator } from "../js/ai/value/ThreatValue.js";
-import { HP_RISK_OPTION_WEIGHT } from "../js/ai/value/ThreatValue.js";
+import { ThreatCalculator } from "../js/ai/Evaluator/StateValue.js";
+import { HP_RISK_OPTION_WEIGHT } from "../js/ai/Evaluator/StateValue.js";
 import {
   Evaluator,
   MIN_TRANSFER_UTILITY,
@@ -105,17 +103,17 @@ import {
   planningCounterDecision,
   privatePeekInformationValue,
   rankDiscardCandidates
-} from "../js/ai/value/Evaluator.js";
+} from "../js/ai/Evaluator/Evaluator.js";
 import { CounterfactualTerms } from "../js/ai/search/CounterfactualTerms.js";
-import { StateValue } from "../js/ai/value/StateValue.js";
+import { StateValue } from "../js/ai/Evaluator/StateValue.js";
 import {
   HP_VALUE as OWNED_HP_VALUE,
   statePointsToUtility
-} from "../js/ai/value/Economics.js";
+} from "../js/ai/Evaluator/StateValue.js";
 import {
   ThreatCalculator as OwnedThreatCalculator,
   exposureComponents as ownedExposureComponents
-} from "../js/ai/value/ThreatValue.js";
+} from "../js/ai/Evaluator/StateValue.js";
 import { CleanupManager } from "../js/utils/CleanupManager.js";
 import {
   clampAiThinkingTime,
@@ -193,12 +191,12 @@ import {
   getDiscardKeepValue, getObservedCardValue, getResourceDefinitionUtility, getResourceUnknownUtility,
   getTransferCardValue as cardSituationValue, getUnknownTransferCardValue,
   UNKNOWN_HAND_EXPECTED_VALUE, validateRoleCardValueDeltas
-} from "../js/ai/value/CardValue.js";
+} from "../js/ai/Evaluator/CardValue.js";
 import {
   ROLE_CARD_VALUE_DELTAS as OWNED_ROLE_CARD_VALUE_DELTAS,
   getBaseCardAiValue as ownedBaseCardAiValue,
   getRoleCardAiValue as ownedRoleCardAiValue
-} from "../js/ai/value/CardValue.js";
+} from "../js/ai/Evaluator/CardValue.js";
 import {
   assaultThreat,
   equipmentThreatSynergy,
@@ -207,19 +205,19 @@ import {
   roleThreatSynergy,
   skillReadinessThreat,
   turnOpportunityValue
-} from "../js/ai/value/ThreatValue.js";
-import { sealTeamBurden } from "../js/ai/value/SealValue.js";
+} from "../js/ai/Evaluator/StateValue.js";
+import { sealTeamBurden } from "../js/ai/Evaluator/StateValue.js";
 import { sealUseValue, turnOrderGap, turnTimingFactor } from "../js/ai/search/SealPrior.js";
 import { MUSIC_PROFILES, SOUND_THROTTLE_MS, SoundManager } from "../js/audio/SoundManager.js";
 import {
   assessGlobalBenefit,
   mutualBenefitDraftValues
-} from "../js/ai/value/GlobalBenefitValue.js";
-import { dynamicRootFlipGain } from "../js/ai/simulation/RootResolutionQuery.js";
+} from "../js/ai/Evaluator/CardValue.js";
+import { dynamicRootFlipGain } from "../js/ai/Evaluator/Evaluator.js";
 import {
   assessGlobalBenefitOutcome,
   buildMutualBenefitDraftOutcome
-} from "../js/ai/domain/GlobalBenefitModel.js";
+} from "../js/ai/Evaluator/CardValue.js";
 
 /*
 功能
@@ -1480,7 +1478,7 @@ async function frArch12SkillFixedFactOwnership() {
   assertClose(rules.decideAllInEnterChance(4), 1);
   const skillSource = await readFile(projectFile("js/domain/rules/skill/SkillRules.js"), "utf8");
   assert.doesNotMatch(skillSource, /if \(skill\.id === "(?:breakArmy|barrier|symbiosis|burningField|hunt|resonance)"\) return Object\.freeze\(\{ energyCost, (?:attackLimitBonus|shieldAmount|healAmount|damageAmount|drawCount): [12]/);
-  const simSource = await readFile(projectFile("js/ai/simulation/SkillEffectSimulation.js"), "utf8");
+  const simSource = await readFile(projectFile("js/ai/Simulator/Simulator.js"), "utf8");
   assert.doesNotMatch(simSource, /energyAmount\s*-\s*1|energyAmount\s*\*\s*\.25/);
 }
 
@@ -5474,7 +5472,7 @@ async function frArch13CarryInRosterAndRootArtifacts() {
   assert.match(checkerSource, /ACCIDENTAL_ROOT_ARTIFACTS/);
   assert.match(checkerSource, /accidentalRootArtifacts/);
 
-  const { projectCanonicalSeatRoster } = await import("../js/ai/state/RuleProjection.js");
+  const { projectCanonicalSeatRoster } = await import("../js/ai/Event/Fact.js");
   const { getCounterResponderOrder, getDyingRescueResponderOrder } = await import("../js/domain/rules/response/ResponseRules.js");
   const { nextLightningReceiverId } = await import("../js/domain/rules/status/StatusRules.js");
   const player = (id, seatIndex, alive = true) => ({
@@ -13444,57 +13442,48 @@ test("隐藏信息：牌背多阶段 pending 会锁住手牌、技能和结束�
 
 // ---- AI 架构与依赖边界 ----
 
-test("AI·架构：Simulation facade 与五个效果组件保持单向依赖和唯一 owner", async () => {
+test("AI·架构：Event/Simulator/Evaluator 最终文件与 sibling 依赖闭合", async () => {
   const paths = {
-    facade: "js/ai/simulation/Simulator.js",
-    response: "js/ai/simulation/ResponseSimulation.js",
-    combat: "js/ai/simulation/CombatSimulation.js",
-    card: "js/ai/simulation/CardEffectSimulation.js",
-    skill: "js/ai/simulation/SkillEffectSimulation.js",
-    status: "js/ai/simulation/StatusSimulation.js",
-    searcher: "js/ai/search/Searcher.js",
-    valueQuery: "js/ai/simulation/ValueSimulationQuery.js"
+    fact:"js/ai/Event/Fact.js",
+    probability:"js/ai/Event/Probability/Probability.js",
+    simulator:"js/ai/Simulator/Simulator.js",
+    world:"js/ai/Simulator/World.js",
+    damage:"js/ai/Simulator/Damage.js",
+    resource:"js/ai/Simulator/Resource.js",
+    response:"js/ai/Simulator/Response.js",
+    evaluator:"js/ai/Evaluator/Evaluator.js",
+    stateValue:"js/ai/Evaluator/StateValue.js",
+    cardValue:"js/ai/Evaluator/CardValue.js"
   };
   const source = Object.fromEntries(await Promise.all(
     Object.entries(paths).map(async ([name, path]) => [name, await readFile(projectFile(path), "utf8")])
   ));
-  assert.doesNotMatch(source.facade, /from\s+["']\.\.\/(?:policy|value|domain)\//);
-  assert.doesNotMatch(source.facade, /ActionLegality/);
-  assert.match(source.facade, /\.\.\/\.\.\/domain\/definitions\/cards\/CardDefinitions\.js/);
-  assert.match(source.facade, /\.\.\/\.\.\/domain\/definitions\/skills\/SkillDefinitions\.js/);
-  for (const name of ["response", "combat", "card", "skill", "status"]) {
-    assert.doesNotMatch(
-      source[name],
-      /from\s+["'][^"']*(?:AiController|UIManager|core\/Game\.js|simulation\/Simulator\.js)[^"']*["']/,
-      name
-    );
-  }
-  assert.doesNotMatch(
-    source.searcher,
-    /from\s+["'][^"']*(?:\/simulation\/|\/policy\/|\/domain\/|AiController)[^"']*["']/
-  );
-  assert.doesNotMatch(source.valueQuery, /from "\.\/Simulator\.js/);
-  assert.match(source.valueQuery, /simulatorFactory/);
+  assert.deepEqual((await readdir(projectFile("js/ai/Simulator"))).sort(), [
+    "Damage.js", "Resource.js", "Response.js", "Simulator.js", "World.js"
+  ]);
+  assert.deepEqual((await readdir(projectFile("js/ai/Evaluator"))).sort(), [
+    "CardValue.js", "Evaluator.js", "StateValue.js"
+  ]);
+  assert.match(source.simulator, /from "\.\/Damage\.js"/);
+  assert.match(source.simulator, /from "\.\/Resource\.js"/);
+  assert.match(source.simulator, /from "\.\/Response\.js"/);
+  assert.match(source.simulator, /from "\.\/World\.js"/);
+  assert.match(source.evaluator, /from "\.\/StateValue\.js"/);
+  assert.match(source.evaluator, /from "\.\/CardValue\.js"/);
+  assert.doesNotMatch(source.damage, /from "\.\/(?:Resource|Response)\.js"/);
+  assert.doesNotMatch(source.resource, /from "\.\/(?:Damage|Response)\.js"/);
+  assert.doesNotMatch(source.response, /from "\.\/(?:Damage|Resource)\.js"/);
+  assert.doesNotMatch(source.stateValue, /from "\.\/CardValue\.js"/);
+  assert.doesNotMatch(source.cardValue, /from "\.\/StateValue\.js"/);
+  assert.match(source.damage, /applyDamage[\s\S]*resolveFatal[\s\S]*healFrom/);
+  assert.match(source.resource, /takeResourceToHand[\s\S]*destroyResource/);
   assert.match(source.response, /consumeBlockResponseWorlds[\s\S]*consumeTargetCounterResponseWorlds/);
-  assert.doesNotMatch(source.response, /GlobalBenefitValue|ResponsePolicy\.js/);
-  assert.match(source.combat, /applyDamage[\s\S]*resolveFatal[\s\S]*healFrom/);
-  assert.match(source.card, /applyCardEffect[\s\S]*takeResourceToHand[\s\S]*destroyResource/);
-  assert.doesNotMatch(source.card, /value\/CardValue\.js/);
-  assert.match(source.skill, /applySkill/);
-  assert.match(source.status, /applyDelayedStatusCard[\s\S]*$/);
-  for (const moved of [
-    "applyDamage", "resolveFatal", "consumeBlockResponseWorlds", "applyCardEffect",
-    "applySkill", "applyDelayedStatusCard"
-  ]) {
-    assert.doesNotMatch(source.facade, new RegExp(`^  ${moved}\\s*\\(`, "m"), moved);
-  }
-  assert.equal((source.facade.match(/withResponseSimulation\(/g) ?? []).length, 1);
-  assert.equal((source.facade.match(/withCombatSimulation\(/g) ?? []).length, 1);
-  assert.equal((source.facade.match(/withCardEffectSimulation\(/g) ?? []).length, 1);
-  assert.equal((source.facade.match(/withSkillEffectSimulation\(/g) ?? []).length, 1);
-  assert.equal((source.facade.match(/withStatusSimulation\(/g) ?? []).length, 1);
-  assert.doesNotMatch(source.facade, /new (?:Response|Combat|CardEffect|SkillEffect|Status)Simulation/);
-  await assert.rejects(access(projectFile("js/ai/simulation/SimulationSupport.js")));
+  assert.match(source.simulator, /applySkill[\s\S]*applyDelayedStatusCard/);
+  for (const path of [
+    "js/ai/state/StateContracts.js",
+    "js/ai/simulation/ValueSimulationQuery.js",
+    "js/ai/value/ValueLedger.js"
+  ]) await assert.rejects(access(projectFile(path)));
 });
 
 /*
@@ -13525,10 +13514,10 @@ readFile、access、assert。
 async function responseCombatSemanticClosure() {
   const paths = {
     controller:"js/ai/AiController.js",
-    evaluator:"js/ai/value/Evaluator.js",
-    simulator:"js/ai/simulation/Simulator.js",
-    response:"js/ai/simulation/ResponseSimulation.js",
-    combat:"js/ai/simulation/CombatSimulation.js",
+    evaluator:"js/ai/Evaluator/Evaluator.js",
+    simulator:"js/ai/Simulator/Simulator.js",
+    response:"js/ai/Simulator/Response.js",
+    combat:"js/ai/Simulator/Damage.js",
     worker:"js/adapters/ai/worker/SearchEngineFactory.js"
   };
   const source = Object.fromEntries(await Promise.all(
@@ -13577,12 +13566,12 @@ test("AI·资源闭合：旧 Resource owner 删除且 Simulation 无价值选择
   ]) await assert.rejects(access(projectFile(path)));
   const paths = {
     controller:"js/ai/AiController.js",
-    card:"js/ai/simulation/CardEffectSimulation.js",
-    simulator:"js/ai/simulation/Simulator.js",
-    response:"js/ai/simulation/ResponseSimulation.js",
+    card:"js/ai/Simulator/Resource.js",
+    simulator:"js/ai/Simulator/Simulator.js",
+    response:"js/ai/Simulator/Response.js",
     worker:"js/adapters/ai/worker/SearchEngineFactory.js",
-    evaluator:"js/ai/value/Evaluator.js",
-    cardValue:"js/ai/value/CardValue.js"
+    evaluator:"js/ai/Evaluator/Evaluator.js",
+    cardValue:"js/ai/Evaluator/CardValue.js"
   };
   const source = Object.fromEntries(await Promise.all(
     Object.entries(paths).map(async ([name, path]) => [
@@ -14197,12 +14186,12 @@ readFile、readdir、listJavaScriptFiles、access。
 只有 facade 可 import Branch/Pool；底层彼此无 import，旧 Radar/Lightning/Seal Model 必须不存在。
 */
 async function probabilityArchitectureClosure() {
-  const directory = projectFile("js/ai/state/Probability");
+  const directory = projectFile("js/ai/Event/Probability");
   const entries = (await readdir(directory)).sort();
   assert.deepEqual(entries, ["Branch.js", "Pool.js", "Probability.js"]);
-  const branchPath = projectFile("js/ai/state/Probability/Branch.js");
-  const poolPath = projectFile("js/ai/state/Probability/Pool.js");
-  const facadePath = projectFile("js/ai/state/Probability/Probability.js");
+  const branchPath = projectFile("js/ai/Event/Probability/Branch.js");
+  const poolPath = projectFile("js/ai/Event/Probability/Pool.js");
+  const facadePath = projectFile("js/ai/Event/Probability/Probability.js");
   const branch = await readFile(branchPath, "utf8");
   const pool = await readFile(poolPath, "utf8");
   const facade = await readFile(facadePath, "utf8");
@@ -15886,7 +15875,7 @@ async function transferFinalPolicyClosure() {
     "js/ai/policy/TransferPolicy.js",
     "js/adapters/ai/TransferExecutionPolicyAdapter.js"
   ]) await assert.rejects(access(projectFile(path)));
-  const evaluatorSource = await readFile(projectFile("js/ai/value/Evaluator.js"), "utf8");
+  const evaluatorSource = await readFile(projectFile("js/ai/Evaluator/Evaluator.js"), "utf8");
   const intentSource = await readFile(
     projectFile("js/application/action/CardIntentRuntime.js"),
     "utf8"
@@ -15928,7 +15917,7 @@ readdir、readFile。
 允许 policy/value 保留 AI 配置；本 guard 只检查确定性规则层。
 */
 async function frArch12AiLegacyRuleImports() {
-  const roots = ["js/ai/search", "js/ai/simulation", "js/ai/domain"];
+  const roots = ["js/ai/search", "js/ai/Event", "js/ai/Simulator", "js/ai/Evaluator"];
   for (const root of roots) {
     const entries = await readdir(projectFile(root), { withFileTypes: true });
     for (const entry of entries) {
@@ -15967,8 +15956,8 @@ projectCanonicalSeatRoster、getRangeConditionBranches、Simulator.applyDamage/h
 概率分支总质量为一时 matches 与 Domain deterministic 结论一致。
 */
 async function frArch12DeterministicParityMatrix() {
-  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/state/RuleProjection.js");
-  const { getRangeConditionBranches } = await import("../js/ai/state/DistanceProbabilityBranches.js");
+  const { projectCanonicalSeatRoster, projectAttackUsage } = await import("../js/ai/Event/Fact.js");
+  const { getRangeConditionBranches } = await import("../js/ai/Event/Probability/Probability.js");
 
   const players = [
     { id: "p0", seatIndex: 0, alive: true, battleTeam: "dawn", hp: 5, maxHp: 5, shield: 1, energy: 3, maxEnergy: 3, attackRange: 1, handCount: 1, equipmentDefinitionId: null, statuses: [] },
@@ -16039,12 +16028,13 @@ async function frArch12AiDomainModelOwnership() {
   for (const file of ["LightningModel.js", "SealModel.js", "RadarModel.js"]) {
     await assert.rejects(access(projectFile(`js/ai/domain/${file}`)));
   }
+  await assert.rejects(access(projectFile("js/ai/domain/GlobalBenefitModel.js")));
   const remainingModel = await readFile(
-    projectFile("js/ai/domain/GlobalBenefitModel.js"),
+    projectFile("js/ai/Evaluator/CardValue.js"),
     "utf8"
   );
-  const simulator = await readFile(projectFile("js/ai/simulation/Simulator.js"), "utf8");
-  assert.match(remainingModel, /AI probabilistic\/search model|AI model|不是 Repository Domain Rule authority/);
+  const simulator = await readFile(projectFile("js/ai/Simulator/Simulator.js"), "utf8");
+  assert.match(remainingModel, /GLOBAL_BENEFIT_CARDS/);
   assert.doesNotMatch(remainingModel, /core\/ActionLegality\.js|core\/DistanceSystem\.js/);
   assert.match(simulator, /nextDomainLightningReceiverId/);
   assert.doesNotMatch(simulator, /players\[\(initialHolder\.seatIndex \+ offset\) % count\]/);
@@ -16640,11 +16630,9 @@ test("AI·模拟器：严格有界 raw probability 操作记录 timing 且 TIME 
   assert.equal(budget.diagnostics().rawProbabilityOperationsAfterTime, 0);
 });
 
-test("AI·搜索：ResourceValueQuery 删除且 ValueSimulationQuery nested Simulator 继承父 SearchBudget", async () => {
+test("AI·搜索：旧 Query 删除且 Evaluator nested Simulator 继承父 SearchBudget", async () => {
   await assert.rejects(access(projectFile("js/ai/simulation/ResourceValueQuery.js")));
-  const { ValueSimulationQuery } = await import(
-    "../js/ai/simulation/ValueSimulationQuery.js"
-  );
+  await assert.rejects(access(projectFile("js/ai/simulation/ValueSimulationQuery.js")));
   const budget = new SearchBudget({ nodeBudget:100, now:() => 0 });
   const state = {
     remainingCardCounts:{},
@@ -16658,16 +16646,18 @@ test("AI·搜索：ResourceValueQuery 删除且 ValueSimulationQuery nested Simu
     }]
   };
   const valueBudgets = [];
-  const valueQuery = new ValueSimulationQuery(
-    { ownerMaterialDelta:() => 0 },
-    (factoryState, runtime = {}) => {
+  const valueQuery = new Evaluator();
+  valueQuery.ownerMaterialDelta = () => 0;
+  valueQuery.configureRuntime({
+    stateValue:{ stateUtility:() => 0 },
+    simulatorFactory:(factoryState, runtime = {}) => {
       valueBudgets.push(runtime.searchBudget);
       return {
         buildLightningPropagationChainIds:() => [factoryState.players[0].id],
         applyLightningHit:() => structuredClone(factoryState)
       };
     }
-  );
+  });
   valueQuery.lightningLifecycleOwnerDeltas(
     state,
     state.players[0],
@@ -26664,7 +26654,7 @@ test("AI·封印：fallback 从权威牌堆组成动态推导且无固定概率�
   assert.notEqual(adjustedTacticTotal / adjustedTotal, tacticTotal / total);
 
   const source = await readFile(
-    projectFile("js/ai/state/Probability/Probability.js"),
+    projectFile("js/ai/Event/Probability/Probability.js"),
     "utf8"
   ),
     rulesetSource = await readFile(projectFile("js/domain/definitions/ruleset/RulesetDefinition.js"), "utf8");
@@ -28943,7 +28933,7 @@ test("AI·雷达：canonical Probability 单次判定保持质量、空池、ove
   assert.deepEqual(counts, snapshot);
   assert.equal(JSON.stringify(outcome).includes("game"), false);
   const source = await readFile(
-    projectFile("js/ai/state/Probability/Probability.js"),
+    projectFile("js/ai/Event/Probability/Probability.js"),
     "utf8"
   );
   assert.doesNotMatch(source, /:\s*0\.25\b/);
@@ -42792,7 +42782,7 @@ test("AI·动态未知：knowledge 缺失时固定回退", () => {
 });
 
 test("AI·动态未知：模拟器未接入动态计数", async () => {
-  const source = await readFile(projectFile("js/ai/simulation/Simulator.js"), "utf8");
+  const source = await readFile(projectFile("js/ai/Simulator/Simulator.js"), "utf8");
   assert.doesNotMatch(source, /remainingCounts/);
 });
 
@@ -46510,7 +46500,7 @@ test("AI·资源选择：破坏模拟同步后掠夺模拟保留具体身份", (
 });
 
 test("AI·资源选择：破坏模拟只执行 resolved selection 且无价值选择公式", async () => {
-  const source = await readFile(projectFile("js/ai/simulation/CardEffectSimulation.js"), "utf8");
+  const source = await readFile(projectFile("js/ai/Simulator/Resource.js"), "utf8");
   assert.match(source, /applyForcedResourceSelection/);
   assert.match(source, /if \(!selection\) return 0/);
   assert.doesNotMatch(source, /chooseBestResourceHandCandidate|chooseResourceZone/);
@@ -46922,7 +46912,7 @@ test("AI·资源选择：掠夺模拟 scale 三档：装备", () => {
 });
 
 test("AI·资源选择：掠夺模拟只执行 resolved selection 且无内部 selector", async () => {
-  const source = await readFile(projectFile("js/ai/simulation/CardEffectSimulation.js"), "utf8");
+  const source = await readFile(projectFile("js/ai/Simulator/Resource.js"), "utf8");
   assert.match(source, /transferKnownCardIdentity/);
   assert.match(source, /transferUnknownCardIdentity/);
   assert.doesNotMatch(source, /chooseSimulatedResourceSelection/);
@@ -49227,7 +49217,7 @@ test("AI·价值归属：Final Utility 只组合显式同单位项且忽略诊�
 
 test("AI·价值归属：最终路径不再包含任意 STATE_DELTA_SCALE 或 0.08", async () => {
   const paths = [
-    "js/ai/value/Economics.js",
+    "js/ai/Evaluator/StateValue.js",
     "js/ai/search/TransitionValue.js",
     "js/ai/search/FrontierValue.js",
     "js/ai/search/SiblingTransitionTerms.js"
@@ -50417,7 +50407,7 @@ test("AI·价值归属：Evaluator 唯一比较 Final Utility 与机器精度同
 });
 
 test("AI·价值归属：正式 Evaluator 源码不存在 Game、Controller 或 concrete Simulator 依赖", async () => {
-  const source = await readFile(projectFile("js/ai/value/Evaluator.js"), "utf8");
+  const source = await readFile(projectFile("js/ai/Evaluator/Evaluator.js"), "utf8");
   assert.doesNotMatch(source, /from\s+["'][^"']*(?:Game|AIController|Simulator)[^"']*["']/u);
   assert.doesNotMatch(source, /new\s+Simulator\s*\(/u);
   assert.doesNotMatch(source, /\.aiController\b/u);

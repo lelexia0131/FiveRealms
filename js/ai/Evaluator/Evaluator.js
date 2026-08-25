@@ -1,12 +1,12 @@
 /*
 模块职责
-唯一拥有响应意愿、State Value、Transition Value、terminal frontier 与候选比较语义。
+唯一拥有价值聚合、响应意愿、transition/final utility、诊断 terms 与候选比较语义。
 
 上游
-AIController、Simulator composition、StateValue runtime adapter、Searcher、ValueLedger 与测试。
+AIController、Searcher、Worker composition、Simulator 的窄决策注入与测试。
 
 下游
-Economics、CardValue、ThreatValue、GlobalBenefitValue、Domain card rules、封印 value 与 canonical Probability。
+内部 StateValue/CardValue、Domain card rules 与 canonical Probability facade。
 
 状态边界
 只读 Fact/World、canonical Action、plain DecisionContext 和显式传入的领域值；不持有 Game，不写状态。
@@ -15,53 +15,67 @@ Economics、CardValue、ThreatValue、GlobalBenefitValue、Domain card rules、�
 只使用公开字段、合法概率摘要与 viewer 自身的可见卡牌身份。
 
 架构约束
-不得导入或构造 Simulator、Searcher、Controller；不得搜索、生成动作、执行响应 transition 或消费 Search Prior。
+唯一聚合并公开 StateValue/CardValue primitive；不得导入 Simulator、Searcher 或 Controller，有界反事实只调用 composition 注入的 Simulator factory。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { getRecoverHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 import {
   PROBABILITY_EPSILON,
+  buildLightningHitDistribution,
   buildRadarJudgmentProbabilities,
   clampProbability,
+  conditionProbability,
   hypergeometricProbabilityAtLeast,
   probabilityFromCurrentCounts,
   queryCurrentCardCounts,
   queryPlayerHandProbability,
+  statusPresence,
   tacticJudgmentProbability
-} from "../state/Probability/Probability.js";
-import { sealTeamBurden } from "./SealValue.js";
+} from "../Event/Probability/Probability.js";
 import {
+  RESOURCE_MATERIAL_SCALE,
+  assessGlobalBenefit,
   cardAvailability,
+  cardPlayerValueTerms,
   getBaseCardAiValue,
   getDiscardKeepValue,
+  getEquipmentKeepValueDeduction,
   getResourceDefinitionUtility,
   getResourceUnknownUtility,
   getRoleCardAiValue,
   getTransferCardValue,
   getUnknownTransferCardValue,
   getUnknownAcquisitionUtility,
+  isGlobalBenefitCard,
+  mutualBenefitDraftValues,
   roleCardDelta,
   skillThresholdOptionPolicyValue
 } from "./CardValue.js";
 import {
-  ENERGY_STATE_WEIGHT,
   HP_VALUE,
-  RESOURCE_MATERIAL_SCALE,
-  energyDeviceFutureUtility,
-  statePointsToUtility
-} from "./Economics.js";
-import { assessGlobalBenefit, mutualBenefitDraftValues } from "./GlobalBenefitValue.js";
-import {
-  DANGER_VALUE,
-  DEATH_VALUE,
   exposureComponents,
-  hp2ThreatRiskValue,
   incomingExposure,
-  radarMitigationUtility,
-  shieldStateValue,
+  sealTeamBurden,
+  StateValue,
+  statePlayerValueTerms,
+  statePointsToUtility,
   ThreatCalculator,
   turnOpportunityValue
-} from "./ThreatValue.js";
+} from "./StateValue.js";
+
+export {
+  assessGlobalBenefit,
+  cardAvailability,
+  getBaseCardAiValue,
+  getEquipmentKeepValueDeduction,
+  getRoleCardAiValue,
+  roleCardDelta,
+  HP_VALUE,
+  incomingExposure,
+  StateValue,
+  statePointsToUtility,
+  turnOpportunityValue
+};
 
 /*
 功能
@@ -1402,6 +1416,164 @@ function compareTransferPreferences(left, right) {
   return String(right.cardId ?? "").localeCompare(String(left.cardId ?? ""));
 }
 
+const TARGET_SCOPE_CARDS = new Set(["shockwave", "provoke"]);
+
+/*
+功能
+为目标级群体战术构造只保留当前目标效果的配对基线。
+
+调用方
+dynamicRootFlipGain。
+
+输入
+Simulator capability、World、root 来源 ID 与公开目标。
+
+输出
+独立的收敛 World。
+
+读取状态
+玩家阵营、存活状态和目标 ID。
+
+写入状态
+只写 Simulator clone 中非目标敌人的 alive 与目标反制容量。
+
+调用函数
+Simulator.clone。
+
+边界与不变量
+base 与 resolved 两世界共享同一收敛基线；非目标固定死亡价值必须在差值中抵消。
+*/
+function buildTargetScopedBase(simulator, state, rootSourceId, targets) {
+  const reduced = simulator.clone(state);
+  const source = reduced.players.find((player) => player.id === rootSourceId);
+  const targetIds = new Set(targets.map((target) => target.id));
+  for (const player of reduced.players) {
+    if (player.id === rootSourceId || targetIds.has(player.id)) continue;
+    if (source && player.battleTeam !== source.battleTeam) player.alive = false;
+  }
+  for (const player of reduced.players) {
+    if (!targetIds.has(player.id)) continue;
+    conditionProbability(reduced.probabilityState, {
+      type:"CONDITION",
+      definitionId:"counter",
+      bucketId:player.id,
+      maximum:0
+    });
+    if (Array.isArray(player.hand)) {
+      player.hand = player.hand.filter((card) => card.definitionId !== "counter");
+    }
+    if (Array.isArray(player.knownCards)) {
+      player.knownCards = player.knownCards.filter((card) => card.definitionId !== "counter");
+    }
+  }
+  return reduced;
+}
+
+/*
+功能
+从当前响应状态模拟 root 战术确定生效后的 after-state。
+
+调用方
+dynamicRootFlipGain。
+
+输入
+  Simulator capability、World 与 Generator 已完成的 canonical root Action。
+
+输出
+root 效果已结算的独立 World。
+
+读取状态
+当前响应资源状态和显式 root 上下文。
+
+写入状态
+临时写 Simulator 递归守卫，并通过 apply 写独立克隆。
+
+调用函数
+  Simulator.apply。
+
+边界与不变量
+root 卡资源已在真实响应链沉没，因此 restoreActorHand 抵消 apply 的重复手牌成本；counterable=false 防止二次概率化。
+*/
+function resolveRootState(
+  simulator,
+  state,
+  rootAction
+) {
+  const previousSimulating = simulator._simulatingRootResolution ?? false;
+  simulator._simulatingRootResolution = true;
+  try {
+    return simulator.apply(state, rootAction);
+  } finally {
+    simulator._simulatingRootResolution = previousSimulating;
+  }
+}
+
+/*
+功能
+计算追加一张反制翻转 root 结局带来的 State Value 增量。
+
+调用方
+ValueSimulationQuery 与直接响应反事实测试。
+
+输入
+  StateValue、Simulator capability、响应 World、响应者、canonical root Action、深度与父 SearchBudget。
+
+输出
+全体受益或非法 root 为 null；否则返回 flip 世界减 stay 世界的原始 State Value points。
+
+读取状态
+过滤后的当前响应状态与实时目标。
+
+写入状态
+仅由 Simulator 写独立克隆。
+
+调用函数
+  isGlobalBenefitCard、buildTargetScopedBase、resolveRootState、StateValue.stateUtility。
+
+边界与不变量
+  两世界只改变 root 是否生效；保持相同响应容量、隐藏信息、概率世界和其他状态；
+  State Value 内的 nested query 必须继承父 SearchBudget；
+State Value 与 counter CardValue 成本继续使用既有 Policy state points。
+*/
+function evaluateDynamicRootFlipGain(
+  stateValue,
+  simulator,
+  state,
+  responderId,
+  rootAction,
+  counterDepth,
+  searchBudget = null
+) {
+  const definitionId = rootAction?.cardId;
+  const definition = CARD_DEFINITIONS[definitionId] ?? null;
+  if (!definitionId || definition?.category !== "tactic" || isGlobalBenefitCard(definitionId)) {
+    return null;
+  }
+  const actor = state.players.find((player) => player.id === rootAction.actorId);
+  if (!actor?.alive) return 0;
+  const targets = (rootAction.targetIds ?? [])
+    .map((id) => state.players.find((player) => player.id === id))
+    .filter((target) => target?.alive);
+  const resolvesAtStay = (counterDepth % 2) === 0;
+  const baseState = TARGET_SCOPE_CARDS.has(definitionId)
+    ? buildTargetScopedBase(simulator, state, rootAction.actorId, targets)
+    : state;
+  const resolvedState = resolveRootState(
+    simulator,
+    baseState,
+    rootAction
+  );
+  const rootEffectValue = stateValue.transitionDelta(
+    baseState,
+    resolvedState,
+    responderId,
+    searchBudget
+  );
+  return resolvesAtStay ? -rootEffectValue : rootEffectValue;
+}
+
+export const dynamicRootFlipGain = evaluateDynamicRootFlipGain;
+
 export class Evaluator {
   /*
   功能
@@ -1435,6 +1607,47 @@ export class Evaluator {
   } = {}) {
     this.energyRules = Object.freeze({ getMaxEnergy, getTurnEnergyBreakdown });
     this.getDifficultyMultiplier = getDifficultyMultiplier;
+    this.simulatorFactory = null;
+    this.stateValue = null;
+    this.lightningLifecycleCache = new WeakMap();
+  }
+
+  /*
+  功能
+  在 composition root 注入有界反事实所需的 Simulator factory 与唯一 StateValue。
+
+  调用方
+  AIController 与 Worker SearchEngineFactory 完成循环能力组装时。
+
+  输入
+  Simulator factory 与 StateValue 实例。
+
+  输出
+  当前 Evaluator，供组合链继续使用。
+
+  读取状态
+  无。
+
+  写入状态
+  绑定 runtime capability，并重置仅以 World 生命周期为界的闪电缓存。
+
+  调用函数
+  WeakMap。
+
+  边界与不变量
+  Simulator 仍由 composition 构造；Evaluator 不静态依赖 Simulator，内部 StateValue/CardValue 不获得该能力。
+  */
+  configureRuntime({ simulatorFactory, stateValue }) {
+    if (typeof simulatorFactory !== "function") {
+      throw new TypeError("Evaluator 缺少依赖：simulatorFactory");
+    }
+    if (!stateValue || typeof stateValue.stateUtility !== "function") {
+      throw new TypeError("Evaluator 缺少依赖：stateValue");
+    }
+    this.simulatorFactory = simulatorFactory;
+    this.stateValue = stateValue;
+    this.lightningLifecycleCache = new WeakMap();
+    return this;
   }
 
   /*
@@ -2359,116 +2572,43 @@ export class Evaluator {
 
   /*
   功能
-  生成单个玩家状态价值的未签名共享分项。
+  聚合单个玩家互斥的 StateValue 与 CardValue 分项。
 
   调用方
-  stateUtility、ValueLedger 与 lightning simulation query。
+  stateUtility、diagnostic terms 与闪电生命周期查询。
 
   输入
-  过滤后的状态、玩家、viewer ID 与雷达战术判定概率。
+  canonical World、玩家、viewer ID 与雷达战术判定概率。
 
   输出
-  death 与 terms 分解；阵亡角色只返回 death。
+  death 与完整但不重复的 terms 分解。
 
   读取状态
-  只读公开资源、合法概率摘要、viewer 自身手牌身份与稳定规则查询。
+  StateValue 的非卡牌状态 primitive 与 CardValue 的卡牌/装备资产 primitive。
 
   写入状态
   无。
 
   调用函数
-  queryPlayerHandProbability、CardValue、ThreatValue 与 energyDeviceFutureUtility。
+  statePlayerValueTerms、cardPlayerValueTerms。
 
   边界与不变量
-  这里不施加团队符号，也不计封印/闪电 burden；同一分项同时供 state value 与 ledger 使用。
+  Final aggregation 只在 Evaluator；hand/equipment intrinsic 不得进入 StateValue，非卡牌后果不得进入 CardValue。
   */
   playerValueTerms(state, player, viewerId, radarTacticProbability) {
-    if (!player.alive) return { death: -DEATH_VALUE, terms: {} };
-    const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
-    let rescueOutlook = 0;
-    if (player.hp <= 1) {
-      const rescueCapacity = state.players
-        .filter((rescuer) => rescuer.alive && rescuer.battleTeam === player.battleTeam)
-        .reduce((sum, rescuer) => (
-          sum + queryPlayerHandProbability(
-            state.probabilityState,
-            rescuer,
-            "recover"
-          ).expected
-        ), 0);
-      if (rescueCapacity > 0) {
-        const requiredRecovery = Math.max(1, 1 - player.hp);
-        const rescueCoverage = Math.min(1, rescueCapacity / requiredRecovery);
-        // 零容量沿用无救援账字段时的中性值；非零容量保留原 coverage 价值曲线。
-        rescueOutlook = (rescueCoverage - 0.5) * 8;
-      }
-    }
-    const equipmentValue = player.equipmentDefinitionId
-      ? getBaseCardAiValue(player.equipmentDefinitionId)
-      : 0;
-    const equipmentDelta = equipmentValue
-      * (player.equipmentRetentionProbability ?? (equipmentValue ? 1 : 0))
-      * RESOURCE_MATERIAL_SCALE;
-    const currentEquipmentRoleDelta = player.equipmentDefinitionId
-      ? roleCardDelta(player.characterId, player.equipmentDefinitionId)
-      : 0;
-    const equipmentRoleDelta = currentEquipmentRoleDelta
-      * (player.equipmentRetentionProbability ?? (currentEquipmentRoleDelta ? 1 : 0))
-      * RESOURCE_MATERIAL_SCALE;
-    const handRoleDelta = player.id === viewerId
-      ? (player.hand ?? []).reduce((sum, card) => (
-          sum + roleCardDelta(player.characterId, card?.definitionId) * cardAvailability(card)
-        ), 0)
-      : 0;
-    const markThreat = Object.entries(player.huntMarkProbabilities ?? {}).reduce(
-      (sum, [sourceId, probability]) => {
-        const source = state.players.find((entry) => entry.id === sourceId);
-        return sum + (source?.battleTeam !== player.battleTeam ? Number(probability) || 0 : 0);
-      },
-      0
+    const stateTerms = statePlayerValueTerms(
+      state,
+      player,
+      viewerId,
+      radarTacticProbability,
+      this.energyRules
     );
-    const {
-      currentThreat,
-      futureInventory,
-      energyPressure,
-      perEnemy
-    } = exposureComponents(state, player);
-    const exposure = currentThreat + futureInventory + energyPressure;
-    const radarMitigation = radarMitigationUtility(exposure, player, radarTacticProbability);
-    const residualExposure = Math.max(0, exposure - radarMitigation);
-    const shield = shieldStateValue(player, residualExposure);
-    // hp2 风险排除 viewer 自身对敌方造成的资源联动，避免同一资源消费在 threat 外再记一次。
-    const bufferExposure = (perEnemy ?? [])
-      .filter((entry) => entry.enemyId !== viewerId)
-      .reduce((sum, entry) => (
-        sum + entry.currentThreat + entry.futureInventory + entry.energyPressure
-      ), 0);
-    const bufferResidualExposure = Math.max(
-      0,
-      bufferExposure - radarMitigationUtility(bufferExposure, player, radarTacticProbability)
-    );
-    const hp2Risk = hp2ThreatRiskValue(player, bufferResidualExposure);
-    const energyDeviceFuture = energyDeviceFutureUtility(this.energyRules, player);
+    if (stateTerms.death) return stateTerms;
     return {
-      death: 0,
-      terms: {
-        danger,
-        hp2Risk,
-        rescueOutlook,
-        hp: player.hp * HP_VALUE,
-        shield,
-        energy: Math.max(0, Number(player.energy) || 0) * ENERGY_STATE_WEIGHT,
-        handCount: player.handCount * 1.1,
-        handRole: handRoleDelta,
-        stacks: (player.exposeWeaknessStacks ?? 0) * 1.5,
-        equipmentDelta,
-        equipmentRoleDelta,
-        markThreat: -markThreat * 1.5,
-        currentThreat: -currentThreat,
-        futureInventory: -futureInventory,
-        energyPressure: -energyPressure,
-        radar: radarMitigation,
-        energyDeviceFuture
+      death:0,
+      terms:{
+        ...stateTerms.terms,
+        ...cardPlayerValueTerms(player, viewerId)
       }
     };
   }
@@ -2901,5 +3041,930 @@ export class Evaluator {
     return statePointsToUtility(
       (residual.held?.recover ?? 0) + (residual.held?.recycle ?? 0)
     );
+  }
+
+  /*
+  功能
+  在 nested value simulation 开始或循环推进前观察父搜索预算。
+
+  调用方
+  本类所有会 clone、structuredClone 或通过 simulatorFactory 创建 Simulator 的查询。
+
+  输入
+  可选父 SearchBudget。
+
+  输出
+  可继续时返回 true；停止时抛出父预算独占的 cooperative unwind signal。
+
+  读取状态
+  传入 SearchBudget。
+
+  写入状态
+  SearchBudget 首次过期时写入停止原因。
+
+  调用函数
+  SearchBudget.checkpointCurrentWork。
+
+  边界与不变量
+  不创建第二套预算；无父预算的执行边界查询保持原完整语义。
+  */
+  checkpointSearchWork(searchBudget) {
+    return searchBudget?.checkpointCurrentWork?.() ?? true;
+  }
+
+  /*
+  功能
+  计算一枚闪电完整生命周期对每个 owner 的预期经济变化。
+
+  调用方
+  lightningLifecycleValue、ValueLedger 与正式边界。
+
+  输入
+  状态、初始 holder、viewer ID、可选存在概率覆盖与父 SearchBudget。
+
+  输出
+  player ID 到未签名 owner delta 的 Map。
+
+  读取状态
+  只读 World、剩余牌计数与存活座位环。
+
+  写入状态
+  仅写本查询实例的 WeakMap 缓存；模拟写入独立克隆。
+
+  调用函数
+  SearchBudget checkpoint、buildLightningHitDistribution、Simulator.applyLightningHit、Evaluator.ownerMaterialValue。
+
+  边界与不变量
+  每个分支除最终命中 holder 外保持同一基线；不把 unresolved lifecycle 再加入 frontier；
+  nested Simulator 必须继承父 SearchBudget。
+  */
+  lightningLifecycleOwnerDeltas(
+    state,
+    initialHolder,
+    viewerId,
+    presenceOverride = null,
+    searchBudget = null
+  ) {
+    if (!state || !initialHolder?.alive) return new Map();
+    let stateCache = this.lightningLifecycleCache.get(state);
+    if (!stateCache) {
+      stateCache = new Map();
+      this.lightningLifecycleCache.set(state, stateCache);
+    }
+    const presence = presenceOverride == null
+      ? statusPresence(initialHolder, "lightning").probability
+      : Math.max(0, Math.min(1, Number(presenceOverride) || 0));
+    const cacheKey = `${initialHolder.id}:${viewerId}:${presence}`;
+    if (stateCache.has(cacheKey)) return stateCache.get(cacheKey);
+    const deltas = new Map(state.players.map((player) => [player.id, 0]));
+    if (presence <= 0) {
+      stateCache.set(cacheKey, deltas);
+      return deltas;
+    }
+    this.checkpointSearchWork(searchBudget);
+    const simulator = this.simulatorFactory(state, { searchBudget });
+    const distribution = buildLightningHitDistribution(
+      state,
+      simulator.buildLightningPropagationChainIds(state.players, initialHolder)
+    );
+    const beforeRadar = buildRadarJudgmentProbabilities(
+      queryCurrentCardCounts(state.probabilityState)
+    ).tactic;
+    for (const outcome of distribution) {
+      this.checkpointSearchWork(searchBudget);
+      const after = simulator.applyLightningHit(state, outcome.holderId);
+      const afterRadar = buildRadarJudgmentProbabilities(
+        queryCurrentCardCounts(after.probabilityState)
+      ).tactic;
+      for (const afterPlayer of after.players) {
+        const delta = this.ownerMaterialDelta(
+          state,
+          after,
+          afterPlayer.id,
+          viewerId,
+          beforeRadar,
+          afterRadar
+        );
+        deltas.set(
+          afterPlayer.id,
+          (deltas.get(afterPlayer.id) ?? 0) + presence * outcome.probability * delta
+        );
+      }
+    }
+    stateCache.set(cacheKey, deltas);
+    return deltas;
+  }
+
+  /*
+  功能
+  从 viewer 视角投影一枚闪电整个流转生命周期的预期局面变化。
+
+  调用方
+  状态价值适配器、SearchPrior、响应策略与正式边界。
+
+  输入
+  状态、初始 holder、viewer ID、可选存在概率覆盖与父 SearchBudget。
+
+  输出
+  viewer 团队视角的闪电生命周期值。
+
+  读取状态
+  只读存活玩家和队伍关系。
+
+  写入状态
+  无；底层查询只写缓存。
+
+  调用函数
+  lightningLifecycleOwnerDeltas。
+
+  边界与不变量
+  owner delta 只在此施加敌我符号，保持当前玩家顺序的浮点累加顺序。
+  */
+  lightningLifecycleValue(
+    state,
+    initialHolder,
+    viewerId,
+    presenceOverride = null,
+    searchBudget = null
+  ) {
+    const viewer = state?.players?.find((player) => player.id === viewerId);
+    if (!viewer) return 0;
+    const deltas = this.lightningLifecycleOwnerDeltas(
+      state,
+      initialHolder,
+      viewerId,
+      presenceOverride,
+      searchBudget
+    );
+    return state.players.reduce((sum, player) => {
+      const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
+      return sum + sign * (deltas.get(player.id) ?? 0);
+    }, 0);
+  }
+
+  /*
+  功能
+  计算一枚闪电对 viewer 阵营造成的预期负担。
+
+  调用方
+  AIController response runtime boundary 与正式价值边界。
+
+  输入
+  状态、holder、viewer ID、可选存在概率与父 SearchBudget。
+
+  输出
+  生命周期价值的相反数。
+
+  读取状态
+  与 lightningLifecycleValue 相同。
+
+  写入状态
+  无。
+
+  调用函数
+  lightningLifecycleValue。
+
+  边界与不变量
+  只改变表示符号，不新增任何价值项。
+  */
+  lightningTeamBurden(state, holder, viewerId, presenceOverride = null, searchBudget = null) {
+    return -this.lightningLifecycleValue(
+      state,
+      holder,
+      viewerId,
+      presenceOverride,
+      searchBudget
+    );
+  }
+
+  /*
+  功能
+  计算状态反制把同一枚闪电转交 receiver 后的阵营负担。
+
+  调用方
+  AIController response runtime boundary 与正式价值边界。
+
+  输入
+  状态、旧 holder、新 receiver、viewer ID 与父 SearchBudget。
+
+  输出
+  过渡态中的闪电阵营负担。
+
+  读取状态
+  只读并克隆传入状态。
+
+  写入状态
+  仅修改独立克隆中的旧 holder 闪电状态。
+
+  调用函数
+  SearchBudget checkpoint、structuredClone、lightningTeamBurden。
+
+  边界与不变量
+  必须先移除旧 holder 再计算新流转环，不能把同一枚闪电当作两个占位。
+  */
+  lightningTransferredBurden(state, holder, receiver, viewerId, searchBudget = null) {
+    if (!state || !holder || !receiver) return 0;
+    this.checkpointSearchWork(searchBudget);
+    const transferred = structuredClone(state);
+    const previous = transferred.players.find((player) => player.id === holder.id);
+    const nextHolder = transferred.players.find((player) => player.id === receiver.id);
+    if (!previous || !nextHolder) return 0;
+    if (Array.isArray(previous.statuses)) {
+      previous.statuses = previous.statuses.filter((statusId) => statusId !== "lightning");
+    } else if (previous.statuses) {
+      delete previous.statuses.lightning;
+    }
+    previous.lightningStatusProbability = 0;
+    return this.lightningTeamBurden(transferred, nextHolder, viewerId, 1, searchBudget);
+  }
+
+  /*
+  功能
+  返回闪电状态反制 STAY/TRANSFER 两个世界的纯负担项。
+
+  调用方
+  AIController.buildResponseDecisionContext 的 lightningCounterTerms 惰性查询。
+
+  输入
+  当前 World、旧 holder、可空新 holder、viewer ID 与父 SearchBudget。
+
+  输出
+  `{valid:true, noCounterBurden, withCounterBurden}`。
+
+  读取状态
+  当前闪电生命周期与传递后的独立克隆。
+
+  写入状态
+  只写底层独立克隆和 query 私有缓存。
+
+  调用函数
+  lightningTeamBurden、lightningTransferredBurden。
+
+  边界与不变量
+  Controller 只绑定实体；两个价值世界只在本查询中各计算一次，不修改真实 World。
+  */
+  lightningCounterTerms(state, holder, receiver, viewerId, searchBudget = null) {
+    return {
+      valid:true,
+      noCounterBurden:this.lightningTeamBurden(
+        state,
+        holder,
+        viewerId,
+        null,
+        searchBudget
+      ),
+      withCounterBurden:receiver
+        ? this.lightningTransferredBurden(
+            state,
+            holder,
+            receiver,
+            viewerId,
+            searchBudget
+          )
+        : 0
+    };
+  }
+
+  /*
+  功能
+  汇总当前状态中所有独立闪电对指定 owner 的未兑现变化。
+
+  调用方
+  ValueLedger 与正式边界。
+
+  输入
+  状态、owner ID、viewer ID 与父 SearchBudget。
+
+  输出
+  未签名 owner delta 总和。
+
+  读取状态
+  只读存活 holder 与闪电存在概率。
+
+  写入状态
+  无；底层查询只写缓存。
+
+  调用函数
+  lightningLifecycleOwnerDeltas、Probability.statusPresence。
+
+  边界与不变量
+  每枚独立闪电恰好计一次，按状态玩家顺序累加。
+  */
+  lightningOwnerDelta(state, ownerId, viewerId, searchBudget = null) {
+    let total = 0;
+    for (const holder of state.players) {
+      if (!holder?.alive || statusPresence(holder, "lightning").probability <= 0) continue;
+      this.checkpointSearchWork(searchBudget);
+      total += this.lightningLifecycleOwnerDeltas(
+        state,
+        holder,
+        viewerId,
+        null,
+        searchBudget
+      ).get(ownerId) ?? 0;
+    }
+    return total;
+  }
+
+  /*
+  功能
+  为纯 Evaluator 生成当前状态中按 holder 顺序排列的闪电生命周期值。
+
+  调用方
+  StateValue。
+
+  输入
+  状态、viewer ID 与父 SearchBudget。
+
+  输出
+  只包含存在概率大于零 holder 的纯数值数组。
+
+  读取状态
+  只读存活 holder 与闪电概率状态。
+
+  写入状态
+  无；底层查询只写缓存。
+
+  调用函数
+  lightningLifecycleValue、Probability.statusPresence。
+
+  边界与不变量
+  顺序必须与旧 stateUtility 的 holder 循环一致，以保持浮点运算顺序。
+  */
+  lightningValues(state, viewerId, searchBudget = null) {
+    const values = [];
+    for (const holder of state.players) {
+      if (holder?.alive && statusPresence(holder, "lightning").probability > 0) {
+        this.checkpointSearchWork(searchBudget);
+        values.push(this.lightningLifecycleValue(state, holder, viewerId, null, searchBudget));
+      }
+    }
+    return values;
+  }
+
+  /*
+  功能
+  为护援 Policy 构造 STAY/AID 两个配对模拟世界并返回纯价值结果。
+
+  调用方
+  AIController response runtime boundary 注入的 guardianAidValues query。
+
+  输入
+  过滤状态、守誓者/目标/来源 ID、伤害量、完整 State Value 入口与父 SearchBudget。
+
+  输出
+  `{stayValue, aidValue, futureInventory}` 原始 Policy state points 对象。
+
+  读取状态
+  只读传入 World 与公开伤害上下文。
+
+  写入状态
+  只修改两个独立 Simulator clone。
+
+  调用函数
+  SearchBudget checkpoint、Simulator.clone/applyDamage、stateValue.stateUtility、Evaluator.exposureComponents。
+
+  边界与不变量
+  STAY 只排除指定守誓者，AID 走既有模拟护援；State Value 与 futureInventory
+  均保持 Policy state points，不在查询出口往返换算；固定 canBlock:false 且不修改真实 GameState；
+  nested Simulator 必须继承父 SearchBudget。
+  */
+  guardianAidValues(
+    state,
+    responderId,
+    targetId,
+    sourceId,
+    amount,
+    stateValue,
+    searchBudget = null
+  ) {
+    this.checkpointSearchWork(searchBudget);
+    const simulator = this.simulatorFactory(state, { searchBudget });
+    const stayState = simulator.clone();
+    const aidState = simulator.clone();
+    const stayTarget = stayState.players.find((player) => player.id === targetId);
+    const aidTarget = aidState.players.find((player) => player.id === targetId);
+    const staySource = sourceId
+      ? stayState.players.find((player) => player.id === sourceId)
+      : null;
+    const aidSource = sourceId
+      ? aidState.players.find((player) => player.id === sourceId)
+      : null;
+    simulator.applyDamage(stayState, staySource, stayTarget, amount, {
+      canBlock: false,
+      excludedGuardianIds: new Set([responderId])
+    });
+    simulator.applyDamage(aidState, aidSource, aidTarget, amount, { canBlock: false });
+    const visibleTarget = state.players.find((player) => player.id === targetId);
+    const { futureInventory } = exposureComponents(state, visibleTarget);
+    return {
+      stayValue: stateValue.stateUtility(stayState, responderId, searchBudget),
+      aidValue: stateValue.stateUtility(aidState, responderId, searchBudget),
+      futureInventory
+    };
+  }
+
+  /*
+  功能
+  为 Evaluator response willingness 追加一张反制翻转 root 结局的纯价值增量。
+
+  调用方
+  AIController response runtime boundary 注入的 dynamicRootFlipGain query。
+
+  输入
+  当前过滤 response state、响应者/root 信息、目标 ID、公开选择上下文、State Value 与父 SearchBudget。
+
+  输出
+  FLIP-STAY 数值；全体受益牌返回 null。
+
+  读取状态
+  只读当前 World 与 root 公开上下文。
+
+  写入状态
+  只写 Simulator 生成的独立克隆。
+
+  调用函数
+  SearchBudget checkpoint、Simulator、GlobalBenefitValue.dynamicRootFlipGain 有界配对查询。
+
+  边界与不变量
+  每个响应窗口只构造一个具体 Simulator；Policy 本身不知道或构造 Simulator；
+  nested Simulator 必须继承父 SearchBudget。
+  */
+  dynamicRootFlipGain(
+    state,
+    responderId,
+    rootAction,
+    counterDepth,
+    stateValue,
+    searchBudget = null
+  ) {
+    this.checkpointSearchWork(searchBudget);
+    const simulator = this.simulatorFactory(state, { searchBudget });
+    return evaluateDynamicRootFlipGain(
+      stateValue,
+      simulator,
+      state,
+      responderId,
+      rootAction,
+      counterDepth,
+      searchBudget
+    );
+  }
+
+  /*
+  功能
+  比较实际响应世界与只移除指定响应能力的配对反事实世界。
+
+  调用方
+  ValueLedger。
+
+  输入
+  before、动作、actor/defender/viewer ID、移除项、可选 actual after、状态价值入口与父 SearchBudget。
+
+  输出
+  grossAvoided、ownerValue 与 viewer projected value。
+
+  读取状态
+  只读 before/after 和指定响应概率字段。
+
+  写入状态
+  只修改反事实浅克隆及 Simulator 生成的独立 World。
+
+  调用函数
+  SearchBudget checkpoint、Simulator.apply、stateValue.stateUtility。
+
+  边界与不变量
+  反事实只改变正在测量的响应能力；其他资源、概率条件与实体身份保持配对；
+  两个 nested Simulator 必须继承同一个父 SearchBudget。
+  */
+  simulateResponseCounterfactual(
+    before,
+    action,
+    actorId,
+    defenderId,
+    viewerId,
+    opts = {},
+    after = null,
+    stateValue,
+    searchBudget = null
+  ) {
+    if (!action) return { grossAvoided: 0, ownerValue: 0, projected: 0 };
+    this.checkpointSearchWork(searchBudget);
+    const simulator = this.simulatorFactory(before, { searchBudget });
+    const actualAfter = after ?? simulator.apply(before, action);
+    const counterfactualBefore = simulator.clone(before);
+    const defender = counterfactualBefore.players.find((player) => player.id === defenderId);
+    for (const [definitionId, remove] of [
+      ["block", opts.removeBlock],
+      ["counter", opts.removeCounter],
+      ["recover", opts.removeRecover]
+    ]) {
+      if (!remove) continue;
+      conditionProbability(counterfactualBefore.probabilityState, {
+        type:"CONDITION",
+        definitionId,
+        bucketId:defenderId,
+        maximum:0
+      });
+      if (Array.isArray(defender?.hand)) {
+        defender.hand = defender.hand.filter((card) => card.definitionId !== definitionId);
+      }
+      if (Array.isArray(defender?.knownCards)) {
+        defender.knownCards = defender.knownCards.filter(
+          (card) => card.definitionId !== definitionId
+        );
+      }
+    }
+    this.checkpointSearchWork(searchBudget);
+    const counterfactualAfter = this.simulatorFactory(
+      counterfactualBefore,
+      { searchBudget }
+    ).apply(
+      counterfactualBefore,
+      action,
+      actorId
+    );
+    const actualDefender = actualAfter.players.find((player) => player.id === defenderId);
+    const counterfactualDefender = counterfactualAfter.players.find(
+      (player) => player.id === defenderId
+    );
+    const grossAvoided = Math.max(
+      0,
+      (actualDefender?.hp ?? 0) - (counterfactualDefender?.hp ?? 0)
+    ) * HP_VALUE;
+    const ownerValue = stateValue.transitionDelta(
+      counterfactualAfter,
+      actualAfter,
+      defenderId,
+      searchBudget
+    );
+    const projected = stateValue.transitionDelta(
+      counterfactualAfter,
+      actualAfter,
+      viewerId,
+      searchBudget
+    );
+    return { grossAvoided, ownerValue, projected };
+  }
+
+  /*
+  功能
+  把一次 state transition 分解到每个 owner 的互斥价值类别。
+
+  调用方
+  computeCandidateLedger、正式边界 与价值归属测试。
+
+  输入
+  before、after、viewer ID 与可选父 SearchBudget。
+
+  输出
+  包含 owners 和未签名 owner total 的账本。
+
+  读取状态
+  只读共享 state primitive、封印 burden 与闪电 owner delta。
+
+  写入状态
+  无；闪电查询只写自身缓存。
+
+  调用函数
+  Evaluator.playerValueTerms、sealTeamBurden、lightningOwnerDelta。
+
+  边界与不变量
+  每个字段只归属于一个 owner；团队符号只在 projectOwnerLedger 施加；
+  闪电 nested simulation 必须继承父 SearchBudget。
+  */
+  ownerStateLedger(before, after, viewerId, searchBudget = null) {
+    const radarTactic = buildRadarJudgmentProbabilities(
+      queryCurrentCardCounts(after.probabilityState)
+    ).tactic;
+    const viewer = after.players.find((player) => player.id === viewerId)
+      ?? before.players.find((player) => player.id === viewerId);
+    const beforePlayers = new Map(before.players.map((player) => [player.id, player]));
+    const owners = [];
+    for (const afterPlayer of after.players) {
+      const beforePlayer = beforePlayers.get(afterPlayer.id);
+      if (!beforePlayer) continue;
+      const relation = afterPlayer.battleTeam === viewer.battleTeam
+        ? (afterPlayer.id === viewerId ? "self" : "ally")
+        : "enemy";
+      const beforeTerms = this.playerValueTerms(
+        before,
+        beforePlayer,
+        viewerId,
+        radarTactic
+      );
+      const afterTerms = this.playerValueTerms(
+        after,
+        afterPlayer,
+        viewerId,
+        radarTactic
+      );
+      const beforeBurden = {
+        lightning: this.lightningOwnerDelta(
+          before,
+          beforePlayer.id,
+          viewerId,
+          searchBudget
+        ),
+        seal: sealTeamBurden(before, beforePlayer, viewer.battleTeam, searchBudget)
+      };
+      const afterBurden = {
+        lightning: this.lightningOwnerDelta(
+          after,
+          afterPlayer.id,
+          viewerId,
+          searchBudget
+        ),
+        seal: sealTeamBurden(after, afterPlayer, viewer.battleTeam, searchBudget)
+      };
+      const fields = {};
+      for (const key of new Set([
+        ...Object.keys(beforeTerms.terms),
+        ...Object.keys(afterTerms.terms)
+      ])) {
+        fields[key] = (afterTerms.terms[key] ?? 0) - (beforeTerms.terms[key] ?? 0);
+      }
+      fields.death = afterTerms.death - beforeTerms.death;
+      fields.lightning = afterBurden.lightning - beforeBurden.lightning;
+      fields.seal = afterBurden.seal - beforeBurden.seal;
+      const total = Object.values(fields).reduce((sum, value) => sum + value, 0);
+      owners.push({
+        playerId: afterPlayer.id,
+        relation,
+        total,
+        generic: { handCount: fields.handCount ?? 0, energy: fields.energy ?? 0 },
+        material: {
+          hp: fields.hp ?? 0,
+          shield: fields.shield ?? 0,
+          hp2Risk: fields.hp2Risk ?? 0,
+          info: fields.info ?? 0,
+          stacks: fields.stacks ?? 0,
+          equipmentDelta: fields.equipmentDelta ?? 0,
+          energyDeviceFuture: fields.energyDeviceFuture ?? 0,
+          death: fields.death ?? 0
+        },
+        threat: {
+          currentThreat: fields.currentThreat ?? 0,
+          futureInventory: fields.futureInventory ?? 0,
+          energyPressure: fields.energyPressure ?? 0,
+          markThreat: fields.markThreat ?? 0,
+          radar: fields.radar ?? 0
+        },
+        specific: {
+          handRole: fields.handRole ?? 0,
+          equipmentRole: fields.equipmentRoleDelta ?? 0
+        },
+        outcome: {
+          danger: fields.danger ?? 0,
+          rescueOutlook: fields.rescueOutlook ?? 0
+        },
+        teamBurden: {
+          lightning: fields.lightning ?? 0,
+          seal: fields.seal ?? 0
+        }
+      });
+    }
+    const total = owners.reduce((sum, owner) => sum + owner.total, 0);
+    return { perspectiveId: viewerId, owners, total };
+  }
+
+  /*
+  功能
+  把 owner-local ledger 投影为 viewer 的 self、ally、enemy 与 total。
+
+  调用方
+  computeCandidateLedger、正式边界 与测试。
+
+  输入
+  owner ledger 与 viewer ID。
+
+  输出
+  敌方收益取反后的团队视角投影。
+
+  读取状态
+  只读账本对象。
+
+  写入状态
+  无。
+
+  调用函数
+  statePointsToUtility。
+
+  边界与不变量
+  projected.total 是显式 Final Utility 诊断，必须等于同一 before/after 原始 State points
+  delta 经 statePointsToUtility 的单次边界换算。
+  */
+  projectOwnerLedger(ledger, viewerId) {
+    const self = ledger.owners.find((owner) => owner.playerId === viewerId);
+    const allies = ledger.owners.filter((owner) => owner.relation === "ally");
+    const enemies = ledger.owners.filter((owner) => owner.relation === "enemy");
+    const selfValue = statePointsToUtility(self?.total ?? 0);
+    const allyValue = statePointsToUtility(
+      allies.reduce((sum, owner) => sum + owner.total, 0)
+    );
+    const enemyValue = statePointsToUtility(
+      enemies.reduce((sum, owner) => sum + owner.total, 0)
+    );
+    return {
+      perspectiveId: viewerId,
+      self: selfValue,
+      ally: allyValue,
+      enemy: enemyValue,
+      total: selfValue + allyValue - enemyValue
+    };
+  }
+
+  /*
+  功能
+  暴露同一事件响应反事实的正式查询入口。
+
+  调用方
+  Planner 与 computeResponseLedger。
+
+  输入
+  before、动作、actor/defender/viewer ID、移除项、可选 actual after 与父 SearchBudget。
+
+  输出
+  grossAvoided、ownerValue 与 projected value。
+
+  读取状态
+  只读过滤后的配对状态。
+
+  写入状态
+  无；simulation query 只写独立克隆。
+
+  调用函数
+  ValueSimulationQuery.responseCounterfactual。
+
+  边界与不变量
+  本层不模拟也不改公式，只把正式 State Value 与父 SearchBudget 显式交给 ValueSimulationQuery。
+  */
+  responseCounterfactual(
+    before,
+    action,
+    actorId,
+    defenderId,
+    viewerId,
+    opts = {},
+    after = null,
+    searchBudget = null
+  ) {
+    return this.simulateResponseCounterfactual(
+      before,
+      action,
+      actorId,
+      defenderId,
+      viewerId,
+      opts,
+      after,
+      this.stateValue,
+      searchBudget
+    );
+  }
+
+  /*
+  功能
+  识别一次 transition 中实际消费的 block、counter 与 rescue，并归属响应价值。
+
+  调用方
+  computeCandidateLedger 与测试。
+
+  输入
+  before、动作、after、viewer ID 与可选父 SearchBudget。
+
+  输出
+  responses 数组。
+
+  读取状态
+  只读响应概率、手牌计数与恢复容量。
+
+  写入状态
+  无。
+
+  调用函数
+  responseCounterfactual。
+
+  边界与不变量
+  响应值已包含在 state delta 中，仅作 owner attribution，不能再次加进 final value。
+  */
+  computeResponseLedger(before, action, after, viewerId, searchBudget = null) {
+    if (!action) return { responses: [] };
+    const beforeById = new Map(before.players.map((player) => [player.id, player]));
+    const actorId = viewerId;
+    const responses = [];
+    for (const player of after.players) {
+      if (player.id === actorId || !player.alive) continue;
+      const beforePlayer = beforeById.get(player.id);
+      if (!beforePlayer) continue;
+      const blockDropped = queryPlayerHandProbability(
+        before.probabilityState, beforePlayer, "block"
+      ).probability - queryPlayerHandProbability(
+        after.probabilityState, player, "block"
+      ).probability > 1e-9;
+      const counterDropped = queryPlayerHandProbability(
+        before.probabilityState, beforePlayer, "counter"
+      ).probability - queryPlayerHandProbability(
+        after.probabilityState, player, "counter"
+      ).probability > 1e-9;
+      if (blockDropped || counterDropped) {
+        const counterfactual = this.responseCounterfactual(
+          before,
+          action,
+          actorId,
+          player.id,
+          viewerId,
+          { removeBlock: blockDropped, removeCounter: counterDropped },
+          after,
+          searchBudget
+        );
+        responses.push({
+          kind: blockDropped && counterDropped
+            ? "blockAndCounter"
+            : blockDropped ? "block" : "counter",
+          responderId: player.id,
+          protectedId: player.id,
+          resourceSpent: Math.max(
+            0,
+            (beforePlayer.handCount ?? 0) - (player.handCount ?? 0)
+          ) * 1.1,
+          grossAvoided: counterfactual.grossAvoided,
+          ownerValue: counterfactual.ownerValue,
+          netValue: counterfactual.projected
+        });
+      }
+    }
+    for (const rescuer of after.players) {
+      if (rescuer.id === actorId || !rescuer.alive) continue;
+      const beforeRescuer = beforeById.get(rescuer.id);
+      if (!beforeRescuer) continue;
+      const recoverSpent = queryPlayerHandProbability(
+        before.probabilityState, beforeRescuer, "recover"
+      ).expected - queryPlayerHandProbability(
+        after.probabilityState, rescuer, "recover"
+      ).expected;
+      if (recoverSpent > 1e-9) {
+        const counterfactual = this.responseCounterfactual(
+          before,
+          action,
+          actorId,
+          rescuer.id,
+          viewerId,
+          { removeRecover: true },
+          after,
+          searchBudget
+        );
+        responses.push({
+          kind: "rescue",
+          responderId: rescuer.id,
+          protectedId: null,
+          resourceSpent: recoverSpent * 1.1,
+          grossAvoided: counterfactual.grossAvoided,
+          ownerValue: counterfactual.ownerValue,
+          netValue: counterfactual.projected
+        });
+      }
+    }
+    return { responses };
+  }
+
+  /*
+  功能
+  构造根候选的 owner、projection 与 response 诊断账本。
+
+  调用方
+  Planner 的显式 diagnostics 路径与测试。
+
+  输入
+  before、动作、after、viewer ID、是否计算响应反事实与可选父 SearchBudget。
+
+  输出
+  ownerLedger、projected 与 responses。
+
+  读取状态
+  只读过滤后的 before/after。
+
+  写入状态
+  无。
+
+  调用函数
+  ownerStateLedger、projectOwnerLedger、computeResponseLedger。
+
+  边界与不变量
+  生产 diagnostics 关闭时不得调用本方法；返回字段不参与候选评分。
+  */
+  computeCandidateLedger(
+    before,
+    action,
+    after,
+    viewerId,
+    includeResponse,
+    searchBudget = null
+  ) {
+    const ownerLedger = this.ownerStateLedger(before, after, viewerId, searchBudget);
+    const projected = this.projectOwnerLedger(ownerLedger, viewerId);
+    const responses = includeResponse
+      ? this.computeResponseLedger(before, action, after, viewerId, searchBudget).responses
+      : [];
+    return { ownerLedger, projected, responses };
   }
 }

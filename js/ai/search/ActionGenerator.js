@@ -6,7 +6,7 @@
 AIController 与 Searcher。
 
 下游
-Domain Card/Skill/Status Rules、Domain Definitions、AI RuleProjection、领域概率与策略评分模块。
+Domain Card/Skill/Status Rules、Domain Definitions、Event Fact/Probability facade 与既有策略评分模块。
 
 状态边界
 只读 World，不执行或结算动作。
@@ -39,18 +39,18 @@ import {
   projectRulePlayer,
   projectRulePlayers,
   projectTransferRulePlayers
-} from "../state/RuleProjection.js";
+} from "../Event/Fact.js";
 import {
   getRangeConditionBranches,
   getRangeLegalityProbability
-} from "../state/DistanceProbabilityBranches.js";
+} from "../Event/Probability/Probability.js";
 import { actionSearchKey, createAction } from "./Action.js";
 import {
   PROBABILITY_EPSILON,
   expectedAnonymousSlots,
   queryAnonymousSlotDistribution,
   statusPresence
-} from "../state/Probability/Probability.js";
+} from "../Event/Probability/Probability.js";
 
 /*
 功能

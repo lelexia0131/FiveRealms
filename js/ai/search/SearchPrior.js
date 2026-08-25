@@ -6,7 +6,7 @@
 Searcher 请求本模块提供有界探索优先级；正式边界与测试只做同一用途查询。
 
 下游
-CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
+Evaluator facade 提供的 Card/State Value primitives、现有领域纯函数与闪电模拟查询。
 
 状态边界
 只读 Fact/World；不写状态、不执行动作。
@@ -19,21 +19,19 @@ CardValue、ThreatValue、现有领域纯函数与闪电模拟查询。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
-import { assessGlobalBenefit } from "../value/GlobalBenefitValue.js";
 import { sealUseValue } from "./SealPrior.js";
 import {
+  assessGlobalBenefit,
   cardAvailability,
   getBaseCardAiValue,
   getEquipmentKeepValueDeduction,
   getRoleCardAiValue,
-  roleCardDelta
-} from "../value/CardValue.js";
-import {
+  roleCardDelta,
   HP_VALUE,
+  incomingExposure,
   statePointsToUtility
-} from "../value/Economics.js";
-import { incomingExposure } from "../value/ThreatValue.js";
-import { queryPlayerHandProbability } from "../state/Probability/Probability.js";
+} from "../Evaluator/Evaluator.js";
+import { queryPlayerHandProbability } from "../Event/Probability/Probability.js";
 
 export const BURNING_FIELD_SEARCH_PRIOR = 8;
 // 这些权重只维持有限 beam 的相对探索顺序，不是单位换算，也不得进入 Final Utility。

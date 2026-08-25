@@ -3,7 +3,7 @@
 Probability authority 的唯一 public facade；组合 generic Branch、finite Pool 与 Radar/Lightning/Seal business-facing queries。
 
 上游
-AI State、Search、Simulation、Value、Policy 与 Worker composition。
+Fact、Generator、Searcher、Simulator、Evaluator、Worker composition 与直接概率测试。
 
 下游
 内部 Branch/Pool 实现及 canonical Domain Definitions/Rules。
@@ -19,7 +19,8 @@ AI State、Search、Simulation、Value、Policy 与 Worker composition。
 */
 import { CARD_DEFINITIONS } from "../../../domain/definitions/cards/CardDefinitions.js";
 import { RULESET_DEFINITION } from "../../../domain/definitions/ruleset/RulesetDefinition.js";
-import { hasFactStatus } from "../Fact.js";
+import { getDistance } from "../../../domain/rules/distance/DistanceRules.js";
+import { hasFactStatus, projectRulePlayers } from "../Fact.js";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
@@ -747,8 +748,300 @@ Simulator 与装备相关评分。
 边界与不变量
 相同实体组合必须生成相同键。
 */
-export function equipmentConditionKey(playerId, definitionId) {
+export function equipmentConditionKey(playerOrId, definitionId) {
+  const playerId = typeof playerOrId === "object" ? playerOrId?.id : playerOrId;
   return `equipment:${playerId}:${definitionId}`;
+}
+
+/*
+功能
+读取真实 Player 或 World 玩家当前确定装备定义。
+
+调用方
+距离概率查询。
+
+输入
+玩家摘要。
+
+输出
+装备定义 ID 或 null。
+
+读取状态
+公开 equipment/equipmentDefinitionId。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只读取公开装备定义，不读取实体反向引用。
+*/
+export function getEquipmentDefinitionId(player) {
+  return player?.equipment?.definitionId ?? player?.equipmentDefinitionId ?? null;
+}
+
+/*
+功能
+读取指定装备效果在当前概率世界中仍存在的概率。
+
+调用方
+距离概率分支枚举。
+
+输入
+玩家与装备定义 ID。
+
+输出
+零到一概率。
+
+读取状态
+equipmentRetentionProbability。
+
+写入状态
+无。
+
+调用函数
+getEquipmentDefinitionId。
+
+边界与不变量
+缺少概率字段的确定世界按一处理；不同装备定义按零处理。
+*/
+export function getEquipmentEffectProbability(player, definitionId) {
+  if (getEquipmentDefinitionId(player) !== definitionId) return 0;
+  const probability = player?.equipmentRetentionProbability;
+  return probability == null ? 1 : Math.max(0, Math.min(1, Number(probability) || 0));
+}
+
+/*
+功能
+枚举一组距离要求共享的装备存在概率分支。
+
+调用方
+Generator、Simulator、StateValue 与距离 facade 查询。
+
+输入
+World/Game 摘要、距离要求数组与显式装备条件。
+
+输出
+带 probability、conditions、matches 的分支数组。
+
+读取状态
+玩家公开座位、装备事实与装备保留概率。
+
+写入状态
+无。
+
+调用函数
+Domain getDistance、Fact.projectRulePlayers 与本 Probability facade 装备查询。
+
+边界与不变量
+距离公式只由 Domain 解释；同一装备变量只枚举一次，隐藏牌身份不会进入分支。
+*/
+export function getRangeConditionBranches(game, requirements, options = {}) {
+  const players = game?.state?.players ?? game?.players ?? [];
+  const entries = (Array.isArray(requirements) ? requirements : [requirements]).filter(Boolean);
+  if (!entries.length) {
+    const empty = { probability:1, conditions:{}, matches:true };
+    if (options.includeRequirementMatches === true) empty.requirementMatches = [];
+    return [empty];
+  }
+  const variables = new Map();
+  const forcedConditions = new Map();
+  /*
+  功能
+  在一次距离查询内登记并去重装备存在变量。
+
+  调用方
+  getRangeConditionBranches。
+
+  输入
+  玩家、装备定义与是否强制存在。
+
+  输出
+  无。
+
+  读取状态
+  查询局部 Map 与公开装备概率。
+
+  写入状态
+  仅写局部 variables/forcedConditions。
+
+  调用函数
+  equipmentConditionKey、getEquipmentEffectProbability。
+
+  边界与不变量
+  强制存在优先；相同玩家装备只登记一次。
+  */
+  const addVariable = (player, definitionId, forcedPresent = false) => {
+    if (!player) return;
+    const key = equipmentConditionKey(player, definitionId);
+    if (forcedPresent) {
+      forcedConditions.set(key, "present");
+      variables.delete(key);
+      return;
+    }
+    if (forcedConditions.has(key) || variables.has(key)) return;
+    const probability = getEquipmentDefinitionId(player) === definitionId
+      ? getEquipmentEffectProbability(player, definitionId)
+      : 0;
+    variables.set(key, { player, definitionId, probability });
+  };
+  for (const requirement of entries) {
+    addVariable(
+      requirement.source,
+      "telescope",
+      options.sourceEquipmentPresent === true && entries.length === 1
+    );
+    addVariable(
+      requirement.target,
+      "barrierDevice",
+      options.targetEquipmentPresent === true && entries.length === 1
+    );
+  }
+  for (const equipment of options.equipmentRequirements ?? []) {
+    addVariable(equipment.player, equipment.definitionId);
+  }
+  let branches = [{ probability:1, conditions:Object.fromEntries(forcedConditions) }];
+  for (const [key, variable] of variables) {
+    const probability = Math.max(0, Math.min(1, Number(variable.probability) || 0));
+    const next = [];
+    if (probability > 0) {
+      for (const branch of branches) {
+        next.push({
+          probability:branch.probability * probability,
+          conditions:{ ...branch.conditions, [key]:"present" }
+        });
+      }
+    }
+    if (probability < 1) {
+      for (const branch of branches) {
+        next.push({
+          probability:branch.probability * (1 - probability),
+          conditions:{ ...branch.conditions, [key]:"absent" }
+        });
+      }
+    }
+    branches = next;
+  }
+  /*
+  功能
+  读取当前距离条件世界中的装备存在标记。
+
+  调用方
+  getRangeConditionBranches 的距离与显式装备条件投影。
+
+  输入
+  条件对象、玩家与装备定义 ID。
+
+  输出
+  装备是否在当前条件世界存在。
+
+  读取状态
+  当前分支条件键。
+
+  写入状态
+  无。
+
+  调用函数
+  equipmentConditionKey。
+
+  边界与不变量
+  只读取本次查询局部条件，不访问物理装备实体。
+  */
+  const isPresent = (conditions, player, definitionId) => (
+    conditions[equipmentConditionKey(player, definitionId)] === "present"
+  );
+  const rulePlayers = projectRulePlayers(players);
+  return branches.map((branch) => {
+    const requirementMatches = entries.map(({ source, target, range }) => {
+      const distance = getDistance(
+        rulePlayers,
+        rulePlayers.find((player) => player.id === source?.id) ?? null,
+        rulePlayers.find((player) => player.id === target?.id) ?? null,
+        isPresent(branch.conditions, source, "telescope") ? "telescope" : null,
+        isPresent(branch.conditions, target, "barrierDevice") ? "barrierDevice" : null
+      );
+      return distance <= range;
+    });
+    const equipmentLegal = (options.equipmentRequirements ?? []).every(
+      ({ player, definitionId, present = true }) => (
+        isPresent(branch.conditions, player, definitionId) === present
+      )
+    );
+    const result = {
+      probability:branch.probability,
+      conditions:Object.fromEntries(
+        Object.entries(branch.conditions).sort(([left], [right]) => left.localeCompare(right))
+      ),
+      matches:requirementMatches.every(Boolean) && equipmentLegal
+    };
+    if (options.includeRequirementMatches === true) {
+      result.requirementMatches = requirementMatches;
+    }
+    return result;
+  });
+}
+
+/*
+功能
+计算单个距离要求成立的总概率。
+
+调用方
+Generator 与外部距离查询。
+
+输入
+World/Game 摘要、来源、目标、距离与选项。
+
+输出
+零到一概率。
+
+读取状态
+getRangeConditionBranches 的公开事实。
+
+写入状态
+无。
+
+调用函数
+getRangeConditionBranches。
+
+边界与不变量
+只合并 matches 分支，不把概率重解释为 Domain 合法性。
+*/
+export function getRangeLegalityProbability(game, source, target, range, options = {}) {
+  return getRangeConditionBranches(game, { source, target, range }, options)
+    .filter((branch) => branch.matches)
+    .reduce((sum, branch) => sum + branch.probability, 0);
+}
+
+/*
+功能
+判断来源是否在至少一个当前装备概率世界中可命中目标。
+
+调用方
+Controller 与 study harness 的攻击距离 facade。
+
+输入
+World/Game 摘要、来源、目标与可选卡牌定义。
+
+输出
+布尔值。
+
+读取状态
+公开距离事实与装备概率。
+
+写入状态
+无。
+
+调用函数
+getRangeLegalityProbability。
+
+边界与不变量
+ignoresDistance 恒 true；概率大于零保持既有候选语义。
+*/
+export function inAttackRange(game, source, target, card = null) {
+  if (card?.ignoresDistance) return true;
+  return getRangeLegalityProbability(game, source, target, source?.attackRange ?? 1) > 0;
 }
 
 /*

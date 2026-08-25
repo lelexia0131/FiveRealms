@@ -6,7 +6,7 @@
 WorkerSearchRuntime 与纯 search composition 测试。
 
 下游
-AI value/policy/simulation/search modules 与 Domain Definitions/Rules。
+AI Event/Simulator/Evaluator facades、当前 runtime 保留的 search/policy modules 与 Domain Definitions/Rules。
 
 状态边界
 只读 request.world 与 request.searchConfig；Searcher/Simulator 只写 Worker 本地状态。
@@ -18,12 +18,9 @@ AI value/policy/simulation/search modules 与 Domain Definitions/Rules。
 不得 import composition、application、UI/Audio/DOM 或 Domain transitions；不得使用 Math.random。
 */
 import { getMaxEnergy, getTurnEnergyBreakdown } from "../../../domain/rules/team/TeamRules.js";
-import { sampleProbabilityWorlds } from "../../../ai/state/Probability/Probability.js";
-import { Evaluator } from "../../../ai/value/Evaluator.js";
-import { StateValue } from "../../../ai/value/StateValue.js";
-import { ValueLedger } from "../../../ai/value/ValueLedger.js";
-import { ValueSimulationQuery } from "../../../ai/simulation/ValueSimulationQuery.js";
-import { Simulator } from "../../../ai/simulation/Simulator.js";
+import { sampleProbabilityWorlds } from "../../../ai/Event/Probability/Probability.js";
+import { Evaluator, StateValue } from "../../../ai/Evaluator/Evaluator.js";
+import { Simulator } from "../../../ai/Simulator/Simulator.js";
 import {
   ActionGenerator,
   deduplicateSearchEquivalentActions
@@ -161,19 +158,11 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     decideDyingRescue:(...args) => stateEvaluator.decidePlanningDyingRescue(...args),
     resolveDiscardCandidates:(...args) => stateEvaluator.resolveDiscardCandidates(...args)
   });
-  const valueSimulationQuery = new ValueSimulationQuery(
-    stateEvaluator,
-    simulatorFactory
-  );
-  const stateValue = new StateValue(stateEvaluator, valueSimulationQuery);
-  const valueLedger = new ValueLedger({
-    evaluator:stateEvaluator,
-    stateValue,
-    simulationQuery:valueSimulationQuery
-  });
+  const stateValue = new StateValue(stateEvaluator);
+  stateEvaluator.configureRuntime({ simulatorFactory, stateValue });
   const searchPrior = new SearchPrior({
     evaluator:stateEvaluator,
-    simulationQuery:valueSimulationQuery
+    simulationQuery:stateEvaluator
   });
   const actionGenerator = new ActionGenerator();
   const counterfactualTerms = new CounterfactualTerms({
@@ -189,7 +178,7 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   const searcher = new Searcher({
     evaluator:stateEvaluator,
     stateValue,
-    valueLedger,
+    valueLedger:stateEvaluator,
     searchPrior,
     counterfactualTerms,
     patternMatcher,

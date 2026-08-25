@@ -3,10 +3,10 @@
 镜像 World 中的格挡、反制、护援与响应资源容量，不拥有响应策略。
 
 上游
-Simulator 正式模拟门面与 Combat/Card/Status 模拟组件。
+Simulator 正式模拟门面。
 
 下游
-state/Probability、composition 注入的 Evaluator boolean willingness、ResourceSelection entity choice 与共享 simulation runtime。
+Fact、canonical Probability facade、Domain response rules 与门面显式注入的 willingness/resource choice。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本及其概率分支。
@@ -19,7 +19,7 @@ state/Probability、composition 注入的 Evaluator boolean willingness、Resour
 */
 import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { getCounterResponderOrder, isCounterEligible } from "../../domain/rules/response/ResponseRules.js";
-import { hasPassiveSkill, projectCanonicalSeatRoster } from "../state/RuleProjection.js";
+import { hasPassiveSkill, projectCanonicalSeatRoster } from "../Event/Fact.js";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
@@ -30,7 +30,7 @@ import {
   queryOrderedFirstResponder,
   queryPlayerHandProbability,
   totalBranchProbability
-} from "../state/Probability/Probability.js";
+} from "../Event/Probability/Probability.js";
 
 /*
 功能
@@ -57,7 +57,7 @@ Simulator.js 文件末尾的组合表达式：在模块加载时把响应资源�
 边界与不变量
 只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
 */
-export const withResponseSimulation = (Base) => class ResponseSimulation extends Base {
+export const withResponse = (Base) => class Response extends Base {
 
 
 
