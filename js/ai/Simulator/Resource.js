@@ -2021,10 +2021,10 @@ export const withResource = (Base) => class Resource extends Base {
   新的完整能量状态分支数组。
 
   读取状态
-  玩家当前 energy。
+  玩家当前 energyBranches；无条件分支时读取 energy 标量。
 
   写入状态
-  玩家当前 energy。
+  玩家 energyBranches 与 energy 期望摘要。
 
   调用函数
   intersectProbabilityStateBranches、projectProbabilityStateBranches、expectedBranchValue。
@@ -2033,11 +2033,17 @@ export const withResource = (Base) => class Resource extends Base {
   transformer 只能改变当前分支能量；条件身份和概率质量必须保留。
   */
   updateEnergyFromWorlds(player, worldBranches, transformer) {
-    const energy = [{
-      probability:1,
-      conditions:{},
-      energyAmount:Number(player.energy) || 0
-    }];
+    const energy = Array.isArray(player.energyBranches) && player.energyBranches.length
+      ? player.energyBranches.map((branch) => ({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          energyAmount:Number(branch.amount ?? branch.energyAmount) || 0
+        }))
+      : [{
+          probability:1,
+          conditions:{},
+          energyAmount:Number(player.energy) || 0
+        }];
     const intersection = this.intersectProbabilityWork(
       [energy, worldBranches],
       "Simulator.updateEnergyFromWorlds:intersect"
@@ -2046,6 +2052,7 @@ export const withResource = (Base) => class Resource extends Base {
       amount:Math.max(0, Math.min(player.maxEnergy ?? Infinity,
         Number(transformer(branch.energyAmount, branch)) || 0))
     }), "Simulator.updateEnergyFromWorlds:project");
+    player.energyBranches = updated;
     player.energy = expectedBranchValue(updated);
     return intersection;
   }

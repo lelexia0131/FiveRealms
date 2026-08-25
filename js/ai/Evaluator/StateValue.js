@@ -597,7 +597,7 @@ function assaultRangeAllocation(state, enemy, targets, targetIndex) {
 把敌方攻击暴露拆成当前威胁、未来突袭库存与能量压力。
 
 调用方
-Evaluator、FrontierValue 与响应策略。
+Evaluator 的 frontier 诊断与响应判断。
 
 输入
 过滤后的状态与被评估玩家。

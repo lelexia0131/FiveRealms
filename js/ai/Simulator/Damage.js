@@ -72,14 +72,15 @@ export const withDamage = (Base) => class Damage extends Base {
   目标既有 HP 分支与同阵营调息期望容量。
 
   写入状态
-  hpSummaryClassification、aliveProbability、alive 与标量 hp。
+  hpSummaryClassification、aliveProbability、待 fatal 结算的 alive 标量与 hp 摘要。
 
   调用函数
   queryHandProbability 与 SimulatorCore 概率投影 primitive。
 
   边界与不变量
-  无救援容量时死亡边界按每个世界离散结算；可能救援的濒死世界保留为非 exact 限制，
-  绝不把跨边界的 expected HP 宣称为确定状态，局部结果分区不写回 World。
+  无救援容量时死亡边界按每个世界离散结算；exact lethal 的标量 alive 在本次调用栈中
+  必须暂时保持 true，交由随后的 resolveFatal 唯一执行资源清理与击杀奖励；
+  绝不把跨边界的 expected HP 宣称为确定状态。
   */
   commitHpOutcomeBranches(state, target, damageWorlds, hpDamageFor) {
     const hpWorlds = damageWorlds.map((branch) => ({
@@ -118,18 +119,20 @@ export const withDamage = (Base) => class Damage extends Base {
     const distinct = new Set();
     let aliveProbability = 0;
     let expectedHp = 0;
+    let hasFatalOutcome = false;
     for (let index = 0; index < branches.length; index += 1) {
       if (index % 32 === 0) this.checkpointSearchWork();
       const branch = branches[index];
       distinct.add(`${branch.hp}|${branch.alive}`);
       if (branch.alive) aliveProbability += branch.probability;
+      else hasFatalOutcome = true;
       expectedHp += branch.hp * branch.probability;
     }
     target.hpSummaryClassification = distinct.size > 1
       ? PROBABILITY_CLASSIFICATION.EXPECTED_VALUE
       : PROBABILITY_CLASSIFICATION.EXACT;
     target.aliveProbability = aliveProbability;
-    target.alive = aliveProbability > PROBABILITY_EPSILON;
+    target.alive = aliveProbability > PROBABILITY_EPSILON || hasFatalOutcome;
     target.hp = expectedHp;
     return branches;
   }

@@ -2111,7 +2111,7 @@ export class Evaluator {
 
   /*
   功能
-  识别一次 transition 是否新触发影客窥隙并返回被观察者。
+  识别一次 transition 是否需要自适应信息搜索，并返回被观察者。
 
   调用方
   Searcher 的 generic adaptive-information orchestration。
@@ -2120,7 +2120,7 @@ export class Evaluator {
   before/after Worlds、canonical Action 与 actor ID。
 
   输出
-  新触发时返回目标 ID，否则返回 null。
+  需要物化自适应信息时返回目标 ID，否则返回 null。
 
   读取状态
   Action identity、双方窥隙概率、角色与最后目标字段。
@@ -2132,9 +2132,9 @@ export class Evaluator {
   clampProbability。
 
   边界与不变量
-  只有根突袭造成的正边际触发才产生信息价值；重复触发和非影客始终返回 null。
+  具体角色与技能识别只能封装在 Evaluator；重复触发始终返回 null。
   */
-  spyGapInformationTarget(beforeState, afterState, action, actorId) {
+  adaptiveInformationTarget(beforeState, afterState, action, actorId) {
     if (action?.cardId !== "assault") return null;
     const beforeActor = beforeState?.players?.find((player) => player.id === actorId);
     const afterActor = afterState?.players?.find((player) => player.id === actorId);
@@ -2149,7 +2149,7 @@ export class Evaluator {
 
   /*
   功能
-  把未知身份条件下的最佳后续值组合为窥隙自适应信息价值。
+  把未知身份条件下的最佳后续值组合为自适应信息选项点数。
 
   调用方
   Searcher 完成 generic hidden-world/follow-up traversal 后。
@@ -2158,7 +2158,7 @@ export class Evaluator {
   未观察基线最佳值与每个条件世界的观察后最佳值。
 
   输出
-  非负 raw information option value。
+  非负 raw transition-option points。
 
   读取状态
   只读传入数值。
@@ -2172,7 +2172,7 @@ export class Evaluator {
   边界与不变量
   公式冻结为 E[max utility] - max E[utility]；空样本与负边际返回零。
   */
-  spyGapInformationValue(baselineBest, informedBestValues) {
+  adaptiveInformationOptionPoints(baselineBest, informedBestValues) {
     if (!Number.isFinite(baselineBest) || !informedBestValues?.length) return 0;
     const informedTotal = informedBestValues.reduce((sum, value) => sum + value, 0);
     return Math.max(0, informedTotal / informedBestValues.length - baselineBest);
@@ -3532,13 +3532,14 @@ export class Evaluator {
 
   /*
   功能
-  计算 canonical Action 的经济项、state delta、transition option 与基础 Final Utility。
+  计算 canonical Action 的 state delta、transition option 与基础 Final Utility。
 
   调用方
   Searcher candidate evaluation path。
 
   输入
-  Evaluator state aggregation、动作、actor、before/after、horizon depth 与上游已计算的 resolution scale。
+  动作、actor、before/after、horizon depth、上游已计算的 resolution scale
+  与 Searcher 物化的 generic transition-option points。
 
   输出
   各命名 term 与 baseTransition 的普通对象。
@@ -3553,7 +3554,7 @@ export class Evaluator {
   deriveTransitionOptionPoints、StateValue.transitionDelta、statePointsToUtility。
 
   边界与不变量
-  Final Utility 公式保持不变；低于冻结门槛的 Transfer 只失去竞争资格，preference 不叠加到 state delta；
+  BaseTransition 只由 StateDeltaValue 与 TransitionOptionValue 构成；低于冻结门槛的 Transfer 只失去竞争资格；
   depth 只作诊断，不缩放价值，search-prior terms 不得进入。
   */
   evaluateTransition({
@@ -3562,16 +3563,14 @@ export class Evaluator {
     beforeState,
     afterState,
     depth = 1,
-    endOpportunityCost = 0,
     resolutionScale = 1,
+    materializedTransitionOptionPoints = 0,
     beforeLightningOutcomeSets = [],
     afterLightningOutcomeSets = []
   }) {
-    const economic = action.type === "end" ? -endOpportunityCost : 0;
     const effectResolutionScale = ["scout", "mutualBenefit"].includes(action.cardId)
       ? resolutionScale
       : 1;
-    const immediate = economic * effectResolutionScale;
     const stateDelta = this.transitionDelta(
       beforeState,
       afterState,
@@ -3586,7 +3585,7 @@ export class Evaluator {
       beforeState,
       afterState,
       effectResolutionScale
-    );
+    ) + materializedTransitionOptionPoints;
     const transitionOptionValue = statePointsToUtility(transitionOptionPoints);
     const transferEvaluation = action?.type === "card" && action?.cardId === "transfer"
       ? this.evaluateTransferAction(action, player, beforeState)
@@ -3594,16 +3593,14 @@ export class Evaluator {
     const transferCompetitive = transferEvaluation === null
       || transferEvaluation.score >= MIN_TRANSFER_UTILITY;
     return {
-      economic,
       resolutionScale:effectResolutionScale,
-      immediate,
       stateDelta,
       stateDeltaValue,
       transitionOptionPoints,
       transitionOptionValue,
       depth,
       baseTransition:transferCompetitive
-        ? immediate + stateDeltaValue + transitionOptionValue
+        ? stateDeltaValue + transitionOptionValue
         : Number.NEGATIVE_INFINITY
     };
   }
@@ -3675,13 +3672,13 @@ export class Evaluator {
 
   /*
   功能
-  把基础转移、terminal held option 与窥隙信息选项组合为唯一 Final Transition Utility。
+  把基础转移与 terminal held option 组合为唯一 Final Transition Utility。
 
   调用方
   Searcher sibling finalization。
 
   输入
-  HP-equivalent base/frontier value 与 raw State points 的窥隙选项。
+  HP-equivalent base/frontier value。
 
   输出
   当前候选的 Final Utility。
@@ -3693,18 +3690,13 @@ export class Evaluator {
   无。
 
   调用函数
-  statePointsToUtility。
+  无。
 
   边界与不变量
   responseNet 已包含在 state delta 中而不再相加；search-prior terms 与 Pattern 不进入公式。
   */
-  composeTransitionValue({
-    baseTransition,
-    frontierValue = 0,
-    spyGapInformationValue = 0
-  }) {
-    return baseTransition + frontierValue
-      + statePointsToUtility(spyGapInformationValue);
+  composeTransitionValue({ baseTransition, frontierValue = 0 }) {
+    return baseTransition + frontierValue;
   }
 
   /*

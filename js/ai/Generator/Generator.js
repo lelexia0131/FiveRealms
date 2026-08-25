@@ -41,17 +41,15 @@ import {
   projectTransferRulePlayers
 } from "../Event/Fact.js";
 import {
-  cardAvailability,
-  getRangeConditionBranches,
-  getRangeLegalityProbability
-} from "../Event/Probability/Probability.js";
-import { actionSearchKey, createAction } from "./Action.js";
-import {
   PROBABILITY_EPSILON,
+  cardAvailability,
   expectedAnonymousSlots,
+  getRangeConditionBranches,
+  getRangeLegalityProbability,
   queryAnonymousSlotDistribution,
   statusPresence
 } from "../Event/Probability/Probability.js";
+import { actionSearchKey, createAction } from "./Action.js";
 
 /*
 功能
@@ -801,7 +799,7 @@ export class Generator {
   无。
 
   调用函数
-  DistanceProbabilityBranches 与 Probability status-presence bounded query。
+  Probability 的距离合法概率与 status-presence bounded query。
 
   边界与不变量
   这里只判断候选存在性，不组合条件世界、不重新判断 Policy 价值或模拟执行。

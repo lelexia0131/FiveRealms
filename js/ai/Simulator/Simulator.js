@@ -509,10 +509,10 @@ class SimulatorCore {
   两名玩家的公开状态字段。
 
   写入状态
-  只写 structuredClone 中旧持有者的闪电状态。
+  只写 canonical cloneWorld 产生的独立 World 中旧持有者的闪电状态。
 
   调用函数
-  structuredClone。
+  clone。
 
   边界与不变量
   必须先清除旧持有者再评估新传播链；不新增或复制价值语义。

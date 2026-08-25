@@ -632,7 +632,7 @@ export class Controller {
   通过动作生成器返回当前真实局面中经规则校验与 AI 候选策略筛选的根动作。
 
   调用方
-  MatchApplication、selectAction、动作重绑与测试。
+  selectAction 与测试。
 
   输入
   当前行动 Player。
@@ -948,7 +948,7 @@ export class Controller {
 
   /*
   功能
-  接受 WorkerSearchOutcome，并在基础设施故障时通过确定性根候选 Policy 产生安全 fallback。
+  接受 WorkerSearchOutcome，并在基础设施故障时从本次根候选取安全 end fallback。
 
   调用方
   selectAction 与 worker result tests。
@@ -957,7 +957,8 @@ export class Controller {
   request、WorkerSearchOutcome 与可选 decision-local 合法根集合。
 
   输出
-  { action, result }；正常结果执行权威重绑，Worker fault 返回已重新比较的合法 fallback。
+  { action, result }；正常结果返回经身份、版本与根集合验证的 canonical Action，
+  Worker fault 返回合法 end fallback。
 
   读取状态
   current GameState、session、request、outcome 与 decision-local root set。

@@ -455,8 +455,8 @@ export class Searcher {
       beforeState,
       afterState,
       depth,
-      endOpportunityCost:0,
       resolutionScale,
+      materializedTransitionOptionPoints:terms.adaptiveInformationOptionPoints ?? 0,
       beforeLightningOutcomeSets,
       afterLightningOutcomeSets
     });
@@ -522,7 +522,6 @@ export class Searcher {
       baseTransition:baseTerms.baseTransition,
       exposeMarginal:terms.exposeMarginal,
       assaultStacksCredit:terms.assaultStacksCredit,
-      spyGapInformationValue:terms.spyGapInformationValue ?? 0,
       remainingProvenance:terms.nextProvenance,
       candidateLedger,
       responseNet,
@@ -564,8 +563,7 @@ export class Searcher {
     for (const candidate of candidates) {
       candidate.transitionValue = this.evaluator.composeTransitionValue({
         baseTransition:candidate.baseTransition,
-        frontierValue:candidate.frontierValue,
-        spyGapInformationValue:candidate.spyGapInformationValue ?? 0
+        frontierValue:candidate.frontierValue
       });
     }
     return candidates;
@@ -2083,13 +2081,14 @@ export class Searcher {
   只写 Simulator 返回的独立世界。
 
   调用函数
-  Evaluator.spyGapInformationTarget、specializeHiddenWorld、bestFollowUpUtility、Evaluator.spyGapInformationValue。
+  Evaluator.adaptiveInformationTarget、specializeHiddenWorld、bestFollowUpUtility、
+  Evaluator.adaptiveInformationOptionPoints。
 
   边界与不变量
   Searcher 只执行通用隐藏世界和后续候选遍历；身份识别与 E[max]-max(E) 公式只属于 Evaluator。
   */
-  evaluateAdaptiveInformationValue(beforeState, afterState, action, actorId, simulator, context, searchBudget = null) {
-    const targetId = this.evaluator.spyGapInformationTarget(
+  evaluateAdaptiveInformationOptionPoints(beforeState, afterState, action, actorId, simulator, context, searchBudget = null) {
+    const targetId = this.evaluator.adaptiveInformationTarget(
       beforeState,
       afterState,
       action,
@@ -2118,7 +2117,7 @@ export class Searcher {
       if (informedBest === null) return null;
       informedBestValues.push(informedBest);
     }
-    return this.evaluator.spyGapInformationValue(baselineBest, informedBestValues);
+    return this.evaluator.adaptiveInformationOptionPoints(baselineBest, informedBestValues);
   }
 
   /*
@@ -2271,7 +2270,7 @@ export class Searcher {
   仅通过反事实辅助函数写独立状态。
 
   调用函数
-  evaluateFollowUpMarginal、evaluateCurrentActionMarginal、evaluateAdaptiveInformationValue 与 Evaluator provenance。
+  evaluateFollowUpMarginal、evaluateCurrentActionMarginal、evaluateAdaptiveInformationOptionPoints 与 Evaluator provenance。
 
   边界与不变量
   Searcher 不读取具体牌或角色 identity；所有业务识别和价值公式都由 Evaluator 返回；
@@ -2313,8 +2312,8 @@ export class Searcher {
       actorId,
       remainingProvenance
     );
-    const spyGapInformationValue = depth === 1
-      ? this.evaluateAdaptiveInformationValue(
+    const adaptiveInformationOptionPoints = depth === 1
+      ? this.evaluateAdaptiveInformationOptionPoints(
           beforeState,
           afterState,
           action,
@@ -2324,11 +2323,11 @@ export class Searcher {
           searchBudget
         )
       : 0;
-    if (spyGapInformationValue === null) return null;
+    if (adaptiveInformationOptionPoints === null) return null;
     return {
       exposeMarginal,
       assaultStacksCredit,
-      spyGapInformationValue,
+      adaptiveInformationOptionPoints,
       nextProvenance
     };
   }
