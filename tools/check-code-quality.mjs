@@ -59,6 +59,7 @@ const WORKER_PATTERN = /^js\/adapters\/ai\/worker\//i;
 const SIMULATOR_FILE = "js/ai/Simulator/Simulator.js";
 const DAMAGE_FILE = "js/ai/Simulator/Damage.js";
 const RESOURCE_FILE = "js/ai/Simulator/Resource.js";
+const RESPONSE_FILE = "js/ai/Simulator/Response.js";
 const PROBABILITY_FILE = "js/ai/Event/Probability/Probability.js";
 const BRANCH_FILE = "js/ai/Event/Probability/Branch.js";
 const POOL_FILE = "js/ai/Event/Probability/Pool.js";
@@ -75,7 +76,7 @@ const FINAL_CORE_ALLOWLIST = Object.freeze(new Set([
   "js/ai/Simulator/World.js",
   DAMAGE_FILE,
   RESOURCE_FILE,
-  "js/ai/Simulator/Response.js",
+  RESPONSE_FILE,
   EVALUATOR_FILE,
   STATE_VALUE_FILE,
   CARD_VALUE_FILE
@@ -152,6 +153,70 @@ const REMOVED_LEGACY_FILES = Object.freeze([
   "js/adapters/ai/TransferExecutionPolicyAdapter.js"
 ]);
 const REMOVED_LEGACY_SYMBOL_PATTERN = /\b(?:RuleEngine|ResponseSystem|DyingSystem|HpLossSystem|JudgmentSystem|TeamRuleService|DistanceSystem|EventBus|CardSelectionSystem|GameChoiceRouter|GameLogger|GeneralSelection|TeamManager|cardRegistry|skillRegistry|gameConfig|cardConfig|generalConfig|CardSelectionBoundary|TransferPolicy|TransferExecutionPolicyAdapter)\b/i;
+const SIMULATOR_SIBLING_CAPABILITIES = Object.freeze({
+  Damage:Object.freeze([
+    "commitHpOutcomeBranches",
+    "applyResolvedDamage",
+    "heal"
+  ]),
+  Resource:Object.freeze([
+    "gainUnknownCardsWithCounterState",
+    "consumeBlockIdentities",
+    "consumeBlockPayment",
+    "consumeCounterPayment",
+    "consumeKnownDefinitionPayment",
+    "clearSimulatedPlayerResources",
+    "limitSimulatedHandCount",
+    "setSimulatedEquipment",
+    "getSimulatedEquipmentProbability",
+    "normalizeResourceEffectWorlds",
+    "nextSimulatedCardId",
+    "findKnownCardEntry",
+    "addSimulatedCardToHand",
+    "availableUnknownCountFor",
+    "findTransferCardEntry",
+    "addSimulatedKnownCard",
+    "transferKnownCardIdentity",
+    "transferUnknownCardIdentity",
+    "buildSimulatedKnownCards",
+    "applyForcedResourceSelection",
+    "consumeKnownCardsFromHand",
+    "downgradePartialKnownCardsAfterRandomLoss",
+    "consumeUnknownResourceCard",
+    "removeOneRandomCardFromHand",
+    "consumeRandomHandCards",
+    "consumeGuardianAidPayment",
+    "buildDiscardKeepValueContext",
+    "hasCompleteCertainHand",
+    "consumeChosenHandCard",
+    "takeResourceToHand",
+    "destroyResource",
+    "addStolenIdentityToHand",
+    "projectStealOutcome",
+    "stealResourceToHand",
+    "updateEnergyFromWorlds",
+    "changeEnergy",
+    "updateShieldFromWorlds",
+    "changeShield",
+    "ensureAttackUseSlots",
+    "ensureSkillUseSlots",
+    "consumeSlot",
+    "consumeAttackUse"
+  ]),
+  Response:Object.freeze([
+    "evaluateCardScopeCounterResponses",
+    "resolveGuardianAidResponse",
+    "resolveBlockResponseWorlds",
+    "resolveTargetCounterResponseWorlds",
+    "targetResolutionChance",
+    "counterDecision"
+  ])
+});
+const SIMULATOR_SIBLING_OWNERS = Object.freeze({
+  [DAMAGE_FILE]:"Damage",
+  [RESOURCE_FILE]:"Resource",
+  [RESPONSE_FILE]:"Response"
+});
 
 /*
 功能
@@ -1553,6 +1618,23 @@ function inspectSource(file, source, changed) {
     }
   }
 
+  const siblingOwner = SIMULATOR_SIBLING_OWNERS[file];
+  if (siblingOwner) {
+    for (const [owner, methods] of Object.entries(SIMULATOR_SIBLING_CAPABILITIES)) {
+      if (owner === siblingOwner) continue;
+      for (const method of methods) {
+        const call = maskedSource.match(new RegExp(`\\bthis\\.${method}\\s*\\(`));
+        if (!call) continue;
+        errors.push({
+          file,
+          functionName:"<architecture>",
+          line:sourceLineAt(source, call.index),
+          missing:[`架构约束：Simulator ${siblingOwner} 禁止调用 ${owner} capability this.${method}()`]
+        });
+      }
+    }
+  }
+
   if (AI_LEGACY_RULE_GUARD_PATTERN.test(file)) {
     const legacyRuleImport = importSource.match(
       /(?:from\s*|import\s*\()\s*["'][^"']*(?:core\/(?:RuleEngine|DistanceSystem)\.js)(?:\?[^"']*)?["']/i,
@@ -2405,6 +2487,47 @@ function identity(value) { return value; }`;
     if (!fixtureErrors.some((error) => error.missing.some((item) => item.includes("internal sibling")))) {
       throw new Error(`final sibling fixture was not rejected: ${fixturePath} -> ${specifier}`);
     }
+  }
+
+  const damageResponseRuntimeErrors = inspectSource(
+    DAMAGE_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "return this.resolveBlockResponseWorlds(value);")}`,
+    null,
+  );
+  if (!damageResponseRuntimeErrors.some((error) => error.missing.some((item) => item.includes("Damage 禁止调用 Response")))) {
+    throw new Error("Damage fixture did not reject Response runtime capability call");
+  }
+  const responseResourceRuntimeErrors = inspectSource(
+    RESPONSE_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "return this.consumeChosenHandCard(value);")}`,
+    null,
+  );
+  if (!responseResourceRuntimeErrors.some((error) => error.missing.some((item) => item.includes("Response 禁止调用 Resource")))) {
+    throw new Error("Response fixture did not reject Resource runtime capability call");
+  }
+  const legalDamageRuntimeErrors = inspectSource(
+    DAMAGE_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "return this.heal(value);")}`,
+    null,
+  );
+  if (legalDamageRuntimeErrors.some((error) => error.missing.some((item) => item.includes("Simulator Damage 禁止调用")))) {
+    throw new Error("Damage runtime guard rejected local Damage capability call");
+  }
+  const legalResponseRuntimeErrors = inspectSource(
+    RESPONSE_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "return this.counterDecision(value);")}`,
+    null,
+  );
+  if (legalResponseRuntimeErrors.some((error) => error.missing.some((item) => item.includes("Simulator Response 禁止调用")))) {
+    throw new Error("Response runtime guard rejected local Response capability call");
+  }
+  const legalSimulatorOrchestrationErrors = inspectSource(
+    SIMULATOR_FILE,
+    `${moduleHeader}\n${pass.replace("return value;", "this.resolveBlockResponseWorlds(value); return this.consumeBlockPayment(value);")}`,
+    null,
+  );
+  if (legalSimulatorOrchestrationErrors.length) {
+    throw new Error(`Simulator orchestration fixture failed: ${JSON.stringify(legalSimulatorOrchestrationErrors)}`);
   }
 
   const externalInternalErrors = inspectSource(

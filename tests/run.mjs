@@ -13475,10 +13475,33 @@ test("AI·架构：Event/Simulator/Evaluator 最终文件与 sibling 依赖闭�
   assert.doesNotMatch(source.response, /from "\.\/(?:Damage|Resource)\.js"/);
   assert.doesNotMatch(source.stateValue, /from "\.\/CardValue\.js"/);
   assert.doesNotMatch(source.cardValue, /from "\.\/StateValue\.js"/);
-  assert.match(source.damage, /applyDamage[\s\S]*resolveFatal[\s\S]*healFrom/);
+  assert.match(source.damage, /commitHpOutcomeBranches[\s\S]*heal/);
+  assert.match(source.resource, /gainUnknownCardsWithCounterState/);
   assert.match(source.resource, /takeResourceToHand[\s\S]*destroyResource/);
-  assert.match(source.response, /consumeBlockResponseWorlds[\s\S]*consumeTargetCounterResponseWorlds/);
-  assert.match(source.simulator, /applySkill[\s\S]*applyDelayedStatusCard/);
+  assert.match(source.response, /resolveGuardianAidResponse[\s\S]*resolveBlockResponseWorlds[\s\S]*resolveTargetCounterResponseWorlds/);
+  assert.doesNotMatch(source.response, /gainUnknownCardsWithCounterState/);
+  assert.match(source.simulator, /applyDamage[\s\S]*resolveFatal[\s\S]*healFrom[\s\S]*applySkill[\s\S]*applyDelayedStatusCard/);
+  const siblingSources = {
+    Damage:source.damage,
+    Resource:source.resource,
+    Response:source.response
+  };
+  const siblingMethods = Object.fromEntries(Object.entries(siblingSources).map(([owner, text]) => [
+    owner,
+    new Set([...text.matchAll(/^  ([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/gm)].map((match) => match[1]))
+  ]));
+  const runtimeSiblingCalls = [];
+  for (const [caller, text] of Object.entries(siblingSources)) {
+    for (const call of text.matchAll(/\bthis\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g)) {
+      for (const [owner, methods] of Object.entries(siblingMethods)) {
+        if (owner !== caller && methods.has(call[1])) {
+          runtimeSiblingCalls.push(`${caller} -> ${owner}: this.${call[1]}()`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(runtimeSiblingCalls, []);
+  assert.doesNotMatch(source.response, /\bmutateProbability\s*\(|\.handCount\s*=|\.availability\s*=/);
   for (const path of [
     "js/ai/state/StateContracts.js",
     "js/ai/simulation/ValueSimulationQuery.js",
@@ -13538,8 +13561,10 @@ async function responseCombatSemanticClosure() {
   );
   assert.match(source.response, /this\.decideBlock/);
   assert.match(source.response, /this\.decideGuardianAid/);
-  assert.match(source.combat, /this\.decideDyingRescue/);
-  assert.match(source.simulator, /selectGuardianAidDiscard/);
+  assert.doesNotMatch(source.combat, /this\.decideDyingRescue/);
+  assert.match(source.simulator, /this\.decideDyingRescue/);
+  assert.match(source.response, /selectGuardianAidDiscard/);
+  assert.doesNotMatch(source.response, /consumeChosenHandCard|consumeRandomHandCards/);
   assert.match(source.worker, /stateEvaluator\.decidePlanningCounter/);
   for (const name of ["evaluator", "response", "combat"]) {
     assert.doesNotMatch(source[name], /Probability\/(?:Branch|Pool)\.js/, name);
@@ -13679,6 +13704,166 @@ test("AI·资源闭合：Guardian 接受选择消费各一次且拒绝均为零"
   assert.equal(rejectedSelections, 0);
   assert.equal(rejectedConsumptions, 0);
   assert.equal(rejectedState.players[1].handCount, 2);
+});
+
+test("AI·资源闭合：Response 只解析 Block/Counter 且 Resource payment 各执行一次", () => {
+  const blockCard = { id:"block-payment", definitionId:"block", availability:1 };
+  const counterCard = { cardId:"counter-payment", definitionId:"counter", availability:1 };
+  const state = {
+    players:[
+      {
+        id:"payment-actor",
+        seatIndex:0,
+        battleTeam:"dawn",
+        alive:true,
+        hp:4,
+        maxHp:4,
+        handCount:0,
+        hand:[],
+        knownCards:[]
+      },
+      {
+        id:"payment-target",
+        seatIndex:1,
+        battleTeam:"dusk",
+        alive:true,
+        hp:4,
+        maxHp:4,
+        handCount:2,
+        hand:[blockCard],
+        knownCards:[counterCard],
+        blockCountDistribution:[{ probability:1, conditions:{}, count:1 }],
+        counterCountDistribution:[{ probability:1, conditions:{}, count:1 }]
+      }
+    ]
+  };
+  const simulator = new Simulator({ players:[] }, { decideBlock:() => true });
+  const target = state.players[1];
+  const attackWorlds = [{
+    probability:1,
+    conditions:{},
+    occurs:true,
+    responseAllowed:true,
+    requiredCount:1
+  }];
+  simulator.resolveBlockResponseWorlds(state, target, attackWorlds);
+  const beforeBlockResolution = structuredClone(state);
+  const blockResolution = simulator.resolveBlockResponseWorlds(state, target, attackWorlds);
+  assert.deepEqual(state, beforeBlockResolution);
+  assert.equal(blockResolution.expectedBlockSpend, 1);
+  let blockPayments = 0;
+  const consumeBlockPayment = simulator.consumeBlockPayment.bind(simulator);
+  simulator.consumeBlockPayment = (...args) => {
+    blockPayments += 1;
+    return consumeBlockPayment(...args);
+  };
+  simulator.consumeBlockResponseWorlds(state, target, attackWorlds);
+  assert.equal(blockPayments, 1);
+
+  const effectWorlds = [{ probability:1, conditions:{}, occurs:true }];
+  const beforeCounterResolution = structuredClone(state);
+  const counterResolution = simulator.resolveTargetCounterResponseWorlds(
+    state,
+    target,
+    effectWorlds,
+    true
+  );
+  assert.deepEqual(state, beforeCounterResolution);
+  assert.equal(counterResolution.payment.attemptedProbability, 1);
+  let counterPayments = 0;
+  const consumeCounterPayment = simulator.consumeCounterPayment.bind(simulator);
+  simulator.consumeCounterPayment = (...args) => {
+    counterPayments += 1;
+    return consumeCounterPayment(...args);
+  };
+  simulator.consumeTargetCounterResponseWorlds(state, target, effectWorlds, true);
+  assert.equal(counterPayments, 1);
+});
+
+test("AI·架构：Damage lifecycle 顺序与匿名 Guardian payment request 保持闭合", () => {
+  const state = {
+    players:[
+      {
+        id:"order-source",
+        seatIndex:0,
+        battleTeam:"dawn",
+        alive:true,
+        hp:4,
+        maxHp:4,
+        shield:0,
+        handCount:0
+      },
+      {
+        id:"order-target",
+        seatIndex:1,
+        battleTeam:"dusk",
+        alive:true,
+        hp:4,
+        maxHp:4,
+        shield:1,
+        handCount:0,
+        blockCountDistribution:[{ probability:1, conditions:{}, count:0 }]
+      }
+    ]
+  };
+  const simulator = new Simulator({ players:[] });
+  const order = [];
+  for (const method of [
+    "resolveBlockResponseWorlds",
+    "simulateGuardianAid",
+    "applyResolvedDamage",
+    "simulateAfterLifeDamage",
+    "resolveFatal",
+    "simulateSpyGapAfterLifeDamage"
+  ]) {
+    const original = simulator[method].bind(simulator);
+    simulator[method] = (...args) => {
+      order.push(method);
+      return original(...args);
+    };
+  }
+  simulator.applyDamage(state, state.players[0], state.players[1], 2, { canBlock:true });
+  assert.deepEqual(order, [
+    "resolveBlockResponseWorlds",
+    "simulateGuardianAid",
+    "applyResolvedDamage",
+    "simulateAfterLifeDamage",
+    "resolveFatal",
+    "simulateSpyGapAfterLifeDamage"
+  ]);
+  assert.equal(state.players[1].shield, 0);
+  assert.equal(state.players[1].hp, 3);
+
+  const guardian = {
+    id:"anonymous-guardian",
+    battleTeam:"dawn",
+    alive:true,
+    handCount:1
+  };
+  Object.defineProperty(guardian, "hand", {
+    get() {
+      throw new Error("anonymous Guardian hand identity must remain unreadable");
+    }
+  });
+  const anonymousSimulator = new Simulator(
+    { players:[] },
+    { decideGuardianAid:() => true }
+  );
+  const response = anonymousSimulator.resolveGuardianAidResponse(
+    { players:[] },
+    guardian,
+    { id:"anonymous-target", battleTeam:"dawn" },
+    {
+      incomingDamage:1,
+      eventProbability:1,
+      triggerProbability:1,
+      conditionalReduction:1,
+      paymentContext:{ completeCertainHand:false }
+    }
+  );
+  assert.equal(response.accepted, true);
+  assert.equal(response.payment.kind, "random-card");
+  assert.equal(Object.hasOwn(response.payment, "definitionId"), false);
 });
 
 test("AI·资源闭合：Simulator 缺失或陈旧 selected ID 时零消费且不改选", () => {

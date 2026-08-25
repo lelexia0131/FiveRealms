@@ -1,66 +1,46 @@
 /*
 模块职责
-镜像 World 中的伤害、失去生命、治疗、濒死救援和死亡生命周期。
+执行已解析伤害的护盾、生命、HP/alive 分支与直接治疗 primitive。
 
 上游
 Simulator 正式模拟门面。
 
 下游
-Domain Combat/Response Rules、CardDefinitions 与 canonical Probability facade。
+Domain Combat Rules 与 canonical Probability facade。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本，不持有真实 GameState。
 
 信息边界
-只消费可见/概率摘要，不读取隐藏实体牌或未来牌堆。
+只消费已解析 damage worlds 与合法概率摘要，不读取隐藏实体牌或未来牌堆。
 
 架构约束
-结算顺序以 Domain CombatRules、CombatWorkflow 与 DyingWorkflow 为权威；不得拥有 Policy 或 Value 公式。
+不得拥有 Block/Counter/Guardian、资源支付或跨子系统生命周期编排。
 */
-import { CARD_DEFINITIONS as DOMAIN_CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
-import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
-import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 import {
   calculateHealAmount,
   calculateHpDamage,
-  calculateShieldAbsorption,
-  isDying,
-  isKillRewardEligible
+  calculateShieldAbsorption
 } from "../../domain/rules/combat/CombatRules.js";
-import { getRequiredBlockCount } from "../../domain/rules/response/ResponseRules.js";
-import { getDyingRescueResponderOrder } from "../../domain/rules/response/ResponseRules.js";
-import { hasPassiveSkill, projectCanonicalSeatRoster } from "../Event/Fact.js";
 import {
   PROBABILITY_CLASSIFICATION,
   PROBABILITY_EPSILON,
-  clampProbability,
-  expectedAnonymousSlots,
   expectedBranchValue,
-  mutateProbability,
-  probabilityEventPartition,
-  queryHandProbability,
-  queryPlayerHandProbability,
-  totalBranchProbability
+  queryHandProbability
 } from "../Event/Probability/Probability.js";
-
-const RADAR_BASIC_DEFINITION_IDS = Object.freeze(
-  Object.values(DOMAIN_CARD_DEFINITIONS)
-    .filter((definition) => definition.category === "basic")
-    .map((definition) => definition.definitionId)
-);
 
 /*
 功能
-把 Base class 与 Damage 生命周期方法组合成单一 Simulator 类型。
+把 Base class 与已解析 Damage primitive 组合成单一 Simulator 类型。
 
 调用方
-Simulator.js 文件末尾的组合表达式：在模块加载时把 CombatSimulation 方法加入正式模拟门面。
+Simulator.js 文件末尾的组合表达式。
 
 输入
-已经包含上一层模拟能力的 Base class；传入的是类定义，不是搜索节点实例。
+已经包含共享概率运行时的 Base class；传入的是类定义，不是搜索节点实例。
 
 输出
-继承 Base 并新增伤害、濒死与治疗方法的 class 定义；不创建 Simulator 实例。
+继承 Base 并新增 HP、护盾和治疗 primitive 的 class 定义；不创建 Simulator 实例。
 
 读取状态
 无。
@@ -72,7 +52,7 @@ Simulator.js 文件末尾的组合表达式：在模块加载时把 CombatSimula
 无。
 
 边界与不变量
-只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
+只在模块加载时组合一次；本 sibling 不得调用 Resource 或 Response capability。
 */
 export const withDamage = (Base) => class Damage extends Base {
   /*
@@ -80,24 +60,24 @@ export const withDamage = (Base) => class Damage extends Base {
   把伤害条件世界投影为 HP/存活分支，并明确标记标量 HP 是否只是期望摘要。
 
   调用方
-  applyDamage 在护盾和实际生命伤害确定后。
+  applyResolvedDamage 在护盾和实际生命伤害确定后。
 
   输入
   World、目标、伤害世界与逐世界生命伤害查询。
 
-输出
+  输出
   只在本次伤害调用栈存在的 hp/alive 结果分区。
 
   读取状态
   目标既有 HP 分支与同阵营调息期望容量。
 
-写入状态
+  写入状态
   hpSummaryClassification、aliveProbability、alive 与标量 hp。
 
   调用函数
-  getHpStateBranches、intersectProbabilityStateBranches、projectProbabilityStateBranches。
+  queryHandProbability 与 SimulatorCore 概率投影 primitive。
 
-边界与不变量
+  边界与不变量
   无救援容量时死亡边界按每个世界离散结算；可能救援的濒死世界保留为非 exact 限制，
   绝不把跨边界的 expected HP 宣称为确定状态，局部结果分区不写回 World。
   */
@@ -156,253 +136,49 @@ export const withDamage = (Base) => class Damage extends Base {
 
   /*
   功能
-  按多槽雷达、格挡、实际生命伤害护援、护盾、生命、救援与伤后钩子的真实顺序结算条件化伤害世界。
+  对已经通过 Block 和 Guardian 的条件世界执行 Shield、HP 与伤害结果构造。
 
   调用方
-  CardEffect、SkillEffect、Status、ValueSimulationQuery 与本模块攻击入口：镜像一次条件化伤害。
+  Simulator.applyDamage：所有响应结果与 mitigation 已解析后。
 
   输入
-  独立 World、可空攻击者、存活目标、正伤害量与格挡/装备/事件选项。
+  World、目标、damage worlds、每个 pending HP world 的 Guardian 减免量与结果上下文。
 
   输出
-  期望生命伤害量；可选 outcome 同步得到伤害与格挡概率分支。
+  actualDamage、lifeDamageChance 和 lifeDamageBranches 的局部结果对象。
 
   读取状态
-  事件世界、攻防装备、格挡容量、护援能力、护盾/生命分支与状态钩子。
+  已解析 damageAmount、shieldAmount、occurs/passes 与目标当前 HP。
 
   写入状态
-  格挡身份和容量、护援资源、护盾、生命、濒死/死亡及伤后状态。
+  目标 shield、HP/alive 分支及调用方 outcome 的 damage fields。
 
   调用函数
-  buildRadarOutcomeSequencePartition、consumeBlockResponseWorlds、simulateGuardianAid、resolveFatal 与伤后钩子。
+  calculateShieldAbsorption、calculateHpDamage、commitHpOutcomeBranches 与概率投影 primitive。
 
   边界与不变量
-  顺序固定为逐需求雷达→格挡→pending HP damage 护援→护盾/生命 commit→伤后钩子→濒死；同一响应资源不得重复消费。
+  不重新决定或支付任何响应；Guardian 只在原本存在 pending HP damage 的世界减免，
+  Shield 先于 HP 且两者各提交一次。
   */
-  applyDamage(state, attacker, target, amount, options = {}) {
-    if (!target.alive || amount <= 0) {
-      if (options.outcome) {
-        options.outcome.lifeDamageChance = 0;
-        options.outcome.blockedByCardChance = 0;
-      }
-      return 0;
-    }
-    const eventWorlds = this.getEventWorlds(state,
-      options.eventProbability ?? 1,
-      options.eventBranches,
-      `damage-event:${attacker?.id ?? "unknown"}:${target.id}`);
-    const eventProbability = this.eventProbability(eventWorlds);
-    if (eventProbability <= 0) return 0;
-    const amountState = (Array.isArray(options.amountBranches) && options.amountBranches.length
-      ? this.mergeProbabilityWork(
-          options.amountBranches,
-          "CombatSimulation.applyDamage:amount"
-        )
-      : [{ probability:1, conditions:{}, amount }]).map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      damageAmount:Math.max(0, Number(branch.amount) || 0)
-    }));
-    const battleProbability = clampProbability(options.deviceAttack
-      && attacker.equipmentDefinitionId === "battleDevice"
-      ? (options.attackerEquipmentProbability ?? this.getSimulatedEquipmentProbability(attacker, "battleDevice"))
-      : 0);
-    // 雷达按统一“需要打出格挡”语义生效：只要本次伤害可格挡（options.canBlock），
-    // 目标装备 defenseDevice 时就进入雷达判定路径，不再依赖 assault/shock 牌名白名单。
-    const defenseProbability = options.canBlock
-      ? this.getSimulatedEquipmentProbability(target, "defenseDevice")
-      : 0;
-    let blockedByCardChance = 0;
-    let expectedBlockSpend = 0;
-    let passChance = 1;
-    let attackOutcomeWorlds = null;
-    if (defenseProbability > 0) {
-      const battleKey = this.currentProbabilityEventKey(
-        state,
-        `battle-required:${attacker?.id ?? "unknown"}:${target.id}`
-      );
-      const requiredPartition = battleProbability >= 1 - PROBABILITY_EPSILON
-        ? [{ probability:1, conditions:{}, requiredCount:getRequiredBlockCount("battleDevice", true) }]
-        : battleProbability <= PROBABILITY_EPSILON
-          ? [{ probability:1, conditions:{}, requiredCount:getRequiredBlockCount(null, true) }]
-          : [
-              {
-                probability:battleProbability,
-                conditions:{ [battleKey]:"yes" },
-                requiredCount:getRequiredBlockCount("battleDevice", true)
-              },
-              {
-                probability:1 - battleProbability,
-                conditions:{ [battleKey]:"no" },
-                requiredCount:getRequiredBlockCount(null, true)
-              }
-            ];
-      const radarPresencePartition = probabilityEventPartition(
-        this.currentProbabilityEventKey(state, `radar-present:${target.id}`),
-        defenseProbability,
-        "hasRadar"
-      );
-      const maximumRequirement = Math.max(
-        0,
-        ...requiredPartition.map((branch) => Math.max(0, Math.floor(Number(branch.requiredCount) || 0)))
-      );
-      const radarOutcomeSequence = this.buildRadarOutcomeSequencePartition(
-        state,
-        maximumRequirement,
-        options.radarJudgmentProbabilities,
-        options.radarJudgmentProbabilitiesByRequirement
-      );
-      const joinedBaseWorlds = this.intersectProbabilityWork(
-        [eventWorlds, requiredPartition, radarPresencePartition, radarOutcomeSequence],
-        "CombatSimulation.applyDamage:radar-base"
-      );
-      const baseWorlds = joinedBaseWorlds.map((branch, index) => {
-        if (index % 32 === 0) this.checkpointSearchWork();
-        const originalRequiredCount = branch.requiredCount;
-        const radarOutcomes = branch.hasRadar && branch.occurs
-          ? branch.radarOutcomes.slice(0, originalRequiredCount)
-          : Array.from({ length:originalRequiredCount }, () => null);
-        const waivedBlockCount = branch.hasRadar && branch.occurs
-          ? branch.waivedBlockSlots.slice(0, originalRequiredCount)
-            .reduce((sum, waived) => sum + waived, 0)
-          : 0;
-        return {
-          ...branch,
-          radarOutcomes,
-          waivedBlockCount,
-          originalRequiredCount,
-          requiredCount:Math.max(0, originalRequiredCount - waivedBlockCount),
-          responseAllowed:Boolean(options.canBlock)
-        };
-      });
-      // 先保存判定前的格挡容量：若在判定身份加入后重建分布，新身份会同时进入
-      // 根容量和本次增量；该快照也用于判断判定得到的格挡是否真的被消费。
-      // 无条件的匿名容量分支在这里显式键化，使判定格挡身份、判定前容量和
-      // 最终 blockCount 在后续世界中保持同一条件关联。
-      const preJudgmentKey = this.currentProbabilityEventKey(state, "pre-judgment-blocks");
-      const preJudgmentBlockState = queryPlayerHandProbability(
-        state.probabilityState, target, "block"
-      ).distribution.map((branch, index) => ({
-        probability:branch.probability,
-        conditions:{ ...branch.conditions, [preJudgmentKey]:`v${index}` },
-        blockCount:branch.blockCount
-      }));
-      const judgmentBlockCards = [];
-      // 每个基础判定牌分别加入身份；判得格挡可在全部雷达槽位完成后用于当前响应。
-      for (let slot = 0; slot < maximumRequirement; slot += 1) {
-        for (const definitionId of RADAR_BASIC_DEFINITION_IDS) {
-          this.checkpointSearchWork();
-          const acquisitionWorlds = this.projectProbabilityWork(
-            baseWorlds,
-            (branch) => ({
-              occurs:Boolean(branch.occurs
-                && branch.hasRadar
-                && slot < branch.originalRequiredCount
-                && branch.radarOutcomes?.[slot] === `basic:${definitionId}`)
-            }),
-            "CombatSimulation.applyDamage:radar-identity"
-          );
-          if (this.eventProbability(acquisitionWorlds) <= PROBABILITY_EPSILON) continue;
-          const simulatedId = this.nextSimulatedCardId(state, definitionId);
-          if (Array.isArray(target.hand)) {
-            this.addSimulatedCardToHand(state, target, { id:simulatedId, definitionId }, acquisitionWorlds);
-            if (definitionId === "block") {
-              const judgedBlock = target.hand.find((card) => card.id === simulatedId) ?? null;
-              if (judgedBlock) judgmentBlockCards.push(judgedBlock);
-            }
-          } else {
-            this.addSimulatedKnownCard(state, target, { cardId:simulatedId, definitionId }, acquisitionWorlds);
-            if (definitionId === "block") {
-              const judgedBlock = target.knownCards.find((entry) => entry.cardId === simulatedId) ?? null;
-              if (judgedBlock) judgmentBlockCards.push(judgedBlock);
-            }
-          }
-        }
-      }
-      const response = this.consumeBlockResponseWorlds(state, target, baseWorlds, {
-        preJudgmentBlockState,
-        judgmentBlockCards
-      });
-      attackOutcomeWorlds = response.outcomeWorlds;
-      blockedByCardChance = eventProbability > 0
-        ? Math.min(1, response.blockedProbability / eventProbability)
-        : 0;
-    } else if (options.canBlock) {
-      // 非雷达路径：格挡数量分布与本次伤害事件世界联合，只有同时发生且数量足够的
-      // 世界才消费格挡；消费张数由军火库条件决定（1 或 2）。
-      const battleKey = this.currentProbabilityEventKey(
-        state,
-        `battle-required:${attacker?.id ?? "unknown"}:${target.id}`
-      );
-      const requiredPartition = battleProbability >= 1 - PROBABILITY_EPSILON
-        ? [{ probability:1, conditions:{}, requiredCount:getRequiredBlockCount("battleDevice", true) }]
-        : battleProbability <= PROBABILITY_EPSILON
-          ? [{ probability:1, conditions:{}, requiredCount:getRequiredBlockCount(null, true) }]
-          : [
-              {
-                probability:battleProbability,
-                conditions:{ [battleKey]:"yes" },
-                requiredCount:getRequiredBlockCount("battleDevice", true)
-              },
-              {
-                probability:1 - battleProbability,
-                conditions:{ [battleKey]:"no" },
-                requiredCount:getRequiredBlockCount(null, true)
-              }
-            ];
-      const responseWorlds = this.intersectProbabilityWork(
-        [eventWorlds, requiredPartition],
-        "CombatSimulation.applyDamage:block"
-      ).map((branch) => ({ ...branch, responseAllowed:true }));
-      const response = this.consumeBlockResponseWorlds(state, target, responseWorlds);
-      const blockedProbability = response.blockedProbability;
-      blockedByCardChance = eventProbability > 0
-        ? Math.min(1, blockedProbability / eventProbability)
-        : 0;
-      passChance = Math.max(0, Math.min(1, 1 - blockedByCardChance));
-      expectedBlockSpend += response.expectedBlockSpend;
-    }
-    let damagePassProbability = eventProbability * passChance;
-    if (attackOutcomeWorlds) {
-      damagePassProbability = 0;
-      for (let index = 0; index < attackOutcomeWorlds.length; index += 1) {
-        if (index % 32 === 0) this.checkpointSearchWork();
-        const branch = attackOutcomeWorlds[index];
-        if (branch.occurs && branch.passes) {
-          damagePassProbability += Math.max(0, Number(branch.probability) || 0);
-        }
-      }
-    }
-    const shieldState = [{
-      probability:1,
-      conditions:{},
-      shieldAmount:Number(target.shield) || 0
-    }];
-    const aidPassWorlds = attackOutcomeWorlds
-      ?? this.intersectProbabilityWork([
-        eventWorlds,
-        probabilityEventPartition(
-          this.currentProbabilityEventKey(state, `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`),
-          passChance,
-          "passes"
-        )
-      ], "CombatSimulation.applyDamage:aid-pass");
-    const preAidDamageWorlds = this.intersectProbabilityWork(
-      [aidPassWorlds, shieldState, amountState],
-      "CombatSimulation.applyDamage:pre-aid"
-    );
+  applyResolvedDamage(
+    state,
+    target,
+    damageWorlds,
+    aidReductionPerLifeDamage,
+    resolution = {}
+  ) {
     /*
     功能
-    读取护援前真正会穿过护盾落到生命值的伤害量。
+    读取 Guardian 减免前穿过 Shield 的 HP damage。
 
     调用方
-    applyDamage 的护援资格与最终条件世界投影。
+    applyResolvedDamage 的减免适用条件。
 
     输入
-    含 occurs、passes、damageAmount 与 shieldAmount 的伤害分支。
+    含 occurs、passes、shieldAmount 与 damageAmount 的 resolved branch。
 
     输出
-    该分支护援前的非负生命伤害。
+    非负 HP damage。
 
     读取状态
     无。
@@ -414,78 +190,37 @@ export const withDamage = (Base) => class Damage extends Base {
     calculateShieldAbsorption、calculateHpDamage。
 
     边界与不变量
-    未发生或未穿过响应的世界必须为零；只用于决定护援窗口，不提交护盾或生命。
+    未发生或未通过响应的世界固定返回零，不提交 Shield 或 HP。
     */
     const preAidHpDamageFor = (branch) => {
       if (!branch.occurs || !branch.passes) return 0;
       const absorbed = calculateShieldAbsorption(branch.shieldAmount, branch.damageAmount);
       return calculateHpDamage(branch.damageAmount, absorbed);
     };
-    let pendingLifeDamageProbability = 0;
-    let incomingExpectedHpDamage = 0;
-    for (let index = 0; index < preAidDamageWorlds.length; index += 1) {
-      if (index % 32 === 0) this.checkpointSearchWork();
-      const branch = preAidDamageWorlds[index];
-      const hpDamage = preAidHpDamageFor(branch);
-      if (hpDamage > PROBABILITY_EPSILON) {
-        pendingLifeDamageProbability += Math.max(0, Number(branch.probability) || 0);
-      }
-      incomingExpectedHpDamage += branch.probability * hpDamage;
-    }
-    let aidReductionPerLifeDamage = 0;
-    if (damagePassProbability > PROBABILITY_EPSILON) {
-      const aidedExpectedHpDamage = this.simulateGuardianAid(
-        state,
-        target,
-        incomingExpectedHpDamage,
-        pendingLifeDamageProbability,
-        options.excludedGuardianIds,
-        options
-      );
-      if (pendingLifeDamageProbability > PROBABILITY_EPSILON) {
-        aidReductionPerLifeDamage = Math.max(0,
-          (incomingExpectedHpDamage - aidedExpectedHpDamage) / pendingLifeDamageProbability);
-      }
-    }
-    const damageWorlds = attackOutcomeWorlds
-      ? this.intersectProbabilityWork(
-          [attackOutcomeWorlds, shieldState, amountState],
-          "CombatSimulation.applyDamage:damage-worlds"
-        )
-      : this.intersectProbabilityWork([
-          eventWorlds,
-          probabilityEventPartition(
-            this.currentProbabilityEventKey(state, `damage-pass:${attacker?.id ?? "unknown"}:${target.id}`),
-            passChance,
-            "passes"
-          ),
-          shieldState,
-          amountState
-        ], "CombatSimulation.applyDamage:damage-worlds");
     /*
     功能
-    读取指定条件世界中扣除免伤后的实际伤害量。
+    将已解析 Guardian mitigation 应用到仍有 pending HP damage 的世界。
 
     调用方
-    applyDamage 的护盾与生命投影：在每个条件世界复用同一护援减免。
+    applyResolvedDamage 的 Shield 与 HP 投影。
 
     输入
-    含 damageAmount 的当前伤害分支。
+    resolved damage branch。
 
     输出
-    扣除本次护援减免后的非负伤害量。
+    Guardian 后的非负入射 damageAmount。
 
     读取状态
-    闭包中的 aidReductionPerLifeDamage 与 preAidHpDamageFor。
+    闭包 aidReductionPerLifeDamage。
 
     写入状态
     无。
 
     调用函数
-    无。
+    preAidHpDamageFor。
 
     边界与不变量
-    只有护援前确实存在生命伤害的世界才减少入射伤害；不得再次应用格挡或护盾减免。
+    Guardian 不得减少原本不会穿过 Shield 的世界，也不得重复减免。
     */
     const effectiveDamageFor = (branch) => Math.max(
       0,
@@ -494,28 +229,28 @@ export const withDamage = (Base) => class Damage extends Base {
     );
     /*
     功能
-    读取指定条件世界中穿过护盾并落到生命值的伤害量。
+    读取 resolved branch 在 Guardian 与 Shield 后落到 HP 的伤害量。
 
     调用方
-    applyDamage：计算每个条件世界真正落到生命值的部分。
+    applyResolvedDamage 的 HP branch、lifeDamageChance 与结果构造。
 
     输入
-    含 occurs、passes、damageAmount 与 shieldAmount 的伤害分支。
+    resolved damage branch。
 
     输出
-    该分支的非负生命伤害量。
+    非负 HP damage。
 
     读取状态
-    闭包中的 effectiveDamageFor。
+    无。
 
     写入状态
     无。
 
     调用函数
-    effectiveDamageFor。
+    effectiveDamageFor、calculateShieldAbsorption、calculateHpDamage。
 
     边界与不变量
-    未发生或未穿过响应的世界必须返回零；护盾只在这里扣一次。
+    Shield 只在此扣除一次；未发生或未通过响应的世界返回零。
     */
     const hpDamageFor = (branch) => {
       if (!branch.occurs || !branch.passes) return 0;
@@ -545,219 +280,27 @@ export const withDamage = (Base) => class Damage extends Base {
       occurs:hpDamageFor(branch) > PROBABILITY_EPSILON
     }), "CombatSimulation.applyDamage:life-damage");
     const lifeDamageChance = this.eventProbability(lifeDamageBranches);
-    if (options.outcome) {
-      options.outcome.lifeDamageBranches = lifeDamageBranches;
-      options.outcome.lifeDamageChance = lifeDamageChance;
-      options.outcome.blockedByCardChance = eventProbability * blockedByCardChance;
-      options.outcome.remainingBlockCountBranches = attackOutcomeWorlds
-        ? this.projectProbabilityWork(attackOutcomeWorlds, (branch) => ({
+    if (resolution.outcome) {
+      resolution.outcome.lifeDamageBranches = lifeDamageBranches;
+      resolution.outcome.lifeDamageChance = lifeDamageChance;
+      resolution.outcome.blockedByCardChance = resolution.eventProbability
+        * resolution.blockedByCardChance;
+      resolution.outcome.remainingBlockCountBranches = resolution.attackOutcomeWorlds
+        ? this.projectProbabilityWork(resolution.attackOutcomeWorlds, (branch) => ({
             remainingBlockCount:branch.requiredCount
           }), "CombatSimulation.applyDamage:remaining-blocks")
         : null;
     }
     this.commitHpOutcomeBranches(state, target, damageWorlds, hpDamageFor);
-    this.simulateAfterLifeDamage(state, attacker, target, lifeDamageChance,
-      lifeDamageBranches, options.damageContext ?? {});
-    this.resolveFatal(state, target, attacker);
-    this.simulateSpyGapAfterLifeDamage(state, attacker, target, lifeDamageChance);
-    return actualDamage;
-  }
-
-
-  /*
-  功能
-  在濒死世界中按已确定救援意愿、合法资源和角色被动结算存活、死亡及资源消耗。
-
-  调用方
-  applyDamage：在目标生命不大于零时结算救援和死亡。
-
-  输入
-  独立 World、濒死目标与可空伤害来源。
-
-  输出
-  无返回值；目标存活、死亡或被救援后的状态已完成。
-
-  读取状态
-  同阵营座次、Evaluator 救援意愿、调息容量、角色被动、击杀来源与奖励配置。
-
-  写入状态
-  救援者手牌/调息/回春，目标生命与全部死亡清理字段，攻击者击杀摸牌。
-
-  调用函数
-  decideDyingRescue、consumeKnownCardsFromHand、simulateCoordination、setSimulatedEquipment、
-  clearHuntMarksBySource、gainUnknownCardsWithCounterState。
-
-  边界与不变量
-  救援按目标优先再顺时针盟友顺序；死亡清理和击杀奖励最多执行一次，不产生半存活状态。
-  */
-  resolveFatal(state, target, attacker = null) {
-    if (!isDying(target.hp, target.alive)) return;
-    const need = Math.max(0, 1 - target.hp);
-    const roster = projectCanonicalSeatRoster(state.players);
-    const rescueOrder = getDyingRescueResponderOrder(roster, target.id);
-    const allies = rescueOrder
-      .map((id) => state.players.find((player) => player.id === id))
-      .filter(Boolean);
-    /*
-    功能
-    惰性查询一名救援者当前可用调息的期望容量。
-
-    调用方
-    resolveFatal 的总容量判断与逐轮救援消费。
-
-    输入
-    当前 World 中的救援玩家。
-
-    输出
-    由唯一 ProbabilityState 和确定身份牌共同得到的非负期望张数。
-
-    读取状态
-    当前 World.probabilityState 与玩家 hand/knownCards。
-
-    写入状态
-    无。
-
-    调用函数
-    queryHandProbability。
-
-    边界与不变量
-    查询结果只在本次濒死结算调用栈中存在，不写回 World，也不创建调息分支层级。
-    */
-    const recoverCapacity = (player) => queryHandProbability(state.probabilityState, {
-      bucketId:player.id,
-      knownResources:[
-        ...(Array.isArray(player.hand) ? player.hand : []),
-        ...(Array.isArray(player.knownCards) ? player.knownCards : [])
-      ],
-      definitionId:"recover"
-    }).expected;
-    const rescuers = [];
-    for (const player of allies) {
-      const available = Math.max(0, recoverCapacity(player));
-      rescuers.push({
-        player,
-        available,
-        willing:available > PROBABILITY_EPSILON && this.decideDyingRescue(
-          state,
-          player,
-          target,
-          { need, available }
-        ) === true
-      });
-    }
-    const capacity = rescuers.reduce(
-      (sum, entry) => sum + (entry.willing ? entry.available : 0),
-      0
-    );
-    if (capacity < need) {
-      target.alive = false;
-      target.hp = 0;
-      target.exposeWeaknessStacks = 0;
-      target.assaultBonus = 0;
-      target.huntMarkSourceId = null;
-      target.huntMarkProbability = 0;
-      target.huntMarkProbabilities = {};
-      target.momentum = 0;
-      target.statuses = [];
-      target.handCount = 0;
-      target.hand = [];
-      target.knownCards = [];
-      const anonymousSlots = expectedAnonymousSlots(state.probabilityState, target.id);
-      const wholeSlots = Math.floor(anonymousSlots);
-      if (wholeSlots > 0) mutateProbability(state.probabilityState, {
-        type:"REMOVE",
-        sourceBucketId:target.id,
-        count:wholeSlots
-      });
-      if (anonymousSlots - wholeSlots > PROBABILITY_EPSILON) mutateProbability(
-        state.probabilityState,
-        {
-          type:"REMOVE",
-          sourceBucketId:target.id,
-          probability:anonymousSlots - wholeSlots
-        }
-      );
-      this.setSimulatedEquipment(target, null, 0);
-      this.clearHuntMarksBySource(state, target.id);
-      const targetFact = roster.find((player) => player.id === target.id) ?? null;
-      const attackerFact = attacker ? roster.find((player) => player.id === attacker.id) ?? null : null;
-      if (isKillRewardEligible(
-        { rewardGranted:false, alive:targetFact?.alive, battleTeam:targetFact?.battleTeam },
-        attackerFact
-      )) {
-        this.gainUnknownCardsWithCounterState(
-          state, attacker, RULESET_DEFINITION.killRewardDrawCount, null, "kill-reward-draw"
-        );
-      }
-      return;
-    }
-    let remaining = need;
-    let healingApplied = 0;
-    const maxRounds = Math.max(1, Math.ceil(capacity));
-    let rounds = 0;
-    while (remaining > PROBABILITY_EPSILON && rounds < maxRounds) {
-      let usedThisRound = false;
-      for (const entry of rescuers) {
-        if (remaining <= PROBABILITY_EPSILON) break;
-        if (!entry.willing) continue;
-        const rescuer = entry.player;
-        const available = Math.max(0, recoverCapacity(rescuer));
-        if (available <= PROBABILITY_EPSILON) continue;
-        const canRejuvenate = hasPassiveSkill(rescuer, "rejuvenation")
-          && (rescuer.rejuvenationTriggerCount ?? 0)
-            < PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn;
-        const healingPerCard = DOMAIN_CARD_DEFINITIONS.recover.healAmount;
-        const spent = Math.min(1, available);
-        if (spent <= PROBABILITY_EPSILON) continue;
-        const healing = spent * healingPerCard;
-        usedThisRound = true;
-        remaining -= healing;
-        healingApplied += healing;
-        const knownBefore = (Array.isArray(rescuer.hand) ? rescuer.hand : [])
-          .filter((entry) => entry.definitionId === "recover")
-          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-        this.consumeKnownCardsFromHand(state, rescuer, "recover", spent);
-        const knownAfter = (Array.isArray(rescuer.hand) ? rescuer.hand : [])
-          .filter((entry) => entry.definitionId === "recover")
-          .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
-        const anonymousSpent = Math.max(0, spent - (knownBefore - knownAfter));
-        if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
-          type:"REMOVE",
-          sourceBucketId:rescuer.id,
-          definitionId:"recover",
-          probability:anonymousSpent
-        });
-        rescuer.handCount = Math.max(0, (rescuer.handCount ?? 0) - spent);
-        if (canRejuvenate) {
-          // 概率救援按实际消耗的期望调息推进回春：摸牌与次数消耗必须共享同一概率权重，
-          // 并以每回合 2 次为上限，避免“摸牌按分数计、次数却完整消耗”的条件世界失配。
-          const remainingSlots = Math.max(
-            0,
-            PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn
-              - (rescuer.rejuvenationTriggerCount ?? 0)
-          );
-          const consume = Math.min(spent, remainingSlots);
-          if (consume > PROBABILITY_EPSILON) {
-            this.gainUnknownCardsWithCounterState(state, rescuer, consume, null, "rejuvenation-rescue-draw");
-            rescuer.rejuvenationTriggerCount = (rescuer.rejuvenationTriggerCount ?? 0) + consume;
-          }
-        }
-        this.simulateCoordination(state, rescuer, [target], spent);
-      }
-      rounds += 1;
-      if (!usedThisRound) break;
-    }
-    const appliedHealing = calculateHealAmount(healingApplied, target.maxHp, target.hp);
-    target.hp += appliedHealing;
-    target.alive = true;
+    return { actualDamage, lifeDamageChance, lifeDamageBranches };
   }
 
   /*
   功能
-  将确定治疗量写入目标生命值分支并限制在最大生命值内。
+  将确定治疗量写入目标生命值并限制在最大生命值内。
 
   调用方
-  healFrom 与直接治疗镜像：只推进确定生命恢复。
+  Simulator.healFrom 与直接治疗专项测试。
 
   输入
   目标玩家与正治疗量。
@@ -772,7 +315,7 @@ export const withDamage = (Base) => class Damage extends Base {
   仅目标 hp。
 
   调用函数
-  无。
+  calculateHealAmount。
 
   边界与不变量
   死亡或已满生命目标不变化；生命不得超过 maxHp。
@@ -781,54 +324,5 @@ export const withDamage = (Base) => class Damage extends Base {
     if (!target.alive || amount <= 0) return;
     const applied = calculateHealAmount(amount, target.maxHp, target.hp);
     if (applied > 0) target.hp += applied;
-  }
-
-  /*
-  功能
-  结算带来源的治疗，同时推进与治疗来源和目标相关的角色被动。
-
-  调用方
-  CardEffectSimulation 与 SkillEffectSimulation：结算带来源的治疗及回春被动。
-
-  输入
-  独立 World、治疗来源、存活目标与正治疗量。
-
-  输出
-  无返回值；治疗和可能的回春摸牌已结算。
-
-  读取状态
-  治疗前后生命、来源角色/阵营与回春次数。
-
-  写入状态
-  目标 hp；满足条件时写来源回春次数、手牌与响应摘要。
-
-  调用函数
-  heal、gainUnknownCardsWithCounterState。
-
-  边界与不变量
-  回春只按实际治疗量触发且每回合不超过两次；摸牌与次数消费共享同一概率权重。
-  */
-  healFrom(state, source, target, amount) {
-    if (!target?.alive || target.hp >= target.maxHp || amount <= 0) return;
-    const beforeHp = target.hp;
-    this.heal(target, amount);
-    const actualAmount = Math.max(0, target.hp - beforeHp);
-    if (hasPassiveSkill(source, "rejuvenation") && source.battleTeam === target.battleTeam
-      && (source.rejuvenationTriggerCount ?? 0)
-        < PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn) {
-      const triggerWeight = Math.min(1, actualAmount);
-      if (triggerWeight <= PROBABILITY_EPSILON) return;
-      // 概率执行的治疗只按触发权重推进回春次数，与摸牌共享同一概率权重；
-      // 剩余额度按 2 - 期望次数截断，保证期望次数不越过每回合 2 次上限。
-      const remainingSlots = Math.max(
-        0,
-        PASSIVE_SKILL_DEFINITIONS.rejuvenation.maxTriggersPerTurn
-          - (source.rejuvenationTriggerCount ?? 0)
-      );
-      const consume = Math.min(triggerWeight, remainingSlots);
-      if (consume <= PROBABILITY_EPSILON) return;
-      source.rejuvenationTriggerCount = (source.rejuvenationTriggerCount ?? 0) + consume;
-      this.gainUnknownCardsWithCounterState(state, source, consume, null, "rejuvenation-draw");
-    }
   }
 };

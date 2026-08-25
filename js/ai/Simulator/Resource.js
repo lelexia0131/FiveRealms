@@ -22,9 +22,11 @@ import {
   clampProbability,
   expectedBranchValue,
   getAvailabilityStateBranches,
+  intersectProbabilityStateBranches,
   mutateProbability,
   probabilityEventPartition,
   queryAnonymousSlotDistribution,
+  expectedAnonymousSlots,
   totalBranchProbability,
   inAttackRange
 } from "../Event/Probability/Probability.js";
@@ -55,6 +57,494 @@ Simulator.js 文件末尾的组合表达式：在模块加载时把卡牌效果�
 只在模块加载时组合一次；搜索节点不得重复创建组件类或改变方法覆盖顺序。
 */
 export const withResource = (Base) => class Resource extends Base {
+  /*
+  功能
+  逐张推进未知资源获得、剩余牌池密度与响应容量。
+
+  调用方
+  Simulator 的摸牌、奖励、救援和技能编排入口。
+
+  输入
+  World、玩家、非负期望张数、可选条件世界与事件标签。
+
+  输出
+  实际获得的期望手牌数量。
+
+  读取状态
+  handCount、remainingCardCounts、block/counter 分布和调用方事件世界。
+
+  写入状态
+  handCount、remainingCardCounts 与 card probability estimates。
+
+  调用函数
+  Probability ADD、事件分区与 SimulatorCore 概率运行时 primitive。
+
+  边界与不变量
+  每张未知牌按更新后的剩余池密度推进；block 与 counter 共享同一抽牌身份世界，
+  未知身份不会在物理获得阶段展开为 definitionId。
+  */
+  gainUnknownCardsWithCounterState(state, player, amount, eventWorlds = null, label = "unknown-draw") {
+    if (!player) return 0;
+    if (typeof amount !== "function" && amount <= PROBABILITY_EPSILON) return 0;
+    const worlds = Array.isArray(eventWorlds) && eventWorlds.length
+      ? eventWorlds
+      : this.getEventWorlds(state, 1, null, label);
+    const eventMass = this.eventProbability(worlds);
+    if (eventMass <= PROBABILITY_EPSILON) return 0;
+    if (typeof amount === "function") {
+      const remainingByBranch = worlds.map((branch) => (
+        branch.occurs ? Math.max(0, Number(amount(branch)) || 0) : 0
+      ));
+      let gained = 0;
+      while (remainingByBranch.some((remaining) => remaining > PROBABILITY_EPSILON)) {
+        this.checkpointSearchWork();
+        const cardWorlds = [];
+        for (let index = 0; index < worlds.length; index += 1) {
+          if (index % 32 === 0) this.checkpointSearchWork();
+          const branch = worlds[index];
+          const remaining = remainingByBranch[index];
+          if (remaining <= PROBABILITY_EPSILON) {
+            cardWorlds.push({ ...branch, occurs:false });
+            continue;
+          }
+          const cardProbability = Math.min(1, remaining);
+          if (cardProbability >= 1 - PROBABILITY_EPSILON) {
+            cardWorlds.push({ ...branch, occurs:true });
+          } else {
+            const gate = probabilityEventPartition(
+              this.currentProbabilityEventKey(state, `${label}:branch-card`),
+              cardProbability,
+              "gateOccurs"
+            );
+            const gatedWorlds = this.rawProbabilityWork(
+              "ResourceSimulation.gainUnknownCardsWithCounterState:single-branch-gate",
+              3,
+              () => intersectProbabilityStateBranches([branch], gate)
+            );
+            for (const gated of gatedWorlds) {
+              cardWorlds.push({ ...gated, occurs:Boolean(gated.gateOccurs) });
+            }
+          }
+        }
+        const cardGain = this.eventProbability(cardWorlds);
+        if (cardGain <= PROBABILITY_EPSILON) break;
+        player.handCount = (player.handCount ?? 0) + cardGain;
+        mutateProbability(state.probabilityState, {
+          type:"ADD",
+          targetBucketId:player.id,
+          probability:cardGain
+        });
+        gained += cardGain;
+        for (let index = 0; index < remainingByBranch.length; index += 1) {
+          remainingByBranch[index] -= Math.min(1, remainingByBranch[index]);
+        }
+      }
+      return gained;
+    }
+    let remaining = Math.max(0, Number(amount) || 0);
+    let gained = 0;
+    while (remaining > PROBABILITY_EPSILON) {
+      this.checkpointSearchWork();
+      const cardProbability = Math.min(1, remaining);
+      const gateChance = Math.min(1, cardProbability / eventMass);
+      const cardWorlds = gateChance >= 1 - PROBABILITY_EPSILON
+        ? worlds
+        : this.gateEventWorlds(state, worlds, gateChance, `${label}:card`);
+      const cardGain = this.eventProbability(cardWorlds);
+      if (cardGain <= PROBABILITY_EPSILON) break;
+      player.handCount = (player.handCount ?? 0) + cardGain;
+      mutateProbability(state.probabilityState, {
+        type:"ADD",
+        targetBucketId:player.id,
+        probability:cardGain
+      });
+      gained += cardGain;
+      remaining -= cardProbability;
+    }
+    return gained;
+  }
+
+  /*
+  功能
+  将已解析格挡世界映射到可用已知身份并消费每张牌至多一次。
+
+  调用方
+  consumeBlockPayment：执行 Response 返回的格挡支付请求。
+
+  输入
+  World、玩家、含 requiredCount/blockUsed 的格挡世界与可选排除 ID。
+
+  输出
+  无返回值；相交世界中的已知格挡身份已消费。
+
+  读取状态
+  hand/knownCards availability 与 blockWorlds。
+
+  写入状态
+  卡牌 availability，并在质量归零时移出身份数组。
+
+  调用函数
+  getAvailabilityStateBranches 与 SimulatorCore 概率运行时 primitive。
+
+  边界与不变量
+  每个世界按稳定身份顺序消费所需张数；排除的雷达判定牌由本次支付单独处理。
+  */
+  consumeBlockIdentities(state, player, blockWorlds, excludedCardIds = null) {
+    if (!player || !Array.isArray(blockWorlds) || !blockWorlds.length) return;
+    const candidates = [
+      ...(Array.isArray(player.hand) ? player.hand.filter((card) => card.definitionId === "block") : []),
+      ...(Array.isArray(player.knownCards) ? player.knownCards.filter((entry) => entry.definitionId === "block") : [])
+    ].filter((card) => !excludedCardIds?.has(card.id ?? card.cardId));
+    if (!candidates.length) return;
+    let remainingWorlds = this.projectProbabilityWork(
+      blockWorlds,
+      (branch) => ({
+        remaining:branch.blockUsed
+          ? Math.max(0, Number(branch.requiredCount) || 1)
+          : 0
+      }),
+      "ResourceSimulation.consumeBlockIdentities:remaining"
+    );
+    for (const card of candidates) {
+      this.checkpointSearchWork();
+      const availabilityState = getAvailabilityStateBranches(card, 1).map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        available:Boolean(branch.available)
+      }));
+      const joined = this.intersectProbabilityWork(
+        [remainingWorlds, availabilityState],
+        "ResourceSimulation.consumeBlockIdentities:join"
+      );
+      if (!joined.length) break;
+      const usedWorlds = this.projectProbabilityWork(
+        joined,
+        (branch) => ({
+          used:Boolean(branch.available && branch.remaining > 0),
+          remaining:Math.max(0, Number(branch.remaining)
+            - (branch.available && branch.remaining > 0 ? 1 : 0))
+        }),
+        "ResourceSimulation.consumeBlockIdentities:used"
+      );
+      const remainingState = this.projectProbabilityWork(
+        joined,
+        (branch) => ({
+          available:Boolean(branch.available && !(branch.available && branch.remaining > 0))
+        }),
+        "ResourceSimulation.consumeBlockIdentities:card-remaining"
+      );
+      card.availability = totalBranchProbability(
+        remainingState.filter((branch) => branch.available)
+      );
+      if (card.availability <= PROBABILITY_EPSILON) {
+        if (Array.isArray(player.hand)) player.hand = player.hand.filter((entry) => entry !== card);
+        if (Array.isArray(player.knownCards)) player.knownCards = player.knownCards.filter((entry) => entry !== card);
+      }
+      remainingWorlds = usedWorlds.map((branch) => ({
+        probability:branch.probability,
+        conditions:branch.conditions,
+        remaining:branch.remaining
+      }));
+      if (!remainingWorlds.some((branch) => branch.remaining > 0 && branch.probability > PROBABILITY_EPSILON)) break;
+    }
+  }
+
+  /*
+  功能
+  执行 Response 已解析的单次格挡支付，统一扣除身份、匿名容量和 handCount。
+
+  调用方
+  Simulator.consumeBlockResponseWorlds：在响应结果确定后恰好调用一次。
+
+  输入
+  World、支付玩家与 Response 返回的局部 payment request。
+
+  输出
+  实际期望格挡支付量。
+
+  读取状态
+  支付请求中的条件世界、判定牌引用及玩家当前已知格挡身份。
+
+  写入状态
+  格挡 identity availability、hand/knownCards、handCount 与匿名 block factor。
+
+  调用函数
+  consumeBlockIdentities、getAvailabilityStateBranches、mutateProbability 与概率运行时 primitive。
+
+  边界与不变量
+  只执行传入请求，不重新决定是否格挡；判定牌和判定前身份使用同一条件世界，
+  同一 payment request 只能由 Simulator 编排一次。
+  */
+  consumeBlockPayment(state, target, payment) {
+    if (!target || !payment) return 0;
+    const {
+      identityWorlds,
+      judgmentBlockCards = [],
+      preJudgmentPartition = null,
+      joined = [],
+      expectedBlockSpend = 0
+    } = payment;
+    const excludedCardIds = judgmentBlockCards.length
+      ? new Set(judgmentBlockCards.map((card) => card.id ?? card.cardId))
+      : null;
+    const knownBlockCards = [
+      ...(Array.isArray(target.hand) ? target.hand : []),
+      ...(Array.isArray(target.knownCards) ? target.knownCards : [])
+    ].filter((card) => card?.definitionId === "block" && !excludedCardIds?.has(card.id ?? card.cardId));
+    const knownBefore = knownBlockCards.reduce((sum, card) => sum + this.cardAvailability(card), 0);
+    this.consumeBlockIdentities(state, target, identityWorlds, excludedCardIds);
+    const knownAfter = knownBlockCards.reduce((sum, card) => sum + this.cardAvailability(card), 0);
+    this.checkpointSearchWork();
+    if (judgmentBlockCards.length && preJudgmentPartition) {
+      let joinedJudgments = joined;
+      for (let index = 0; index < judgmentBlockCards.length; index += 1) {
+        this.checkpointSearchWork();
+        const availabilityField = `judgmentBlockAvailable${index}`;
+        const availability = getAvailabilityStateBranches(
+          judgmentBlockCards[index],
+          1
+        ).map((branch) => ({
+          probability:branch.probability,
+          conditions:branch.conditions,
+          [availabilityField]:Boolean(branch.available)
+        }));
+        joinedJudgments = this.intersectProbabilityWork([joinedJudgments, availability]);
+      }
+      for (let index = 0; index < judgmentBlockCards.length; index += 1) {
+        this.checkpointSearchWork();
+        const judgmentBlockCard = judgmentBlockCards[index];
+        const availabilityField = `judgmentBlockAvailable${index}`;
+        const judgmentConsumedWorlds = this.projectProbabilityWork(
+          joinedJudgments,
+          (branch) => {
+            let earlierAvailable = 0;
+            for (let prior = 0; prior < index; prior += 1) {
+              if (branch[`judgmentBlockAvailable${prior}`]) earlierAvailable += 1;
+            }
+            const neededFromJudgments = Math.max(0, branch.requiredCount - branch.preBlockCount);
+            return {
+              available:Boolean(branch[availabilityField]
+                && !(branch.blockUsed && earlierAvailable < neededFromJudgments))
+            };
+          }
+        );
+        judgmentBlockCard.availability = totalBranchProbability(
+          judgmentConsumedWorlds.filter((branch) => branch.available)
+        );
+        if (judgmentBlockCard.availability <= PROBABILITY_EPSILON) {
+          if (Array.isArray(target.hand)) target.hand = target.hand.filter((card) => card !== judgmentBlockCard);
+          if (Array.isArray(target.knownCards)) target.knownCards = target.knownCards.filter((entry) => entry !== judgmentBlockCard);
+        }
+      }
+    }
+    target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
+    const anonymousSpend = Math.max(0, expectedBlockSpend - (knownBefore - knownAfter));
+    const wholeAnonymousSpend = Math.floor(anonymousSpend);
+    if (wholeAnonymousSpend > 0) mutateProbability(state.probabilityState, {
+      type:"REMOVE",
+      sourceBucketId:target.id,
+      definitionId:"block",
+      count:wholeAnonymousSpend
+    });
+    if (anonymousSpend - wholeAnonymousSpend > PROBABILITY_EPSILON) {
+      mutateProbability(state.probabilityState, {
+        type:"REMOVE",
+        sourceBucketId:target.id,
+        definitionId:"block",
+        probability:anonymousSpend - wholeAnonymousSpend
+      });
+    }
+    return expectedBlockSpend;
+  }
+
+  /*
+  功能
+  执行 Response 已解析的单次 Counter 支付，扣除选中身份或匿名容量。
+
+  调用方
+  Simulator.consumeTargetCounterResponseWorlds：目标或 card-scope 响应结果确定后调用一次。
+
+  输入
+  World、响应者与包含候选、选择分区和 attempted probability 的 payment request。
+
+  输出
+  实际期望 Counter 支付量。
+
+  读取状态
+  请求中已解析的 identity 选择及响应者当前 availability。
+
+  写入状态
+  Counter identity availability、hand/knownCards、handCount 与匿名 counter factor。
+
+  调用函数
+  cardAvailability、totalBranchProbability 与 mutateProbability。
+
+  边界与不变量
+  不重新运行响应顺序或 willingness；已知与匿名身份互斥，单次请求最多消费一张 Counter。
+  */
+  consumeCounterPayment(state, target, payment) {
+    if (!target || !payment) return 0;
+    const { candidates = [], selectionPartition = [], attemptedProbability = 0 } = payment;
+    const knownBefore = candidates.reduce(
+      (sum, candidate) => sum + this.cardAvailability(candidate.card), 0
+    );
+    for (let index = 0; index < candidates.length; index += 1) {
+      this.checkpointSearchWork();
+      const candidate = candidates[index];
+      const selectedProbability = totalBranchProbability(
+        selectionPartition.filter((branch) => branch.selectedIndex === index)
+      );
+      candidate.card.availability = Math.max(
+        0,
+        this.cardAvailability(candidate.card) - selectedProbability
+      );
+      if (candidate.card.availability <= PROBABILITY_EPSILON) {
+        if (Array.isArray(target.hand)) target.hand = target.hand.filter((card) => card !== candidate.card);
+        if (Array.isArray(target.knownCards)) target.knownCards = target.knownCards.filter((entry) => entry !== candidate.card);
+      }
+    }
+    const knownAfter = candidates.reduce(
+      (sum, candidate) => sum + this.cardAvailability(candidate.card), 0
+    );
+    const anonymousSpend = Math.max(0, attemptedProbability - (knownBefore - knownAfter));
+    if (anonymousSpend > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
+      type:"REMOVE",
+      sourceBucketId:target.id,
+      definitionId:"counter",
+      probability:anonymousSpend
+    });
+    target.handCount = Math.max(0, (target.handCount ?? 0) - attemptedProbability);
+    return attemptedProbability;
+  }
+
+  /*
+  功能
+  执行已解析的指定 definition 支付，统一扣除已知身份、匿名容量与 handCount。
+
+  调用方
+  Simulator.resolveFatal 的 Recover 救援支付。
+
+  输入
+  World、支付玩家、definitionId 与非负期望支付量。
+
+  输出
+  实际请求的期望支付量。
+
+  读取状态
+  当前已知身份 availability 与同 definition 匿名 probability factor。
+
+  写入状态
+  已知 identity、匿名 factor 和 handCount。
+
+  调用函数
+  consumeKnownCardsFromHand、cardAvailability、mutateProbability。
+
+  边界与不变量
+  只执行调用方已解析的 payment，不决定救援意愿；已知与匿名消费之和等于请求量。
+  */
+  consumeKnownDefinitionPayment(state, player, definitionId, amount) {
+    const spend = Math.max(0, Number(amount) || 0);
+    if (!player || spend <= PROBABILITY_EPSILON) return 0;
+    const knownBefore = (Array.isArray(player.hand) ? player.hand : [])
+      .filter((entry) => entry.definitionId === definitionId)
+      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+    this.consumeKnownCardsFromHand(state, player, definitionId, spend);
+    const knownAfter = (Array.isArray(player.hand) ? player.hand : [])
+      .filter((entry) => entry.definitionId === definitionId)
+      .reduce((sum, entry) => sum + this.cardAvailability(entry), 0);
+    const anonymousSpent = Math.max(0, spend - (knownBefore - knownAfter));
+    if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
+      type:"REMOVE",
+      sourceBucketId:player.id,
+      definitionId,
+      probability:anonymousSpent
+    });
+    player.handCount = Math.max(0, (player.handCount ?? 0) - spend);
+    return spend;
+  }
+
+  /*
+  功能
+  清空阵亡玩家的全部模拟手牌、匿名容量与装备资源。
+
+  调用方
+  Simulator.resolveFatal 的确定死亡分支。
+
+  输入
+  World 与待清理玩家。
+
+  输出
+  无返回值；玩家资源区已清空。
+
+  读取状态
+  ProbabilityState 中该玩家的 anonymous slots 与当前装备。
+
+  写入状态
+  handCount、hand/knownCards、anonymous factors 与 equipment。
+
+  调用函数
+  expectedAnonymousSlots、mutateProbability、setSimulatedEquipment。
+
+  边界与不变量
+  不修改 HP、alive 或状态效果；只执行 Simulator 已决定的死亡资源清理一次。
+  */
+  clearSimulatedPlayerResources(state, player) {
+    if (!player) return;
+    player.handCount = 0;
+    player.hand = [];
+    player.knownCards = [];
+    const anonymousSlots = expectedAnonymousSlots(state.probabilityState, player.id);
+    const wholeSlots = Math.floor(anonymousSlots);
+    if (wholeSlots > 0) mutateProbability(state.probabilityState, {
+      type:"REMOVE",
+      sourceBucketId:player.id,
+      count:wholeSlots
+    });
+    if (anonymousSlots - wholeSlots > PROBABILITY_EPSILON) mutateProbability(
+      state.probabilityState,
+      {
+        type:"REMOVE",
+        sourceBucketId:player.id,
+        probability:anonymousSlots - wholeSlots
+      }
+    );
+    this.setSimulatedEquipment(player, null, 0);
+  }
+
+  /*
+  功能
+  将无身份摘要手牌截断到已解析上限。
+
+  调用方
+  Simulator.applyMandatoryDiscard 的无 hand identity 兼容路径。
+
+  输入
+  玩家与非负 handCount 上限。
+
+  输出
+  截断后的 handCount。
+
+  读取状态
+  玩家当前 handCount。
+
+  写入状态
+  仅 handCount。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只用于不存在 identity 数组的摘要夹具；不得创建或推测 definitionId。
+  */
+  limitSimulatedHandCount(player, limit) {
+    if (!player) return 0;
+    player.handCount = Math.min(
+      Math.max(0, Number(player.handCount) || 0),
+      Math.max(0, Number(limit) || 0)
+    );
+    return player.handCount;
+  }
+
   /*
   功能
   在概率世界中写入玩家当前模拟装备，并同步价值、角色差量与保留概率。
@@ -120,41 +610,6 @@ export const withResource = (Base) => class Resource extends Base {
     if (!player?.equipmentDefinitionId || (definitionId && player.equipmentDefinitionId !== definitionId)) return 0;
     return Math.max(0, Math.min(1, Number(player.equipmentRetentionProbability ?? 1) || 0));
   }
-
-  /*
-功能
-读取一张抽象牌当前剩余可用概率。
-
-  调用方
-  Simulation、CardValue 与资源选择：读取一张已过滤卡牌仍可消费的概率。
-
-输入
-带当前 availability 标量或确定可用身份的卡牌摘要。
-
-输出
-卡牌当前可用概率；缺失标量时为一。
-
-  读取状态
-  只读卡牌 availability 状态。
-
-  写入状态
-  无。
-
-调用函数
-clampProbability。
-
-边界与不变量
-只读当前值，不创建或保存 availability branch hierarchy。
-  */
-  cardAvailability(card) {
-    return clampProbability(card?.availability ?? 1);
-  }
-
-
-
-
-
-
 
   /*
   功能
@@ -1000,6 +1455,47 @@ clampProbability。
       totalSpent += spend;
     }
     return totalSpent;
+  }
+
+  /*
+  功能
+  执行 Response 已解析的单次 Guardian 手牌支付。
+
+  调用方
+  Simulator.simulateGuardianAid：每个接受响应恰好调用一次。
+
+  输入
+  World、Guardian 与包含支付类型、数量和可选已选 card ID 的 payment request。
+
+  输出
+  实际消费的期望手牌数量。
+
+  读取状态
+  Guardian 当前 hand/handCount 与已解析 selectedCardId；匿名支付不读取隐藏 definitionId。
+
+  写入状态
+  Guardian hand/knownCards、handCount 及对应概率容量。
+
+  调用函数
+  consumeChosenHandCard 或 consumeRandomHandCards。
+
+  边界与不变量
+  不决定 Guardian 意愿或选择替代身份；缺失/陈旧 selectedCardId 时保持既有零消费语义。
+  */
+  consumeGuardianAidPayment(state, guardian, payment) {
+    if (!guardian || !payment || payment.amount <= PROBABILITY_EPSILON) return 0;
+    if (payment.kind === "chosen-card") {
+      return this.consumeChosenHandCard(state, guardian, payment.amount, {
+        selectedCardId:payment.selectedCardId,
+        result:payment.result ?? null
+      });
+    }
+    if (payment.kind === "random-card") {
+      return this.consumeRandomHandCards(state, guardian, payment.amount, {
+        result:payment.result ?? null
+      });
+    }
+    return 0;
   }
 
   /*
@@ -1884,94 +2380,4 @@ clampProbability。
     return consumed;
   }
 
-  /*
-  功能
-  在搜索世界的 end 动作后投影真实弃牌阶段的手牌上限结算。
-
-  调用方
-  apply 的 end 分支。
-
-  输入
-  独立 World 与行动者。
-
-  输出
-  无；行动者总手牌数量按生命上限压缩，并同步已知身份、匿名容量与概率摘要。
-
-  读取状态
-  行动者 hand/handCount、生命、匿名容量与公开装备上下文。
-
-  写入状态
-  手牌 availability、hand/handCount、匿名容量与突袭/格挡/反制/调息摘要。
-
-  调用函数
-  hasCompleteCertainHand、cardAvailability、consumeUnknownResourceCard、
-  consumeChosenHandCard、syncCardEstimates。
-
-  边界与不变量
-  总手牌数以 handCount 为准，不得用 hand.length 掩盖匿名容量；完整确定手牌先请求 Evaluator resolved IDs，
-  混合状态先消费匿名容量，再对剩余已知身份请求同一 resolved capability；不虚构 definitionId，
-  行动者未存活或手牌不超上限时为空操作。
-  */
-  applyMandatoryDiscard(state, actor) {
-    if (!actor?.alive) return;
-    const rawHandCount = Number(actor.handCount);
-    const handSize = Number.isFinite(rawHandCount)
-      ? Math.max(0, rawHandCount)
-      : (Array.isArray(actor.hand) ? actor.hand.length : 0);
-    const hp = Math.max(0, Number(actor.hp) || 0);
-    let remaining = Math.max(0, handSize - hp);
-    if (remaining <= PROBABILITY_EPSILON) return;
-    if (!Array.isArray(actor.hand)) {
-      // 无身份信息的摘要状态（测试夹具）无法按保留价值选牌，只投影数量上限。
-      actor.handCount = Math.min(handSize, hp);
-      return;
-    }
-    if (this.hasCompleteCertainHand(actor)) {
-      const selected = this.resolveDiscardCandidates(
-        actor,
-        actor.hand,
-        remaining,
-        this.buildDiscardKeepValueContext(state, actor)
-      );
-      this.consumeChosenHandCard(state, actor, remaining, {
-        label:"end-hand-limit-discard",
-        selectedCardIds:selected.map((card) => card.id ?? card.cardId).filter(Boolean)
-      });
-      return;
-    }
-    // 混合状态中的匿名容量没有可排序身份，先在匿名聚合内消费；
-    // 余量只落在已知身份上，再复用正式保留价值选择，避免给匿名牌虚构 definitionId。
-    while (remaining > PROBABILITY_EPSILON) {
-      const explicitExpected = [
-        ...(Array.isArray(actor.hand) ? actor.hand : []),
-        ...(Array.isArray(actor.knownCards) ? actor.knownCards : [])
-      ].reduce((sum, card) => sum + this.cardAvailability(card), 0);
-      const anonymousCapacity = Math.max(
-        0,
-        Math.max(0, Number(actor.handCount) || 0) - explicitExpected
-      );
-      if (anonymousCapacity <= PROBABILITY_EPSILON) break;
-      const removed = this.consumeUnknownResourceCard(
-        state,
-        actor,
-        Math.min(1, remaining, anonymousCapacity),
-        anonymousCapacity
-      );
-      if (removed <= PROBABILITY_EPSILON) break;
-      remaining = Math.max(0, Math.max(0, Number(actor.handCount) || 0) - hp);
-    }
-    remaining = Math.max(0, Math.max(0, Number(actor.handCount) || 0) - hp);
-    if (remaining > PROBABILITY_EPSILON) {
-      const selected = this.resolveDiscardCandidates(
-        actor,
-        actor.hand,
-        remaining,
-        this.buildDiscardKeepValueContext(state, actor)
-      );
-      this.consumeChosenHandCard(state, actor, remaining, {
-        label:"end-hand-limit-discard",
-        selectedCardIds:selected.map((card) => card.id ?? card.cardId).filter(Boolean)
-      });
-    }
-  }
 }
