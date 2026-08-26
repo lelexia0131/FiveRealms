@@ -390,7 +390,7 @@ class SimulatorCore {
     if (options.checkpoint !== false) this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
     const cloned = cloneWorld(state);
-    this.initializeMomentumBranches(cloned);
+    this.initializeMomentumState(cloned);
     this.syncActiveSkillCosts(cloned);
     return cloned;
   }
@@ -3069,30 +3069,31 @@ const withSkillTransition = (Base) => class SkillTransition extends Base {
 const withStatusTransition = (Base) => class StatusTransition extends Base {
   /*
   功能
-  为刀客补齐势能与本回合卡牌类别使用的概率分支，并同步确定摘要。
+  初始化刀客 canonical 势能与本回合卡牌类别使用状态。
 
   调用方
-  Simulator 构造/clone 与 simulateCategoryUse：补齐刀客概率状态。
+  Simulator clone 与 simulateCategoryUse：规范刀客势能状态。
 
   输入
   独立 World。
 
   输出
-  无返回值；刀客的势能和类别使用分支已存在并同步。
+  无返回值；刀客的 canonical 势能与类别使用状态已同步。
 
   读取状态
-  玩家 characterId、momentum、categoriesUsed 及已有概率分支。
+  玩家 characterId、momentum、categoryUsedProbabilities 与 categoriesUsed。
 
   写入状态
-  momentumBranches、categoryUsedStateBranchesByCategory 及摘要字段。
+  momentum、categoryUsedProbabilities 与 categoriesUsed。
 
   调用函数
   syncMomentumSummary、syncCategoryUsedSummary。
 
   边界与不变量
-  已有正式分支只规范不重采样；非刀客不获得额外势能状态。
+  当前事件所需的势能/类别分支只在调用栈内临时构造，不写回 World；
+  非刀客不获得额外势能状态。
   */
-  initializeMomentumBranches(state) {
+  initializeMomentumState(state) {
     for (const player of state?.players ?? []) {
       if (!hasPassiveSkill(player, "momentum")) continue;
       this.syncMomentumSummary(player);
@@ -3110,28 +3111,28 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   /*
   功能
-  规范势能数量分支并把其期望值同步到玩家势能摘要。
+  规范 canonical 势能，并为当前计算返回临时的确定势能分支。
 
   调用方
-  Damage 与本模块势能推进：读取规范化刀客势能世界。
+  Damage 与本模块势能推进：读取当前刀客势能。
 
   输入
-  包含势能确定值或 momentumBranches 的玩家摘要。
+  包含 canonical momentum 的玩家摘要。
 
   输出
   规范化后的 amount 概率分支数组。
 
   读取状态
-  player.momentumBranches 与 momentum。
+  player.momentum。
 
   写入状态
-  momentumBranches 与期望 momentum。
+  player.momentum。
 
   调用函数
-  mergeProbabilityStateBranches、expectedBranchValue。
+  无。
 
   边界与不变量
-  势能量不得为负；摘要必须由完整分支投影，不能另行累加。
+  势能量不得为负；返回分支只服务当前计算调用栈，不得持久化到 World。
   */
   syncMomentumSummary(player) {
     player.momentum = Math.max(
@@ -3143,10 +3144,10 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   /*
   功能
-  合并指定卡牌类别的已用分支，并同步概率与确定类别列表。
+  规范指定卡牌类别的存在概率，并为当前计算返回临时 used 分支。
 
   调用方
-  initializeMomentumBranches 与 simulateCategoryUse：同步一种卡牌类别的本回合使用状态。
+  initializeMomentumState 与 simulateCategoryUse：同步一种卡牌类别的本回合使用状态。
 
   输入
   玩家摘要与卡牌 category。
@@ -3155,16 +3156,16 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   规范化后的 used 概率分支数组。
 
   读取状态
-  类别分支、类别概率与确定 categoriesUsed。
+  categoryUsedProbabilities 与 categoriesUsed。
 
   写入状态
-  categoryUsedStateBranchesByCategory、categoryUsedProbabilities 与 categoriesUsed。
+  categoryUsedProbabilities 与 categoriesUsed。
 
   调用函数
-  mergeProbabilityStateBranches、totalBranchProbability。
+  无。
 
   边界与不变量
-  只有概率一的类别才进入确定列表；不同类别的条件身份不得互相覆盖。
+  只有概率一的类别才进入确定列表；返回分支只服务当前计算调用栈。
   */
   syncCategoryUsedSummary(player, category) {
     const probability = clampProbability(
@@ -3199,23 +3200,25 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   World、行动者、卡牌类别、使用世界与可选生命伤害世界。
 
   输出
-  无返回值；类别使用和势能分支已推进。
+  返回首次使用该类别的概率；canonical 类别使用与势能状态已推进。
 
   读取状态
-  刀客身份、当前类别/势能分支与本次使用/伤害条件。
+  刀客身份、momentum、categoryUsedProbabilities、categoriesUsed 与本次使用/伤害条件。
 
   写入状态
-  类别已用分支、类别概率、categoriesUsed、momentumBranches 与 momentum。
+  momentum、categoryUsedProbabilities 与 categoriesUsed。
 
   调用函数
-  initializeMomentumBranches、getEventWorlds、intersectProbabilityStateBranches、syncMomentumSummary、syncCategoryUsedSummary。
+  initializeMomentumState、getEventWorlds、intersectProbabilityWork、projectProbabilityWork、
+  expectedBranchValue、totalBranchProbability、syncMomentumSummary、syncCategoryUsedSummary。
 
   边界与不变量
-  同类首次且造成生命伤害才增加势能，重复类别在相交世界清空；条件质量必须守恒。
+  同类首次且造成生命伤害才增加势能，重复类别在相交世界清空；
+  本次事件分支只在当前调用栈内存在，边缘化写回后不得保留 genealogy。
   */
   simulateCategoryUse(state, player, category, useResolution = 1, lifeDamageResolution = null) {
     if (!category || !hasPassiveSkill(player, "momentum")) return 0;
-    this.initializeMomentumBranches({ players: [player] });
+    this.initializeMomentumState({ players: [player] });
     const useWorlds = Array.isArray(useResolution)
       ? this.getEventWorlds(state, 1, useResolution, `momentum-use:${player.id}:${category}`)
       : this.getEventWorlds(state, clampProbability(useResolution), null,
@@ -3378,7 +3381,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   /*
   功能
-  按追猎命中世界写入来源绑定的猎物标记及其概率分支。
+  按追猎命中世界更新来源绑定的猎物标记概率。
 
   调用方
   Damage.simulateAssault：在突袭执行世界写入追猎标记。
@@ -3387,19 +3390,20 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   World、攻击来源、目标与突袭事件世界。
 
   输出
-  无返回值；目标的来源绑定标记分支已推进。
+  无返回值；目标的猎物标记概率与确定摘要已推进。
 
   读取状态
-  目标已有 huntMark 分支和来源 ID。
+  huntMarkProbabilities、huntMarkProbability、huntMarkSourceId、statuses 与本次事件 worlds。
 
   写入状态
-  huntMarkStateBranchesBySource、huntMarkProbabilities、huntMarkProbability、huntMarkSourceId 与 statuses。
+  huntMarkProbabilities、huntMarkProbability、huntMarkSourceId 与 statuses。
 
   调用函数
-  intersectProbabilityStateBranches、projectProbabilityStateBranches、totalBranchProbability。
+  probabilityEventPartition、gateEventWorlds、intersectProbabilityWork、projectProbabilityWork、totalBranchProbability。
 
   边界与不变量
-  不同来源的标记分别记账；确定摘要只能来自概率一世界，未命中世界保持原标记。
+  不同来源的概率分别记账；临时 Probability branches 只存在于当前调用栈，
+  确定摘要只能来自概率一世界，未命中世界保持原标记。
   */
   simulateTracking(state, source, target, eventWorlds) {
     if (!hasPassiveSkill(source, "tracking") || target.battleTeam === source.battleTeam) return;
@@ -3652,7 +3656,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   /*
   功能
-  结算闪电命中目标的伤害与延迟状态移除，并保持状态分支一致。
+  结算闪电命中目标的伤害，并清除其当前状态存在概率。
 
   调用方
   Simulator/Evaluator composition：推进一枚闪电在指定持有者命中的模拟世界。
@@ -3661,16 +3665,16 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   独立 World 与命中目标 ID。
 
   输出
-  无返回值；闪电伤害和状态移除已结算。
+  闪电伤害和状态移除已结算的独立 World。
 
   读取状态
-  目标存活、闪电状态分支与伤害资源。
+  目标存活、lightningStatusProbability、statuses 与伤害资源。
 
   写入状态
-  目标伤害/濒死字段及闪电 statuses/概率分支。
+  目标伤害/濒死字段、lightningStatusProbability 与 statuses。
 
   调用函数
-  applyDamage、Probability 状态投影 辅助函数。
+  clone、applyDamage。
 
   边界与不变量
   只移除当前目标的闪电状态；命中伤害与状态清除顺序保持领域生命周期。
@@ -3679,7 +3683,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
     const next = this.clone(state);
     const target = next.players.find((player) => player.id === targetId);
     if (!target?.alive) return next;
-    // 真实结算在伤害前已消费命中的闪电；分支 after-state 也必须清除此状态，
+    // 真实结算在伤害前已消费命中的闪电；命中 outcome World 也必须清除此状态，
     // 否则后续评估会把已经兑现的风险继续留在场上。
     if (Array.isArray(target.statuses)) {
       target.statuses = target.statuses.filter((statusId) => statusId !== "lightning");
@@ -3705,13 +3709,13 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   无返回值；所有玩家上该来源的追猎标记已清除。
 
   读取状态
-  players 的来源绑定标记分支和摘要。
+  players 的 huntMarkProbabilities、huntMarkProbability、huntMarkSourceId 与 statuses。
 
   写入状态
-  huntMarkStateBranchesBySource、huntMarkProbabilities、huntMarkProbability、huntMarkSourceId 与 statuses。
+  huntMarkProbabilities、huntMarkProbability、huntMarkSourceId 与 statuses。
 
   调用函数
-  projectProbabilityStateBranches、totalBranchProbability。
+  clampProbability。
 
   边界与不变量
   只清除指定来源，不影响其他来源；确定摘要必须由剩余分支重新投影。
@@ -3730,7 +3734,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   /*
   功能
-  把闪电或封印卡牌的条件生效世界合并进目标延迟状态分支。
+  由当前状态存在概率与本次效果事件 worlds 计算闪电或封印的新状态存在概率。
 
   调用方
   Simulator.applyCardEffect：在延迟牌已通过反制门控后写入状态。
@@ -3739,19 +3743,20 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   World、行动者、目标、statusId 与条件生效世界。
 
   输出
-  无返回值；目标延迟状态分支和确定摘要已推进。
+  无返回值；目标状态存在概率与 statuses 已写回。
 
   读取状态
-  目标已有 status 分支与本次 effectEventWorlds。
+  lightningStatusProbability 或 sealedStatusProbability、statuses 与本次 effectEventWorlds。
 
   写入状态
-  对应 status 状态分支、存在概率与 statuses。
+  lightningStatusProbability 或 sealedStatusProbability，以及 statuses。
 
   调用函数
-  intersectProbabilityStateBranches、projectProbabilityStateBranches、totalBranchProbability。
+  statusPresence、intersectProbabilityWork、projectProbabilityWork、totalBranchProbability。
 
   边界与不变量
-  闪电/封印状态只按同一效果世界加入；概率小于一时不得误写为确定状态。
+  当前状态存在概率与本次效果事件 worlds 只在当前调用栈内相交；
+  新概率写回后不保留临时 branches，概率小于一时不得误写为确定状态。
   */
   applyDelayedStatusCard(state, actor, target, statusId, effectEventWorlds) {
     const holder = statusId === "lightning" ? actor : target;

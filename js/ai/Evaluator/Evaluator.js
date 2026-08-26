@@ -404,7 +404,7 @@ strategic、actionValue、defeat risk、survival、opportunity cost 与 expected
 getBaseCardAiValue。
 
 边界与不变量
-planning 可提供 Belief 概率，runtime 可提供更精确事实；共同权重和运算顺序只能在此定义。
+planning 可提供 resource probability，runtime 可提供更精确事实；共同权重和运算顺序只能在此定义。
 */
 function dyingRescueValueTerms({
   responder,
@@ -1553,7 +1553,7 @@ export class Evaluator {
   零到一的排序相关性；只用于 prior。
 
   读取状态
-  使用者合法已知手牌、目标 Belief 资源概率、生命与公开威胁。
+  使用者合法已知手牌、目标 resource probability、生命与公开威胁。
 
   写入状态
   无。

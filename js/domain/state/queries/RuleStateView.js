@@ -12,7 +12,7 @@ domain/rules/** 与 tests。
 只读 state.players 的已明确 Domain 字段；每次访问重新投影，不缓存可变快照。
 
 信息边界
-不暴露 controllerType、aiMemory、portrait、aiProfile、SearchState/VisibleState/BeliefState 或装备概率。
+不暴露 controllerType、aiMemory、portrait、aiProfile、AI Probability/World 或装备概率。
 
 架构约束
 不得依赖 application/adapters/ui/audio/ai/Game runtime；不得复制整个 Player 或 Card entity。

@@ -12,7 +12,7 @@ Evaluator public facade 与直接 primitive 契约测试。
 只读传入的卡牌、角色与可见状态字段；不写任何状态。
 
 信息边界
-只使用公开配置、自己卡牌、合法记忆、过滤后的 known identity 或聚合 Belief counts。
+只使用公开配置、自己卡牌、合法记忆、过滤后的 known identity 或聚合 finite-pool counts。
 
 架构约束
 不得选择最终候选、导入 Evaluator/Simulator 或执行资源 transition；静态值不得直接成为最终 Transition Value。
@@ -397,7 +397,7 @@ Evaluator 的匿名转移候选评估。
 有效剩余池的加权单卡值；缺少有效计数时返回 canonical 固定期望四。
 
 读取状态
-只读聚合 Belief counts 与单卡转移资源值。
+只读聚合 finite-pool counts 与单卡转移资源值。
 
 写入状态
 无。
@@ -587,7 +587,7 @@ export function getResourceDefinitionUtility(purpose, actor, owner, definitionId
 
 /*
 功能
-计算匿名手牌资源在破坏或掠夺中的 Belief 期望价值。
+计算匿名手牌资源在破坏或掠夺中的 Probability 期望价值。
 
 调用方
 Evaluator 的资源候选估值。
@@ -599,7 +599,7 @@ Evaluator 的资源候选估值。
 动态加权期望；无有效计数时返回冻结固定期望。
 
 读取状态
-只读 Belief remaining counts。
+只读 remaining-card counts。
 
 写入状态
 无。
@@ -642,7 +642,7 @@ export function getResourceUnknownUtility(
 Evaluator 的 plunder candidate 估值。
 
 输入
-Belief remaining counts；允许为 null。
+remaining-card counts；允许为 null。
 
 输出
 基础 CardValue 加权期望；无有效计数时返回冻结未知期望。
