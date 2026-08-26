@@ -15343,6 +15343,11 @@ test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 ser
   const importPattern = /^\s*import\s+(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/gm;
   for (const file of files) {
     const source = await readFile(file, "utf8");
+    assert.doesNotMatch(
+      source,
+      /ResponseBoundary|SealPrior|SealValue|GlobalBenefitValue|CandidateMaterializer|\bPlanner\b|GlobalBenefitModel|value\/Evaluator|accepted plan|(?:persistent|持久)[^\n]*(?:momentumBranches|attackUseSlots)|(?:momentumBranches|attackUseSlots)[^\n]*(?:persistent|持久)/,
+      `${file} 保留 stale architecture comment`
+    );
     const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
     assert.doesNotMatch(code, /\b(?:this\.)?game\.aiController\b/, file);
     const dependencies = [];
@@ -15383,6 +15388,64 @@ test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 ser
   };
   for (const file of files) visit(file);
 });
+
+/*
+功能
+验证 AI production 模块只公开仍有生产或测试 caller 的 export。
+
+调用方
+AI 架构测试。
+
+输入
+无。
+
+输出
+无返回值；已内部化或已删除 symbol 再次导出时抛断言。
+
+读取状态
+Controller、Evaluator、StateValue、Probability、Branch 与 Searcher 模块命名导出。
+
+写入状态
+无。
+
+调用函数
+动态 import、Object.hasOwn、assert。
+
+边界与不变量
+只锁定本轮经全仓调用图证明无 caller 的表面；有真实测试/研究工具 caller 的导出继续保留。
+*/
+async function unusedAiExportClosure() {
+  const [controller, evaluator, stateValue, probability, branch, searcher] = await Promise.all([
+    import("../js/ai/Controller.js"),
+    import("../js/ai/Evaluator/Evaluator.js"),
+    import("../js/ai/Evaluator/StateValue.js"),
+    import("../js/ai/Event/Probability/Probability.js"),
+    import("../js/ai/Event/Probability/Branch.js"),
+    import("../js/ai/Searcher/Searcher.js")
+  ]);
+  const removedExports = new Map([
+    [controller, ["createRuntimeComposition"]],
+    [evaluator, [
+      "assessGlobalBenefit", "getBaseCardAiValue", "getEquipmentKeepValueDeduction",
+      "getRoleCardAiValue", "roleCardDelta", "HP_VALUE", "incomingExposure",
+      "statePointsToUtility", "turnOpportunityValue"
+    ]],
+    [stateValue, [
+      "DANGER_VALUE", "energyDeviceFutureUtility", "radarMitigationUtility", "shieldStateValue"
+    ]],
+    [probability, [
+      "binaryConditionPartition", "getAvailabilityBranches", "mergeProbabilityBranches",
+      "mergeProbabilityBranchesCooperatively", "queryCardCategoryProbability"
+    ]],
+    [branch, ["binaryConditionPartition", "mergeProbabilityBranches", "mergeProbabilityBranchesCooperatively"]],
+    [searcher, ["SEARCH_STOP_REASON"]]
+  ]);
+  for (const [module, names] of removedExports) {
+    for (const name of names) assert.equal(Object.hasOwn(module, name), false, name);
+  }
+}
+
+test("AI·架构：unused production exports 已删除或内部化", unusedAiExportClosure);
 
 /*
 功能
@@ -15445,6 +15508,7 @@ async function probabilityArchitectureClosure() {
   assert.doesNotMatch(poolCode, /\b(?:Radar|Lightning|Seal|Simulator|Evaluator|Generator)\b/);
   assert.match(poolCode, /function consumeSequencePool\s*\(/);
   assert.match(poolCode, /export function finitePoolSequence\s*\(/);
+  assert.match(poolCode, /slotCount\s*>\s*maxSlotCount/);
   assert.doesNotMatch(
     facadeCode,
     /\[outcome\]\s*:\s*[^,\n]+-\s*1|world\.total\s*-\s*1/
@@ -15460,7 +15524,7 @@ test("AI·架构：唯一 Searcher 只通过注入能力消费 Simulator/SearchB
   const source = await readFile(projectFile("js/ai/Searcher/Searcher.js"), "utf8");
   const searcherClass = source.slice(
     source.indexOf("export class Searcher"),
-    source.indexOf("export const SEARCH_STOP_REASON")
+    source.indexOf("const SEARCH_STOP_REASON")
   );
   assert.doesNotMatch(searcherClass, /new\s+Simulator\s*\(/);
   assert.doesNotMatch(
@@ -15518,7 +15582,8 @@ async function testSharedRuntimeComposition() {
     "utf8"
   );
   const evaluator = await readFile(projectFile("js/ai/Evaluator/Evaluator.js"), "utf8");
-  assert.match(controller, /export function createRuntimeComposition\(/);
+  assert.match(controller, /function createRuntimeComposition\(/);
+  assert.doesNotMatch(controller, /export function createRuntimeComposition\(/);
   assert.match(controller, /const runtimeComposition = createRuntimeComposition\(/);
   assert.match(controller, /export function createSearchEngine[\s\S]*createRuntimeComposition\(/);
   assert.doesNotMatch(searcher, /export function createRuntimeComposition\(|export function createSearchEngine\(/);
@@ -17642,6 +17707,44 @@ async function runTacticalPatternFixture({
     generatedFromPaths
   };
 }
+
+/*
+功能
+验证 Searcher child scheduling 只消费 Pattern 生成的 canonical proposal object。
+
+调用方
+Pattern focused contract test。
+
+输入
+无。
+
+输出
+无返回值；旧 string semantic-key compatibility 回流时抛断言。
+
+读取状态
+Searcher.scheduleChildActions production source。
+
+写入状态
+无。
+
+调用函数
+readFile、assert。
+
+边界与不变量
+调度仍通过 Pattern.matchesStep 解析真实 canonical Action；不得恢复 legacyGuidedRanks 或 string 类型分支。
+*/
+async function canonicalPatternProposalContract() {
+  const source = await readFile(projectFile("js/ai/Searcher/Searcher.js"), "utf8");
+  const method = source.slice(
+    source.indexOf("scheduleChildActions("),
+    source.indexOf("observeCompletedPatterns(")
+  );
+  assert.match(method, /proposals\.findIndex[\s\S]*patternMatcher\.matchesStep/);
+  assert.doesNotMatch(method, /legacyGuidedRanks|typeof\s+(?:proposal|key)\s*(?:===|!==)\s*["']string["']/);
+  assert.doesNotMatch(method, /兼容 semantic keys/);
+}
+
+test("AI·搜索：child scheduling 只接受 canonical Pattern proposals", canonicalPatternProposalContract);
 
 test("AI·搜索：空测试 Pattern 注入保持 diagnostics 为空且不改 production registry", () => {
   const matcher = new PatternMatcher({ definitions:[] });
@@ -22147,8 +22250,9 @@ test("AI·雷达：canonical Probability 单次判定保持质量、空池、ove
 
 test("AI·雷达：canonical Probability 多次判定逐槽无放回且不保留 genealogy", () => {
   const counts = { block:1, charge:1 };
+  const maxRadarSlots = getRequiredBlockCount("battleDevice", true);
   const snapshot = structuredClone(counts);
-  const sequence = buildRadarJudgmentSequenceProbabilities(counts, 2);
+  const sequence = buildRadarJudgmentSequenceProbabilities(counts, 2, maxRadarSlots);
   assert.deepEqual(sequence, [
     { probability:.5, outcomes:["basic:block", "basic:charge"] },
     { probability:.5, outcomes:["basic:charge", "basic:block"] }
@@ -22158,13 +22262,14 @@ test("AI·雷达：canonical Probability 多次判定逐槽无放回且不保留
     1
   );
   assert.deepEqual(
-    buildRadarJudgmentSequenceProbabilities({}, 2),
+    buildRadarJudgmentSequenceProbabilities({}, 2, maxRadarSlots),
     [{ probability:1, outcomes:["noJudgment", "noJudgment"] }]
   );
   assert.deepEqual(
     buildRadarJudgmentSequenceProbabilities(
       counts,
       2,
+      maxRadarSlots,
       [
         { block:1, otherBasic:0, equipment:0 },
         { block:0, otherBasic:1, equipment:0 }
@@ -22177,6 +22282,7 @@ test("AI·雷达：canonical Probability 多次判定逐槽无放回且不保留
     buildRadarJudgmentSequenceProbabilities(
       { block:1, counter:1 },
       2,
+      maxRadarSlots,
       [forceBlock, null]
     ),
     [{ probability:1, outcomes:["basic:block", "tactic"] }]
@@ -22185,30 +22291,34 @@ test("AI·雷达：canonical Probability 多次判定逐槽无放回且不保留
     buildRadarJudgmentSequenceProbabilities(
       { block:1, counter:1 },
       2,
+      maxRadarSlots,
       null,
       forceBlock
     ),
     [{ probability:1, outcomes:["basic:block", "tactic"] }]
   );
-  assert.deepEqual(
-    buildRadarJudgmentSequenceProbabilities(
+  assert.throws(
+    () => buildRadarJudgmentSequenceProbabilities(
       { block:1, counter:1, energyDevice:1 },
       3,
+      maxRadarSlots,
       [forceBlock, null, null]
     ),
-    [
-      { probability:.5, outcomes:["basic:block", "tactic", "equipment"] },
-      { probability:.5, outcomes:["basic:block", "equipment", "tactic"] }
-    ]
+    /slotCount 3 超过领域上限 2/
   );
   assert.deepEqual(
     buildRadarJudgmentSequenceProbabilities(
       { assault:1 },
       2,
+      maxRadarSlots,
       null,
       { block:0, otherBasic:0, equipment:0 }
     ),
     [{ probability:1, outcomes:["tactic", "tactic"] }]
+  );
+  assert.deepEqual(
+    buildRadarJudgmentSequenceProbabilities(counts, 0, maxRadarSlots),
+    [{ probability:1, outcomes:[] }]
   );
   assert.deepEqual(counts, snapshot);
   assert.equal(sequence.some((branch) => "conditions" in branch || "state" in branch), false);

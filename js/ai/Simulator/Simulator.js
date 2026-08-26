@@ -1579,9 +1579,14 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
         0,
         ...requiredPartition.map((branch) => Math.max(0, Math.floor(Number(branch.requiredCount) || 0)))
       );
+      const maximumAllowedRequirement = Math.max(
+        getRequiredBlockCount(null, true),
+        getRequiredBlockCount("battleDevice", true)
+      );
       const radarOutcomeSequence = this.buildRadarOutcomeSequencePartition(
         state,
         maximumRequirement,
+        maximumAllowedRequirement,
         options.radarJudgmentProbabilities,
         options.radarJudgmentProbabilitiesByRequirement
       );
@@ -3602,7 +3607,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   Damage.applyDamage。
 
   输入
-  World、格挡需求数量、可选统一概率覆盖与可选逐需求概率覆盖。
+  World、格挡需求数量、响应规则给出的领域最大需求数量、可选统一概率覆盖与可选逐需求概率覆盖。
 
   输出
   互斥且概率守恒的 `{ radarOutcomes, waivedBlockSlots }` 条件分支。
@@ -3617,17 +3622,20 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   Probability.buildRadarJudgmentSequenceProbabilities、interpretDefenseJudgment、currentProbabilityEventKey。
 
   边界与不变量
-  outcomes 顺序与真实判定调用顺序一致；每个战术结果只免除一个格挡需求。
+  outcomes 顺序与真实判定调用顺序一致；每个战术结果只免除一个格挡需求；
+  requirementCount 超过 maxRequirementCount 时由 Probability/Pool 明确失败。
   */
   buildRadarOutcomeSequencePartition(
     state,
     requirementCount,
+    maxRequirementCount,
     overrideProbabilities = null,
     overrideProbabilitiesByRequirement = null
   ) {
     const sequence = buildRadarJudgmentSequenceProbabilities(
       queryCurrentCardCounts(state.probabilityState),
       requirementCount,
+      maxRequirementCount,
       overrideProbabilitiesByRequirement,
       overrideProbabilities
     );

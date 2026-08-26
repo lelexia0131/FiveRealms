@@ -153,7 +153,7 @@ export class Generator {
   把已经通过真实规则入口的 root 战术投影为响应反事实直接消费的 canonical Action。
 
   调用方
-  ResponseBoundary 的 dynamic root flip 查询。
+  Controller 真实响应边界的 dynamic root flip 查询。
 
   输入
   当前 World、root 卡牌公开身份、来源 ID、原始目标 ID 与公开选择上下文。

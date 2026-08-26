@@ -773,7 +773,7 @@ const GLOBAL_BENEFIT_CARDS = new Set(
 判断卡牌定义是否属于全体受益模型。
 
 调用方
-GlobalBenefitValue 价值与模拟查询与 assessGlobalBenefitOutcome。
+assessGlobalBenefitOutcome 与本文件全体受益值查询。
 
 输入
 卡牌定义 ID。
@@ -839,7 +839,7 @@ function mutualBenefitSeatOrderIds(players, source) {
 按真实接收顺序从公开剩余定义池构造互利的确定性期望选择结果。
 
 调用方
-GlobalBenefitValue 价值适配器与直接领域测试。
+assessGlobalBenefitOutcome、mutualBenefitDraftValues 与直接领域测试。
 
 输入
 玩家、来源、公开剩余定义计数，以及由调用方注入的角色定义价值查询。
@@ -939,7 +939,7 @@ function directBenefitForPlayer(player, definitionId) {
 从指定阵营视角汇总全体受益牌的盟友、敌方与净受益结构。
 
 调用方
-GlobalBenefitValue 价值适配器与直接领域测试。
+assessGlobalBenefit 与直接领域测试。
 
 输入
 玩家、观察阵营、定义 ID，以及来源、剩余计数和注入定义价值查询。
@@ -1058,7 +1058,7 @@ Simulator 与直接价值测试。
 buildMutualBenefitDraftOutcome、cardValueFor。
 
 边界与不变量
-座次和牌池消耗只由 Domain owner 决定；本函数只提供价值查询并投影结果。
+座次和牌池消耗只由 buildMutualBenefitDraftOutcome 决定；本函数只提供价值查询并投影结果。
 */
 export function mutualBenefitDraftValues(players, source, remainingCounts) {
   const playersById = new Map((players ?? []).map((player) => [player.id, player]));
@@ -1090,7 +1090,7 @@ Evaluator response willingness、Evaluator search prior、Simulation 与 Control
 非全体受益牌为 null，否则返回团队计数与受益摘要。
 
 读取状态
-玩家公开字段、CardValue 与 GlobalBenefitModel 领域结果。
+玩家公开字段、CardValue 与 buildMutualBenefitDraftOutcome 的当前 recipient 结果。
 
 写入状态
 无。
@@ -1099,7 +1099,7 @@ Evaluator response willingness、Evaluator search prior、Simulation 与 Control
 assessGlobalBenefitOutcome、cardValueFor。
 
 边界与不变量
-Domain 拥有 recipient 结构；此处只移除领域细节并保留既有 Value 输出字段。
+buildMutualBenefitDraftOutcome 唯一构造 recipient 结构；此处只投影既有团队 Value 输出字段。
 */
 export function assessGlobalBenefit(
   players,

@@ -297,37 +297,8 @@ mergeProbabilityBranchesWithCheckpoint。
 边界与不变量
 普通调用不启用 cooperative interruption，保持既有合并顺序和概率语义。
 */
-export function mergeProbabilityBranches(branches = []) {
+function mergeProbabilityBranches(branches = []) {
   return mergeProbabilityBranchesWithCheckpoint(branches);
-}
-
-/*
-功能
-在 cooperative checkpoint 保护下合并纯条件概率分支。
-
-调用方
-Probability facade consumer 的单 action 惰性概率查询。
-
-输入
-概率分支数组与返回 false 表示中断的 checkpoint。
-
-输出
-完整合并结果；checkpoint 返回 false 时返回 null，绝不返回部分结果。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-mergeProbabilityBranchesWithCheckpoint、checkpoint。
-
-边界与不变量
-每 32 个输入世界检查一次；正常路径与 mergeProbabilityBranches 完全等价。
-*/
-export function mergeProbabilityBranchesCooperatively(branches = [], checkpoint = null) {
-  return mergeProbabilityBranchesWithCheckpoint(branches, checkpoint);
 }
 
 /*
@@ -954,37 +925,4 @@ export function availableBranchesFromState(branches = []) {
   return mergeProbabilityBranches(branches
     .filter((branch) => branch.available)
     .map(({ probability, conditions }) => ({ probability, conditions })));
-}
-
-/*
-功能
-创建表示公开条件存在与不存在的完整二元匹配分区。
-
-调用方
-Probability facade consumer 条件消费流程。
-
-输入
-条件键、存在概率以及两侧是否匹配当前动作。
-
-输出
-概率为正的二元条件分支。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-clampProbability。
-
-边界与不变量
-分支总质量为一，极端概率只保留有质量的世界。
-*/
-export function binaryConditionPartition(key, presentProbability, presentMatches = true, absentMatches = false) {
-  const probability = clampProbability(presentProbability);
-  return [
-    { probability, conditions:{ [key]:"present" }, matches:presentMatches },
-    { probability:1 - probability, conditions:{ [key]:"absent" }, matches:absentMatches }
-  ].filter((branch) => branch.probability > PROBABILITY_EPSILON);
 }

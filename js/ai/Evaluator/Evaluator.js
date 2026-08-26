@@ -67,18 +67,6 @@ import {
   turnOpportunityValue
 } from "./StateValue.js";
 
-export {
-  assessGlobalBenefit,
-  getBaseCardAiValue,
-  getEquipmentKeepValueDeduction,
-  getRoleCardAiValue,
-  roleCardDelta,
-  HP_VALUE,
-  incomingExposure,
-  statePointsToUtility,
-  turnOpportunityValue
-};
-
 /*
 功能
 按当前可见决策机会计算四类私密信息的敌我目标相关性。
@@ -289,7 +277,7 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
 返回所有响应入口共用且只计一次的反制牌机会成本。
 
 调用方
-Evaluator 响应意愿方法与 GlobalBenefitValue 价值边界。
+Evaluator 的 Counter、延迟状态与全体受益响应意愿方法。
 
 输入
 无。
@@ -3445,7 +3433,7 @@ export class Evaluator {
 把状态与调用层已计算的闪电、封印值转换为唯一团队 State Value。
 
   调用方
-  状态价值运行时适配器与纯边界测试。
+  Evaluator transition/frontier/diagnostic 方法与纯边界测试。
 
   输入
 过滤后的状态、viewer ID，以及按 holder 顺序排列的闪电与可选封印纯数值。
@@ -3853,7 +3841,7 @@ export class Evaluator {
   从 viewer 视角投影一枚闪电整个流转生命周期的预期局面变化。
 
   调用方
-  状态价值适配器、搜索先验、响应策略与正式边界。
+  Evaluator State Value、搜索先验、响应意愿与正式边界。
 
   输入
   基线 World、Simulator 已准备的 outcome set 与 viewer ID。

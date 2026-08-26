@@ -64,7 +64,7 @@ export function statePointsToUtility(points) {
 计算充能桩下一回合有效能量的状态价值。
 
 调用方
-value/Evaluator。
+Evaluator.statePlayerValueTerms。
 
 输入
 显式注入的队伍能量规则能力与可见玩家。
@@ -84,7 +84,7 @@ getMaxEnergy、getTurnEnergyBreakdown。
 边界与不变量
 只比较下一回合有无充能桩两个配对世界；除装备外的角色、队伍和当前能量必须相同。
 */
-export function energyDeviceFutureUtility(rules = {}, player) {
+function energyDeviceFutureUtility(rules = {}, player) {
   if (player?.equipmentDefinitionId !== "energyDevice" || !player?.battleTeam) return 0;
   if (typeof rules.getMaxEnergy !== "function" || typeof rules.getTurnEnergyBreakdown !== "function") return 0;
   const retention = player.equipmentRetentionProbability
@@ -108,7 +108,7 @@ export function energyDeviceFutureUtility(rules = {}, player) {
   return retention * baseValue;
 }
 
-export const DANGER_VALUE = 7;
+const DANGER_VALUE = 7;
 const DEATH_VALUE = 28;
 const SHIELD_RESERVE_WEIGHT = 2;
 const SHIELD_PROTECTION_WEIGHT = 0.5;
@@ -468,7 +468,7 @@ export function equipmentThreatSynergy(player, state) {
 汇总手牌、能量、技能准备和攻击资源，估算被封印跳过出牌阶段的机会价值。
 
 调用方
-SealValue、SealPrior 与 ResponseBoundary。
+sealTeamBurden、Evaluator 搜索先验与直接价值测试。
 
 输入
 过滤后的玩家状态。
@@ -719,7 +719,7 @@ Evaluator 与直接价值查询。
 边界与不变量
 仅 defenseDevice 生效；减免由 Evaluator 与护盾共享，不能重复抵扣同一暴露。
 */
-export function radarMitigationUtility(exposure, player, tacticJudgmentProbability) {
+function radarMitigationUtility(exposure, player, tacticJudgmentProbability) {
   if (player?.equipmentDefinitionId !== "defenseDevice") return 0;
   const retention = player.equipmentRetentionProbability ?? 1;
   return exposure * retention * tacticJudgmentProbability;
@@ -782,7 +782,7 @@ Evaluator 与直接价值查询。
 边界与不变量
 第一点盾保留储备价值，其余价值受可见威胁容量限制；不得再次完整计入伤害避免收益。
 */
-export function shieldStateValue(player, residualExposure) {
+function shieldStateValue(player, residualExposure) {
   const shield = Math.max(0, Number(player.shield) || 0);
   if (!shield || !player?.alive) return 0;
   const reserve = SHIELD_RESERVE_WEIGHT * Math.min(shield, 1);

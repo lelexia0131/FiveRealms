@@ -380,7 +380,7 @@ Evaluator、Simulator。
 边界与不变量
 Controller 是唯一 composition owner；Simulator 只接收 Evaluator 的 boolean/resource capabilities，Evaluator 不保存或反向调用 Simulator。
 */
-export function createRuntimeComposition({
+function createRuntimeComposition({
   world = null,
   getMaxEnergy: getMaxEnergyForPlayer = null,
   getTurnEnergyBreakdown: getTurnEnergyBreakdownForPlayer = null,
@@ -558,7 +558,7 @@ export class Controller {
   仅写控制器组件字段。
 
   调用函数
-  Value owners、Fact、正式 Policy、执行边界与 Generator 构造函数。
+  createRuntimeComposition、Fact、Evaluator、Generator 与真实选择/响应边界方法。
 
   边界与不变量
   装配无事后补丁；闭包只持有窄能力，不保存 Game，也不把 Controller 传给任何子组件。
@@ -1089,7 +1089,7 @@ export class Controller {
   current GameState、Fact、search configuration 与 searchRng。
 
   写入状态
-  lastSearchRequest、lastDecisionDiagnostics、worker/fallback diagnostics、RNG continuation 与 accepted plan。
+  lastSearchRequest、lastDecisionDiagnostics、worker/fallback diagnostics、RNG continuation 与当前 search result。
 
   调用函数
   createInitialWorld、getActionCandidates、createSearchRequest、searchExecutor.search、acceptWorkerSearchOutcome、decisionNow。

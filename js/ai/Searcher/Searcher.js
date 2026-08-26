@@ -836,7 +836,7 @@ export class Searcher {
   materializeChildCandidates。
 
   输入
-  当前合法动作、行动者、生成这些动作的 post-state、按优先级排列的 proposals 或兼容 semantic keys，
+  当前合法动作、行动者、生成这些动作的 post-state、按优先级排列的 canonical Pattern proposals，
   以及当前零基 step index。
 
   输出
@@ -855,27 +855,22 @@ export class Searcher {
   只改变探索顺序，不改变合法集合、Final Utility 或 incumbent 规则；
   guided 与普通同分都不得读取 hand index 或 card instance ID；同 intent 的执行分支必须稳定排序。
   */
-  scheduleChildActions(actions, player, state, guidance = [], stepIndex = 0) {
-    const legacyGuidedRanks = new Map();
-    for (const [index, key] of guidance.entries()) {
-      if (typeof key === "string" && !legacyGuidedRanks.has(key)) {
-        legacyGuidedRanks.set(key, index);
-      }
-    }
+  scheduleChildActions(actions, player, state, proposals = [], stepIndex = 0) {
     return (actions ?? []).map((action) => ({
       action,
       score:this.schedulingScore(action, player, state),
       key:actionIntentKey(action),
-      guidedRank:guidance.findIndex((proposal) => typeof proposal !== "string"
-        && this.patternMatcher.matchesStep(proposal, stepIndex, action, state)),
+      guidedRank:proposals.findIndex((proposal) => (
+        this.patternMatcher.matchesStep(proposal, stepIndex, action, state)
+      )),
       secondaryKey:actionSearchKey(action)
     })).sort((left, right) => {
       const leftRank = left.guidedRank >= 0
         ? left.guidedRank
-        : legacyGuidedRanks.get(left.key) ?? Number.POSITIVE_INFINITY;
+        : Number.POSITIVE_INFINITY;
       const rightRank = right.guidedRank >= 0
         ? right.guidedRank
-        : legacyGuidedRanks.get(right.key) ?? Number.POSITIVE_INFINITY;
+        : Number.POSITIVE_INFINITY;
       if (leftRank !== rightRank) return leftRank < rightRank ? -1 : 1;
       if (left.score !== right.score) return left.score > right.score ? -1 : 1;
       const intentOrder = left.key.localeCompare(right.key);
@@ -2337,7 +2332,7 @@ const DEFAULT_SEARCH_TIME_BUDGET_MS = 900;
 
 // COMPLETE 表示自然完成；TIME/NODE 分别表示时间或完整节点预算耗尽；
 // CANCELLED 表示会话让步检测到取消。停止原因只决定收束方式，不修改候选价值。
-export const SEARCH_STOP_REASON = Object.freeze({
+const SEARCH_STOP_REASON = Object.freeze({
   COMPLETE:"COMPLETE",
   TIME:"TIME",
   NODE:"NODE",

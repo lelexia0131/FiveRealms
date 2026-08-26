@@ -339,7 +339,7 @@ export function projectAttackUsage(player) {
 读取过滤玩家当前确定持有的 canonical Domain status fact。
 
 调用方
-Probability status-presence query、ResponseBoundary 与 SealPrior。
+Probability status-presence query、Controller、Evaluator 与 Generator。
 
 输入
 真实或过滤玩家，以及 Domain status ID。

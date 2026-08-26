@@ -26,8 +26,6 @@ import {
   cardAvailability,
   clampProbability,
   independentUnionProbability,
-  mergeProbabilityBranches,
-  mergeProbabilityBranchesCooperatively,
   totalBranchProbability,
   mergeProbabilityStateBranches,
   mergeProbabilityStateBranchesCooperatively,
@@ -39,8 +37,7 @@ import {
   probabilityEventPartition,
   getAvailabilityBranches,
   getAvailabilityStateBranches,
-  availableBranchesFromState,
-  binaryConditionPartition
+  availableBranchesFromState
 } from "./Branch.js";
 import {
   conditionFinitePool,
@@ -63,8 +60,6 @@ export {
   cardAvailability,
   clampProbability,
   independentUnionProbability,
-  mergeProbabilityBranches,
-  mergeProbabilityBranchesCooperatively,
   totalBranchProbability,
   mergeProbabilityStateBranches,
   mergeProbabilityStateBranchesCooperatively,
@@ -74,18 +69,15 @@ export {
   projectProbabilityStateBranchesCooperatively,
   expectedBranchValue,
   probabilityEventPartition,
-  getAvailabilityBranches,
   getAvailabilityStateBranches,
   availableBranchesFromState,
-  binaryConditionPartition,
   hypergeometricProbabilityAtLeast,
   probabilityFromCurrentCounts,
   currentProbabilitySignature,
   queryCurrentCardCounts,
   expectedAnonymousSlots,
   queryAnonymousSlotDistribution,
-  queryProbability,
-  queryCardCategoryProbability
+  queryProbability
 };
 
 export const PROBABILITY_CLASSIFICATION = Object.freeze({
@@ -412,7 +404,8 @@ function radarOutcomeDistribution(
 Simulator.buildRadarOutcomeSequencePartition 与直接概率测试。
 
 输入
-当前剩余牌计数、非负判定次数、可选逐槽概率覆盖与可选统一概率覆盖。
+当前剩余牌计数、非负判定次数、调用方明确给出的领域最大判定次数、
+可选逐槽概率覆盖与可选统一概率覆盖。
 
 输出
 `{ probability, outcomes }` 数组；outcomes 严格按判定顺序排列。
@@ -427,17 +420,18 @@ Domain CardDefinitions、RulesetDefinition 与传入当前牌池计数。
 Pool.finitePoolSequence、radarOutcomeDistribution。
 
 边界与不变量
-所有槽统一从前一槽剩余容量抽取；per-slot/uniform override 只变换当前分布，不能跳过物理耗用；
+所有槽统一从前一槽剩余容量抽取；requirementCount 不得超过 maxRequirementCount；
+per-slot/uniform override 只变换当前分布，不能跳过物理耗用；
 结果不写回 World 或保留历史 genealogy。
 */
 export function buildRadarJudgmentSequenceProbabilities(
   remainingCardCounts,
   requirementCount,
+  maxRequirementCount,
   overrideProbabilitiesByRequirement = null,
   overrideProbabilities = null
 ) {
   const count = Math.max(0, Math.floor(Number(requirementCount) || 0));
-  if (count <= 0) return [{ probability:1, outcomes:[] }];
   const overrides = Array.isArray(overrideProbabilitiesByRequirement)
     ? overrideProbabilitiesByRequirement
     : null;
@@ -449,6 +443,7 @@ export function buildRadarJudgmentSequenceProbabilities(
   return finitePoolSequence({
     initialCounts:sourceCounts,
     slotCount:count,
+    maxSlotCount:maxRequirementCount,
     classifyOutcome:(definitionId) => {
       const definition = CARD_DEFINITIONS[definitionId];
       if (!definition) return null;
@@ -598,7 +593,7 @@ export function buildLightningHitDistribution(state, holderIds = []) {
 计算公开剩余判定池中 Seal trigger category 的概率。
 
 调用方
-ResponseBoundary、sealOutcomeProbabilities 与 direct probability tests。
+Evaluator、sealOutcomeProbabilities 与 direct probability tests。
 
 输入
 可选当前剩余牌计数。
@@ -673,7 +668,7 @@ function sealCounterProbability(state, holder) {
 汇总 Seal 先 Counter、未 Counter 再 judgment 且最终 clear 的互斥事件概率。
 
 调用方
-SealPrior、SealValue 与 direct probability tests。
+Evaluator、StateValue 与 direct probability tests。
 
 输入
 过滤 World 与 Seal holder。

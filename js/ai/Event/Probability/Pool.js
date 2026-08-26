@@ -227,7 +227,7 @@ export function hypergeometricProbabilityAtLeast(
 从当前确定计数查询下一匿名牌的定义概率。
 
 调用方
-ResponseBoundary 等根状态窄查询。
+Probability facade、Evaluator 与直接概率测试。
 
 输入
 definitionId 到当前实例数的确定 Fact 与目标 definitionId。
@@ -396,7 +396,7 @@ function consumeSequencePool(pool, consumeKey) {
 Probability facade 的 business-facing sequence query。
 
 输入
-初始 identity counts、槽数、identity classifier 与逐槽 distribution callback。
+初始 identity counts、非负整数槽数、调用方明确给出的领域槽数上限、identity classifier 与逐槽 distribution callback。
 
 输出
 只含 probability 与 outcomes 的最终序列分布；内部 pool 已立即投影移除。
@@ -411,19 +411,32 @@ Probability facade 的 business-facing sequence query。
 createSequencePool、distributionForSlot、consumeSequencePool。
 
 边界与不变量
+slotCount 与 maxSlotCount 必须是非负整数且 slotCount 不得超过上限；
 physical outcome 必须提供 consumeKey 并走唯一扣减路径；null consumeKey 表示 synthetic/non-physical；
 不 clone World、不保存历史 genealogy，也不解释任何业务 outcome。
 */
 export function finitePoolSequence({
   initialCounts = {},
   slotCount = 0,
+  maxSlotCount,
   classifyOutcome,
   distributionForSlot
 } = {}) {
   if (typeof classifyOutcome !== "function" || typeof distributionForSlot !== "function") {
     throw new TypeError("finitePoolSequence 缺少 classifier/distribution callback");
   }
-  const count = Math.max(0, Math.floor(Number(slotCount) || 0));
+  if (!Number.isInteger(slotCount) || slotCount < 0) {
+    throw new TypeError("finitePoolSequence slotCount 必须是非负整数");
+  }
+  if (!Number.isInteger(maxSlotCount) || maxSlotCount < 0) {
+    throw new TypeError("finitePoolSequence maxSlotCount 必须是非负整数");
+  }
+  if (slotCount > maxSlotCount) {
+    throw new RangeError(
+      `finitePoolSequence slotCount ${slotCount} 超过领域上限 ${maxSlotCount}`
+    );
+  }
+  const count = slotCount;
   if (count <= 0) return [{ probability:1, outcomes:[] }];
   const initialPool = createSequencePool(initialCounts, classifyOutcome);
   let worlds = [{ probability:1, outcomes:[], pool:initialPool }];
