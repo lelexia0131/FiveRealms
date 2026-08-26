@@ -105,12 +105,12 @@ export const withResource = (Base) => class Resource extends Base {
           const branch = worlds[index];
           const remaining = remainingByBranch[index];
           if (remaining <= PROBABILITY_EPSILON) {
-            cardWorlds.push({ ...branch, occurs:false });
+            cardWorlds.push({ ...branch, occurs: false });
             continue;
           }
           const cardProbability = Math.min(1, remaining);
           if (cardProbability >= 1 - PROBABILITY_EPSILON) {
-            cardWorlds.push({ ...branch, occurs:true });
+            cardWorlds.push({ ...branch, occurs: true });
           } else {
             const gate = probabilityEventPartition(
               this.currentProbabilityEventKey(state, `${label}:branch-card`),
@@ -123,7 +123,7 @@ export const withResource = (Base) => class Resource extends Base {
               () => intersectProbabilityStateBranches([branch], gate)
             );
             for (const gated of gatedWorlds) {
-              cardWorlds.push({ ...gated, occurs:Boolean(gated.gateOccurs) });
+              cardWorlds.push({ ...gated, occurs: Boolean(gated.gateOccurs) });
             }
           }
         }
@@ -131,9 +131,9 @@ export const withResource = (Base) => class Resource extends Base {
         if (cardGain <= PROBABILITY_EPSILON) break;
         player.handCount = (player.handCount ?? 0) + cardGain;
         mutateProbability(state.probabilityState, {
-          type:"ADD",
-          targetBucketId:player.id,
-          probability:cardGain
+          type: "ADD",
+          targetBucketId: player.id,
+          probability: cardGain
         });
         gained += cardGain;
         for (let index = 0; index < remainingByBranch.length; index += 1) {
@@ -155,9 +155,9 @@ export const withResource = (Base) => class Resource extends Base {
       if (cardGain <= PROBABILITY_EPSILON) break;
       player.handCount = (player.handCount ?? 0) + cardGain;
       mutateProbability(state.probabilityState, {
-        type:"ADD",
-        targetBucketId:player.id,
-        probability:cardGain
+        type: "ADD",
+        targetBucketId: player.id,
+        probability: cardGain
       });
       gained += cardGain;
       remaining -= cardProbability;
@@ -200,7 +200,7 @@ export const withResource = (Base) => class Resource extends Base {
     let remainingWorlds = this.projectProbabilityWork(
       blockWorlds,
       (branch) => ({
-        remaining:branch.blockUsed
+        remaining: branch.blockUsed
           ? Math.max(0, Number(branch.requiredCount) || 1)
           : 0
       }),
@@ -209,9 +209,9 @@ export const withResource = (Base) => class Resource extends Base {
     for (const card of candidates) {
       this.checkpointSearchWork();
       const availabilityState = getAvailabilityStateBranches(card, 1).map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        available:Boolean(branch.available)
+        probability: branch.probability,
+        conditions: branch.conditions,
+        available: Boolean(branch.available)
       }));
       const joined = this.intersectProbabilityWork(
         [remainingWorlds, availabilityState],
@@ -221,8 +221,8 @@ export const withResource = (Base) => class Resource extends Base {
       const usedWorlds = this.projectProbabilityWork(
         joined,
         (branch) => ({
-          used:Boolean(branch.available && branch.remaining > 0),
-          remaining:Math.max(0, Number(branch.remaining)
+          used: Boolean(branch.available && branch.remaining > 0),
+          remaining: Math.max(0, Number(branch.remaining)
             - (branch.available && branch.remaining > 0 ? 1 : 0))
         }),
         "ResourceSimulation.consumeBlockIdentities:used"
@@ -230,7 +230,7 @@ export const withResource = (Base) => class Resource extends Base {
       const remainingState = this.projectProbabilityWork(
         joined,
         (branch) => ({
-          available:Boolean(branch.available && !(branch.available && branch.remaining > 0))
+          available: Boolean(branch.available && !(branch.available && branch.remaining > 0))
         }),
         "ResourceSimulation.consumeBlockIdentities:card-remaining"
       );
@@ -242,9 +242,9 @@ export const withResource = (Base) => class Resource extends Base {
         if (Array.isArray(player.knownCards)) player.knownCards = player.knownCards.filter((entry) => entry !== card);
       }
       remainingWorlds = usedWorlds.map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        remaining:branch.remaining
+        probability: branch.probability,
+        conditions: branch.conditions,
+        remaining: branch.remaining
       }));
       if (!remainingWorlds.some((branch) => branch.remaining > 0 && branch.probability > PROBABILITY_EPSILON)) break;
     }
@@ -305,9 +305,9 @@ export const withResource = (Base) => class Resource extends Base {
           judgmentBlockCards[index],
           1
         ).map((branch) => ({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          [availabilityField]:Boolean(branch.available)
+          probability: branch.probability,
+          conditions: branch.conditions,
+          [availabilityField]: Boolean(branch.available)
         }));
         joinedJudgments = this.intersectProbabilityWork([joinedJudgments, availability]);
       }
@@ -324,7 +324,7 @@ export const withResource = (Base) => class Resource extends Base {
             }
             const neededFromJudgments = Math.max(0, branch.requiredCount - branch.preBlockCount);
             return {
-              available:Boolean(branch[availabilityField]
+              available: Boolean(branch[availabilityField]
                 && !(branch.blockUsed && earlierAvailable < neededFromJudgments))
             };
           }
@@ -342,17 +342,17 @@ export const withResource = (Base) => class Resource extends Base {
     const anonymousSpend = Math.max(0, expectedBlockSpend - (knownBefore - knownAfter));
     const wholeAnonymousSpend = Math.floor(anonymousSpend);
     if (wholeAnonymousSpend > 0) mutateProbability(state.probabilityState, {
-      type:"REMOVE",
-      sourceBucketId:target.id,
-      definitionId:"block",
-      count:wholeAnonymousSpend
+      type: "REMOVE",
+      sourceBucketId: target.id,
+      definitionId: "block",
+      count: wholeAnonymousSpend
     });
     if (anonymousSpend - wholeAnonymousSpend > PROBABILITY_EPSILON) {
       mutateProbability(state.probabilityState, {
-        type:"REMOVE",
-        sourceBucketId:target.id,
-        definitionId:"block",
-        probability:anonymousSpend - wholeAnonymousSpend
+        type: "REMOVE",
+        sourceBucketId: target.id,
+        definitionId: "block",
+        probability: anonymousSpend - wholeAnonymousSpend
       });
     }
     return expectedBlockSpend;
@@ -409,10 +409,10 @@ export const withResource = (Base) => class Resource extends Base {
     );
     const anonymousSpend = Math.max(0, attemptedProbability - (knownBefore - knownAfter));
     if (anonymousSpend > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
-      type:"REMOVE",
-      sourceBucketId:target.id,
-      definitionId:"counter",
-      probability:anonymousSpend
+      type: "REMOVE",
+      sourceBucketId: target.id,
+      definitionId: "counter",
+      probability: anonymousSpend
     });
     target.handCount = Math.max(0, (target.handCount ?? 0) - attemptedProbability);
     return attemptedProbability;
@@ -455,10 +455,10 @@ export const withResource = (Base) => class Resource extends Base {
       .reduce((sum, entry) => sum + cardAvailability(entry), 0);
     const anonymousSpent = Math.max(0, spend - (knownBefore - knownAfter));
     if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
-      type:"REMOVE",
-      sourceBucketId:player.id,
+      type: "REMOVE",
+      sourceBucketId: player.id,
       definitionId,
-      probability:anonymousSpent
+      probability: anonymousSpent
     });
     player.handCount = Math.max(0, (player.handCount ?? 0) - spend);
     return spend;
@@ -497,16 +497,16 @@ export const withResource = (Base) => class Resource extends Base {
     const anonymousSlots = expectedAnonymousSlots(state.probabilityState, player.id);
     const wholeSlots = Math.floor(anonymousSlots);
     if (wholeSlots > 0) mutateProbability(state.probabilityState, {
-      type:"REMOVE",
-      sourceBucketId:player.id,
-      count:wholeSlots
+      type: "REMOVE",
+      sourceBucketId: player.id,
+      count: wholeSlots
     });
     if (anonymousSlots - wholeSlots > PROBABILITY_EPSILON) mutateProbability(
       state.probabilityState,
       {
-        type:"REMOVE",
-        sourceBucketId:player.id,
-        probability:anonymousSlots - wholeSlots
+        type: "REMOVE",
+        sourceBucketId: player.id,
+        probability: anonymousSlots - wholeSlots
       }
     );
     this.setSimulatedEquipment(player, null, 0);
@@ -733,7 +733,7 @@ export const withResource = (Base) => class Resource extends Base {
   addSimulatedCardToHand(state, player, cardIdentity, acquisitionWorlds) {
     if (!player || !cardIdentity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
     const acquired = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
-      available:Boolean(branch.occurs)
+      available: Boolean(branch.occurs)
     }), "Simulator.addSimulatedCardToHand:acquired");
     const acquisitionProbability = totalBranchProbability(acquired.filter((branch) => branch.available));
     if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
@@ -742,7 +742,7 @@ export const withResource = (Base) => class Resource extends Base {
     player.hand.push({
       id,
       definitionId: cardIdentity.definitionId,
-      availability:acquisitionProbability
+      availability: acquisitionProbability
     });
     player.handCount = (player.handCount ?? 0) + acquisitionProbability;
     return acquisitionProbability;
@@ -848,7 +848,7 @@ export const withResource = (Base) => class Resource extends Base {
   addSimulatedKnownCard(state, player, identity, acquisitionWorlds) {
     if (!player || !identity?.cardId || !identity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
     const acquired = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
-      available:Boolean(branch.occurs)
+      available: Boolean(branch.occurs)
     }), "Simulator.addSimulatedKnownCard:acquired");
     const acquisitionProbability = totalBranchProbability(acquired.filter((branch) => branch.available));
     if (acquisitionProbability <= PROBABILITY_EPSILON) return 0;
@@ -867,14 +867,14 @@ export const withResource = (Base) => class Resource extends Base {
       );
       const oldProbability = cardAvailability(existing);
       const newState = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
-        newAvailable:Boolean(branch.occurs)
+        newAvailable: Boolean(branch.occurs)
       }), "Simulator.addSimulatedKnownCard:new");
       const merged = this.intersectProbabilityWork(
         [oldState, newState],
         "Simulator.addSimulatedKnownCard:join"
       );
       const mergedState = this.projectProbabilityWork(merged, (branch) => ({
-        available:Boolean(branch.available || branch.newAvailable)
+        available: Boolean(branch.available || branch.newAvailable)
       }), "Simulator.addSimulatedKnownCard:merged");
       existing.availability = totalBranchProbability(
         mergedState.filter((branch) => branch.available)
@@ -887,9 +887,9 @@ export const withResource = (Base) => class Resource extends Base {
     }
     player.knownCards ??= [];
     player.knownCards.push({
-      cardId:identity.cardId,
-      definitionId:identity.definitionId,
-      availability:acquisitionProbability
+      cardId: identity.cardId,
+      definitionId: identity.definitionId,
+      availability: acquisitionProbability
     });
     player.handCount = (player.handCount ?? 0) + acquisitionProbability;
     return acquisitionProbability;
@@ -935,10 +935,10 @@ export const withResource = (Base) => class Resource extends Base {
       "Simulator.transferKnownCardIdentity:join"
     );
     const remainingState = this.projectProbabilityWork(joined, (branch) => ({
-      available:Boolean(branch.available && !branch.occurs)
+      available: Boolean(branch.available && !branch.occurs)
     }), "Simulator.transferKnownCardIdentity:remaining");
     const acquisitionWorlds = this.projectProbabilityWork(joined, (branch) => ({
-      occurs:Boolean(branch.available && branch.occurs)
+      occurs: Boolean(branch.available && branch.occurs)
     }), "Simulator.transferKnownCardIdentity:acquired");
     const transferProbability = this.eventProbability(acquisitionWorlds);
     if (transferProbability <= PROBABILITY_EPSILON) return 0;
@@ -958,8 +958,8 @@ export const withResource = (Base) => class Resource extends Base {
     source.handCount = Math.max(0, (source.handCount ?? 0) - transferProbability);
     if (receiverIsActor) {
       return this.addSimulatedCardToHand(state, receiver, {
-        id:identity.cardId,
-        definitionId:identity.definitionId
+        id: identity.cardId,
+        definitionId: identity.definitionId
       }, acquisitionWorlds);
     }
     return this.addSimulatedKnownCard(state, receiver, identity, acquisitionWorlds);
@@ -999,16 +999,16 @@ export const withResource = (Base) => class Resource extends Base {
     if (transferred <= PROBABILITY_EPSILON) return 0;
     const whole = Math.floor(transferred);
     if (whole > 0) mutateProbability(state.probabilityState, {
-      type:"MOVE",
-      sourceBucketId:source.id,
-      targetBucketId:receiver.id,
-      count:whole
+      type: "MOVE",
+      sourceBucketId: source.id,
+      targetBucketId: receiver.id,
+      count: whole
     });
     if (transferred - whole > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
-      type:"MOVE",
-      sourceBucketId:source.id,
-      targetBucketId:receiver.id,
-      probability:transferred - whole
+      type: "MOVE",
+      sourceBucketId: source.id,
+      targetBucketId: receiver.id,
+      probability: transferred - whole
     });
     source.handCount = Math.max(0, (source.handCount ?? 0) - transferred);
     receiver.handCount = (receiver.handCount ?? 0) + transferred;
@@ -1104,7 +1104,7 @@ export const withResource = (Base) => class Resource extends Base {
         "Simulator.consumeKnownCardsFromHand:join"
       );
       const remainingState = this.projectProbabilityWork(joined, (branch) => ({
-        available:Boolean(branch.available && !branch.occurs)
+        available: Boolean(branch.available && !branch.occurs)
       }), "Simulator.consumeKnownCardsFromHand:remaining");
       card.availability = totalBranchProbability(
         remainingState.filter((branch) => branch.available)
@@ -1192,14 +1192,14 @@ export const withResource = (Base) => class Resource extends Base {
     if (spent <= PROBABILITY_EPSILON) return 0;
     const whole = Math.floor(spent);
     if (whole > 0) mutateProbability(state.probabilityState, {
-      type:"REMOVE",
-      sourceBucketId:player.id,
-      count:whole
+      type: "REMOVE",
+      sourceBucketId: player.id,
+      count: whole
     });
     if (spent - whole > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
-      type:"REMOVE",
-      sourceBucketId:player.id,
-      probability:spent - whole
+      type: "REMOVE",
+      sourceBucketId: player.id,
+      probability: spent - whole
     });
     player.handCount = Math.max(0, (player.handCount ?? 0) - spent);
     this.downgradePartialKnownCardsAfterRandomLoss(player);
@@ -1247,9 +1247,9 @@ export const withResource = (Base) => class Resource extends Base {
     const explicitCards = options.anonymousOnly
       ? []
       : [
-          ...(Array.isArray(player.hand) ? player.hand : []),
-          ...(Array.isArray(player.knownCards) ? player.knownCards : [])
-        ];
+        ...(Array.isArray(player.hand) ? player.hand : []),
+        ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+      ];
     const explicitExpected = explicitCards.reduce(
       (sum, card) => sum + cardAvailability(card), 0
     );
@@ -1257,40 +1257,40 @@ export const withResource = (Base) => class Resource extends Base {
     const candidates = options.anonymousOnly
       ? []
       : [
-          ...(Array.isArray(player.hand) ? player.hand
-            .filter((card) => cardAvailability(card) > PROBABILITY_EPSILON)
-            .map((card, index) => ({ key:`hand:${card.id ?? index}`, card, definitionId:card.definitionId })) : []),
-          ...(Array.isArray(player.knownCards) ? player.knownCards
-            .filter((entry) => cardAvailability(entry) > PROBABILITY_EPSILON)
-            .map((entry, index) => ({ key:`known:${entry.cardId ?? index}`, card:entry, definitionId:entry.definitionId })) : [])
-        ];
+        ...(Array.isArray(player.hand) ? player.hand
+          .filter((card) => cardAvailability(card) > PROBABILITY_EPSILON)
+          .map((card, index) => ({ key: `hand:${card.id ?? index}`, card, definitionId: card.definitionId })) : []),
+        ...(Array.isArray(player.knownCards) ? player.knownCards
+          .filter((entry) => cardAvailability(entry) > PROBABILITY_EPSILON)
+          .map((entry, index) => ({ key: `known:${entry.cardId ?? index}`, card: entry, definitionId: entry.definitionId })) : [])
+      ];
     if (!candidates.length && expectedUnknown <= PROBABILITY_EPSILON) return 0;
 
     const anonymousState = queryAnonymousSlotDistribution(
       state.probabilityState,
       player.id
     ).map((branch) => ({
-      probability:branch.probability,
-      conditions:{},
-      anonymousCount:branch.count
+      probability: branch.probability,
+      conditions: {},
+      anonymousCount: branch.count
     }));
 
     const removalWorlds = Array.isArray(options.eventWorlds) && options.eventWorlds.length
       ? this.gateEventWorlds(
-          state,
-          options.eventWorlds,
-          eventMass > PROBABILITY_EPSILON ? amount / eventMass : 0,
-          "random-hand-removal"
-        )
+        state,
+        options.eventWorlds,
+        eventMass > PROBABILITY_EPSILON ? amount / eventMass : 0,
+        "random-hand-removal"
+      )
       : probabilityEventPartition(
-          this.currentProbabilityEventKey(state, "random-hand-removal"),
-          Math.min(1, amount),
-          "occurs"
-        );
+        this.currentProbabilityEventKey(state, "random-hand-removal"),
+        Math.min(1, amount),
+        "occurs"
+      );
     const anonymousPartition = anonymousState.map((branch) => ({
-      probability:branch.probability,
-      conditions:branch.conditions,
-      anonymousCount:Math.max(0, Number(branch.anonymousCount) || 0)
+      probability: branch.probability,
+      conditions: branch.conditions,
+      anonymousCount: Math.max(0, Number(branch.anonymousCount) || 0)
     }));
     const joined = this.intersectProbabilityWork([
       removalWorlds,
@@ -1308,10 +1308,10 @@ export const withResource = (Base) => class Resource extends Base {
       const total = knownCount + anonymousCount;
       if (!occurs || total <= PROBABILITY_EPSILON) {
         outcomes.push({
-          probability:branch.probability,
-          conditions:{ ...branch.conditions, [selectionKey]:"none" },
-          selectedIndex:-1,
-          anonymousSelected:false,
+          probability: branch.probability,
+          conditions: { ...branch.conditions, [selectionKey]: "none" },
+          selectedIndex: -1,
+          anonymousSelected: false,
           anonymousCount
         });
         continue;
@@ -1319,19 +1319,19 @@ export const withResource = (Base) => class Resource extends Base {
       for (let index = 0; index < candidates.length; index += 1) {
         if (knownWeights[index] > PROBABILITY_EPSILON) {
           outcomes.push({
-            probability:branch.probability * (knownWeights[index] / total),
-            conditions:{ ...branch.conditions, [selectionKey]:`known:${candidates[index].key}` },
-            selectedIndex:index,
-            anonymousSelected:false,
+            probability: branch.probability * (knownWeights[index] / total),
+            conditions: { ...branch.conditions, [selectionKey]: `known:${candidates[index].key}` },
+            selectedIndex: index,
+            anonymousSelected: false,
             anonymousCount
           });
         }
       }
       outcomes.push({
-        probability:branch.probability * (anonymousCount / total),
-        conditions:{ ...branch.conditions, [selectionKey]:"anonymous" },
-        selectedIndex:-1,
-        anonymousSelected:true,
+        probability: branch.probability * (anonymousCount / total),
+        conditions: { ...branch.conditions, [selectionKey]: "anonymous" },
+        selectedIndex: -1,
+        anonymousSelected: true,
         anonymousCount
       });
     }
@@ -1357,12 +1357,12 @@ export const withResource = (Base) => class Resource extends Base {
       selectionPartition.filter((branch) => branch.anonymousSelected)
     );
     if (anonymousRemoved > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
-      type:options.anonymousTargetBucketId ? "MOVE" : "REMOVE",
-      sourceBucketId:player.id,
+      type: options.anonymousTargetBucketId ? "MOVE" : "REMOVE",
+      sourceBucketId: player.id,
       ...(options.anonymousTargetBucketId
-        ? { targetBucketId:options.anonymousTargetBucketId }
+        ? { targetBucketId: options.anonymousTargetBucketId }
         : {}),
-      probability:anonymousRemoved
+      probability: anonymousRemoved
     });
     if (Array.isArray(player.hand)) {
       player.hand = player.hand.filter((card) => cardAvailability(card) > PROBABILITY_EPSILON);
@@ -1409,8 +1409,8 @@ export const withResource = (Base) => class Resource extends Base {
       const spend = Math.min(1, remaining, Math.max(0, Number(player.handCount) || 0));
       this.removeOneRandomCardFromHand(state, player, spend, {
         result,
-        eventWorlds:options.eventWorlds ?? null,
-        anonymousOnly:options.anonymousOnly ?? false
+        eventWorlds: options.eventWorlds ?? null,
+        anonymousOnly: options.anonymousOnly ?? false
       });
       remaining -= spend;
       totalSpent += spend;
@@ -1447,13 +1447,13 @@ export const withResource = (Base) => class Resource extends Base {
     if (!guardian || !payment || payment.amount <= PROBABILITY_EPSILON) return 0;
     if (payment.kind === "chosen-card") {
       return this.consumeChosenHandCard(state, guardian, payment.amount, {
-        selectedCardId:payment.selectedCardId,
-        result:payment.result ?? null
+        selectedCardId: payment.selectedCardId,
+        result: payment.result ?? null
       });
     }
     if (payment.kind === "random-card") {
       return this.consumeRandomHandCards(state, guardian, payment.amount, {
-        result:payment.result ?? null
+        result: payment.result ?? null
       });
     }
     return 0;
@@ -1678,7 +1678,7 @@ export const withResource = (Base) => class Resource extends Base {
         state,
         target,
         actor,
-        { cardId:selection.cardId, definitionId:selection.definitionId },
+        { cardId: selection.cardId, definitionId: selection.definitionId },
         effectWorlds,
         true,
         null
@@ -1751,12 +1751,12 @@ export const withResource = (Base) => class Resource extends Base {
           "Simulator.destroyResource:join"
         );
         const removalWorlds = this.projectProbabilityWork(joined, (branch) => ({
-          occurs:Boolean(branch.available && branch.occurs)
+          occurs: Boolean(branch.available && branch.occurs)
         }), "Simulator.destroyResource:removal");
         const removalProbability = this.eventProbability(removalWorlds);
         if (removalProbability <= PROBABILITY_EPSILON) return 0;
         const remainingState = this.projectProbabilityWork(joined, (branch) => ({
-          available:Boolean(branch.available && !branch.occurs)
+          available: Boolean(branch.available && !branch.occurs)
         }), "Simulator.destroyResource:remaining");
         entry.availability = totalBranchProbability(
           remainingState.filter((branch) => branch.available)
@@ -1808,7 +1808,7 @@ export const withResource = (Base) => class Resource extends Base {
   addStolenIdentityToHand(state, actor, cardIdentity, acquisitionWorlds) {
     if (!actor || !cardIdentity?.definitionId || !Array.isArray(acquisitionWorlds)) return 0;
     const acquired = this.projectProbabilityWork(acquisitionWorlds, (branch) => ({
-      available:Boolean(branch.occurs ?? branch.available)
+      available: Boolean(branch.occurs ?? branch.available)
     }), "Simulator.addStolenIdentityToHand:acquired");
     const acquisitionProbability = totalBranchProbability(
       acquired.filter((branch) => branch.available)
@@ -1829,9 +1829,9 @@ export const withResource = (Base) => class Resource extends Base {
         oldState.filter((branch) => branch.available)
       );
       const newState = acquired.map((branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        newAvailable:Boolean(branch.available)
+        probability: branch.probability,
+        conditions: branch.conditions,
+        newAvailable: Boolean(branch.available)
       }));
       const joined = this.intersectProbabilityWork(
         [oldState, newState],
@@ -1839,7 +1839,7 @@ export const withResource = (Base) => class Resource extends Base {
       );
       const mergedState = this.projectProbabilityWork(
         joined,
-        (branch) => ({ available:Boolean(branch.available || branch.newAvailable) }),
+        (branch) => ({ available: Boolean(branch.available || branch.newAvailable) }),
         "Simulator.addStolenIdentityToHand:merged"
       );
       existing.availability = totalBranchProbability(
@@ -1848,9 +1848,9 @@ export const withResource = (Base) => class Resource extends Base {
       return Math.max(0, existing.availability - oldProbability);
     }
     actor.hand.push({
-      id:identityId,
-      definitionId:cardIdentity.definitionId,
-      availability:acquisitionProbability
+      id: identityId,
+      definitionId: cardIdentity.definitionId,
+      availability: acquisitionProbability
     });
     return acquisitionProbability;
   }
@@ -1885,9 +1885,9 @@ export const withResource = (Base) => class Resource extends Base {
     return this.projectProbabilityWork(
       selectionPartition,
       (branch) => ({
-        probability:branch.probability,
-        conditions:branch.conditions,
-        occurs:branch.outcome === outcome
+        probability: branch.probability,
+        conditions: branch.conditions,
+        occurs: branch.outcome === outcome
           && (cardId == null || branch.cardId === cardId)
       }),
       "Simulator.projectStealOutcome"
@@ -1933,33 +1933,33 @@ export const withResource = (Base) => class Resource extends Base {
     const outcomeBranches = [];
     if (equipmentLossProbability > PROBABILITY_EPSILON && target.equipmentDefinitionId) {
       outcomeBranches.push({
-        probability:equipmentLossProbability,
-        conditions:{ [selectionKey]:"equipment" },
-        outcome:"equipment"
+        probability: equipmentLossProbability,
+        conditions: { [selectionKey]: "equipment" },
+        outcome: "equipment"
       });
     }
     for (let index = 0; index < knownCards.length; index += 1) {
       if (index % 32 === 0) this.checkpointSearchWork();
       const card = knownCards[index];
       outcomeBranches.push({
-        probability:chance / poolSize,
-        conditions:{ [selectionKey]:`known:${card.cardId}` },
-        outcome:"known",
-        cardId:card.cardId,
-        definitionId:card.definitionId
+        probability: chance / poolSize,
+        conditions: { [selectionKey]: `known:${card.cardId}` },
+        outcome: "known",
+        cardId: card.cardId,
+        definitionId: card.definitionId
       });
     }
     if (unknownLoss > PROBABILITY_EPSILON) {
       outcomeBranches.push({
-        probability:unknownLoss,
-        conditions:{ [selectionKey]:"unknown" },
-        outcome:"unknown"
+        probability: unknownLoss,
+        conditions: { [selectionKey]: "unknown" },
+        outcome: "unknown"
       });
     }
     outcomeBranches.push({
-      probability:Math.max(0, 1 - chance),
-      conditions:{ [selectionKey]:"none" },
-      outcome:"none"
+      probability: Math.max(0, 1 - chance),
+      conditions: { [selectionKey]: "none" },
+      outcome: "none"
     });
     const selectionPartition = this.mergeProbabilityWork(
       outcomeBranches,
@@ -1976,7 +1976,7 @@ export const withResource = (Base) => class Resource extends Base {
           existenceProbability - equipmentLossProbability
         );
         this.addStolenIdentityToHand(state, actor, {
-          definitionId:stolenEquipmentDefinitionId
+          definitionId: stolenEquipmentDefinitionId
         }, equipmentWorlds);
         actor.handCount = (actor.handCount ?? 0) + equipmentMass;
       }
@@ -1988,7 +1988,7 @@ export const withResource = (Base) => class Resource extends Base {
         state,
         target,
         actor,
-        { cardId:known.cardId, definitionId:known.definitionId },
+        { cardId: known.cardId, definitionId: known.definitionId },
         knownWorlds,
         true,
         null
@@ -1999,9 +1999,9 @@ export const withResource = (Base) => class Resource extends Base {
       const result = { counterRemovedWorlds: [] };
       const stolen = this.consumeRandomHandCards(state, target, unknownLoss, {
         result,
-        eventWorlds:unknownWorlds,
-        anonymousOnly:true,
-        anonymousTargetBucketId:actor.id
+        eventWorlds: unknownWorlds,
+        anonymousOnly: true,
+        anonymousTargetBucketId: actor.id
       });
       actor.handCount = (actor.handCount ?? 0) + stolen;
     }
@@ -2035,9 +2035,9 @@ export const withResource = (Base) => class Resource extends Base {
   */
   updateEnergyFromWorlds(player, worldBranches, transformer) {
     const energy = [{
-      probability:1,
-      conditions:{},
-      energyAmount:Number(player.energy) || 0
+      probability: 1,
+      conditions: {},
+      energyAmount: Number(player.energy) || 0
     }];
     const intersection = this.intersectProbabilityWork(
       [energy, worldBranches],
@@ -2045,7 +2045,7 @@ export const withResource = (Base) => class Resource extends Base {
     );
     const updated = this.projectProbabilityWork(intersection, (branch) => ({
       ...branch,
-      amount:Math.max(0, Math.min(player.maxEnergy ?? Infinity,
+      amount: Math.max(0, Math.min(player.maxEnergy ?? Infinity,
         Number(transformer(branch.energyAmount, branch)) || 0))
     }), "Simulator.updateEnergyFromWorlds:project");
     player.energy = expectedBranchValue(updated);
@@ -2111,16 +2111,16 @@ export const withResource = (Base) => class Resource extends Base {
   */
   updateShieldFromWorlds(player, worldBranches, transformer) {
     const shield = [{
-      probability:1,
-      conditions:{},
-      shieldAmount:Number(player.shield) || 0
+      probability: 1,
+      conditions: {},
+      shieldAmount: Number(player.shield) || 0
     }];
     const intersection = this.intersectProbabilityWork(
       [shield, worldBranches],
       "Simulator.updateShieldFromWorlds:intersect"
     );
     const updated = this.projectProbabilityWork(intersection, (branch) => ({
-      amount:Math.max(0, Number(transformer(branch.shieldAmount, branch)) || 0)
+      amount: Math.max(0, Number(transformer(branch.shieldAmount, branch)) || 0)
     }), "Simulator.updateShieldFromWorlds:project");
     player.shield = expectedBranchValue(updated);
     return intersection;
@@ -2160,7 +2160,7 @@ export const withResource = (Base) => class Resource extends Base {
 
   /*
   功能
-  从正式槽位或次数摘要恢复本回合每次突袭的独立可用世界。
+  根据当前攻击次数上限与已使用次数，临时构造本次 transition 使用的攻击可用槽位。
 
   调用方
   consumeAttackUse、Simulator 与破军技能：取得突袭次数资源的完整槽位。
@@ -2189,7 +2189,7 @@ export const withResource = (Base) => class Resource extends Base {
       ? Math.max(0, Number(player.attackLimit))
       : used + 1;
     const remaining = Math.max(0, limit - used);
-    return Array.from({ length:Math.ceil(remaining) }, (_, index) => probabilityEventPartition(
+    return Array.from({ length: Math.ceil(remaining) }, (_, index) => probabilityEventPartition(
       `attack-use:${player.id}:${index}`,
       Math.min(1, remaining - index),
       "available"
@@ -2198,7 +2198,7 @@ export const withResource = (Base) => class Resource extends Base {
 
   /*
   功能
-  从正式槽位或技能次数摘要恢复指定主动技能的独立可用世界。
+  根据当前技能使用上限与已使用次数，临时构造本次 transition 使用的技能可用槽位。
 
   调用方
   apply：取得当前主动技能次数资源的完整槽位。
@@ -2225,7 +2225,7 @@ export const withResource = (Base) => class Resource extends Base {
     const uses = Math.max(0, Number(player.activeSkillUses ?? (player.activeSkillUsed ? 1 : 0)) || 0);
     const limit = Math.max(0, Number(player.activeSkillLimit ?? skill?.limitPerTurn ?? 1) || 0);
     const remaining = Math.max(0, limit - uses);
-    return Array.from({ length:Math.ceil(remaining) }, (_, index) => probabilityEventPartition(
+    return Array.from({ length: Math.ceil(remaining) }, (_, index) => probabilityEventPartition(
       `skill-use:${player.id}:${skill?.id ?? "unknown"}:${index}`,
       Math.min(1, remaining - index),
       "available"
@@ -2272,9 +2272,9 @@ export const withResource = (Base) => class Resource extends Base {
         if (branchIndex % 32 === 0) this.checkpointSearchWork();
         const branch = normalizedSlot[branchIndex];
         slotState.push({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          slotAvailable:Boolean(branch.available)
+          probability: branch.probability,
+          conditions: branch.conditions,
+          slotAvailable: Boolean(branch.available)
         });
       }
       const intersection = this.intersectProbabilityWork(
@@ -2282,24 +2282,24 @@ export const withResource = (Base) => class Resource extends Base {
         "Simulator.consumeSlot:intersect"
       );
       const actualWorlds = this.projectProbabilityWork(intersection, (branch) => ({
-        occurs:Boolean(branch.occurs && branch.slotAvailable)
+        occurs: Boolean(branch.occurs && branch.slotAvailable)
       }), "Simulator.consumeSlot:actual");
       const executionProbability = this.eventProbability(actualWorlds);
       if (executionProbability <= PROBABILITY_EPSILON
         || (best && executionProbability <= best.executionProbability + PROBABILITY_EPSILON)) continue;
-      best = { index, intersection, eventWorlds:actualWorlds, executionProbability };
+      best = { index, intersection, eventWorlds: actualWorlds, executionProbability };
     }
     if (best) {
       slots[best.index] = this.projectProbabilityWork(best.intersection, (branch) => ({
-        available:Boolean(branch.slotAvailable && !(branch.occurs && branch.slotAvailable))
+        available: Boolean(branch.slotAvailable && !(branch.occurs && branch.slotAvailable))
       }), "Simulator.consumeSlot:remaining");
-      return { index:best.index, eventWorlds:best.eventWorlds };
+      return { index: best.index, eventWorlds: best.eventWorlds };
     }
     return {
-      index:null,
-      eventWorlds:this.projectProbabilityWork(
+      index: null,
+      eventWorlds: this.projectProbabilityWork(
         desiredEventWorlds,
-        () => ({ occurs:false }),
+        () => ({ occurs: false }),
         "Simulator.consumeSlot:unavailable"
       )
     };
@@ -2319,7 +2319,7 @@ export const withResource = (Base) => class Resource extends Base {
   实际攻击事件世界、消费概率和槽位下标。
 
   读取状态
-  行动者 attackUseSlots 与攻击次数摘要。
+  行动者 attackLimit 与 attackUsed 次数摘要；攻击槽位由当前调用临时构造。
 
   写入状态
   attackUsed 当前摘要。
