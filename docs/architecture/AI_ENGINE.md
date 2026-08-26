@@ -20,6 +20,13 @@
 
 代码风格与函数头只在 `CODE_STANDARD.md` 定义。Current Architecture Snapshot 与第 36 节是当前物理事实；历史章节中的“当前”“目标”“后续”和旧目录名只描述对应阶段当时的状态，不覆盖最终架构。
 
+### AI 与自动化的平衡权限边界（强制）
+
+- Codex、Claude、DeepSeek、任何其他 AI 或自动化流程不得运行 Balance、自博弈统计或 `tests/ai-card-study` 研究实验。
+- 平衡常数、权重、阈值、倍率、utility 参数及类似数值只能作为既定架构事实读取和使用；不得依据测试结果调整、试探、搜索或拟合，也不得以优化平衡为目的修改。
+- 所有平衡测试、结果解释和参数调整仅由项目所有者本人执行。
+- AI 可以运行正确性、回归、架构和性能测试，但不得把这些测试扩展为数值平衡评估或调参建议。
+
 ## Current Architecture Snapshot
 
 当前生产 AI 严格为 18 个 JavaScript 模块：
@@ -166,7 +173,7 @@ Step 5.6 当前硬边界：
 | Simulator | `AI·模拟器` 及突袭、借势、决斗、雷达、角色技能等场景 | clone 隔离、概率分支、伤害/响应/濒死、实体消费 | 与真实 Game/Response/Dying/Card/Skill authority 的表驱动差分 |
 | Response/Selection Policy | 借势响应、护援、封印/闪电反制、窥探/转移/弃牌测试 | 不泄露、资源保留、状态响应和选择一致 | DecisionContext 不含 Game/Simulator concrete 的构造测试 |
 | Domain models | `AI·封印`、`AI·闪电`、`AI·互利`、雷达判定测试 | remaining-count 概率、未来 RNG 隔离、座次和阵营投影 | Domain 输出 schema、概率质量和无反向依赖测试 |
-| 端到端与性能 | `tests/ai-benchmark`、`tests/ai-card-study`、Balance harness | 生产 Controller、固定节点/seed、场景报告 | clone/apply/stateUtility/branch 计数基线与阶段对比 |
+| 端到端与性能 | `tests/ai-benchmark`；项目所有者专属的 `tests/ai-card-study` 与 Balance harness | 生产 Controller、固定节点/seed、场景报告 | clone/apply/stateUtility/branch 计数基线与阶段对比；AI 不运行或解释所有者专属结果 |
 
 测试量很大，但当前更偏行为回归；“真实权威与模拟镜像对同一输入产生等价 Transition”的系统化差分层仍缺失。这是 ARCH-7/8 的前置验收项，不应在 ARCH-2 先行扩大。
 
@@ -598,7 +605,7 @@ Guard 必须从解析到的 import、路径层和明确语法事实得出结论�
 - 来源 → 目标：旧 façade、旧文件转发、重复镜像 helper → 正式分层 API。
 - 移动：无；只删除已无调用的兼容层并在语义冻结后优化 clone/cache。
 - API/import：上游只依赖 Controller 公共入口；启用更完整 Architecture Guard。
-- 测试：完整功能、AI benchmark、适用时 Balance、quality `--all` 基线、性能报告。
+- 测试：完整功能、AI benchmark、quality `--all` 基线、性能报告；Balance 仅由项目所有者本人另行执行，不属于 AI 阶段验收。
 - 风险/回滚：隐藏动态调用与缓存错误；删除前 `rg`+覆盖率证据，性能改动逐项独立提交。
 
 ## 19. 阶段验收与停止规则

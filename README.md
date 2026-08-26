@@ -20,12 +20,11 @@ py tools/dev-server.py
 
 ```bash
 npm test
-npm run test:balance
 ```
 
-`npm test` 运行快速规则、隐藏信息、AI、UI 模板和完整对局测试。`npm run test:balance` 使用固定种子和固定搜索节点预算运行至少 200 局无 DOM 全 AI 对局；可用环境变量 `FIVE_REALMS_GAMES`、`FIVE_REALMS_SEED_BASE`、`FIVE_REALMS_START_INDEX` 和 `FIVE_REALMS_SEARCH_NODE_BUDGET` 调整样本与每次搜索的最大展开节点数。
+`npm test` 运行快速规则、隐藏信息、AI、UI 模板和完整对局测试。AI 与自动化流程只允许运行正确性、回归、架构和性能测试，不得将其扩展为数值平衡评估。
 
-详细测试流程、定点测试方法、Balance 备用候选模式、严格固定样本模式、参数说明和报告解释见 [`test.md`](./test.md)。
+`npm run test:balance`、AI 自博弈统计和 `tests/ai-card-study` 研究实验仅允许由项目所有者本人手动运行。禁止 Codex、Claude、DeepSeek、任何其他 AI 或自动化流程执行平衡测试，或根据结果调整、试探、搜索、拟合平衡常数、权重、阈值、倍率、utility 参数及类似数值。平衡常数对 AI 而言是只读既定规则，不得以优化平衡为目的修改。详细的所有者专属 Balance 操作说明见 [`test.md`](./test.md)。
 
 ## 如何开始和操作
 
@@ -301,11 +300,13 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 
 修改 AI：
 
+下列数值和策略位置只用于说明既定实现。所有平衡测试、结果解释及以平衡为目的的数值调整仅由项目所有者本人执行；AI 可以做正确性、回归、架构和性能验证，但不得调参或把验证扩展为平衡评估。
+
 - 单步时间窗口：调整 `js/application/policy/RuntimePolicy.js` 中 `AI_PACING` 的三档 `{baseMinMs,baseMaxMs,jitter}`；`Tmin` 控制最低自然节奏，`Tmax` 同时控制本次真实搜索上限。
 - 搜索结构：调整 `js/ai/policy/AiRuntimePolicy.js` 中的 `searchDepth`、`beamWidth`、`hiddenStateSamples` 与相关 policy。`searchTimeBudgetMs` 只是没有 Application 单步窗口时的直接调用 fallback；浏览器正常决策使用显式 `Tmax`。
 - 行为倾向：优先修改 `AiEvaluator` 与 `AiResponsePolicy`，不要让 AI 访问完整隐藏手牌。
 - 随机性：`randomnessRange` 控制近似同分候选的评分扰动范围，设为 `0` 时稳定选择最高分。
-- 难度：`difficultyMultiplier` 缩放公开威胁优先级；`ThreatCalculator` 的稳定 `roleTags`、斩杀线、公开资源、状态和近期攻击者会直接影响攻击/控制目标。改变评分后应按 `test.md` 运行当前 Balance 入口。
+- 难度：`difficultyMultiplier` 缩放公开威胁优先级；`ThreatCalculator` 的稳定 `roleTags`、斩杀线、公开资源、状态和近期攻击者会直接影响攻击/控制目标。AI 不得试探或调整这些数值，也不得运行 Balance 入口；相关工作只由项目所有者本人执行。
 
 ## 角色、卡牌和 UI 资源
 
@@ -341,7 +342,7 @@ FiveRealms/
 │   └── utils/                    # 可取消延迟、ID 与调试
 └── tests/
     ├── run.mjs                   # 快速回归测试
-    └── balance.mjs               # 平衡模拟入口；参数以 test.md 为准
+    └── balance.mjs               # 项目所有者专属平衡模拟入口；参数以 test.md 为准
 ```
 
 ## 常用配置修改
@@ -354,7 +355,7 @@ FiveRealms/
 - 响应时限：修改 `js/application/policy/RuntimePolicy.js` 的 `responseTimeoutMs`。
 - 调试：修改同一文件的 `debugMode`；统一 `Debug` 会输出阶段、事件、牌移动、响应和清理信息。
 
-配置项旁有中文注释，说明增减影响、推荐范围和可能的平衡/性能风险。规则数字不得复制到 UI 或 AI 模块。
+配置项旁有中文注释，说明增减影响、推荐范围和可能的平衡/性能风险。规则数字不得复制到 UI 或 AI 模块；AI 只能把平衡常数作为既定规则读取和使用，不得为优化平衡而修改。
 
 ## 添加新卡牌
 
@@ -365,7 +366,7 @@ FiveRealms/
 3. 在 `domain/rules/card` 定义合法性/结果，在 `application/action` 接入真实 effect workflow；状态提交必须经过 Domain transition，不能由 UI 改状态。
 4. 在 `CardPresentationDefinitions.js` 增加展示字段；规则不得按中文名判断。
 5. 在 `js/ai` 的生成、模拟和价值 owner 中补齐 SearchState 行为；未知牌推断只读取定义数量与合法观察。
-6. 增加牌数、结算、反制、AI 牌序、DOM 展示和本地资源测试，再运行两套测试。
+6. 增加牌数、结算、反制、AI 牌序、DOM 展示和本地资源正确性测试；是否另行运行 Balance 只由项目所有者本人决定和执行。
 
 ## 添加新角色和技能
 
@@ -405,4 +406,4 @@ FiveRealms/
 - 把技能注册器按角色拆分，并增加事件时序可视化调试器。
 - 增加可选战报导出、可复现种子输入和对局回放。
 - 在保持五个视觉座位稳定的前提下，为阵亡后的动态距离增加更细腻的桌面收拢动画。
-- 每次调整牌数、阵营补偿或 AI 权重后，固定运行快速测试与至少 200 局平衡模拟。
+- 牌数、阵营补偿、AI 权重及其 Balance 验证仅由项目所有者本人调整和执行，不得委托 AI 或自动化流程调参、拟合或评估数值平衡。

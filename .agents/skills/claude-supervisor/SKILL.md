@@ -9,7 +9,7 @@ Use the deterministic runner in `scripts/supervisor.mjs`. Keep Codex as the deci
 
 ## Start a task
 
-1. Read the user request and `AGENTS.md`, determine the task mode, and state assumptions and success criteria. Read `test.md` for test organization or Balance work. Read `docs/architecture/CODE_STANDARD.md` before code changes and `docs/architecture/AI_ENGINE.md` for AI architecture work.
+1. Read the user request and `AGENTS.md`, determine the task mode, and state assumptions and success criteria. Read `test.md` for test organization or balance-adjacent work, but treat all Balance commands as project-owner-only documentation. Read `docs/architecture/CODE_STANDARD.md` before code changes and `docs/architecture/AI_ENGINE.md` for AI architecture work.
 2. Confirm branch `deepseek-fixes` and record the current dirty worktree. Treat all pre-existing changes as user-owned.
 3. Put only the worker task text in an ignored file under `.claude/claude-supervisor/tasks/`.
 4. Run `node .agents/skills/claude-supervisor/scripts/supervisor.mjs start <task-file> [--worker-model flash|pro]`.
@@ -39,6 +39,8 @@ When the user explicitly asks for Flash, DS Flash, DeepSeek Flash, or V4 Flash, 
 Each Supervisor session freezes its Worker profile in `session.json`. A resume keeps that profile; a mismatched `--worker-model` on resume is refused, and changing the model requires a new session.
 
 ## Review and resume
+
+Never delegate or approve Balance/self-play/card-study experiments to Claude, DeepSeek, another AI, or automation. Never let a worker adjust, probe, search, or fit balance constants, weights, thresholds, multipliers, utility parameters, or similar values from test results. Those values are fixed rules for AI workers; all balance testing, result interpretation, and parameter adjustment belong exclusively to the project owner. Correctness, regression, architecture, and performance tests are allowed only while they remain non-balance evaluations.
 
 Follow detail on demand, not detail by default: do not consume Claude's full stream. The runner saves the complete redacted stream locally and prints only compact Supervisor events. Normally read only:
 

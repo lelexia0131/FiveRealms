@@ -208,7 +208,7 @@ TEST_PATTERN=<pattern> node tests/run.mjs
 node tests/run.mjs
 ```
 
-Balance 入口、参数与解释口径只由仓库根目录 `test.md` 定义。
+Balance 入口、参数与解释口径只由仓库根目录 `test.md` 定义，且仅允许项目所有者本人运行和解释。Codex、Claude、DeepSeek、任何其他 AI 或自动化流程不得运行 Balance、自博弈或卡牌价值研究实验，不得根据结果调整、试探、搜索或拟合平衡常数、权重、阈值、倍率、utility 参数及类似数值。AI 只能将这些数值作为既定规则读取和使用；正确性、回归、架构和性能验证不得扩展为数值平衡评估。
 
 ## 13. Architecture Guard Closure
 
