@@ -113,6 +113,7 @@ import {
   turnTimingFactor
 } from "../js/ai/Evaluator/Evaluator.js";
 import {
+  ENERGY_STATE_WEIGHT,
   HP_VALUE as OWNED_HP_VALUE,
   statePointsToUtility
 } from "../js/ai/Evaluator/StateValue.js";
@@ -14121,7 +14122,7 @@ test(
 
 /*
 功能
-锁定基础 transition 已物理删除恒零 Immediate/economic/end-opportunity 价值链。
+锁定旧 Immediate/economic/endOpportunityCost contract 保持删除，并验证新 END 能量机会公式边界。
 
 调用方
 AI 架构与价值归属回归测试。
@@ -14130,7 +14131,7 @@ AI 架构与价值归属回归测试。
 无；函数内构造同一 canonical World 的普通动作与 end 动作。
 
 输出
-Promise；任一死 term 或旧参数回流时抛出断言。
+Promise；旧 contract 回流、新公式单位或边界错误时抛出断言。
 
 读取状态
 canonical World 与 Evaluator/Searcher 生产源码。
@@ -14142,8 +14143,7 @@ canonical World 与 Evaluator/Searcher 生产源码。
 Evaluator.evaluateTransition、createAction、readFile。
 
 边界与不变量
-普通动作和 end 在同一 before/after 上的 base 必须完全相同；
-resolutionScale 和 transition-option 公式仍保留。
+基础 transition 不内嵌 END penalty；新 penalty 只消费显式输入并在最终组合时换算一次。
 */
 async function valueResidueClosure() {
   const game = makeBenchmarkGame({
@@ -14175,18 +14175,89 @@ async function valueResidueClosure() {
       }),
       createAction({ type:"end", actorId:actor.id })
     ];
-    for (const action of actions) {
-      const terms = game.aiController.evaluator.evaluateTransition({
+    const evaluated = actions.map((action) => ({
+      action,
+      terms:game.aiController.evaluator.evaluateTransition({
         action,
         player:worldActor,
         beforeState:world,
         afterState:world,
         resolutionScale:0.4
-      });
+      })
+    }));
+    for (const { terms } of evaluated) {
       assert.equal(terms.baseTransition, 0);
       assert.equal(Object.hasOwn(terms, "economic"), false);
       assert.equal(Object.hasOwn(terms, "immediate"), false);
     }
+    const evaluator = game.aiController.evaluator;
+    const endTerms = evaluated.find(({ action }) => action.type === "end").terms;
+    const withInputs = (overrides = {}) => ({
+      ...endTerms,
+      dangerBefore:0,
+      endOpportunityInputs:{
+        energy:2,
+        turnEnergyGain:1,
+        maxEnergy:4,
+        activeSkillCost:2,
+        hasActiveSkill:true,
+        ...overrides
+      }
+    });
+    assert.equal(evaluator.endEnergyOpportunityPenalty(withInputs(), 20), 0);
+    const overflowOnly = evaluator.endEnergyOpportunityPenalty(
+      withInputs({ energy:4 }),
+      20
+    );
+    assert.equal(overflowOnly, ENERGY_STATE_WEIGHT);
+    const dangerFull = evaluator.endEnergyOpportunityPenalty(
+      { ...withInputs({ energy:4 }), dangerBefore:1 },
+      5
+    );
+    assert.equal(dangerFull, ENERGY_STATE_WEIGHT + 5);
+    assert.equal(
+      evaluator.endEnergyOpportunityPenalty(
+        { ...withInputs({ energy:3 }), dangerBefore:1 },
+        4
+      ),
+      1,
+      "S(E) 在 (E-C)/(Emax-C)=1/2 时必须平方为 1/4"
+    );
+    assert.equal(
+      evaluator.endEnergyOpportunityPenalty(
+        { ...withInputs({ energy:4 }), dangerBefore:1 },
+        0
+      ),
+      ENERGY_STATE_WEIGHT
+    );
+    assert.equal(
+      evaluator.endEnergyOpportunityPenalty(
+        { ...withInputs({ energy:4, activeSkillCost:4 }), dangerBefore:1 },
+        5
+      ),
+      ENERGY_STATE_WEIGHT
+    );
+    assert.equal(
+      evaluator.endEnergyOpportunityPenalty(
+        { ...withInputs({ energy:4, hasActiveSkill:false }), dangerBefore:1 },
+        5
+      ),
+      ENERGY_STATE_WEIGHT
+    );
+    const invalidCap = evaluator.endEnergyOpportunityPenalty(
+      { ...withInputs({ maxEnergy:0 }), dangerBefore:1 },
+      5
+    );
+    assert.equal(invalidCap, 0);
+    assert.ok(Number.isFinite(invalidCap));
+    assert.equal(
+      evaluator.composeTransitionValue({
+        baseTransition:2,
+        frontierValue:0.5,
+        endOpportunityPoints:dangerFull
+      }),
+      2.5 - statePointsToUtility(dangerFull)
+    );
     const productionCode = (await Promise.all([
       "js/ai/Evaluator/Evaluator.js",
       "js/ai/Searcher/Searcher.js"
@@ -14197,12 +14268,124 @@ async function valueResidueClosure() {
       productionCode,
       /\bendOpportunityCost\b|\beconomic\b|\bimmediate\b/u
     );
+    const searcherCode = (await readFile(
+      projectFile("js/ai/Searcher/Searcher.js"),
+      "utf8"
+    )).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    assert.doesNotMatch(
+      searcherCode,
+      /ENERGY_STATE_WEIGHT|END_SKILL_SAFETY_WEIGHT|activeSkillCost|getMaxEnergy|getTurnEnergyBreakdown|dangerBefore/u
+    );
+    assert.doesNotMatch(
+      searcherCode,
+      /candidate\.(?:skillSafetyRelief|dangerDelta|skillOpportunity)/u
+    );
   } finally {
     disposeBenchmarkGame(game);
   }
 }
 
-test("AI·价值归属：V01 死价值链删除且 end 与普通动作语义不变", valueResidueClosure);
+test("AI·价值归属：END 新机会公式不恢复旧价值 contract", valueResidueClosure);
+
+/*
+功能
+验证 skill safety relief 只投影当步生命、防护与威胁变化。
+
+调用方
+AI 价值归属回归测试。
+
+输入
+无；函数内构造自己/队友危险、无直接改善、continuation 与当步击杀威胁场景。
+
+输出
+Promise；Safety 投影遗漏直接救援或混入能量/continuation 时抛出断言。
+
+读取状态
+canonical before/after Worlds 与同一次 Evaluator transition terms。
+
+写入状态
+仅独立 after World clone。
+
+调用函数
+Evaluator.evaluateTransition、skillSafetyRelief。
+
+边界与不变量
+不调用第二次 Simulator；技能 ID 不决定 relief，只有 already-materialized World 的 safety 差决定。
+*/
+async function skillSafetyReliefProjectionContract() {
+  const game = makeBenchmarkGame({
+    players:[
+      { id:"end-safety-actor", team:"dawn", character:"oath-warden", energy:3, hand:[] },
+      { id:"end-safety-ally", team:"dawn", character:"spirit-medic", hand:[] },
+      {
+        id:"end-safety-enemy",
+        team:"dusk",
+        character:"trail-hunter",
+        hand:[makeBenchmarkCard("assault", "end-safety-assault")]
+      }
+    ],
+    options:{ actorId:"end-safety-actor", seed:20260814, nodeBudget:20 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const evaluator = game.aiController.evaluator;
+    const action = createAction({
+      type:"skill",
+      actorId:actor.id,
+      skillId:"barrier",
+      targetIds:[actor.id]
+    });
+    const relief = (before, after, skillAction = action) => evaluator.skillSafetyRelief(
+      evaluator.evaluateTransition({
+        action:skillAction,
+        player:before.players.find((entry) => entry.id === actor.id),
+        beforeState:before,
+        afterState:after
+      })
+    );
+
+    const selfDanger = structuredClone(world);
+    selfDanger.players.find((entry) => entry.id === actor.id).hp = 1;
+    const selfProtected = structuredClone(selfDanger);
+    selfProtected.players.find((entry) => entry.id === actor.id).shield = 1;
+    assert.ok(relief(selfDanger, selfProtected) > 0);
+
+    const allyDanger = structuredClone(world);
+    allyDanger.players.find((entry) => entry.id === "end-safety-ally").hp = 1;
+    const allyProtected = structuredClone(allyDanger);
+    allyProtected.players.find((entry) => entry.id === "end-safety-ally").shield = 1;
+    assert.ok(relief(allyDanger, allyProtected) > 0);
+
+    const noDirectRelief = structuredClone(allyDanger);
+    const noReliefActor = noDirectRelief.players.find((entry) => entry.id === actor.id);
+    noReliefActor.energy = Math.max(0, noReliefActor.energy - 1);
+    noReliefActor.attackLimit = (noReliefActor.attackLimit ?? 1) + 1;
+    const breakArmy = createAction({
+      type:"skill",
+      actorId:actor.id,
+      skillId:"breakArmy"
+    });
+    assert.equal(relief(allyDanger, noDirectRelief, breakArmy), 0);
+
+    const threatRemoved = structuredClone(world);
+    const removedEnemy = threatRemoved.players.find((entry) => entry.id === "end-safety-enemy");
+    removedEnemy.alive = false;
+    removedEnemy.hp = 0;
+    assert.ok(relief(world, threatRemoved) > 0);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test(
+  "AI·价值归属：技能当步 Safety relief 覆盖自身队友与威胁击杀但排除 continuation",
+  skillSafetyReliefProjectionContract
+);
 
 /*
 功能
@@ -17801,6 +17984,213 @@ Pattern ID 与 exploration priority。
 边界与不变量
 只用于测试注入，不进入 PatternMatcher production definitions。
 */
+/*
+功能
+创建只为 END sibling 完整性测试提供 scalar 的 Evaluator 替身。
+
+调用方
+END sibling 顺序与预算中断回归测试。
+
+输入
+可选的 penalty 调用观察数组。
+
+输出
+满足 Searcher root-only fixture 的 Evaluator capability 对象。
+
+读取状态
+测试 Action 上的 baseValue、safetyRelief 与 schedulingScore 标量。
+
+写入状态
+只向 penaltyCalls 追加已完整聚合的最大 relief。
+
+调用函数
+statePointsToUtility。
+
+边界与不变量
+替身不解释 HP、盾、危险或能量公式；它只验证 Searcher 是否机械等待完整 sibling 并传递 max scalar。
+*/
+function createEndSiblingEvaluator(penaltyCalls = []) {
+  return {
+    rootSchedulingScore:(action) => action.schedulingScore,
+    initialTransitionProvenance:() => null,
+    exposeMarginalStackDelta:() => 0,
+    assaultMarginalStackCount:() => 0,
+    advanceTransitionProvenance:() => null,
+    adaptiveInformationTarget:() => null,
+    evaluateTransition:({ action }) => ({
+      baseTransition:action.baseValue,
+      safetyBeforePoints:0,
+      safetyAfterPoints:action.safetyRelief ?? 0,
+      dangerBefore:1,
+      endOpportunityInputs:action.type === "end" ? {} : null
+    }),
+    frontierResidual:() => null,
+    terminalFrontierValue:() => 0,
+    requiresActionLightningOutcomes:() => false,
+    requiresHiddenWorldPrior:() => false,
+    composeSearchPrior:() => ({ domainPrior:0, searchCredit:0, prior:0 }),
+    resourceSelectionPreference:() => null,
+    skillSafetyRelief:(terms) => terms.safetyAfterPoints - terms.safetyBeforePoints,
+    endEnergyOpportunityPenalty:(_terms, maximumSkillSafetyRelief) => {
+      penaltyCalls.push(maximumSkillSafetyRelief);
+      return maximumSkillSafetyRelief;
+    },
+    composeTransitionValue:({ baseTransition, frontierValue, endOpportunityPoints }) => (
+      baseTransition + frontierValue - statePointsToUtility(endOpportunityPoints)
+    ),
+    compareCandidates:(left, right) => left.valueScore - right.valueScore
+  };
+}
+
+/*
+功能
+运行只允许 materialize END 一个 root 的 NODE 或 TIME 搜索夹具。
+
+调用方
+END sibling 预算中断回归测试。
+
+输入
+`NODE` 或 `TIME`。
+
+输出
+选择结果、诊断、apply 轨迹与 canonical root Actions。
+
+读取状态
+data-only root World 与测试 Evaluator scalar。
+
+写入状态
+独立 Searcher、SearchBudget 与 apply 轨迹。
+
+调用函数
+Searcher.search、SearchBudget、PatternMatcher。
+
+边界与不变量
+END 调度在 skill 前且能完整 apply，但预算到达后不得继续 materialize skill；返回 END 只能来自既有 provisional fallback。
+*/
+async function runEndSiblingBudgetFixture(stopReason) {
+  const actorId = "end-sibling-actor";
+  const end = {
+    type:"end",
+    actorId,
+    targetIds:[],
+    selection:null,
+    baseValue:10,
+    schedulingScore:100
+  };
+  const skill = {
+    type:"skill",
+    actorId,
+    skillId:"barrier",
+    targetIds:[actorId],
+    selection:null,
+    baseValue:1,
+    safetyRelief:10,
+    schedulingScore:10
+  };
+  const applied = [];
+  let clockCalls = 0;
+  const searcher = new Searcher({
+    evaluator:createEndSiblingEvaluator(),
+    patternMatcher:new PatternMatcher({ definitions:[] }),
+    getResolutionScale:() => 1,
+    config:{ depth:1, beamWidth:2, hiddenSamples:0, yieldEvery:100 },
+    simulatorFactory:() => ({
+      apply:(state, action) => {
+        applied.push(action.type);
+        return { ...state, playPhaseEnded:action.type === "end" };
+      },
+      buildLightningOutcomeSets:() => []
+    }),
+    searchBudgetFactory:() => stopReason === "NODE"
+      ? new SearchBudget({ nodeBudget:1 })
+      : new SearchBudget({
+          timeBudget:1,
+          now:() => (clockCalls++ < 2 ? 0 : 1)
+        }),
+    deduplicateActions:(actions) => actions,
+    generateActions:() => [],
+    sampleUnknownHands:() => ({
+      classification:PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE,
+      worlds:[],
+      sampleCount:0
+    }),
+    yieldControl:async () => true
+  });
+  const selected = await searcher.search(
+    { id:actorId, hand:[] },
+    {
+      playPhaseEnded:false,
+      probabilityState:null,
+      players:[{
+        id:actorId,
+        battleTeam:"dawn",
+        alive:true,
+        hp:4,
+        handCount:0
+      }]
+    },
+    [skill, end],
+    { gameId:"end-sibling-budget" }
+  );
+  return { selected, stats:searcher.lastSearchStats, applied, end, skill };
+}
+
+test("AI·搜索：END Final Utility 只使用完整 skill sibling 集合且与顺序无关", () => {
+  const penaltyCalls = [];
+  const searcher = Object.create(Searcher.prototype);
+  searcher.evaluator = createEndSiblingEvaluator(penaltyCalls);
+  const endAction = { type:"end" };
+  const skillA = { type:"skill", skillId:"a" };
+  const skillB = { type:"skill", skillId:"b" };
+  const candidate = (action, baseTransition, safetyRelief = 0) => ({
+    action,
+    baseTransition,
+    frontierValue:0,
+    baseTerms:{ safetyBeforePoints:0, safetyAfterPoints:safetyRelief },
+    transitionValue:null
+  });
+  const partialEnd = candidate(endAction, 10);
+  const partialSkill = candidate(skillA, 1, 2);
+  searcher.finalizeCandidates(
+    [partialEnd, partialSkill],
+    [endAction, skillA, skillB]
+  );
+  assert.equal(partialEnd.transitionValue, null);
+  assert.equal(partialSkill.transitionValue, 1);
+  assert.deepEqual(penaltyCalls, []);
+
+  const evaluateOrder = (orderedSkills) => {
+    const end = candidate(endAction, 10);
+    const skills = orderedSkills.map((action) => candidate(
+      action,
+      1,
+      action === skillA ? 2 : 5
+    ));
+    searcher.finalizeCandidates(
+      [end, ...skills],
+      [endAction, ...orderedSkills]
+    );
+    return end.transitionValue;
+  };
+  assert.equal(evaluateOrder([skillA, skillB]), evaluateOrder([skillB, skillA]));
+  assert.deepEqual(penaltyCalls, [5, 5]);
+});
+
+test("AI·搜索：TIME/NODE 遇到 skill-incomplete END 不登记 incumbent 且不突破预算", async () => {
+  for (const stopReason of ["NODE", "TIME"]) {
+    const result = await runEndSiblingBudgetFixture(stopReason);
+    assert.equal(result.selected, result.end, `${stopReason} 只可沿用 provisional END`);
+    assert.deepEqual(result.applied, ["end"], `${stopReason} 不得补算 skill sibling`);
+    assert.equal(result.stats.stopReason, stopReason);
+    assert.equal(result.stats.completedRootCandidateCount, 0);
+    assert.equal(result.stats.bestValueScore, null);
+    assert.equal(result.stats.incumbentUpdateCount, 0);
+    assert.equal(result.stats.provisionalFallbackUsed, true);
+    assert.equal(result.stats.provisionalFallbackAction, result.end);
+    assert.equal(result.stats.rootWork[0].completed, false);
+  }
+});
+
 function fakeTacticalPattern(id = "fake-a-b", explorationPriority = 10) {
   return {
     id,

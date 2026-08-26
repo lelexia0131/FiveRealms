@@ -27,7 +27,7 @@ import {
 } from "../Event/Probability/Probability.js";
 
 export const HP_VALUE = 5;
-const ENERGY_STATE_WEIGHT = 1.2;
+export const ENERGY_STATE_WEIGHT = 1.2;
 
 /*
 功能

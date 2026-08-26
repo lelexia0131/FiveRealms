@@ -542,7 +542,7 @@ export class Searcher {
   根、root safety 与深层 sibling materialization 完成点。
 
   输入
-  完整候选数组。
+  已物化候选数组与同 parent 的完整 legal Action 集合。
 
   输出
   同一数组。
@@ -551,19 +551,43 @@ export class Searcher {
   候选命名 value terms。
 
   写入状态
-  只写候选 transitionValue。
+  只写候选 transitionValue；skill siblings 不完整时 END 保持 null。
 
   调用函数
-  Evaluator.composeTransitionValue。
+  Evaluator.skillSafetyRelief、endEnergyOpportunityPenalty、composeTransitionValue。
 
   边界与不变量
-  sibling 不再拥有第二套机会成本；responseNet 只作诊断。
+  Searcher 只机械确认 skill sibling 完整并取最大 relief；不读取危险、能量、权重或公式；
+  partial skill 集合不得给 END 赋值，responseNet 只作诊断。
   */
-  finalizeCandidates(candidates) {
+  finalizeCandidates(candidates, siblingActions = candidates.map((entry) => entry.action)) {
+    const legalSkillActions = siblingActions.filter((action) => action?.type === "skill");
+    const skillSiblingsComplete = legalSkillActions.every((skillAction) => (
+      candidates.some((candidate) => candidate.action === skillAction)
+    ));
+    const maximumSkillSafetyRelief = skillSiblingsComplete
+      ? candidates
+          .filter((candidate) => candidate.action?.type === "skill")
+          .reduce((maximum, candidate) => Math.max(
+            maximum,
+            this.evaluator.skillSafetyRelief(candidate.baseTerms)
+          ), 0)
+      : 0;
     for (const candidate of candidates) {
+      if (candidate.action?.type === "end" && !skillSiblingsComplete) {
+        candidate.transitionValue = null;
+        continue;
+      }
+      const endOpportunityPoints = candidate.action?.type === "end"
+        ? this.evaluator.endEnergyOpportunityPenalty(
+            candidate.baseTerms,
+            maximumSkillSafetyRelief
+          )
+        : 0;
       candidate.transitionValue = this.evaluator.composeTransitionValue({
         baseTransition:candidate.baseTransition,
-        frontierValue:candidate.frontierValue
+        frontierValue:candidate.frontierValue,
+        endOpportunityPoints
       });
     }
     return candidates;
@@ -1127,11 +1151,6 @@ export class Searcher {
       nextActionIndex += 1;
       newCandidateCount += 1;
       budget.observeNode();
-      workDiagnostics.completedChildCandidateCount += 1;
-      workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, depth);
-      if (depth === 2) {
-        workDiagnostics.firstDepth2AtWorkCount ??= candidate.completedAtWorkCount;
-      }
       if (budget.expandedNodes % structure.yieldEvery === 0) {
         budget.observeYield();
         if (!(await this.yieldControl(options.gameId))) {
@@ -1146,10 +1165,27 @@ export class Searcher {
         }
       }
     }
-    this.finalizeCandidates(candidates);
+    this.finalizeCandidates(candidates, followActions);
+    const completeCandidateCount = candidates.filter(
+      (candidate) => candidate.transitionValue !== null
+    ).length;
+    const previousCompleteCandidateCount = resumeExpansion?.completeCandidateCount ?? 0;
+    const newlyCompletedCandidateCount = Math.max(
+      0,
+      completeCandidateCount - previousCompleteCandidateCount
+    );
+    workDiagnostics.completedChildCandidateCount += newlyCompletedCandidateCount;
+    if (newlyCompletedCandidateCount > 0) {
+      workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, depth);
+      if (depth === 2) {
+        const firstComplete = candidates.find((candidate) => candidate.transitionValue !== null);
+        workDiagnostics.firstDepth2AtWorkCount ??= firstComplete?.completedAtWorkCount ?? null;
+      }
+    }
     return {
       actions:followActions,
       candidates,
+      completeCandidateCount,
       nextActionIndex,
       complete:nextActionIndex >= followActions.length,
       cancelled:false
@@ -1487,17 +1523,19 @@ export class Searcher {
       candidate.completedAtWorkCount = budget.simulationCalls;
       rootCandidates.push(candidate);
       budget.observeNode();
-      workDiagnostics.completedRootCandidateCount += 1;
-      workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, 1);
+      this.finalizeCandidates(rootCandidates, scheduledRootActions);
+      workDiagnostics.completedRootCandidateCount = rootCandidates.filter(
+        (entry) => entry.transitionValue !== null
+      ).length;
+      if (workDiagnostics.completedRootCandidateCount > 0) {
+        workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, 1);
+      }
       workDiagnostics.activeRoot = null;
       workDiagnostics.rootWork.push({
         action:rootDescriptor,
-        completed:true,
+        completed:candidate.transitionValue !== null,
         simulatorTransitions:budget.simulationCalls - rootWorkStarted
       });
-      if (collectDiagnostics) {
-        rootLedgers.push(this.diagnosticEntry(candidate));
-      }
       if (!progressiveDepth2Expansions.size
         && structure.depth >= 2
         && workDiagnostics.completedRootCandidateCount === earlyProgressiveRootCoverage
@@ -1557,7 +1595,7 @@ export class Searcher {
     }
 
     // 同层转移项是 SearchNode 最终价值的一部分；完成它之后候选才具备 best-seen 资格。
-    this.finalizeCandidates(rootCandidates);
+    this.finalizeCandidates(rootCandidates, scheduledRootActions);
     const initiallyMaterializedRootActions = new Set(
       rootCandidates.map((candidate) => candidate.action)
     );
@@ -1574,13 +1612,16 @@ export class Searcher {
     );
     const remainingRootSafetyCount = unmaterializedNonTerminalRoots.length
       + (unmaterializedRootTerminal ? 1 : 0);
-    const rootSafetyNeeded = (
+    const unresolvedRootTerminal = rootCandidates.some((candidate) => (
+      candidate.action?.type === "end" && candidate.transitionValue === null
+    ));
+    const rootSafetyNeeded = !unresolvedRootTerminal && ((
       unmaterializedNonTerminalRoots.length > 0
         && !(bestMaterializedNonTerminal?.transitionValue >= 0)
     ) || (
       unmaterializedRootTerminal
         && bestMaterializedNonTerminal?.transitionValue < 0
-    );
+    ));
     const rootSafetyCompletionGranted = rootSafetyNeeded
       && remainingRootSafetyCount > 0
       && typeof budget.requestRootSafetyCompletion === "function"
@@ -1630,21 +1671,37 @@ export class Searcher {
         candidate.completedAtWorkCount = budget.simulationCalls;
         rootCandidates.push(candidate);
         budget.observeNode();
-        workDiagnostics.completedRootCandidateCount += 1;
-        workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, 1);
+        this.finalizeCandidates(rootCandidates, scheduledRootActions);
+        workDiagnostics.completedRootCandidateCount = rootCandidates.filter(
+          (entry) => entry.transitionValue !== null
+        ).length;
+        if (workDiagnostics.completedRootCandidateCount > 0) {
+          workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, 1);
+        }
         workDiagnostics.activeRoot = null;
         workDiagnostics.rootWork.push({
           action:rootDescriptor,
-          completed:true,
+          completed:candidate.transitionValue !== null,
           simulatorTransitions:budget.simulationCalls - rootWorkStarted
         });
-        if (collectDiagnostics) {
-          rootLedgers.push(this.diagnosticEntry(candidate));
-        }
       }
-      this.finalizeCandidates(rootCandidates);
+      this.finalizeCandidates(rootCandidates, scheduledRootActions);
     }
-    const beam = rootCandidates.map((candidate) => {
+    for (const rootWork of workDiagnostics.rootWork) {
+      const materialized = rootCandidates.find((candidate) => candidate.action === rootWork.action);
+      if (materialized) rootWork.completed = materialized.transitionValue !== null;
+    }
+    workDiagnostics.completedRootCandidateCount = rootCandidates.filter(
+      (candidate) => candidate.transitionValue !== null
+    ).length;
+    if (collectDiagnostics) {
+      rootLedgers.push(...rootCandidates
+        .filter((candidate) => candidate.transitionValue !== null)
+        .map((candidate) => this.diagnosticEntry(candidate)));
+    }
+    const beam = rootCandidates
+      .filter((candidate) => candidate.transitionValue !== null)
+      .map((candidate) => {
       const valueScore = candidate.transitionValue;
       return {
         action:candidate.action,
@@ -1679,7 +1736,9 @@ export class Searcher {
     for (const [rootAction, expansion] of progressiveDepth2Expansions) {
       const parent = beam.find((node) => node.action === rootAction);
       if (!parent) continue;
-      const childNodes = expansion.candidates.map(
+      const childNodes = expansion.candidates
+        .filter((candidate) => candidate.transitionValue !== null)
+        .map(
         (candidate) => this.buildChildNode(parent, candidate, 2)
       );
       progressiveNodesByDepth.get(2).set(parent, { ...expansion, childNodes });
@@ -1729,7 +1788,9 @@ export class Searcher {
         });
         if (expansion.cancelled) break;
         childCandidates = expansion.candidates;
-        childNodes = childCandidates.map(
+        childNodes = childCandidates
+          .filter((candidate) => candidate.transitionValue !== null)
+          .map(
           (candidate) => this.buildChildNode(progressiveSpine, candidate, depth)
         );
         depthCache.set(progressiveSpine, { ...expansion, childNodes });
@@ -1767,6 +1828,7 @@ export class Searcher {
           continue;
         }
         const previousCandidateCount = cachedExpansion?.candidates.length ?? 0;
+        const previousChildNodeCount = cachedExpansion?.childNodes.length ?? 0;
         const expansion = await this.materializeChildCandidates({
           parentState:node.state,
           parentProvenance:node.remainingProvenance,
@@ -1794,13 +1856,14 @@ export class Searcher {
         }
         const childNodes = [
           ...(cachedExpansion?.childNodes ?? []),
-          ...expansion.candidates.slice(previousCandidateCount).map(
-            (candidate) => this.buildChildNode(node, candidate, depth)
-          )
+          ...expansion.candidates
+            .slice(previousCandidateCount)
+            .filter((candidate) => candidate.transitionValue !== null)
+            .map((candidate) => this.buildChildNode(node, candidate, depth))
         ];
         depthCache.set(node, { ...expansion, childNodes });
         candidates.push(...childNodes);
-        for (let index = previousCandidateCount; index < childNodes.length; index += 1) {
+        for (let index = previousChildNodeCount; index < childNodes.length; index += 1) {
           const nextNode = childNodes[index];
           this.observeCompletedPatterns(nextNode, workDiagnostics);
           bestSeenCandidate = this.considerIncumbent(
@@ -1869,7 +1932,10 @@ export class Searcher {
             collectDiagnostics:false,
             searchBudget:budget
           });
-          if (candidate) this.finalizeCandidates([candidate]);
+          if (candidate) this.finalizeCandidates(
+            [...rootCandidates, candidate],
+            scheduledRootActions
+          );
           return { state, candidate };
         });
         const terminalState = prepared?.state ?? null;
