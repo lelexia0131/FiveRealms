@@ -1,7 +1,7 @@
 # FiveRealms AI Engine 2.0
 
-当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE；Final Semantic Authority Closure COMPLETE，AI architecture FROZEN。
-架构结论：AI core 已收敛为 18 个 JavaScript 文件；runtime authority、Search、Controller、Worker、Generator 与 Step 5.6 core residue 全部关闭。
+当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE；STEP 5.8 VALUE AUTHORITY / TEST DEBT CLOSURE COMPLETE，AI architecture FROZEN。
+架构结论：AI core 严格为 18 个 JavaScript 文件；Immediate/end opportunity 死链、SpyGap Final 一级泄漏、production residue 与 active AI test debt 均已关闭。
 本轮语义闭合基线：`6d9fcb8 STEP 5.7 — REMOTE VERIFIED`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 最新校验日期：2026-08-25
@@ -1383,23 +1383,30 @@ statePointsToUtility(points) = points / HP_VALUE
 1 Final Utility = 1 HP 的状态价值
 ```
 
-`Evaluator.stateUtility` 汇总后仍返回原始 state points，保证 Search/CardValue consumer 不发生单位往返。换算只发生在 `Evaluator` 内明确的 Final Utility 边界：state delta、SpyGap information option、terminal held option 与 `projectOwnerLedger` 诊断。当前最终公式为：
+`Evaluator.stateUtility` 汇总后仍返回原始 state points，保证 Search/CardValue consumer 不发生单位往返。换算只发生在 `Evaluator` 内明确的 Final Utility 边界：state delta、generic transition option、terminal held option 与 `projectOwnerLedger` 诊断。当前最终公式为：
 
 ```text
 RawStateDelta           = StateValuePoints(after) - StateValuePoints(before)
 DeltaStateUtility       = statePointsToUtility(RawStateDelta)
-FinalFlowUtility        = 0
-TerminalOptionUtility   = terminal ? statePointsToUtility(heldRecover + heldRecycle) : 0
-InformationOptionUtility = statePointsToUtility(spyGapInformationValuePoints)
+TransitionOptionPoints  = derivedActionOptionPoints
+                        + materializedAdaptiveInformationOptionPoints
+TransitionOptionUtility = statePointsToUtility(TransitionOptionPoints)
 
-FinalTransitionUtility
+BaseTransition
   = DeltaStateUtility
-  + FinalFlowUtility
-  + TerminalOptionUtility
-  + InformationOptionUtility
+  + TransitionOptionUtility
+
+TerminalHeldOptionUtility
+  = terminal ? statePointsToUtility(heldRecover + heldRecycle) : 0
+
+FinalTransition
+  = BaseTransition
+  + TerminalHeldOptionUtility
 ```
 
-`responseNet`、raw owner ledger、forced-discard information、static CardValue、SearchPrior 以及 expose/assault 的有限 beam 前瞻只用于诊断或搜索排序，不进入 final composition。`STATE_UTILITY_PRIOR_WEIGHT=0.4` 只是为保持 beam 相对排序的 heuristic：它可消费按 HP 基线归一化的输入，但不是 Final Utility 换算，也不是 `0.08` 的替代。Raw State delta 在路径上严格 telescoping；depth 不缩放动作价值。
+Adaptive information 仍保持 `E[max U] - max E[U]`：Searcher 只执行 hidden-world/follow-up traversal，Evaluator 只拥有具体角色/技能识别、公式与价值分类。物化结果作为 generic `TransitionOptionPoints` 进入 `evaluateTransition`；Searcher candidate schema 与 `composeTransitionValue` 不再知道 SpyGap。
+
+`responseNet`、raw owner ledger、forced-discard information、static CardValue、Search Prior 以及 expose/assault 的有限 beam 前瞻只用于诊断或搜索排序，不进入 final composition。`STATE_UTILITY_PRIOR_WEIGHT=0.4` 只是为保持 beam 相对排序的 heuristic：它可消费按 HP 基线归一化的输入，但不是 Final Utility 换算，也不是 `0.08` 的替代。Raw State delta 在路径上严格 telescoping；depth 不缩放动作价值。
 
 ### 33.6 `0.08` 历史结论与剩余常数
 
@@ -1620,3 +1627,32 @@ StateValue  -> pure current-state primitives
 当前没有 Evaluator nested simulation、跨 transition branch genealogy、hidden identity 指数展开、无界 Cartesian probability expansion、新 DTO hierarchy、重复 candidate materialization、重复 World conversion或 action-specific search metadata。Probability 的 response consumer 仍保持既有有界 `O(W × H)`，本阶段没有重写概率公式。
 
 `tools/check-code-quality.mjs --ai-all` 对精确 18 文件 allowlist、legacy path/`createStateContracts`、facade/Rng bypass、sibling import/`this.*` bypass、Evaluator runtime injection 与 function capability、DecisionContext capability、planning/runtime willingness contract、Searcher action-specific value owner、Controller candidate mini-search、Action replay metadata、raw World clone、Worker internal import 与 `transferPreference` 回流执行源码检查；self-test 同时包含合法和非法夹具。
+
+## 37. STEP 5.8 Final Cleanup / Test Debt Closure 当前事实
+
+STEP 5.8 不重新设计架构，只在既有 owner 内关闭 value placement、production residue 和 test debt。
+
+### Value authority closure
+
+- `endOpportunityCost`、`economic`、`immediate` 的 production term 和 caller 均为零引用；`resolutionScale` / `effectResolutionScale` 仍为 Scout、MutualBenefit 等 transition option 服务。
+- `BaseTransition = StateDeltaValue + TransitionOptionValue`；Transfer 低于冻结门槛时仍返回 `-Infinity`。
+- SpyGap adaptive information 的 hidden-world traversal 仍在 Searcher，领域识别和 `E[max U] - max E[U]` 仍在 Evaluator；结果已并入 generic transition option。
+- Searcher generic schema、candidate 与 final composition 中的 SpyGap 具体字段/参数为零。Simulator/Evaluator 内部仍可识别真实 SpyGap 领域规则。
+
+### Test debt closure
+
+起始完整入口为 `1160/1754`，失败 `594`。最终 active suite 为 `1196/1196`：
+
+- 物理删除 `561` 个只保护旧 owner/private schema 或无效扁平 fixture 的测试注册；其中 old architecture `140`、stale expectation `155`、broken canonical fixture `266`。
+- `34` 个原失败合同通过 canonical Action/World fixture、harness 修正或已证明的 production root fix 转绿。
+- 新增 `3` 个 canonical 合同：V01 死价值链、V02 generic TransitionOption、Resource `energyBranches` 保留。
+- 清理前的 `1192` 个通过测试在清理后一个也未丢失；active `OLD_ARCHITECTURE_TEST`、`STALE_EXPECTATION`、`BROKEN_CANONICAL_FIXTURE`、`AI_REAL_REGRESSION` 均为零。
+
+### Production regressions closed
+
+- `Simulator/Resource.updateEnergyFromWorlds` 改回在已有 `energyBranches` 上逐世界变换，并同步分支与期望 energy；不再从标量期望重建单世界。
+- exact lethal HP outcome 在同一伤害调用栈内保留待 `resolveFatal` 处理的存活资格，恢复死亡资源清理和击杀奖励的唯一 lifecycle。
+
+### Frozen complexity evidence
+
+固定 D4 在修改前后均为：roots `9/9`、nodes `102`、simulations `186`、clones `196`、probability operations `1812`、TIME fallback `false`、winner `stealSkill -> b`、score `2.5842210063856244`。说明 V01/V02 与两个 root fix 没有增加搜索节点、World clone、模拟或概率工作。

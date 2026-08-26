@@ -1,6 +1,6 @@
 FiveRealms AI 引擎 —— 最终架构说明
 
-当前状态： FINAL RESIDUE DELETION COMPLETE
+当前状态： FINAL RESIDUE / VALUE AUTHORITY / TEST DEBT CLOSURE COMPLETE
 架构状态： 18 文件 AI 架构已冻结
 执行硬规则： 每执行一个真实 Action 后，必须基于最新真实 World 重新搜索
 文档用途： 本文只描述当前正式生产架构。历史文件名只允许出现在“历史吸收表”中，不再拥有任何当前职责。
@@ -1116,6 +1116,42 @@ StateValue 与 CardValue 互不调用。
 Evaluator
 
 同一语义不得两边重复计价。
+
+10.5 最终价值公式
+
+Evaluator 内部的唯一正式换算基线为：
+
+```text
+HP_VALUE = 5 state points / HP
+statePointsToUtility(points) = points / HP_VALUE
+```
+
+当前公式严格为：
+
+```text
+StateDeltaValue
++
+TransitionOptionValue
+=
+BaseTransition
+
+BaseTransition
++
+TerminalHeldOption / FrontierValue
+=
+FinalTransition
+```
+
+`TransitionOption` 是 generic value category，包含从当前 action transition 派生的 card/resource option，以及由 Searcher 物化、Evaluator 定义公式和归类的 adaptive-information option。
+
+Final aggregation 不得包含：
+
+- Immediate / economic flow；
+- end opportunity penalty 或 fixed END penalty；
+- 具体卡牌名、角色名或技能名；
+- SpyGap 或其他具体业务项的一级参数。
+
+SpyGap 的真实技能 transition 仍归 Simulator；角色/技能识别与 `E[max U] - max E[U]` 仍归 Evaluator；hidden-world/follow-up traversal 仍归 Searcher。Searcher generic candidate schema 和 Final compose 只消费 `TransitionOptionPoints/Value`。
 
 11. Canonical 数据结构
 
