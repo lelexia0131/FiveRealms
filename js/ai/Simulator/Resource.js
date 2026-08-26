@@ -2009,52 +2009,47 @@ export const withResource = (Base) => class Resource extends Base {
 
   /*
   功能
-  按条件世界变换能量分支，并同步玩家的期望能量摘要。
+  在当前事件条件世界内变换能量，并把结果边缘化为玩家的 canonical 能量。
 
   调用方
   changeEnergy 与主动技能模拟：按同一条件世界更新能量。
 
   输入
-  目标玩家、事件世界和以当前能量/分支为输入的 transformer。
+  目标玩家、当前事件世界和以当前能量/事件分支为输入的 transformer。
 
   输出
-  新的完整能量状态分支数组。
+  仅供当前事件调用栈继续消费的完整能量结果分支。
 
   读取状态
-  玩家当前 energyBranches；无条件分支时读取 energy 标量。
+  玩家 canonical energy 标量与当前事件世界。
 
   写入状态
-  玩家 energyBranches 与 energy 期望摘要。
+  仅写玩家 canonical energy 标量。
 
   调用函数
   intersectProbabilityStateBranches、projectProbabilityStateBranches、expectedBranchValue。
 
   边界与不变量
-  transformer 只能改变当前分支能量；条件身份和概率质量必须保留。
+  transformer 只能改变当前事件分支能量；完整分支只沿当前调用栈返回，
+  事件结束后不得把条件身份或分支 genealogy 写回 World。
   */
   updateEnergyFromWorlds(player, worldBranches, transformer) {
-    const energy = Array.isArray(player.energyBranches) && player.energyBranches.length
-      ? player.energyBranches.map((branch) => ({
-          probability:branch.probability,
-          conditions:branch.conditions,
-          energyAmount:Number(branch.amount ?? branch.energyAmount) || 0
-        }))
-      : [{
-          probability:1,
-          conditions:{},
-          energyAmount:Number(player.energy) || 0
-        }];
+    const energy = [{
+      probability:1,
+      conditions:{},
+      energyAmount:Number(player.energy) || 0
+    }];
     const intersection = this.intersectProbabilityWork(
       [energy, worldBranches],
       "Simulator.updateEnergyFromWorlds:intersect"
     );
     const updated = this.projectProbabilityWork(intersection, (branch) => ({
+      ...branch,
       amount:Math.max(0, Math.min(player.maxEnergy ?? Infinity,
         Number(transformer(branch.energyAmount, branch)) || 0))
     }), "Simulator.updateEnergyFromWorlds:project");
-    player.energyBranches = updated;
     player.energy = expectedBranchValue(updated);
-    return intersection;
+    return updated;
   }
 
   /*
@@ -2068,10 +2063,10 @@ export const withResource = (Base) => class Resource extends Base {
   World、目标玩家、能量 delta 与可选事件世界。
 
   输出
-  无返回值；玩家能量分支和摘要已推进。
+  仅供当前事件调用栈继续消费的完整能量结果分支。
 
   读取状态
-  玩家当前能量与事件世界。
+  玩家 canonical energy 标量与当前事件世界。
 
   写入状态
   玩家 energy。
@@ -2080,7 +2075,7 @@ export const withResource = (Base) => class Resource extends Base {
   getEventWorlds、updateEnergyFromWorlds。
 
   边界与不变量
-  能量不得小于零或超过 maxEnergy；未发生世界保持原值。
+  能量不得小于零或超过 maxEnergy；未发生世界保持原值；返回分支不得写回 World。
   */
   changeEnergy(state, player, delta, eventWorlds = null) {
     const worlds = eventWorlds ?? this.getEventWorlds(state, 1, null, "energy");

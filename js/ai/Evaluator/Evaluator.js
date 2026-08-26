@@ -383,6 +383,62 @@ function guardianAidWillingness({
 
 /*
 功能
+从两条救援路径各自提供的事实计算唯一一组共同价值项。
+
+调用方
+planning decidePlanningDyingRescue 与 runtime assessDyingRescue。
+
+输入
+响应者、目标、存活队友数、当前可用 Recover 与本路径已解析的救援成功概率。
+
+输出
+strategic、actionValue、defeat risk、survival、opportunity cost 与 expected value。
+
+读取状态
+只读 plain player facts 与 CardValue/Domain 常量。
+
+写入状态
+无。
+
+调用函数
+getBaseCardAiValue。
+
+边界与不变量
+planning 可提供 Belief 概率，runtime 可提供更精确事实；共同权重和运算顺序只能在此定义。
+*/
+function dyingRescueValueTerms({
+  responder,
+  target,
+  aliveTeamCount,
+  availableRecover,
+  rescueSuccessProbability
+}) {
+  const strategic = (target.roleTags ?? []).some(
+    (tag) => ["support", "healer", "damage", "control", "tank"].includes(tag)
+  );
+  const actionValue = target.handCount * 1.25
+    + target.energy * 1.1
+    + (target.equipmentDefinitionId ? 2 : 0)
+    + (strategic ? 3 : 0);
+  const immediateDefeatRisk = aliveTeamCount <= 2;
+  const lastRecoverPenalty = availableRecover <= 1 ? (responder.hp <= 2 ? 3 : 1.5) : 0;
+  const survivalValue = HP_VALUE + actionValue + (immediateDefeatRisk ? 8 : 0);
+  const recoverOpportunityCost = getBaseCardAiValue("recover") * 0.35
+    + lastRecoverPenalty;
+  const expectedRescueValue = rescueSuccessProbability * survivalValue
+    - recoverOpportunityCost;
+  return {
+    strategic,
+    actionValue,
+    immediateDefeatRisk,
+    survivalValue,
+    recoverOpportunityCost,
+    expectedRescueValue
+  };
+}
+
+/*
+功能
 用统一救援 assessment 合同判断是否支付 Recover。
 
 调用方
@@ -2560,19 +2616,19 @@ export class Evaluator {
 
   /*
   功能
-  决定借势第一目标是否愿意把现有装备换成一次突袭。
+  用唯一借势公式决定第一目标是否愿意把现有装备换成一次突袭。
 
   调用方
   Simulator composition 注入的 decideLeverageAssault capability。
 
   输入
-  World、第一目标与第二目标。
+  World、第一目标、第二目标与可选 runtime 精确事实。
 
   输出
   确定的愿意/拒绝布尔值。
 
   读取状态
-  第一目标装备价值、突袭容量、第二目标格挡概率与敌友关系。
+  planning 从 Probability 读取突袭容量/格挡概率；runtime 可注入已解析的精确或估算事实。
 
   写入状态
   无。
@@ -2581,26 +2637,30 @@ export class Evaluator {
   getBaseCardAiValue、queryPlayerHandProbability。
 
   边界与不变量
-  保留既有 heuristic 的全部输入和 0.5 阈值；返回值不是自然概率。
+  planning/runtime 只能改变事实精度；价值项、系数和 0.5 阈值只在本方法定义，返回值不是自然概率。
   */
-  decideLeverageAssault(state, first, second) {
-    const firstAssault = queryPlayerHandProbability(
+  decideLeverageAssault(state, first, second, facts = null) {
+    const assaultExpected = facts?.assaultExpected ?? queryPlayerHandProbability(
       state.probabilityState,
       first,
       "assault"
-    );
-    const secondBlock = queryPlayerHandProbability(
+    ).expected;
+    const blockProbability = facts?.blockProbability ?? queryPlayerHandProbability(
       state.probabilityState,
       second,
       "block"
-    );
-    const equipmentValue = getBaseCardAiValue(first.equipmentDefinitionId);
+    ).probability;
+    const equipmentDefinitionId = facts?.equipmentDefinitionId
+      ?? first.equipmentDefinitionId;
+    const equipmentValue = getBaseCardAiValue(equipmentDefinitionId);
     const friendlyFirePenalty = second.battleTeam === first.battleTeam ? 0.55 : 0;
-    const defenseRisk = Math.min(0.9, secondBlock.probability);
+    const defenseRisk = Math.min(0.9, clampProbability(blockProbability));
     const targetValue = second.battleTeam === first.battleTeam
       ? -0.35 - (second.hp <= 2 ? 0.15 : 0)
       : 0.3 + (second.hp <= 2 ? 0.15 : 0);
-    const conserveAssaultPenalty = firstAssault.expected <= 0.75 ? 0.18 : 0;
+    const conserveAssaultPenalty = Math.max(0, Number(assaultExpected) || 0) <= 0.75
+      ? 0.18
+      : 0;
     const willingness = 0.42 + equipmentValue * 0.04 + targetValue
       - friendlyFirePenalty - defenseRisk * 0.2 - conserveAssaultPenalty;
     return willingness >= 0.5;
@@ -2742,65 +2802,55 @@ export class Evaluator {
       "recover"
     ).expected, 0);
     const guaranteedImpossible = teamRecover * getRecoverHealAmount() < need;
-    const strategic = (target.roleTags ?? []).some(
-      (tag) => ["support", "healer", "damage", "control", "tank"].includes(tag)
-    );
-    const actionValue = target.handCount * 1.25
-      + target.energy * 1.1
-      + (target.equipmentDefinitionId ? 2 : 0)
-      + (strategic ? 3 : 0);
-    const immediateDefeatRisk = team.length <= 2;
-    const lastRecoverPenalty = availableRecover <= 1 ? (rescuer.hp <= 2 ? 3 : 1.5) : 0;
-    const survivalValue = HP_VALUE + actionValue + (immediateDefeatRisk ? 8 : 0);
-    const recoverOpportunityCost = getBaseCardAiValue("recover") * 0.35 + lastRecoverPenalty;
     const rescueSuccessProbability = Math.min(1, teamRecover * getRecoverHealAmount() / need);
+    const { expectedRescueValue } = dyingRescueValueTerms({
+      responder:rescuer,
+      target,
+      aliveTeamCount:team.length,
+      availableRecover,
+      rescueSuccessProbability
+    });
     return dyingRescueWillingness({
       responder:rescuer,
       target,
       availableRecover,
       guaranteedImpossible,
-      expectedRescueValue:rescueSuccessProbability * survivalValue - recoverOpportunityCost,
+      expectedRescueValue,
       forceAiRescueHuman:this.forceAiRescueHuman
     });
   }
 
   /*
   功能
-  计算借势响应所需的目标威胁与格挡风险价值输入。
+  计算借势 runtime 响应可知的格挡风险事实。
 
   调用方
   Controller.buildResponseDecisionContext 的 leverageMetrics 预计算。
 
   输入
-  响应者/目标公开视图、合法记忆、World 与 current remaining counts。
+  目标公开视图与 current remaining counts。
 
   输出
-  `{threat, blockRisk}` 纯数值。
+  `{blockRisk}` 纯数值。
 
   读取状态
-  公开目标事实、合法记忆、Probability current counts 与难度倍率。
+  公开目标 handCount 与 Probability current counts。
 
   写入状态
   无。
 
   调用函数
-  threatPriority、probabilityFromCurrentCounts。
+  probabilityFromCurrentCounts。
 
   边界与不变量
-  Controller 只提供 runtime-bound facts；0.85 上限和既有乘法顺序保持不变。
+  Controller 只提供 runtime-bound fact；本方法不拥有借势价值项、系数或阈值。
   */
-  leverageResponseMetrics(responder, target, memory, world, remainingCardCounts) {
-    const worldResponder = world.players.find((player) => player.id === responder.id);
-    const worldTarget = world.players.find((player) => player.id === target.id);
-    const enemyTarget = target.battleTeam !== responder.battleTeam;
-    const threat = enemyTarget && worldResponder && worldTarget
-      ? this.threatPriority(worldResponder, worldTarget, memory, 1)
-      : 0;
+  leverageResponseMetrics(target, remainingCardCounts) {
     const blockRisk = Math.min(
       0.85,
       target.handCount * probabilityFromCurrentCounts(remainingCardCounts, "block")
     );
-    return { threat, blockRisk };
+    return { blockRisk };
   }
 
   /*
@@ -2918,19 +2968,13 @@ export class Evaluator {
     const aliveTeam = rescueOrder.filter(
       (player) => player.alive && player.battleTeam === target.battleTeam
     );
-    const strategic = (target.roleTags ?? []).some(
-      (tag) => ["support", "healer", "damage", "control", "tank"].includes(tag)
-    );
-    const actionValue = target.handCount * 1.25
-      + target.energy * 1.1
-      + (target.equipmentDefinitionId ? 2 : 0)
-      + (strategic ? 3 : 0);
-    const immediateDefeatRisk = aliveTeam.length <= 2;
-    const lastRecoverPenalty = ownRecover === 1 ? (responder.hp <= 2 ? 3 : 1.5) : 0;
-    const survivalValue = HP_VALUE + actionValue + (immediateDefeatRisk ? 8 : 0);
-    const recoverOpportunityCost = getBaseCardAiValue("recover") * 0.35 + lastRecoverPenalty;
-    const expectedRescueValue = rescueSuccessProbability * survivalValue
-      - recoverOpportunityCost;
+    const valueTerms = dyingRescueValueTerms({
+      responder,
+      target,
+      aliveTeamCount:aliveTeam.length,
+      availableRecover:ownRecover,
+      rescueSuccessProbability
+    });
     const resolvedRecoverDensity = recoverDensity
       ?? probabilityFromCurrentCounts(remainingCardCounts, "recover");
     return {
@@ -2946,13 +2990,8 @@ export class Evaluator {
       guaranteedSurvivable,
       rescueSuccessProbability,
       remainingAfterThisCard,
-      strategic,
-      immediateDefeatRisk,
-      actionValue,
-      survivalValue,
-      recoverOpportunityCost,
-      expectedRescueValue,
-      score:expectedRescueValue
+      ...valueTerms,
+      score:valueTerms.expectedRescueValue
     };
   }
 
@@ -3137,23 +3176,12 @@ export class Evaluator {
     }
     if (type === "leverageAssault") {
       if (!availableResponseCount || !target?.alive || !leverageMetrics) return false;
-      const metrics = leverageMetrics;
-      const enemyTarget = target.battleTeam !== responder.battleTeam;
-      const attackBenefit = enemyTarget
-        ? 4
-          + metrics.threat
-          + Math.max(0, target.maxHp - target.hp) * 1.5
-          + (target.hp <= 1 ? 5 : 0)
-        : -10;
-      const equipmentValue = context.equipment?.definitionId
-        ? getBaseCardAiValue(context.equipment.definitionId)
-        : 5;
-      const assaultCost = availableResponseCount <= 1 ? 4.5 : 2.5;
-      const score = attackBenefit
-        + equipmentValue * 1.05
-        - assaultCost
-        - metrics.blockRisk * 2.5;
-      return score > 0;
+      return this.decideLeverageAssault(world, responder, target, {
+        assaultExpected:availableResponseCount,
+        blockProbability:leverageMetrics.blockRisk,
+        equipmentDefinitionId:context.equipment?.definitionId
+          ?? responder.equipmentDefinitionId
+      });
     }
     if (type === "skill") return this.shouldUseGuardianAid(decision);
     return false;

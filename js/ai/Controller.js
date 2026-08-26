@@ -1517,12 +1517,9 @@ export class Controller {
     if (type === "leverageAssault") {
       const target = publicContext.target ?? responderView;
       decision.leverageMetrics = this.evaluator.leverageResponseMetrics(
-          responderView,
-          target,
-          responder.aiMemory,
-          world,
-          remainingCardCounts
-        );
+        target,
+        remainingCardCounts
+      );
     } else if (type === "skill" && publicContext.target) {
       const simulator = this.simulatorFactory();
       const worlds = simulator.buildGuardianAidWorlds(

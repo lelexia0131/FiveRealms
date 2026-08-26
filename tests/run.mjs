@@ -13941,6 +13941,7 @@ async function finalAiResidueApiClosure() {
   const paths = {
     action:"js/ai/Generator/Action.js",
     simulator:"js/ai/Simulator/Simulator.js",
+    resource:"js/ai/Simulator/Resource.js",
     response:"js/ai/Simulator/Response.js",
     searcher:"js/ai/Searcher/Searcher.js",
     stateValue:"js/ai/Evaluator/StateValue.js",
@@ -13954,6 +13955,7 @@ async function finalAiResidueApiClosure() {
   ));
   assert.doesNotMatch(source.action, /export\s+const\s+Action\s*=/);
   assert.doesNotMatch(source.simulator, /constructor\s*\(\s*visibleState|void\s+visibleState/);
+  assert.doesNotMatch(source.resource, /\benergyBranches\b/);
   assert.doesNotMatch(
     source.response,
     /void\s+options|resolveTargetCounterResponseWorlds\s*\([^)]*\boptions\b/
@@ -13968,11 +13970,154 @@ async function finalAiResidueApiClosure() {
     source.evaluator,
     /breakArmyUtility[\s\S]*reduce\(\(sum, card\) => sum \+ cardAvailability\(card\)/
   );
+  const evaluatorCode = source.evaluator.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  assert.equal((evaluatorCode.match(/const willingness = 0\.42/g) ?? []).length, 1);
+  assert.equal((evaluatorCode.match(/return willingness >= 0\.5/g) ?? []).length, 1);
+  assert.doesNotMatch(evaluatorCode, /\b(?:attackBenefit|assaultCost)\b/);
+  assert.match(
+    evaluatorCode,
+    /if \(type === "leverageAssault"\)[\s\S]*return this\.decideLeverageAssault\(/
+  );
+  for (const term of [
+    "strategic",
+    "actionValue",
+    "immediateDefeatRisk",
+    "lastRecoverPenalty",
+    "survivalValue",
+    "recoverOpportunityCost",
+    "expectedRescueValue"
+  ]) {
+    assert.equal(
+      (evaluatorCode.match(new RegExp(`const ${term} =`, "g")) ?? []).length,
+      1,
+      `Dying Rescue ${term} 必须只有一个定义`
+    );
+  }
   const actionModule = await import("../js/ai/Generator/Action.js");
   assert.equal(actionModule.Action, undefined);
 }
 
 test("AI·架构：Final residue API 与 duplicate primitive 闭合", finalAiResidueApiClosure);
+
+/*
+功能
+锁定 generic Branch intersection 的生产调用点集合与 current-event 非持久化边界。
+
+调用方
+AI 架构与概率生命周期回归测试。
+
+输入
+无；函数内读取四个真实 caller 与 canonical World 源码。
+
+输出
+Promise；新增未审计 caller、调用数漂移或 World branch field 回流时抛出断言。
+
+读取状态
+Probability、Simulator、Resource、Response 与 World production source。
+
+写入状态
+无。
+
+调用函数
+readFile。
+
+边界与不变量
+29 个 cooperative caller 与两个小输入 direct caller 必须全部归入显式方法清单；
+交集只在当前事件调用栈投影或边缘化，canonical World 不保存 branch arrays。
+*/
+async function branchIntersectionCallerBoundednessContract() {
+  const paths = {
+    probability:"js/ai/Event/Probability/Probability.js",
+    simulator:"js/ai/Simulator/Simulator.js",
+    resource:"js/ai/Simulator/Resource.js",
+    response:"js/ai/Simulator/Response.js",
+    world:"js/ai/Simulator/World.js"
+  };
+  const source = Object.fromEntries(await Promise.all(
+    Object.entries(paths).map(async ([name, file]) => [
+      name,
+      (await readFile(projectFile(file), "utf8"))
+        .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")
+    ])
+  ));
+  const auditedMethods = {
+    simulator: {
+      gateEventWorlds:1,
+      apply:1,
+      applyDamage:6,
+      buildCardExecutionWorlds:1,
+      applyDuel:1,
+      buildSkillExecutionWorlds:1,
+      simulateCategoryUse:1,
+      simulateTracking:1,
+      simulateAfterLifeDamage:1,
+      applyDelayedStatusCard:1
+    },
+    resource: {
+      consumeBlockIdentities:1,
+      consumeBlockPayment:1,
+      addSimulatedKnownCard:1,
+      transferKnownCardIdentity:1,
+      consumeKnownCardsFromHand:1,
+      removeOneRandomCardFromHand:1,
+      consumeChosenHandCard:1,
+      destroyResource:1,
+      addStolenIdentityToHand:1,
+      updateEnergyFromWorlds:1,
+      updateShieldFromWorlds:1,
+      consumeSlot:1
+    },
+    response: {
+      resolveBlockResponseWorlds:1,
+      resolveTargetCounterResponseWorlds:1
+    }
+  };
+  let auditedCooperativeCallers = 0;
+  for (const [file, methods] of Object.entries(auditedMethods)) {
+    for (const [method, expectedCalls] of Object.entries(methods)) {
+      const start = source[file].indexOf(`\n  ${method}(`);
+      assert.ok(start >= 0, `${file}.${method} 必须存在`);
+      const followingMethod = source[file]
+        .slice(start + 1)
+        .match(/\n  [A-Za-z_$][\w$]*\(/);
+      const end = followingMethod
+        ? start + 1 + followingMethod.index
+        : source[file].length;
+      const section = source[file].slice(start, end);
+      const calls = section.match(/this\.intersectProbabilityWork\(/g) ?? [];
+      assert.equal(calls.length, expectedCalls, `${file}.${method} caller 数漂移`);
+      auditedCooperativeCallers += calls.length;
+    }
+  }
+  assert.equal(auditedCooperativeCallers, 29);
+  assert.equal(
+    (source.probability.match(/intersectProbabilityStateBranches\(/g) ?? []).length,
+    1,
+    "Probability 只允许 availableResourceCountDistribution 的 H+1 fold"
+  );
+  assert.equal(
+    (source.resource.match(/(?<!\.)intersectProbabilityStateBranches\(/g) ?? []).length,
+    1,
+    "Resource 只允许单 branch × 二元 gate 的直接相交"
+  );
+  assert.doesNotMatch(
+    source.world,
+    /\b[A-Za-z_$][\w$]*Branches(?:By[A-Za-z_$][\w$]*)?\b/,
+    "canonical World 不得持久化 branch arrays"
+  );
+  for (const name of ["simulator", "resource", "response"]) {
+    assert.doesNotMatch(
+      source[name],
+      /\b(?:state|player|actor|target|holder|source|receiver)\.[A-Za-z_$][\w$]*Branches(?:By[A-Za-z_$][\w$]*)?\s*=/,
+      `${name} 不得把 intersection genealogy 写回 World player`
+    );
+  }
+}
+
+test(
+  "AI·概率架构：全部 Branch intersection caller 有界且不持久化 genealogy",
+  branchIntersectionCallerBoundednessContract
+);
 
 /*
 功能
@@ -14163,58 +14308,131 @@ test(
 
 /*
 功能
-锁定 Resource 在能量条件世界上逐分支更新，并保留分支身份。
+验证 Resource 把能量不确定性限制在当前事件返回分支，并只持久化 canonical 能量。
 
 调用方
 AI Simulator/Resource 回归测试。
 
 输入
-无；函数内构造两个互斥能量世界与对应事件。
+无；函数内构造一个含上限截断的条件能量获得事件。
 
 输出
-无；分支量、条件或期望摘要丢失时抛出断言。
+无；局部分支、条件、上限或 canonical 摘要错误时抛出断言。
 
 读取状态
-测试玩家 energyBranches。
+测试玩家的 canonical energy。
 
 写入状态
-仅测试玩家的 energyBranches 与 energy。
+仅测试玩家的 canonical energy。
 
 调用函数
 Simulator.updateEnergyFromWorlds。
 
 边界与不变量
-必须在既有条件分支上变换，不得从期望标量重建单世界。
+完整条件分支只能由返回值供当前事件消费，不能写入玩家或 World。
 */
-function energyBranchesPreservationContract() {
+function currentEventEnergyUncertaintyContract() {
   const player = {
-    id:"energy-branch-owner",
-    energy:1.5,
-    maxEnergy:4,
-    energyBranches:[
-      { probability:0.4, conditions:{ energyWorld:"low" }, amount:1 },
-      { probability:0.6, conditions:{ energyWorld:"high" }, amount:3 }
-    ]
+    id:"current-event-energy-owner",
+    energy:3,
+    maxEnergy:4
   };
   const eventWorlds = [
-    { probability:0.4, conditions:{ energyWorld:"low" }, occurs:true },
-    { probability:0.6, conditions:{ energyWorld:"high" }, occurs:false }
+    { probability:0.4, conditions:{ currentEnergyEvent:"gain" }, occurs:true },
+    { probability:0.6, conditions:{ currentEnergyEvent:"unchanged" }, occurs:false }
   ];
-  new Simulator({ players:[] }).updateEnergyFromWorlds(
+  const localBranches = new Simulator({ players:[] }).updateEnergyFromWorlds(
     player,
     eventWorlds,
-    (amount, branch) => branch.occurs ? amount + 1 : amount
+    (amount, branch) => branch.occurs ? amount + 2 : amount
   );
-  assert.deepEqual(player.energyBranches.map(({ conditions, amount }) => ({ conditions, amount })), [
-    { conditions:{ energyWorld:"low" }, amount:2 },
-    { conditions:{ energyWorld:"high" }, amount:3 }
+  assert.deepEqual(localBranches.map(({
+    probability, conditions, occurs, energyAmount, amount
+  }) => ({ probability, conditions, occurs, energyAmount, amount })), [
+    {
+      probability:0.4,
+      conditions:{ currentEnergyEvent:"gain" },
+      occurs:true,
+      energyAmount:3,
+      amount:4
+    },
+    {
+      probability:0.6,
+      conditions:{ currentEnergyEvent:"unchanged" },
+      occurs:false,
+      energyAmount:3,
+      amount:3
+    }
   ]);
-  assertClose(player.energyBranches[0].probability, 0.4);
-  assertClose(player.energyBranches[1].probability, 0.6);
-  assertClose(player.energy, 2.6);
+  assertClose(player.energy, 3.4);
+  assert.equal(Object.hasOwn(player, "energyBranches"), false);
 }
 
-test("AI·模拟器：Resource 保留 energyBranches 条件世界与期望摘要", energyBranchesPreservationContract);
+test(
+  "AI·模拟器：Resource 能量不确定性只在当前事件分支返回",
+  currentEventEnergyUncertaintyContract
+);
+
+/*
+功能
+验证连续 Resource transition 只从上一次 canonical 能量开始当前事件计算。
+
+调用方
+AI Simulator/Resource 回归测试。
+
+输入
+无；函数内依次构造 Event A 条件获得与 Event B 条件消耗。
+
+输出
+无；Event B 继承 Event A 条件或生成 Cartesian genealogy 时抛出断言。
+
+读取状态
+同一测试玩家在两个 transition 之间的 canonical energy。
+
+写入状态
+仅测试玩家的 canonical energy。
+
+调用函数
+Simulator.changeEnergy。
+
+边界与不变量
+Event A 的完整分支在返回后即丢弃；Event B 只能包含自己的条件并保持两分支上界。
+*/
+function consecutiveEnergyTransitionGenealogyContract() {
+  const player = {
+    id:"consecutive-energy-owner",
+    energy:3,
+    maxEnergy:4
+  };
+  const state = { players:[player] };
+  const simulator = new Simulator(state);
+  const eventABranches = simulator.changeEnergy(state, player, 2, [
+    { probability:0.4, conditions:{ transitionA:"gain" }, occurs:true },
+    { probability:0.6, conditions:{ transitionA:"unchanged" }, occurs:false }
+  ]);
+  assert.equal(eventABranches.length, 2);
+  assertClose(player.energy, 3.4);
+  assert.equal(Object.hasOwn(player, "energyBranches"), false);
+
+  const eventBBranches = simulator.changeEnergy(state, player, -1, [
+    { probability:0.25, conditions:{ transitionB:"consume" }, occurs:true },
+    { probability:0.75, conditions:{ transitionB:"unchanged" }, occurs:false }
+  ]);
+  assert.equal(eventBBranches.length, 2);
+  assert.deepEqual(eventBBranches.map((branch) => branch.conditions), [
+    { transitionB:"consume" },
+    { transitionB:"unchanged" }
+  ]);
+  assert.ok(eventBBranches.every((branch) => branch.energyAmount === 3.4));
+  assert.deepEqual(eventBBranches.map((branch) => branch.amount), [2.4, 3.4]);
+  assertClose(player.energy, 3.15);
+  assert.equal(Object.hasOwn(player, "energyBranches"), false);
+}
+
+test(
+  "AI·模拟器：连续 Resource transition 不继承能量分支 genealogy",
+  consecutiveEnergyTransitionGenealogyContract
+);
 
 test("AI·响应一致性：Block planning 与 runtime 共享致命和资源意愿", () => {
   const run = (hp) => {
@@ -15889,6 +16107,7 @@ function testWorldCloneIsolation() {
   assert.equal(world.players[0].hand[0].availability, 1);
   assert.equal(queryCurrentCardCounts(secondClone.probabilityState).assault, 2);
   assert.equal("hpStateBranches" in world.players[0], false);
+  assert.equal("energyBranches" in world.players[0], false);
   assert.equal("availabilityStateBranches" in world.players[0].hand[0], false);
   assert.equal("remainingCardCounts" in world, false);
   assert.equal("game" in world, false);
@@ -16804,6 +17023,11 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
     assert.equal(stats.bestValueScore, 2.5842210063856244);
     assert.equal(stats.stopReason, "COMPLETE");
     assert.equal(stats.simulationCalls, 186);
+    assert.equal(stats.cloneCalls, 196);
+    assert.equal(stats.probabilityOperations, 1812);
+    assert.equal(stats.rootCandidateCount, 9);
+    assert.equal(stats.completedRootCandidateCount, 9);
+    assert.equal(stats.timeoutObserved, false);
     assert.equal(stats.matchedPatternCount, 1);
     assert.equal(stats.patternProposalCount, 1);
     assert.equal(stats.completedPatternCount, 1);
@@ -20857,6 +21081,43 @@ test("AI·借势：搜索模拟只消费 Evaluator 的确定 boolean choice", ()
   );
 });
 
+test("AI·借势：planning 与 runtime facts 进入同一 canonical response 公式", () => {
+  const responder = makePlayer("leverage-authority-responder", 0, "dawn", "ai", 4);
+  const target = makePlayer("leverage-authority-target", 1, "dusk", "ai", 4);
+  const knownBlock = instance("block");
+  target.hand.push(knownBlock);
+  responder.aiMemory.knownCardsByPlayer[target.id] = { [knownBlock.id]:"block" };
+  const { game } = makeGame([responder, target]);
+  const world = createInitialWorld(
+    responder.id,
+    game.state,
+    deriveCurrentCardCounts(responder, game.state)
+  );
+  const worldResponder = world.players.find((player) => player.id === responder.id);
+  const worldTarget = world.players.find((player) => player.id === target.id);
+  const facts = {
+    assaultExpected:2,
+    blockProbability:0,
+    equipmentDefinitionId:"battleDevice"
+  };
+  const planningDecision = game.aiController.evaluator.decideLeverageAssault(
+    world,
+    worldResponder,
+    worldTarget,
+    facts
+  );
+  const runtimeDecision = game.aiController.evaluator.shouldRespond({
+    responder:worldResponder,
+    responseType:"leverageAssault",
+    context:{ target:worldTarget, equipment:{ definitionId:"battleDevice" } },
+    availableResponseCount:2,
+    leverageMetrics:{ blockRisk:0 },
+    world
+  });
+  assert.equal(planningDecision, true);
+  assert.equal(runtimeDecision, planningDecision);
+});
+
 test("AI·借势：响应通过可见快照评估真实玩家状态", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     first = makePlayer("first", 1, "dusk"),
@@ -23812,7 +24073,6 @@ test("AI·赌命者：模拟孤注按E-1摸牌并按25%概率质量合并非叠�
           shield: 0,
           energy,
           maxEnergy: 4,
-          energyBranches: [{ probability: 1, conditions: {}, amount: energy }],
           assaultBonus,
           handCount: 0,
           activeSkillUses: 0,
@@ -25399,6 +25659,40 @@ test("AI·救援：strategic 目标在极低成功率下不能覆盖负期望", 
   assert.equal(assessment.actionValue, 3);
   assert.ok(assessment.expectedRescueValue < 0);
   assert.equal(policy.shouldRespond(decision), false);
+});
+
+test("AI·救援：planning 与 runtime 共享 canonical common value semantic", () => {
+  const target = makePlayer("rescue-authority-target", 0, "dawn", "ai", 4);
+  const responder = makePlayer("rescue-authority-responder", 1, "dawn", "ai", 3);
+  const enemy = makePlayer("rescue-authority-enemy", 2, "dusk", "ai", 4);
+  target.hp = 0;
+  responder.hand.push(instance("recover"));
+  const { game } = makeGame([target, responder, enemy]);
+  const decision = game.aiController.buildResponseDecisionContext(
+    responder,
+    "dyingRescue",
+    { target },
+    responder.hand
+  );
+  const assessment = game.aiController.evaluator.assessDyingRescue({
+    responder:decision.responder,
+    target:decision.context.target,
+    rescueOrder:decision.rescueOrder,
+    responderHandDefinitionIds:decision.responderHandDefinitionIds,
+    knownCardsByPlayer:decision.knownCardsByPlayer,
+    recoverDensity:decision.recoverDensity,
+    remainingCardCounts:decision.remainingCardCounts
+  });
+  const planningDecision = game.aiController.evaluator.decidePlanningDyingRescue(
+    decision.world,
+    decision.responder,
+    decision.context.target,
+    { available:assessment.ownRecover, need:assessment.need }
+  );
+  assert.equal(assessment.strategic, true);
+  assert.ok(assessment.expectedRescueValue > 0);
+  assert.equal(game.aiController.evaluator.shouldRespond(decision), planningDecision);
+  assert.equal(planningDecision, true);
 });
 
 

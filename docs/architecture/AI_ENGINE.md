@@ -1628,7 +1628,7 @@ StateValue  -> pure current-state primitives
 
 `tools/check-code-quality.mjs --ai-all` 对精确 18 文件 allowlist、legacy path/`createStateContracts`、facade/Rng bypass、sibling import/`this.*` bypass、Evaluator runtime injection 与 function capability、DecisionContext capability、planning/runtime willingness contract、Searcher action-specific value owner、Controller candidate mini-search、Action replay metadata、raw World clone、Worker internal import 与 `transferPreference` 回流执行源码检查；self-test 同时包含合法和非法夹具。
 
-## 37. STEP 5.8 Final Cleanup / Test Debt Closure 当前事实
+## 37. STEP 5.8 / Post-5.8 Residue Cleanup 当前事实
 
 STEP 5.8 不重新设计架构，只在既有 owner 内关闭 value placement、production residue 和 test debt。
 
@@ -1641,18 +1641,28 @@ STEP 5.8 不重新设计架构，只在既有 owner 内关闭 value placement、
 
 ### Test debt closure
 
-起始完整入口为 `1160/1754`，失败 `594`。最终 active suite 为 `1196/1196`：
+STEP 5.8 Batch A 起始完整入口为 `1160/1754`，失败 `594`；当批 active suite 收束为 `1196/1196`：
 
 - 物理删除 `561` 个只保护旧 owner/private schema 或无效扁平 fixture 的测试注册；其中 old architecture `140`、stale expectation `155`、broken canonical fixture `266`。
 - `34` 个原失败合同通过 canonical Action/World fixture、harness 修正或已证明的 production root fix 转绿。
-- 新增 `3` 个 canonical 合同：V01 死价值链、V02 generic TransitionOption、Resource `energyBranches` 保留。
+- 当批新增 `3` 个 canonical 合同：V01 死价值链、V02 generic TransitionOption，以及后来确认保护了错误持久化合同的 Resource `energyBranches` 保留测试。
 - 清理前的 `1192` 个通过测试在清理后一个也未丢失；active `OLD_ARCHITECTURE_TEST`、`STALE_EXPECTATION`、`BROKEN_CANONICAL_FIXTURE`、`AI_REAL_REGRESSION` 均为零。
+
+Post-5.8 Residue Cleanup B 将错误 Resource 合同迁移为 current-event energy uncertainty 与连续 transition genealogy 两项合同；当批完整入口为 `1199/1199`。
+
+### Post-5.8 duplicate authority 与 Branch closure
+
+- Leverage Assault 的 planning/runtime facts 统一进入 `Evaluator.decideLeverageAssault`；价值项、系数与 `0.5` threshold 只保留一份，runtime 只提供当前可用突袭数、装备定义与格挡风险事实。
+- Dying Rescue 的 planning/runtime 共用唯一 `dyingRescueValueTerms`；strategic、action value、defeat risk、last-Recover penalty、survival、opportunity cost 与 expected rescue value 不再在两条路径重复定义，既有 `dyingRescueWillingness` 资格和阈值保持不变。
+- 生产 generic Branch intersection 共 `31` 个 caller：`29` 个经 cooperative Simulator runtime，`2` 个为显式小输入 direct caller。所有 caller 只在当前事件调用栈投影、合并或边缘化；canonical World 不保存 branch arrays，persistent genealogy 与 unbounded caller 均为零。
+- 新增 Leverage authority、Dying Rescue common terms 与 Branch caller boundedness 三项合同；最终完整入口为 `1202/1202`。
 
 ### Production regressions closed
 
-- `Simulator/Resource.updateEnergyFromWorlds` 改回在已有 `energyBranches` 上逐世界变换，并同步分支与期望 energy；不再从标量期望重建单世界。
+- `Simulator/Resource.updateEnergyFromWorlds` 只把 canonical `player.energy` 与当前事件 worlds 相交；更新后的完整分支仅沿当前调用栈返回，事件结束只写回期望 `player.energy`。
+- 持久 `player.energyBranches` production caller 与字段均已删除；AllIn 继续消费同一事件返回分支中的结算前能量，下一 transition 不继承上一事件条件或 branch genealogy。
 - exact lethal HP outcome 在同一伤害调用栈内保留待 `resolveFatal` 处理的存活资格，恢复死亡资源清理和击杀奖励的唯一 lifecycle。
 
 ### Frozen complexity evidence
 
-固定 D4 在修改前后均为：roots `9/9`、nodes `102`、simulations `186`、clones `196`、probability operations `1812`、TIME fallback `false`、winner `stealSkill -> b`、score `2.5842210063856244`。说明 V01/V02 与两个 root fix 没有增加搜索节点、World clone、模拟或概率工作。
+固定 D4 在 STEP 5.8 与 Post-5.8 Residue Cleanup 修改前后均为：roots `9/9`、nodes `102`、simulations `186`、clones `196`、probability operations `1812`、TIME fallback `false`、winner `stealSkill -> b`、score `2.5842210063856244`。说明 V01/V02、两个 root fix、energy branch lifecycle 与最终 duplicate-authority 收口均未增加搜索节点、World clone、模拟或概率工作。
