@@ -1066,13 +1066,32 @@ export class Searcher {
     maxNewCandidates = Number.POSITIVE_INFINITY,
     workDiagnostics
   }) {
-    const followActions = resumeExpansion?.actions ?? this.scheduleChildActions(
-      this.generateActions(parentState, player.id, budget),
-      player,
-      parentState,
-      activePatternProposals,
-      depth - 1
-    );
+    const resumedCandidates = [...(resumeExpansion?.candidates ?? [])];
+    let followActions;
+    try {
+      followActions = resumeExpansion?.actions ?? this.scheduleChildActions(
+        this.generateActions(parentState, player.id, budget),
+        player,
+        parentState,
+        activePatternProposals,
+        depth - 1
+      );
+    } catch (error) {
+      if (!budget.isCurrentWorkInterruption?.(error)) throw error;
+      // 深层 Generator 与 candidate preparation 使用同一 cooperative abort 语义；
+      // 中断只能丢弃当前未完成 child，不能把已经完成的 root incumbent 升级成 Worker fault。
+      workDiagnostics.abortedCandidateCount += 1;
+      return {
+        actions:resumeExpansion?.actions ?? [],
+        candidates:resumedCandidates,
+        completeCandidateCount:resumedCandidates.filter(
+          (candidate) => candidate.transitionValue !== null
+        ).length,
+        nextActionIndex:resumeExpansion?.nextActionIndex ?? 0,
+        complete:false,
+        cancelled:false
+      };
+    }
     if (!resumeExpansion) workDiagnostics.childBranches += followActions.length;
     if (!resumeExpansion) {
       for (const proposal of activePatternProposals) {
@@ -1091,7 +1110,7 @@ export class Searcher {
         workDiagnostics.abortedPatternCount += 1;
       }
     }
-    const candidates = [...(resumeExpansion?.candidates ?? [])];
+    const candidates = resumedCandidates;
     let nextActionIndex = resumeExpansion?.nextActionIndex ?? 0;
     let newCandidateCount = 0;
     const requestedCandidateLimit = Number.isFinite(maxNewCandidates)

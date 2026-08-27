@@ -17221,6 +17221,202 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
   }
 });
 
+/*
+功能
+在真实 canonical World/Action 链上用确定性时钟触发深层生成阶段的 TIME 收束。
+
+调用方
+AI 搜索停止与 Controller acceptance 回归测试。
+
+输入
+场景标识、时间预算、固定玩家配置、行动者 ID 与搜索种子。
+
+输出
+Game、全部 root Actions、Worker outcome 与 Controller acceptance 结果。
+
+读取状态
+固定 GameState、canonical World、Generator root Actions 与 Searcher diagnostics。
+
+写入状态
+只推进局部单调时钟、Worker 搜索实例与 Controller 诊断。
+
+调用函数
+makeBenchmarkGame、createInitialWorld、createSearchRequest、runSearchRequest 与 acceptWorkerSearchOutcome。
+
+边界与不变量
+不调整价值、预算或候选顺序；两条路径共用生产 Worker runtime 和 Main Thread acceptance。
+*/
+async function runTimedSearchAcceptanceFixture({
+  label,
+  timeBudgetMs,
+  players,
+  actorId,
+  seed
+}) {
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const game = makeBenchmarkGame({ players, options:{ actorId, seed } });
+  const actor = game.state.players.find((player) => player.id === actorId);
+  const world = createInitialWorld(
+    actor.id,
+    game.state,
+    deriveCurrentCardCounts(actor, game.state)
+  );
+  const rootActions = game.aiController.getActionCandidates(actor, world);
+  const request = createSearchRequest({
+    requestId:label,
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    world,
+    searchConfig:{
+      ...game.aiController.buildSearchConfig({ timeBudgetMs }),
+      nodeBudget:null
+    },
+    rng:new SearchRng(seed).snapshot(),
+    rootActions
+  });
+  let currentMs = 0;
+  const outcome = await runSearchRequest(request, {
+    now:() => currentMs++,
+    yieldControl:async () => true
+  });
+  const accepted = game.aiController.acceptWorkerSearchOutcome(
+    request,
+    outcome,
+    rootActions
+  );
+  return { game, rootActions, outcome, accepted };
+}
+
+test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incumbent", async () => {
+  const fixture = await runTimedSearchAcceptanceFixture({
+    label:"time-plunder-charge-incumbent",
+    timeBudgetMs:30,
+    actorId:"resource-actor",
+    seed:1818,
+    players:[
+      {
+        id:"resource-actor",
+        team:"dawn",
+        character:"shade-agent",
+        energy:1,
+        maxEnergy:3,
+        hand:[
+          makeBenchmarkCard("plunder", "time-plunder"),
+          makeBenchmarkCard("charge", "time-charge")
+        ]
+      },
+      {
+        id:"resource-enemy",
+        team:"dusk",
+        character:"oath-warden",
+        hp:4,
+        energy:0,
+        hand:[makeBenchmarkCard("assault", "time-enemy-hand")],
+        equipment:makeBenchmarkCard("energyDevice", "time-enemy-equipment")
+      }
+    ]
+  });
+  try {
+    const { game, rootActions, outcome, accepted } = fixture;
+    assert.deepEqual(rootActions.map((action) => (
+      action.type === "end" ? "end" : action.cardId ?? action.skillId
+    )), ["plunder", "plunder", "charge", "end"]);
+    assert.equal(outcome.workerError ?? null, null);
+    assert.equal(outcome.searchStopReason, "TIME");
+    assert.equal(outcome.stats.uniqueRootCandidateCount, 4);
+    assert.equal(outcome.stats.completedRootCandidateCount, 4);
+    assert.equal(outcome.stats.expanded, 4);
+    assert.equal(outcome.stats.bestValueScore, 0.5172121093750007);
+    assert.ok(outcome.stats.elapsedMs >= 30);
+    assert.ok(outcome.stats.rootWork.every((entry) => entry.completed));
+    assert.equal(outcome.stats.provisionalFallbackUsed, false);
+    assert.equal(outcome.stats.provisionalFallbackAction, null);
+    assert.deepEqual(describeBenchmarkAction(outcome.action), {
+      type:"card",
+      cardId:"plunder",
+      cardInstanceId:"time-plunder",
+      targetId:"resource-enemy",
+      targetIds:["resource-enemy"],
+      selection:{
+        zone:"equipment",
+        selectionKind:"equipment",
+        cardId:null,
+        definitionId:"energyDevice",
+        availableUnknownCount:0
+      }
+    });
+    assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.equal(accepted.action, outcome.action);
+    assert.equal(game.aiController.lastSearchFallback, null);
+  } finally {
+    disposeBenchmarkGame(fixture.game);
+  }
+});
+
+test("AI·搜索：TIME 深层生成中断保留赌命者已完成突袭/孤注 root incumbent", async () => {
+  const fixture = await runTimedSearchAcceptanceFixture({
+    label:"time-fate-gambler-incumbent",
+    timeBudgetMs:40,
+    actorId:"fate-actor",
+    seed:1815,
+    players:[
+      {
+        id:"fate-actor",
+        team:"dawn",
+        character:"fate-gambler",
+        energy:3,
+        maxEnergy:3,
+        hand:[
+          makeBenchmarkCard("assault", "time-assault-a"),
+          makeBenchmarkCard("assault", "time-assault-b"),
+          makeBenchmarkCard("assault", "time-assault-c")
+        ]
+      },
+      {
+        id:"fate-enemy",
+        team:"dusk",
+        character:"oath-warden",
+        hp:4,
+        energy:0,
+        hand:[]
+      }
+    ]
+  });
+  try {
+    const { game, rootActions, outcome, accepted } = fixture;
+    assert.deepEqual(rootActions.map((action) => (
+      action.type === "end" ? "end" : action.cardId ?? action.skillId
+    )), ["assault", "allIn", "end"]);
+    assert.equal(outcome.workerError ?? null, null);
+    assert.equal(outcome.searchStopReason, "TIME");
+    assert.equal(outcome.stats.uniqueRootCandidateCount, 3);
+    assert.equal(outcome.stats.completedRootCandidateCount, 3);
+    assert.equal(outcome.stats.expanded, 5);
+    assert.equal(outcome.stats.bestValueScore, 0.07999999999999971);
+    assert.ok(outcome.stats.elapsedMs >= 40);
+    assert.ok(outcome.stats.rootWork.every((entry) => entry.completed));
+    assert.equal(outcome.stats.provisionalFallbackUsed, false);
+    assert.equal(outcome.stats.provisionalFallbackAction, null);
+    assert.deepEqual(describeBenchmarkAction(outcome.action), {
+      type:"card",
+      cardId:"assault",
+      cardInstanceId:"time-assault-a",
+      targetId:"fate-enemy",
+      targetIds:["fate-enemy"],
+      selection:null
+    });
+    assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.equal(accepted.action, outcome.action);
+    assert.equal(game.aiController.lastSearchFallback, null);
+  } finally {
+    disposeBenchmarkGame(fixture.game);
+  }
+});
+
 test("AI·搜索：SearchBudget 用确定性时钟统一 TIME/NODE/COMPLETE 停止原因", () => {
   const timeValues = [100, 105, 110];
   const timeBudget = new SearchBudget({
