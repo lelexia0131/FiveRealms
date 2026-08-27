@@ -13692,6 +13692,21 @@ test("UI·区域选牌：多张装备与手牌候选各自保持稳定顺序", (
   assert.deepEqual(handSlots.map((slot) => slot.token), ["hand-a", "hand-b"]);
 });
 
+test("UI·区域选牌：已知手牌稳定排在未知手牌前", () => {
+  const equipmentSlots = [{ token: "equipment" }],
+    handSlots = [
+      { token: "unknown-1", known: false },
+      { token: "known-1", known: true },
+      { token: "unknown-2", known: false },
+      { token: "known-2", known: true }
+    ];
+  const ordered = orderZoneSelectionSlots(equipmentSlots, handSlots);
+  assert.deepEqual(
+    ordered.map((slot) => slot.token),
+    ["equipment", "known-1", "known-2", "unknown-1", "unknown-2"]
+  );
+});
+
 test("隐藏信息：过期手牌版本令不透明令牌失效", () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }

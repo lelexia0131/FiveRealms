@@ -46,7 +46,7 @@ export function hiddenSelectionMarkup(selection, slots = null) {
 
 /*
 功能
-把公开装备槽位稳定排列在隐藏手牌槽位之前。
+把公开装备槽位排在手牌槽位之前，并稳定排列已知和未知手牌。
 
 调用方
 InteractionController.requestZoneCard 与区域选牌展示回归测试。
@@ -55,10 +55,10 @@ InteractionController.requestZoneCard 与区域选牌展示回归测试。
 按装备区原顺序生成的公开装备槽位，以及按 token 原顺序生成的手牌槽位。
 
 输出
-装备在前、手牌在后的新槽位数组。
+装备、已知手牌、未知手牌依次排列的新槽位数组。
 
 读取状态
-无。
+手牌槽位的 known 展示事实。
 
 写入状态
 无。
@@ -67,10 +67,12 @@ InteractionController.requestZoneCard 与区域选牌展示回归测试。
 无。
 
 边界与不变量
-不排序、不修改输入数组，也不读取任何隐藏手牌牌面；两个区域各自保持稳定顺序。
+不修改输入数组，也不读取任何隐藏手牌牌面；装备、已知手牌和未知手牌各自保持稳定顺序。
 */
 export function orderZoneSelectionSlots(equipmentSlots, handSlots) {
-  return [...equipmentSlots, ...handSlots];
+  const knownHandSlots = handSlots.filter((slot) => slot.known);
+  const unknownHandSlots = handSlots.filter((slot) => !slot.known);
+  return [...equipmentSlots, ...knownHandSlots, ...unknownHandSlots];
 }
 
 /** 多阶段真人选择器。只把公开 ID 或不透明令牌交给 DOM。 */
