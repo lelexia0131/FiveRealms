@@ -600,7 +600,7 @@ function selectedResourceStateValue(player, selection, viewerId) {
       equipmentDefinitionId:null,
       equipmentRetentionProbability:0
     }, viewerId);
-    return projection.handCount + projection.handRole;
+    return projection.handCount + projection.handRoleDelta;
   }
   const definitionId = selection.definitionId ?? player.equipmentDefinitionId ?? null;
   if (selection.zone !== "equipment" || !definitionId) return 0;
@@ -1425,10 +1425,7 @@ const TEAM_SAFETY_TERM_KEYS = Object.freeze([
   "hp",
   "shield",
   "markThreat",
-  "currentThreat",
-  "futureInventory",
-  "energyPressure",
-  "radar"
+  "residualExposureValue"
 ]);
 const TEAM_DANGER_TERM_KEYS = Object.freeze(
   TEAM_SAFETY_TERM_KEYS.filter((key) => key !== "hp")
@@ -4489,14 +4486,11 @@ export class Evaluator {
           death: fields.death ?? 0
         },
         threat: {
-          currentThreat: fields.currentThreat ?? 0,
-          futureInventory: fields.futureInventory ?? 0,
-          energyPressure: fields.energyPressure ?? 0,
           markThreat: fields.markThreat ?? 0,
-          radar: fields.radar ?? 0
+          residualExposureValue: fields.residualExposureValue ?? 0
         },
         specific: {
-          handRole: fields.handRole ?? 0,
+          handRoleDelta: fields.handRoleDelta ?? 0,
           equipmentRole: fields.equipmentRoleDelta ?? 0
         },
         outcome: {

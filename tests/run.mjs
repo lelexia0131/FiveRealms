@@ -24187,9 +24187,9 @@ test("AI·灵医：energyPressure 归因诊断——灵医花能量是相邻敌�
   const adjacentEnemy = owner("b");
   const distantEnemy = owner("e");
   assert.ok(adjacentEnemy && distantEnemy, "应能找到相邻与不相邻敌人 owner");
-  assertClose(adjacentEnemy.threat.energyPressure, Math.min(2, 2) * 0.3 * 5);
+  assertClose(adjacentEnemy.threat.residualExposureValue, Math.min(2, 2) * 0.3 * 5);
   assertClose(adjacentEnemy.generic.energy, 0, 1e-9);
-  assertClose(distantEnemy.threat.energyPressure, 0, 1e-9);
+  assertClose(distantEnemy.threat.residualExposureValue, 0, 1e-9);
   assertClose(owner("a").generic.energy, -2 * 1.2, 1e-9);
 });
 
@@ -31682,9 +31682,9 @@ test("AI·价值归属：泛用手牌资源与具体响应选项不重复计价"
   const action = ledgerAction(state, "a", "recover");
   const after = new Simulator(state).apply(state, action, "a");
   const owner = evaluator.ownerStateLedger(state, after, "a").owners.find((o) => o.playerId === "a");
-  // 泛用资源（handCount×1.1）与具体身份先验（handRole）是两条独立记账
+  // 泛用资源（handCount×1.1）与具体身份先验（handRoleDelta）是两条独立记账
   assert.equal(owner.generic.handCount, -1.1);
-  assert.equal(owner.specific.handRole, -1);
+  assert.equal(owner.specific.handRoleDelta, -1);
   assert.equal(owner.material.hp, 5);
   assertClose(owner.total, 2.9);
 });
@@ -31803,8 +31803,8 @@ test("AI·价值归属：突袭三世界守恒——消费成本在 B-A、兑现
   const ledgerBC = evaluator.ownerStateLedger(worldB, worldC, "c");
   const threatAB = ledgerAB.owners.find((o) => o.playerId === "a").threat;
   const threatBC = ledgerBC.owners.find((o) => o.playerId === "a").threat;
-  const threatSumAB = threatAB.currentThreat + threatAB.futureInventory + threatAB.energyPressure;
-  const threatSumBC = threatBC.currentThreat + threatBC.futureInventory + threatBC.energyPressure;
+  const threatSumAB = threatAB.residualExposureValue;
+  const threatSumBC = threatBC.residualExposureValue;
   assert.ok(Math.abs(threatSumAB) > 1, `B-A 应包含未来攻击库存成本，实际 ${threatSumAB}`);
   assert.ok(Math.abs(threatSumBC) < 1e-9, `C-B 不应重复扣除未来攻击库存，实际 ${threatSumBC}`);
   // C-B 只含 realized outcome（敌方 HP 下降）
@@ -31824,11 +31824,10 @@ test("AI·价值归属：确定命中的非击杀突袭不得让敌方净 State 
   const after = new Simulator(state).apply(state, action, "a");
   const owner = evaluator.ownerStateLedger(state, after, "a")
     .owners.find((entry) => entry.playerId === "e");
-  // 修正前账本：hp -5 + currentThreat relief +5 + futureInventory relief +2.5 = +2.5（净改善）。
-  // 修正后：同一张牌只按响应威胁计一次，futureInventory 为 0，敌方净变化为 0。
+  // 修正前账本：hp -5 + 重复暴露 relief +7.5 = +2.5（净改善）。
+  // 修正后：同一张牌只按响应威胁计一次，剩余暴露度 relief 为 5，敌方净变化为 0。
   assert.equal(owner.material.hp, -5);
-  assert.equal(owner.threat.currentThreat, 5);
-  assert.equal(owner.threat.futureInventory, 0);
+  assert.equal(owner.threat.residualExposureValue, 5);
   assert.equal(owner.total, 0);
 });
 
@@ -31869,7 +31868,7 @@ test("AI·价值归属：突袭击杀/2HP 危险/确定格挡场景在修正后�
     twoBlockProbability: 0
   });
   assert.equal(blocked.after.players.find((player) => player.id === "e").hp, 4);
-  assert.equal(blocked.enemyOwner.threat.currentThreat, 5);
+  assert.equal(blocked.enemyOwner.threat.residualExposureValue, 5);
   assert.ok(blocked.projected.total < 0,
     `突袭被确定格挡时 viewer 应为负（实际 ${blocked.projected.total}）`);
 });

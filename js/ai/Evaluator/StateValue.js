@@ -112,7 +112,7 @@ const DANGER_VALUE = 7;
 const DEATH_VALUE = 28;
 const SHIELD_RESERVE_WEIGHT = 2;
 const SHIELD_PROTECTION_WEIGHT = 0.5;
-export const HP_RISK_OPTION_WEIGHT = 0.05;
+export const HP_RISK_OPTION_WEIGHT = 0.3;
 
 /*
 功能
@@ -175,17 +175,17 @@ const nextTurnEnergyBranches = (player) => {
   const cap = Math.max(current, Number(player?.maxEnergy) || current + baseGain + equipmentGain);
   const withoutEquipment = Math.min(cap, current + baseGain);
   if (player?.equipmentDefinitionId !== "energyDevice") {
-    return [{ probability:1, energy:withoutEquipment }];
+    return [{ probability: 1, energy: withoutEquipment }];
   }
   const retained = clampProbability(player?.equipmentRetentionProbability ?? 1);
-  if (retained <= PROBABILITY_EPSILON) return [{ probability:1, energy:withoutEquipment }];
+  if (retained <= PROBABILITY_EPSILON) return [{ probability: 1, energy: withoutEquipment }];
   const withEquipment = Math.min(cap, current + baseGain + equipmentGain);
   if (retained >= 1 - PROBABILITY_EPSILON || withEquipment === withoutEquipment) {
-    return [{ probability:1, energy:withEquipment }];
+    return [{ probability: 1, energy: withEquipment }];
   }
   return [
-    { probability:1 - retained, energy:withoutEquipment },
-    { probability:retained, energy:withEquipment }
+    { probability: 1 - retained, energy: withoutEquipment },
+    { probability: retained, energy: withEquipment }
   ];
 };
 
@@ -318,7 +318,7 @@ export function skillReadinessThreat(player) {
   if (readiness <= PROBABILITY_EPSILON) return 0;
   const currentEnergy = Math.max(0, Number(player?.energy) || 0);
   const skillCost = Math.max(0, Number(player?.activeSkillCost) || 0);
-  return readiness * (2 + (currentEnergy >= skillCost ? 0.5 : 0));
+  return readiness * (3 + (currentEnergy >= skillCost ? 0.5 : 0));
 }
 
 /*
@@ -358,7 +358,7 @@ export function expectedUsableAssaultsNextTurn(player, state) {
   if (total > PROBABILITY_EPSILON) {
     return distribution.reduce((sum, branch) => (
       sum + Number(branch.probability)
-        * expectedUsableFromInventory(branch.count, limit, extraAttackProbability)
+      * expectedUsableFromInventory(branch.count, limit, extraAttackProbability)
     ), 0) / total;
   }
   return expectedUsableFromInventory(
@@ -788,7 +788,7 @@ function shieldStateValue(player, residualExposure) {
   const reserve = SHIELD_RESERVE_WEIGHT * Math.min(shield, 1);
   const threatPoints = Math.max(0, residualExposure) / HP_VALUE;
   const absorbed = Math.min(shield, threatPoints);
-  const hpProtection = absorbed * HP_VALUE * SHIELD_PROTECTION_WEIGHT;
+  const hpProtection = absorbed * HP_VALUE;
   const lifePremium = player.hp === 1 ? DEATH_VALUE - HP_VALUE
     : player.hp === 2 ? DANGER_VALUE - HP_VALUE
       : 0;
@@ -861,7 +861,7 @@ export function statePlayerValueTerms(
   radarTacticProbability,
   energyRules = {}
 ) {
-  if (!player.alive) return { death:-DEATH_VALUE, terms:{} };
+  if (!player.alive) return { death: -DEATH_VALUE, terms: {} };
   const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
   let rescueOutlook = 0;
   if (player.hp <= 1) {
@@ -907,21 +907,18 @@ export function statePlayerValueTerms(
     bufferExposure - radarMitigationUtility(bufferExposure, player, radarTacticProbability)
   );
   return {
-    death:0,
-    terms:{
+    death: 0,
+    terms: {
       danger,
-      hp2Risk:hp2ThreatRiskValue(player, bufferResidualExposure),
+      hp2Risk: hp2ThreatRiskValue(player, bufferResidualExposure),
       rescueOutlook,
-      hp:player.hp * HP_VALUE,
+      hp: player.hp * HP_VALUE,
       shield,
-      energy:Math.max(0, Number(player.energy) || 0) * ENERGY_STATE_WEIGHT,
-      stacks:(player.exposeWeaknessStacks ?? 0) * 1.5,
-      markThreat:-markThreat * 1.5,
-      currentThreat:-currentThreat,
-      futureInventory:-futureInventory,
-      energyPressure:-energyPressure,
-      radar:radarMitigation,
-      energyDeviceFuture:energyDeviceFutureUtility(energyRules, player)
+      energy: Math.max(0, Number(player.energy) || 0) * ENERGY_STATE_WEIGHT,
+      stacks: (player.exposeWeaknessStacks ?? 0) * 3,
+      markThreat: -markThreat * 2,
+      residualExposureValue: -residualExposure,
+      energyDeviceFuture: energyDeviceFutureUtility(energyRules, player)
     }
   };
 }

@@ -749,14 +749,14 @@ export function cardPlayerValueTerms(player, viewerId) {
   const currentEquipmentRoleDelta = player.equipmentDefinitionId
     ? roleCardDelta(player.characterId, player.equipmentDefinitionId)
     : 0;
-  const handRole = player.id === viewerId
+  const handRoleDelta = player.id === viewerId
     ? (player.hand ?? []).reduce((sum, card) => (
         sum + roleCardDelta(player.characterId, card?.definitionId) * cardAvailability(card)
       ), 0)
     : 0;
   return {
     handCount:player.handCount * 1.1,
-    handRole,
+    handRoleDelta,
     equipmentDelta:equipmentValue * retention * RESOURCE_MATERIAL_SCALE,
     equipmentRoleDelta:currentEquipmentRoleDelta * retention * RESOURCE_MATERIAL_SCALE
   };
