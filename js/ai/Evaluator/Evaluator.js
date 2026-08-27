@@ -158,7 +158,7 @@ function privatePeekDecisionRelevance(state, actor, target) {
 deriveTransitionOptionPoints 与直接 Value 测试。
 
 输入
-动作前 World、观察者、目标与最大揭示数量。
+动作前 World、观察者、目标与实际新增揭示数量。
 
 输出
 非负 raw information option points；完全已知或空手时为零。
@@ -175,11 +175,11 @@ privatePeekDecisionRelevance、cardAvailability、Probability 查询。
 边界与不变量
 身份熵只是容量上限，必须乘当前决策相关性；期望数量不得冒充事件概率。
 */
-export function privatePeekInformationValue(state, actor, target, revealCount) {
+export function privatePeekInformationValue(state, actor, target, actualNewRevealCount) {
   const knownExpectedCount = (target?.knownCards ?? [])
     .reduce((sum, entry) => sum + cardAvailability(entry), 0);
   const unknownCount = Math.max(0, (Number(target?.handCount) || 0) - knownExpectedCount);
-  const revealed = Math.min(Math.max(0, Number(revealCount) || 0), unknownCount);
+  const revealed = Math.min(Math.max(0, Number(actualNewRevealCount) || 0), unknownCount);
   if (revealed <= PROBABILITY_EPSILON) return 0;
   const currentCounts = queryCurrentCardCounts(state?.probabilityState);
   const identityEntropy = Object.keys(CARD_DEFINITIONS).reduce((sum, definitionId) => {
@@ -193,10 +193,23 @@ export function privatePeekInformationValue(state, actor, target, revealCount) {
     ]
   ));
   const relevance = privatePeekDecisionRelevance(state, actor, target);
-  const decisionWeightedUncertainty = Object.keys(chances).reduce((sum, definitionId) => {
-    const chance = chances[definitionId];
-    return sum + chance * (1 - chance) * relevance[definitionId];
-  }, 0);
+  let decisionWeightedUncertainty;
+  if (target.battleTeam !== actor.battleTeam) {
+    decisionWeightedUncertainty = Object.keys(chances).reduce((sum, definitionId) => {
+      const chance = chances[definitionId];
+      return sum + chance * (1 - chance) * relevance[definitionId];
+    }, 0);
+  } else {
+    const assaultUncertainty = chances.assault * (1 - chances.assault);
+    const survivalUncertainty = Math.max(
+      chances.block * (1 - chances.block),
+      chances.recover * (1 - chances.recover),
+      chances.counter * (1 - chances.counter)
+    );
+    // 三类生存资源回答同一个自保问题，只取最大不确定性，避免重复计算同一信息需求。
+    decisionWeightedUncertainty = assaultUncertainty * relevance.assault
+      + survivalUncertainty * relevance.block;
+  }
   return unknownCount * identityEntropy * (revealed / unknownCount) * decisionWeightedUncertainty;
 }
 
@@ -238,11 +251,16 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
   if (cardId === "scout") {
     const target = beforeState.players.find((entry) => entry.id === action.targetIds?.[0]);
     if (!target?.alive) return 0;
+    const revealLimit = CARD_DEFINITIONS.scout.maxRevealCount;
+    const actualNewRevealCount = Math.min(
+      revealLimit,
+      Math.max(0, action.selection?.unknownCount ?? 0)
+    );
     return privatePeekInformationValue(
       beforeState,
       beforeActor,
       target,
-      CARD_DEFINITIONS.scout.maxRevealCount
+      actualNewRevealCount
     ) * effectScale * 0.35;
   }
   if (cardId === "leverage") {
@@ -1903,7 +1921,11 @@ export class Evaluator {
           (target.hand?.length ?? target.handCount ?? 0) - knownExpectedCount
         );
         const revealLimit = Math.max(1, Number(card.maxRevealCount) || 1);
-        const revealCoverage = Math.min(revealLimit, unknownCount) / revealLimit;
+        const actualNewRevealCount = Math.min(
+          revealLimit,
+          Math.max(0, action.selection?.unknownCount ?? 0)
+        );
+        const revealCoverage = Math.min(actualNewRevealCount, unknownCount) / revealLimit;
         value += getBaseCardAiValue(card.definitionId)
           * revealCoverage
           * this.scoutDecisionRelevance(actor, target, visible);
@@ -3802,7 +3824,7 @@ export class Evaluator {
 
   /*
   功能
-  按根 Transfer 冻结偏好或 Final Utility 的唯一语义比较两个完整候选。
+  按根 Transfer 冻结偏好、Final Utility 与限定同分规则比较两个完整候选。
 
   调用方
   Searcher incumbent、beam protection 与 final selection。
@@ -3814,7 +3836,7 @@ export class Evaluator {
   left 更优返回正数，right 更优返回负数，完全等价返回零。
 
   读取状态
-  候选根 Transfer preference、Final Utility 与 canonical root Action type。
+  候选根 Transfer preference、Final Utility 与 canonical root Action/selection。
 
   写入状态
   无。
@@ -3824,7 +3846,8 @@ export class Evaluator {
 
   边界与不变量
   两个根 Transfer 先保持旧 contextual winner；Transfer 与其它动作仍比较 Final Utility；
-  Final Utility 机器精度同分时稳定优先 skill-root，Searcher、Pattern、search-prior terms 与随机数不得定义另一套偏好。
+  Final Utility 已在 tolerance 内同分且目标相同时，Scout 只按实际新增揭示数确定顺序，随后才稳定优先 skill-root；
+  Searcher、Pattern、search-prior terms 与随机数不得定义另一套偏好。
   */
   compareCandidates(left, right, actor = null, rootWorld = null) {
     if (left?.action?.cardId === "transfer" && right?.action?.cardId === "transfer") {
@@ -3860,6 +3883,21 @@ export class Evaluator {
       Math.abs(rightValue)
     );
     if (Math.abs(difference) > tolerance) return difference;
+    const sameScoutTarget = left?.action?.cardId === "scout"
+      && right?.action?.cardId === "scout"
+      && left.action.targetIds?.[0] === right.action.targetIds?.[0];
+    if (sameScoutTarget) {
+      const revealLimit = CARD_DEFINITIONS.scout.maxRevealCount;
+      const leftRevealCount = Math.min(
+        revealLimit,
+        Math.max(0, left.action.selection?.unknownCount ?? 0)
+      );
+      const rightRevealCount = Math.min(
+        revealLimit,
+        Math.max(0, right.action.selection?.unknownCount ?? 0)
+      );
+      if (leftRevealCount !== rightRevealCount) return leftRevealCount - rightRevealCount;
+    }
     if (left?.action?.type === "skill" && right?.action?.type === "card") return 1;
     if (left?.action?.type === "card" && right?.action?.type === "skill") return -1;
     return 0;

@@ -2335,11 +2335,16 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
         break;
       case "scout": {
         if (!target?.alive) break;
+        const revealLimit = CARD_DEFINITIONS.scout.maxRevealCount;
+        const actualNewRevealCount = Math.min(
+          revealLimit,
+          Math.max(0, action.selection?.unknownCount ?? 0)
+        );
         this.recordSimulatedPrivatePeek(
           next,
           actor,
           target,
-          CARD_DEFINITIONS.scout.maxRevealCount,
+          actualNewRevealCount,
           effectEventWorlds
         );
         coordinationProbability = scale;
@@ -3522,7 +3527,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   Simulator 的窥探结算与 simulateSpyGapAfterLifeDamage：推进私密信息状态。
 
   输入
-  World、观察者、被观察者、期望揭示数量与触发条件世界。
+  World、观察者、被观察者、实际新增揭示数量与触发条件世界。
 
   输出
   实际发生的期望查看槽数。
@@ -3540,7 +3545,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   观察前对所有互斥身份求期望后，边际牌池必须等于观察前当前状态；
   禁止持久保存 operation×definition identity worlds，信息选择价值由惰性反事实查询拥有。
   */
-  recordSimulatedPrivatePeek(state, source, target, revealCount, triggerWorlds) {
+  recordSimulatedPrivatePeek(state, source, target, actualNewRevealCount, triggerWorlds) {
     if (!target?.alive || !Array.isArray(state?.players)) return 0;
     const triggerProbability = this.eventProbability(triggerWorlds);
     if (triggerProbability <= PROBABILITY_EPSILON) return 0;
@@ -3549,7 +3554,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
       0
     );
     const revealSlots = Math.min(
-      Math.max(0, Number(revealCount) || 0),
+      Math.max(0, Number(actualNewRevealCount) || 0),
       Math.max(0, (Number(target.handCount) || 0) - knownOccupancy)
     );
     return revealSlots * triggerProbability;
