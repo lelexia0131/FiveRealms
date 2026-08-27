@@ -2338,7 +2338,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
         const revealLimit = CARD_DEFINITIONS.scout.maxRevealCount;
         const actualNewRevealCount = Math.min(
           revealLimit,
-          Math.max(0, action.selection?.unknownCount ?? 0)
+          Math.max(0, abstractAction.selection?.unknownCount ?? 0)
         );
         this.recordSimulatedPrivatePeek(
           next,

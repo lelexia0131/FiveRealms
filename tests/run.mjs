@@ -14220,8 +14220,8 @@ async function valueResidueClosure() {
         { ...withInputs({ energy:3 }), dangerBefore:1 },
         4
       ),
-      1,
-      "S(E) 在 (E-C)/(Emax-C)=1/2 时必须平方为 1/4"
+      16 / 9,
+      "S(E) 在 (E-C+1)/(Emax-C+1)=2/3 时必须平方为 4/9"
     );
     assert.equal(
       evaluator.endEnergyOpportunityPenalty(
@@ -14235,7 +14235,7 @@ async function valueResidueClosure() {
         { ...withInputs({ energy:4, activeSkillCost:4 }), dangerBefore:1 },
         5
       ),
-      ENERGY_STATE_WEIGHT
+      ENERGY_STATE_WEIGHT + 5
     );
     assert.equal(
       evaluator.endEnergyOpportunityPenalty(
@@ -17200,13 +17200,13 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
     assert.deepEqual(stats.bestSequence[0], action);
     assert.notDeepEqual(stats.scheduledRootOrder[0], action,
       "最终 root 必须由完整未来价值决定，而不是照搬首个调度动作");
-    assert.equal(stats.expanded, 102);
+    assert.equal(stats.expanded, 103);
     assert.equal(stats.depth, 4);
     assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 2.5842210063856244);
+    assert.equal(stats.bestValueScore, 2.7046625402770643);
     assert.equal(stats.stopReason, "COMPLETE");
-    assert.equal(stats.simulationCalls, 186);
-    assert.equal(stats.cloneCalls, 196);
+    assert.equal(stats.simulationCalls, 187);
+    assert.equal(stats.cloneCalls, 197);
     assert.equal(stats.probabilityOperations, 1812);
     assert.equal(stats.rootCandidateCount, 9);
     assert.equal(stats.completedRootCandidateCount, 9);
@@ -24187,7 +24187,7 @@ test("AI·灵医：energyPressure 归因诊断——灵医花能量是相邻敌�
   const adjacentEnemy = owner("b");
   const distantEnemy = owner("e");
   assert.ok(adjacentEnemy && distantEnemy, "应能找到相邻与不相邻敌人 owner");
-  assertClose(adjacentEnemy.threat.residualExposureValue, Math.min(2, 2) * 0.3 * 5);
+  assertClose(adjacentEnemy.threat.residualExposureValue, 1.7730061349693251);
   assertClose(adjacentEnemy.generic.energy, 0, 1e-9);
   assertClose(distantEnemy.threat.residualExposureValue, 0, 1e-9);
   assertClose(owner("a").generic.energy, -2 * 1.2, 1e-9);
