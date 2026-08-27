@@ -554,10 +554,11 @@ export class Searcher {
   只写候选 transitionValue；skill siblings 不完整时 END 保持 null。
 
   调用函数
-  Evaluator.skillSafetyRelief、endEnergyOpportunityPenalty、composeTransitionValue。
+  Evaluator.skillSafetyRelief、endDiscardOpportunityRelief、endEnergyOpportunityPenalty、composeTransitionValue。
 
   边界与不变量
-  Searcher 只机械确认 skill sibling 完整并取最大 relief；不读取危险、能量、权重或公式；
+  Searcher 只机械确认 skill sibling 完整，并从 Evaluator 返回值取最大 safety/discard relief；
+  不读取危险、能量、手牌价值、权重或公式；
   partial skill 集合不得给 END 赋值，responseNet 只作诊断。
   */
   finalizeCandidates(candidates, siblingActions = candidates.map((entry) => entry.action)) {
@@ -578,10 +579,22 @@ export class Searcher {
         candidate.transitionValue = null;
         continue;
       }
+      const maximumDiscardOpportunityRelief = candidate.action?.type === "end"
+        ? candidates
+            .filter((sibling) => sibling.action?.type !== "end")
+            .reduce((maximum, sibling) => Math.max(
+              maximum,
+              this.evaluator.endDiscardOpportunityRelief(
+                candidate.baseTerms,
+                sibling.baseTerms
+              )
+            ), 0)
+        : 0;
       const endOpportunityPoints = candidate.action?.type === "end"
         ? this.evaluator.endEnergyOpportunityPenalty(
             candidate.baseTerms,
-            maximumSkillSafetyRelief
+            maximumSkillSafetyRelief,
+            maximumDiscardOpportunityRelief
           )
         : 0;
       candidate.transitionValue = this.evaluator.composeTransitionValue({

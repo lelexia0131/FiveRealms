@@ -349,6 +349,7 @@ class Simulator extends ProductionSimulator {
       decideBlock:(...args) => testResponseEvaluator.decidePlanningBlock(...args),
       decideGuardianAid:(...args) => testResponseEvaluator.decidePlanningGuardianAid(...args),
       decideDyingRescue:(...args) => testResponseEvaluator.decidePlanningDyingRescue(...args),
+      choosePublicCardId:(...args) => testResponseEvaluator.choosePublicCardId(...args),
       resolveDiscardCandidates:(player, cards, count, context) => (
         chooseDiscardCandidates(player, cards, count, context)
       ),
@@ -18218,7 +18219,7 @@ END sibling 顺序与预算中断回归测试。
 statePointsToUtility。
 
 边界与不变量
-替身不解释 HP、盾、危险或能量公式；它只验证 Searcher 是否机械等待完整 sibling 并传递 max scalar。
+替身不解释 HP、盾、危险、手牌或能量公式；它只验证 Searcher 是否机械等待完整 sibling 并传递 max scalar。
 */
 function createEndSiblingEvaluator(penaltyCalls = []) {
   return {
@@ -18242,6 +18243,7 @@ function createEndSiblingEvaluator(penaltyCalls = []) {
     composeSearchPrior:() => ({ domainPrior:0, searchCredit:0, prior:0 }),
     resourceSelectionPreference:() => null,
     skillSafetyRelief:(terms) => terms.safetyAfterPoints - terms.safetyBeforePoints,
+    endDiscardOpportunityRelief:() => 0,
     endEnergyOpportunityPenalty:(_terms, maximumSkillSafetyRelief) => {
       penaltyCalls.push(maximumSkillSafetyRelief);
       return maximumSkillSafetyRelief;
@@ -18386,6 +18388,129 @@ test("AI·搜索：END Final Utility 只使用完整 skill sibling 集合且与�
   assert.equal(evaluateOrder([skillA, skillB]), evaluateOrder([skillB, skillA]));
   assert.deepEqual(penaltyCalls, [5, 5]);
 });
+
+/*
+功能
+验证 END 会计入先使用有益牌即可避免强制弃牌的真实 sibling 状态机会。
+
+调用方
+AI 搜索与规划回归测试。
+
+输入
+无；构造炎术师受伤且手牌超限的固定局面。
+
+输出
+无返回值；断言失败时抛错。
+
+读取状态
+生产 Generator、Simulator、Evaluator、Searcher 与 Controller 搜索诊断。
+
+写入状态
+仅测试 Game 生命周期与独立 World clone。
+
+调用函数
+makeBenchmarkGame、createInitialWorld、Evaluator.evaluateTransition、Searcher.finalizeCandidates、runBenchmarkAiDecision。
+
+边界与不变量
+Recover 与 END 都必须正式物化；选择变化只能来自 HP、手牌与强制弃牌后的真实状态差，
+且测试必须证明没有 Searcher provisional fallback 或 Controller worker fallback。
+*/
+async function recoverBeforeMandatoryDiscardRegression() {
+  const game = makeBenchmarkGame({
+    players:[
+      {
+        id:"recover-end-actor",
+        team:"dawn",
+        character:"ember-magus",
+        hp:3,
+        hand:["counter", "counter", "counter", "recover"].map(
+          (definitionId, index) => makeBenchmarkCard(definitionId, `recover-end-${index}`)
+        )
+      },
+      { id:"recover-end-ally", team:"dawn", character:"oath-warden", hp:4 },
+      { id:"recover-end-enemy-a", team:"dusk", character:"blade-walker", hp:4 },
+      { id:"recover-end-enemy-b", team:"dusk", character:"trail-hunter", hp:4 },
+      { id:"recover-end-enemy-c", team:"dusk", character:"spirit-medic", hp:4 }
+    ],
+    options:{ actorId:"recover-end-actor", nodeBudget:1000 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const actions = game.aiController.getActionCandidates(actor, world);
+    const recoverAction = actions.find((action) => action.cardId === "recover");
+    const endAction = actions.find((action) => action.type === "end");
+    assert.ok(recoverAction);
+    assert.ok(endAction);
+
+    const evaluator = game.aiController.evaluator;
+    const simulator = game.aiController.simulatorFactory();
+    const candidates = [recoverAction, endAction].map((action) => {
+      const after = simulator.apply(world, action);
+      const baseTerms = evaluator.evaluateTransition({
+        action,
+        player:world.players[0],
+        beforeState:world,
+        afterState:after
+      });
+      const frontierResidual = after.playPhaseEnded
+        ? evaluator.frontierResidual(after, actor.id)
+        : null;
+      return {
+        action,
+        state:after,
+        baseTerms,
+        baseTransition:baseTerms.baseTransition,
+        frontierValue:evaluator.terminalFrontierValue(
+          frontierResidual,
+          Boolean(after.playPhaseEnded)
+        ),
+        transitionValue:null
+      };
+    });
+    const searcher = Object.create(Searcher.prototype);
+    searcher.evaluator = evaluator;
+    searcher.finalizeCandidates(candidates, actions);
+    const recoverCandidate = candidates.find((candidate) => candidate.action === recoverAction);
+    const endCandidate = candidates.find((candidate) => candidate.action === endAction);
+    const recoverLedger = evaluator.computeCandidateLedger(
+      world,
+      recoverAction,
+      recoverCandidate.state,
+      actor.id,
+      true,
+      [],
+      [],
+      []
+    );
+    assertClose(recoverCandidate.baseTerms.stateDelta, 2.9, 1e-9);
+    assertClose(recoverLedger.ownerLedger.owners[0].material.hp, 5, 1e-9);
+    assertClose(recoverLedger.ownerLedger.owners[0].generic.handCount, -1.1, 1e-9);
+    assertClose(recoverLedger.ownerLedger.owners[0].specific.handRoleDelta, -1, 1e-9);
+    assert.equal(endCandidate.state.players[0].handCount, 3);
+    assert.equal(endCandidate.state.players[0].hand.some(
+      (card) => card.definitionId === "recover"
+    ), true);
+    assert.ok(
+      recoverCandidate.transitionValue > endCandidate.transitionValue,
+      "先 Recover 的真实 HP 与弃牌避免收益必须高于直接 END"
+    );
+
+    const decision = await runBenchmarkAiDecision(game, actor.id);
+    assert.equal(decision.stats.stopReason, "COMPLETE");
+    assert.equal(decision.stats.provisionalFallbackUsed, false);
+    assert.equal(game.aiController.lastSearchFallback, null);
+    assert.equal(decision.action.cardId, "recover");
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test("AI·搜索：Recover 避免 END 强制弃牌时按真实状态机会优先", recoverBeforeMandatoryDiscardRegression);
 
 test("AI·搜索：TIME/NODE 遇到 skill-incomplete END 不登记 incumbent 且不突破预算", async () => {
   for (const stopReason of ["NODE", "TIME"]) {
@@ -28094,7 +28219,7 @@ test("AI·角色选牌：canonical transfer selection 绑定自己手牌角色�
   assert.equal(chosen, recover);
 });
 
-test("AI·角色选牌：公开池影客优先选借势而灵医优先选调息", () => {
+test("AI·角色选牌：公开池领取按当前 StateValue 边际而非静态 CardValue", () => {
   const shade = makePlayer("shade", 0, "dawn", "ai", 3);
   const medic = makePlayer("medic", 1, "dawn", "ai", 2);
   const { game }
@@ -28103,20 +28228,86 @@ test("AI·角色选牌：公开池影客优先选借势而灵医优先选调息"
   const pool = [leverage, recover];
   const before = pool.map((card) => card.id);
   const selector = game.aiController;
-  assert.equal(selector.choosePublicCard(shade, pool), leverage);
+  assert.equal(selector.choosePublicCard(shade, pool), recover);
   assert.equal(selector.choosePublicCard(medic, pool), recover);
   assert.deepEqual(pool.map((card) => card.id), before);
 });
+
+/*
+功能
+验证互利公开牌选择按当前状态的真实边际收益处理重复装备。
+
+调用方
+AI 角色选牌回归测试。
+
+输入
+无；构造已装备望远镜的影客与望远镜/聚能公开池。
+
+输出
+无返回值；断言失败时抛错。
+
+读取状态
+当前装备、静态 CardValue、Simulator receipt/replacement Worlds 与 Evaluator StateValue。
+
+写入状态
+仅测试 Game 的公开牌池和独立 World clones。
+
+调用函数
+createInitialWorld、Simulator.buildPublicCardReceiptOutcomes、Evaluator.stateUtility、Controller.choosePublicCard。
+
+边界与不变量
+不禁止重复装备；同分仍保持公开池顺序，选择差异只能来自正式 StateValue 的 receipt/replacement 边际。
+*/
+function mutualBenefitDuplicateEquipmentMarginalRegression() {
+  const actor = makePlayer("mutual-telescope-actor", 0, "dawn", "ai", 3);
+  const ally = makePlayer("mutual-telescope-ally", 1, "dawn", "ai", 1);
+  const enemyA = makePlayer("mutual-telescope-enemy-a", 2, "dusk", "ai", 0);
+  const enemyB = makePlayer("mutual-telescope-enemy-b", 3, "dusk", "ai", 5);
+  const enemyC = makePlayer("mutual-telescope-enemy-c", 4, "dusk", "ai", 6);
+  actor.equipment = instance("telescope");
+  const telescope = instance("telescope");
+  const charge = instance("charge");
+  const { game } = makeGame([actor, ally, enemyA, enemyB, enemyC]);
+  game.state.publicCardPool = [telescope, charge];
+  const world = createInitialWorld(
+    actor.id,
+    game.state,
+    deriveCurrentCardCounts(actor, game.state)
+  );
+  const outcomes = game.aiController.simulatorFactory().buildPublicCardReceiptOutcomes(
+    world,
+    actor.id,
+    game.state.publicCardPool
+  );
+  const beforeValue = game.aiController.evaluator.stateUtility(world, actor.id);
+  const marginalByDefinition = Object.fromEntries(outcomes.map((outcome) => [
+    outcome.definitionId,
+    Math.max(...outcome.worlds.map(
+      (after) => game.aiController.evaluator.stateUtility(after, actor.id) - beforeValue
+    ))
+  ]));
+
+  assert.deepEqual({
+    telescope:getRoleCardAiValue(actor.character.id, "telescope"),
+    charge:getRoleCardAiValue(actor.character.id, "charge")
+  }, { telescope:9, charge:7 });
+  assert.equal(world.players[0].equipmentDefinitionId, "telescope");
+  assert.ok(marginalByDefinition.charge > marginalByDefinition.telescope);
+  assert.equal(game.aiController.choosePublicCard(actor, game.state.publicCardPool), charge);
+  assert.deepEqual(game.state.publicCardPool, [telescope, charge]);
+}
+
+test("AI·角色选牌：互利已装备望远镜时按真实边际选择替代资源", mutualBenefitDuplicateEquipmentMarginalRegression);
 
 test("AI·角色选牌：公开池相同价值保持原始顺序且空池返回 null", () => {
   const shade = makePlayer("shade", 0, "dawn", "ai", 3);
   const ally = makePlayer("ally", 1, "dawn");
   const { game }
     = makeGame([shade, ally], { random: () => 0 });
-  const recover = instance("recover"), transfer = instance("transfer");
-  // 影客两者均为 6
+  const leverage = instance("leverage"), transfer = instance("transfer");
+  // 两张牌领取后都只增加同一 handCount，且影客角色差量都为零。
   const selector = game.aiController;
-  assert.equal(selector.choosePublicCard(shade, [recover, transfer]), recover);
+  assert.equal(selector.choosePublicCard(shade, [leverage, transfer]), leverage);
   assert.equal(selector.choosePublicCard(shade, []), null);
 });
 

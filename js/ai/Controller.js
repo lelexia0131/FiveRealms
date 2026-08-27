@@ -31,8 +31,7 @@ import {
   Evaluator,
   chooseDiscardCandidates,
   chooseLowestKnownCardId,
-  chooseLowestRoleCardId,
-  choosePublicCardId
+  chooseLowestRoleCardId
 } from "./Evaluator/Evaluator.js";
 import { SearchBudget, Searcher } from "./Searcher/Searcher.js";
 import { Pattern } from "./Searcher/Pattern.js";
@@ -426,6 +425,7 @@ function createRuntimeComposition({
     decideBlock:(...args) => evaluator.decidePlanningBlock(...args),
     decideGuardianAid:(...args) => evaluator.decidePlanningGuardianAid(...args),
     decideDyingRescue:(...args) => evaluator.decidePlanningDyingRescue(...args),
+    choosePublicCardId:(...args) => evaluator.choosePublicCardId(...args),
     resolveDiscardCandidates:chooseDiscardCandidates
   });
   return { evaluator, simulatorFactory };
@@ -1365,7 +1365,7 @@ export class Controller {
 
   /*
   功能
-  从公开牌池选择最适合当前角色的牌。
+  从公开牌池选择对当前角色真实状态边际最高的牌。
 
   调用方
   PublicCardPoolWorkflow。
@@ -1377,20 +1377,31 @@ export class Controller {
   被选实体牌；空牌池时为 null。
 
   读取状态
-  角色卡牌价值。
+  当前 GameState、接收者公开状态、装备槽与公开候选实体。
 
   写入状态
   无。
 
   调用函数
-  Evaluator.choosePublicCardId。
+  createInitialWorld、Simulator.resolvePublicCardChoice。
 
   边界与不变量
-  门面不改变同分时的原始顺序。
+  Controller 只组装 canonical before World 并请求 resolved choice；Simulator 唯一构造候选状态，Evaluator 唯一比较价值；
+  门面不改变同分时的原始顺序，也不写真实 GameState。
   */
   choosePublicCard(player, cards) {
     const startedAt = decisionNow();
-    const cardId = choosePublicCardId(player, cards);
+    const state = this.getState();
+    const world = createInitialWorld(
+      player.id,
+      state,
+      deriveCurrentCardCounts(player, state)
+    );
+    const cardId = this.simulatorFactory().resolvePublicCardChoice(
+      world,
+      player.id,
+      cards
+    );
     const card = cards.find((candidate) => candidate.id === cardId) ?? null;
     this.recordMainThreadOperation(
       "Evaluator.choosePublicCardId",

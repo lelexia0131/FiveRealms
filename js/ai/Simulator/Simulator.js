@@ -99,7 +99,7 @@ class SimulatorCore {
   无。
 
   边界与不变量
-  构造不得回读 GameState；Evaluator capability 只返回 boolean 且必须全部显式注入；
+  构造不得回读 GameState；Evaluator capability 只返回已解析 decision/实体 ID 且必须全部显式注入；
   构造阶段不得复制 World；所有完整 World copy 必须由 clone 显式创建并计数。
   */
   constructor(options = {}) {
@@ -109,7 +109,8 @@ class SimulatorCore {
       "decideLeverageAssault",
       "decideBlock",
       "decideGuardianAid",
-      "decideDyingRescue"
+      "decideDyingRescue",
+      "choosePublicCardId"
     ];
     for (const name of decisionCapabilities) {
       if (typeof options[name] !== "function") {
@@ -2148,6 +2149,102 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
         selectedCardIds:selected.map((card) => card.id ?? card.cardId).filter(Boolean)
       });
     }
+  }
+
+  /*
+  功能
+  为公开牌选择构造每张候选的领取状态，以及装备候选可选的真实换装状态。
+
+  调用方
+  Controller.choosePublicCard。
+
+  输入
+  领取前 World、接收者 ID 与公开实体牌数组。
+
+  输出
+  每张牌对应 cardId、definitionId 与独立领取/换装 Worlds 的数组。
+
+  读取状态
+  接收者当前手牌、装备槽、ProbabilityState 与卡牌定义类别。
+
+  写入状态
+  只写独立 World clones 的手牌、装备和资源概率摘要。
+
+  调用函数
+  clone、getEventWorlds、addSimulatedCardToHand、consumeChosenHandCard、setSimulatedEquipment、syncActiveSkillCosts。
+
+  边界与不变量
+  真实公开池实体不变；普通牌只构造领取状态；装备同时保留“留在手牌”和“替换装备槽”两种合法资源状态，
+  不触发出牌阶段被动、响应或第二套价值公式。
+  */
+  buildPublicCardReceiptOutcomes(state, recipientId, cards) {
+    const outcomes = [];
+    for (const card of cards ?? []) {
+      const definition = CARD_DEFINITIONS[card?.definitionId];
+      if (!card?.id || !definition) continue;
+      const received = this.clone(state);
+      const recipient = received.players.find((player) => player.id === recipientId);
+      if (!recipient?.alive || !Array.isArray(recipient.hand)) continue;
+      const acquisitionWorlds = this.getEventWorlds(
+        received,
+        1,
+        null,
+        `public-card-receipt:${card.id}`
+      );
+      this.addSimulatedCardToHand(
+        received,
+        recipient,
+        { id:card.id, definitionId:card.definitionId },
+        acquisitionWorlds
+      );
+      const worlds = [received];
+      if (definition.category === "equipment") {
+        const equipped = this.clone(received);
+        const equippedRecipient = equipped.players.find(
+          (player) => player.id === recipientId
+        );
+        this.consumeChosenHandCard(equipped, equippedRecipient, 1, {
+          label:`public-card-equip:${card.id}`,
+          selectedCardIds:[card.id]
+        });
+        this.setSimulatedEquipment(equippedRecipient, card.definitionId, 1);
+        this.syncActiveSkillCosts(equipped);
+        worlds.push(equipped);
+      }
+      outcomes.push({ cardId:card.id, definitionId:card.definitionId, worlds });
+    }
+    return outcomes;
+  }
+
+  /*
+  功能
+  构造公开牌领取候选 Worlds，并请求 Evaluator 返回已解析实体 ID。
+
+  调用方
+  Controller.choosePublicCard。
+
+  输入
+  领取前 World、接收者 ID 与公开实体牌数组。
+
+  输出
+  最大正式状态边际的 cardId；无合法结果时为 null。
+
+  读取状态
+  buildPublicCardReceiptOutcomes 的独立 Worlds 与注入的 Evaluator 选择能力。
+
+  写入状态
+  仅构造并丢弃独立 World clones；不写真实 GameState 或输入 World。
+
+  调用函数
+  buildPublicCardReceiptOutcomes、choosePublicCardId。
+
+  边界与不变量
+  Simulator 不读取或实现价值公式；Evaluator 不构造 World；Controller 不遍历、模拟或比较候选。
+  */
+  resolvePublicCardChoice(state, recipientId, cards) {
+    const recipient = state?.players?.find((player) => player.id === recipientId) ?? null;
+    const outcomes = this.buildPublicCardReceiptOutcomes(state, recipientId, cards);
+    return this.choosePublicCardId(recipient, cards, state, outcomes);
   }
 };
 

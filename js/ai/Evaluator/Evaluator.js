@@ -924,44 +924,6 @@ export function chooseDiscardCandidates(player, cards, count, context = {}) {
 
 /*
 功能
-从公开合法牌池中按角色 CardValue 稳定选择最佳实体 ID。
-
-调用方
-Evaluator.choosePublicCardId、Controller 与直接测试。
-
-输入
-当前玩家和公开卡牌数组。
-
-输出
-最佳 cardId 或 null。
-
-读取状态
-CardValue 角色 primitive。
-
-写入状态
-无。
-
-调用函数
-getRoleCardAiValue。
-
-边界与不变量
-同分保持公开池原始顺序。
-*/
-export function choosePublicCardId(player, cards) {
-  let best = null;
-  let bestValue = Number.NEGATIVE_INFINITY;
-  for (const card of cards ?? []) {
-    const value = getRoleCardAiValue(player.characterId, card.definitionId);
-    if (value > bestValue) {
-      best = card;
-      bestValue = value;
-    }
-  }
-  return best?.id ?? null;
-}
-
-/*
-功能
 从自己合法手牌中按角色 CardValue 稳定选择最低价值实体 ID。
 
 调用方
@@ -1525,6 +1487,55 @@ export class Evaluator {
     });
     this.getDifficultyMultiplier = getDifficultyMultiplier;
     this.forceAiRescueHuman = Boolean(forceAiRescueHuman);
+  }
+
+  /*
+  功能
+  从公开合法牌池中按领取或换装后的最大 StateValue 边际稳定选择实体 ID。
+
+  调用方
+  Controller.choosePublicCard。
+
+  输入
+  当前玩家、公开卡牌、领取前 World，以及 Simulator 为每张牌准备的领取/可选换装 Worlds。
+
+  输出
+  最大真实状态边际的 cardId；空牌池或缺少合法 outcome 时返回 null。
+
+  读取状态
+  领取前后 World 的正式 StateValue，以及当前装备和手牌状态。
+
+  写入状态
+  无。
+
+  调用函数
+  stateUtility。
+
+  边界与不变量
+  Simulator 唯一构造状态；Evaluator 只比较已准备 Worlds；装备可保留在手牌或替换当前槽位，
+  重复装备不被硬禁；同分保持公开池原始顺序，静态 CardValue 不再代替边际状态。
+  */
+  choosePublicCardId(player, cards, beforeState, receiptOutcomes) {
+    if (!player || !beforeState || !Array.isArray(cards) || cards.length === 0) return null;
+    const outcomesByCardId = new Map(
+      (receiptOutcomes ?? []).map((outcome) => [outcome.cardId, outcome])
+    );
+    const beforeValue = this.stateUtility(beforeState, player.id);
+    let bestCardId = null;
+    let bestMarginal = Number.NEGATIVE_INFINITY;
+    for (const card of cards) {
+      const outcome = outcomesByCardId.get(card.id);
+      const worlds = Array.isArray(outcome?.worlds) ? outcome.worlds : [];
+      const marginal = worlds.reduce((maximum, world) => Math.max(
+        maximum,
+        this.stateUtility(world, player.id) - beforeValue
+      ), Number.NEGATIVE_INFINITY);
+      if (marginal > bestMarginal) {
+        bestCardId = card.id;
+        bestMarginal = marginal;
+      }
+    }
+    return bestCardId;
   }
 
   /*
@@ -3661,7 +3672,8 @@ export class Evaluator {
 
   边界与不变量
   BaseTransition 只由 StateDeltaValue 与 TransitionOptionValue 构成；低于冻结门槛的 Transfer 只失去竞争资格；
-  depth 只作诊断，不缩放价值，search-prior terms 不得进入。
+  depth 只作诊断，不缩放价值，search-prior terms 不得进入；手牌溢出只作为后续同层真实状态比较输入，
+  不在本函数产生固定 END 或卡牌分数。
   */
   evaluateTransition({
     action,
@@ -3702,11 +3714,25 @@ export class Evaluator {
       : null;
     const transferCompetitive = transferEvaluation === null
       || transferEvaluation.score >= MIN_TRANSFER_UTILITY;
+    const beforeActor = beforeState.players.find(
+      (entry) => entry.id === player.id
+    ) ?? player;
+    const afterActor = afterState.players.find(
+      (entry) => entry.id === player.id
+    ) ?? beforeActor;
+    const discardOpportunityInputs = {
+      beforeOverflow:Math.max(
+        0,
+        (Number(beforeActor.handCount) || 0) - Math.max(0, Number(beforeActor.hp) || 0)
+      ),
+      afterOverflow:Math.max(
+        0,
+        (Number(afterActor.handCount) || 0) - Math.max(0, Number(afterActor.hp) || 0)
+      ),
+      stateDelta
+    };
     let endOpportunityInputs = null;
     if (action?.type === "end") {
-      const beforeActor = beforeState.players.find(
-        (entry) => entry.id === player.id
-      ) ?? player;
       const maxEnergy = Math.max(
         0,
         Number(this.energyRules.getMaxEnergy?.(beforeActor)) || 0
@@ -3735,6 +3761,7 @@ export class Evaluator {
       safetyBeforePoints:beforeSnapshot.teamSafetyPoints,
       safetyAfterPoints:afterSnapshot.teamSafetyPoints,
       dangerBefore:beforeSnapshot.teamDanger,
+      discardOpportunityInputs,
       endOpportunityInputs,
       baseTransition:transferCompetitive
         ? stateDeltaValue + transitionOptionValue
@@ -3777,19 +3804,53 @@ export class Evaluator {
 
   /*
   功能
-  计算 END 的能量溢出与已完整技能 sibling 的安全机会惩罚。
+  计算某个同层动作相对直接 END 所兑现的强制弃牌状态机会。
+
+  调用方
+  Searcher.finalizeCandidates 的完整 sibling 聚合。
+
+  输入
+  END 与一个非 END sibling 的完整 transition terms。
+
+  输出
+  非负 StateValue points relief。
+
+  读取状态
+  两个候选的动作前后手牌溢出量与 Raw StateDelta。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只有 END 确实触发弃牌且 sibling 通过真实 HP/手牌变化完全消除同一溢出时才产生机会；
+  数值严格取两个已物化状态差的正向差，不读取牌名、CardValue 或固定奖励。
+  */
+  endDiscardOpportunityRelief(endTerms, siblingTerms) {
+    const end = endTerms?.discardOpportunityInputs;
+    const sibling = siblingTerms?.discardOpportunityInputs;
+    if (!end || !sibling || end.beforeOverflow <= 0 || end.afterOverflow !== 0) return 0;
+    if (sibling.beforeOverflow !== end.beforeOverflow || sibling.afterOverflow > 0) return 0;
+    return Math.max(0, sibling.stateDelta - end.stateDelta);
+  }
+
+  /*
+  功能
+  计算 END 的能量溢出、已完整技能 sibling 安全机会与强制弃牌状态机会惩罚。
 
   调用方
   Searcher 同 parent sibling 完整收束点。
 
   输入
-  END transition terms 与 Searcher 机械聚合的最大 skill safety relief。
+  END transition terms，以及 Searcher 机械聚合的最大 skill safety relief 与 discard opportunity relief。
 
   输出
-  非负 State Value penalty points。
+  三类互斥来源相加后的非负 StateValue penalty points。
 
   读取状态
-  Evaluator 已物化的能量规则输入、队伍危险与 safety relief scalar。
+  Evaluator 已物化的能量规则输入、队伍危险、safety relief 与 discard relief scalars。
 
   写入状态
   无。
@@ -3799,11 +3860,20 @@ export class Evaluator {
 
   边界与不变量
   λ 唯一由 Evaluator 的 END_SKILL_SAFETY_WEIGHT 拥有；maxEnergy<=0、无主动技能或当前能量不足费用时 readiness 为零；
-  无合法技能由最大 relief 为零自然表达；不得接收 partial sibling max。
+  discard relief 已由 endDiscardOpportunityRelief 从真实状态差得出，不再缩放或读取 CardValue；
+  无合法 sibling 由最大 relief 为零自然表达。
   */
-  endEnergyOpportunityPenalty(transitionTerms, maximumSkillSafetyRelief = 0) {
+  endEnergyOpportunityPenalty(
+    transitionTerms,
+    maximumSkillSafetyRelief = 0,
+    maximumDiscardOpportunityRelief = 0
+  ) {
     const inputs = transitionTerms?.endOpportunityInputs;
-    if (!inputs || inputs.maxEnergy <= 0) return 0;
+    const discardOpportunityPoints = Math.max(
+      0,
+      Number(maximumDiscardOpportunityRelief) || 0
+    );
+    if (!inputs || inputs.maxEnergy <= 0) return discardOpportunityPoints;
     const overflowPoints = ENERGY_STATE_WEIGHT * Math.max(
       0,
       inputs.energy + inputs.turnEnergyGain - inputs.maxEnergy
@@ -3819,7 +3889,7 @@ export class Evaluator {
       * readiness
       * clampProbability(Number(transitionTerms.dangerBefore) || 0)
       * Math.max(0, Number(maximumSkillSafetyRelief) || 0);
-    return overflowPoints + lostSkillPoints;
+    return overflowPoints + lostSkillPoints + discardOpportunityPoints;
   }
 
   /*
