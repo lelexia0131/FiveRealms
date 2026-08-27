@@ -3774,7 +3774,7 @@ export class Evaluator {
   从同一次 transition evaluation 的 safety-only 投影计算技能当步安全改善。
 
   调用方
-  Searcher 同 parent skill sibling 聚合。
+  endOpportunityPoints。
 
   输入
   Evaluator.evaluateTransition 返回的完整命名 terms。
@@ -3807,7 +3807,7 @@ export class Evaluator {
   计算某个同层动作相对直接 END 所兑现的强制弃牌状态机会。
 
   调用方
-  Searcher.finalizeCandidates 的完整 sibling 聚合。
+  endOpportunityPoints。
 
   输入
   END 与一个非 END sibling 的完整 transition terms。
@@ -3838,13 +3838,62 @@ export class Evaluator {
 
   /*
   功能
+  从同 parent 的完整 sibling transition terms 聚合 END 的全部机会惩罚点数。
+
+  调用方
+  Searcher.finalizeCandidates 在 skill sibling 完整后请求 END Final Utility。
+
+  输入
+  END transition terms，以及带 actionType 与 transitionTerms 的完整 sibling terms 数组。
+
+  输出
+  Pf、Ps 与 Pd 相加后的非负 StateValue penalty points。
+
+  读取状态
+  sibling 的 safety、强制弃牌状态差，以及 END 的能量和危险输入。
+
+  写入状态
+  无。
+
+  调用函数
+  skillSafetyRelief、endDiscardOpportunityRelief、endEnergyOpportunityPenalty。
+
+  边界与不变量
+  Searcher 只提供完整集合；M* 与 Pd 的最大值及 Pf + Ps + Pd 仅在 Evaluator 聚合；
+  sibling 顺序不得改变结果，单项公式、单位换算和零 sibling 行为保持不变。
+  */
+  endOpportunityPoints(endTransitionTerms, siblingTransitionTerms = []) {
+    const maximumSkillSafetyRelief = siblingTransitionTerms
+      .filter((sibling) => sibling?.actionType === "skill")
+      .reduce((maximum, sibling) => Math.max(
+        maximum,
+        this.skillSafetyRelief(sibling.transitionTerms)
+      ), 0);
+    const maximumDiscardOpportunityRelief = siblingTransitionTerms
+      .filter((sibling) => sibling?.actionType !== "end")
+      .reduce((maximum, sibling) => Math.max(
+        maximum,
+        this.endDiscardOpportunityRelief(
+          endTransitionTerms,
+          sibling.transitionTerms
+        )
+      ), 0);
+    return this.endEnergyOpportunityPenalty(
+      endTransitionTerms,
+      maximumSkillSafetyRelief,
+      maximumDiscardOpportunityRelief
+    );
+  }
+
+  /*
+  功能
   计算 END 的能量溢出、已完整技能 sibling 安全机会与强制弃牌状态机会惩罚。
 
   调用方
-  Searcher 同 parent sibling 完整收束点。
+  endOpportunityPoints。
 
   输入
-  END transition terms，以及 Searcher 机械聚合的最大 skill safety relief 与 discard opportunity relief。
+  END transition terms，以及同一 Evaluator 聚合出的最大 skill safety relief 与 discard opportunity relief。
 
   输出
   三类互斥来源相加后的非负 StateValue penalty points。
@@ -3861,7 +3910,7 @@ export class Evaluator {
   边界与不变量
   λ 唯一由 Evaluator 的 END_SKILL_SAFETY_WEIGHT 拥有；maxEnergy<=0、无主动技能或当前能量不足费用时 readiness 为零；
   discard relief 已由 endDiscardOpportunityRelief 从真实状态差得出，不再缩放或读取 CardValue；
-  无合法 sibling 由最大 relief 为零自然表达。
+  无合法 sibling 由最大 relief 为零自然表达；调用方不得在 Evaluator 外部重复聚合。
   */
   endEnergyOpportunityPenalty(
     transitionTerms,
@@ -3978,7 +4027,7 @@ export class Evaluator {
   把基础转移与 terminal held option 组合为唯一 Final Transition Utility。
 
   调用方
-  Searcher sibling finalization。
+  Searcher sibling finalization；END opportunity 已由 endOpportunityPoints 完整聚合。
 
   输入
   HP-equivalent base/frontier value 与 Evaluator 计算的 END opportunity State points。

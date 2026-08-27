@@ -554,11 +554,11 @@ export class Searcher {
   只写候选 transitionValue；skill siblings 不完整时 END 保持 null。
 
   调用函数
-  Evaluator.skillSafetyRelief、endDiscardOpportunityRelief、endEnergyOpportunityPenalty、composeTransitionValue。
+  Evaluator.endOpportunityPoints、composeTransitionValue。
 
   边界与不变量
-  Searcher 只机械确认 skill sibling 完整，并从 Evaluator 返回值取最大 safety/discard relief；
-  不读取危险、能量、手牌价值、权重或公式；
+  Searcher 只确认 skill sibling 完整并提供同 parent 的完整 transition terms；
+  最大 relief、END opportunity 与 Final Utility 公式全部由 Evaluator 聚合；
   partial skill 集合不得给 END 赋值，responseNet 只作诊断。
   */
   finalizeCandidates(candidates, siblingActions = candidates.map((entry) => entry.action)) {
@@ -566,35 +566,19 @@ export class Searcher {
     const skillSiblingsComplete = legalSkillActions.every((skillAction) => (
       candidates.some((candidate) => candidate.action === skillAction)
     ));
-    const maximumSkillSafetyRelief = skillSiblingsComplete
-      ? candidates
-          .filter((candidate) => candidate.action?.type === "skill")
-          .reduce((maximum, candidate) => Math.max(
-            maximum,
-            this.evaluator.skillSafetyRelief(candidate.baseTerms)
-          ), 0)
-      : 0;
+    const siblingTransitionTerms = candidates.map((candidate) => ({
+      actionType:candidate.action?.type ?? null,
+      transitionTerms:candidate.baseTerms
+    }));
     for (const candidate of candidates) {
       if (candidate.action?.type === "end" && !skillSiblingsComplete) {
         candidate.transitionValue = null;
         continue;
       }
-      const maximumDiscardOpportunityRelief = candidate.action?.type === "end"
-        ? candidates
-            .filter((sibling) => sibling.action?.type !== "end")
-            .reduce((maximum, sibling) => Math.max(
-              maximum,
-              this.evaluator.endDiscardOpportunityRelief(
-                candidate.baseTerms,
-                sibling.baseTerms
-              )
-            ), 0)
-        : 0;
       const endOpportunityPoints = candidate.action?.type === "end"
-        ? this.evaluator.endEnergyOpportunityPenalty(
+        ? this.evaluator.endOpportunityPoints(
             candidate.baseTerms,
-            maximumSkillSafetyRelief,
-            maximumDiscardOpportunityRelief
+            siblingTransitionTerms
           )
         : 0;
       candidate.transitionValue = this.evaluator.composeTransitionValue({

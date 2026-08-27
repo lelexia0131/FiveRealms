@@ -18198,13 +18198,13 @@ Pattern ID 与 exploration priority。
 */
 /*
 功能
-创建只为 END sibling 完整性测试提供 scalar 的 Evaluator 替身。
+创建只记录 END sibling terms 交接的 Evaluator 替身。
 
 调用方
 END sibling 顺序与预算中断回归测试。
 
 输入
-可选的 penalty 调用观察数组。
+可选的 opportunity 调用观察数组。
 
 输出
 满足 Searcher root-only fixture 的 Evaluator capability 对象。
@@ -18213,15 +18213,15 @@ END sibling 顺序与预算中断回归测试。
 测试 Action 上的 baseValue、safetyRelief 与 schedulingScore 标量。
 
 写入状态
-只向 penaltyCalls 追加已完整聚合的最大 relief。
+只向 opportunityCalls 追加 END terms 与完整 sibling terms。
 
 调用函数
 statePointsToUtility。
 
 边界与不变量
-替身不解释 HP、盾、危险、手牌或能量公式；它只验证 Searcher 是否机械等待完整 sibling 并传递 max scalar。
+替身不解释 HP、盾、危险、手牌或能量公式；它只验证 Searcher 是否等待完整 sibling 并交出全部 terms。
 */
-function createEndSiblingEvaluator(penaltyCalls = []) {
+function createEndSiblingEvaluator(opportunityCalls = []) {
   return {
     rootSchedulingScore:(action) => action.schedulingScore,
     initialTransitionProvenance:() => null,
@@ -18242,11 +18242,9 @@ function createEndSiblingEvaluator(penaltyCalls = []) {
     requiresHiddenWorldPrior:() => false,
     composeSearchPrior:() => ({ domainPrior:0, searchCredit:0, prior:0 }),
     resourceSelectionPreference:() => null,
-    skillSafetyRelief:(terms) => terms.safetyAfterPoints - terms.safetyBeforePoints,
-    endDiscardOpportunityRelief:() => 0,
-    endEnergyOpportunityPenalty:(_terms, maximumSkillSafetyRelief) => {
-      penaltyCalls.push(maximumSkillSafetyRelief);
-      return maximumSkillSafetyRelief;
+    endOpportunityPoints:(endTerms, siblingTerms) => {
+      opportunityCalls.push({ endTerms, siblingTerms });
+      return 5;
     },
     composeTransitionValue:({ baseTransition, frontierValue, endOpportunityPoints }) => (
       baseTransition + frontierValue - statePointsToUtility(endOpportunityPoints)
@@ -18349,9 +18347,9 @@ async function runEndSiblingBudgetFixture(stopReason) {
 }
 
 test("AI·搜索：END Final Utility 只使用完整 skill sibling 集合且与顺序无关", () => {
-  const penaltyCalls = [];
+  const opportunityCalls = [];
   const searcher = Object.create(Searcher.prototype);
-  searcher.evaluator = createEndSiblingEvaluator(penaltyCalls);
+  searcher.evaluator = createEndSiblingEvaluator(opportunityCalls);
   const endAction = { type:"end" };
   const skillA = { type:"skill", skillId:"a" };
   const skillB = { type:"skill", skillId:"b" };
@@ -18370,7 +18368,7 @@ test("AI·搜索：END Final Utility 只使用完整 skill sibling 集合且与�
   );
   assert.equal(partialEnd.transitionValue, null);
   assert.equal(partialSkill.transitionValue, 1);
-  assert.deepEqual(penaltyCalls, []);
+  assert.deepEqual(opportunityCalls, []);
 
   const evaluateOrder = (orderedSkills) => {
     const end = candidate(endAction, 10);
@@ -18386,7 +18384,64 @@ test("AI·搜索：END Final Utility 只使用完整 skill sibling 集合且与�
     return end.transitionValue;
   };
   assert.equal(evaluateOrder([skillA, skillB]), evaluateOrder([skillB, skillA]));
-  assert.deepEqual(penaltyCalls, [5, 5]);
+  assert.equal(opportunityCalls.length, 2);
+  for (const call of opportunityCalls) {
+    assert.equal(call.siblingTerms.length, 3);
+    assert.deepEqual(
+      call.siblingTerms
+        .filter((sibling) => sibling.actionType === "skill")
+        .map((sibling) => sibling.transitionTerms.safetyAfterPoints)
+        .sort((left, right) => left - right),
+      [2, 5]
+    );
+  }
+  const finalizeSource = Searcher.prototype.finalizeCandidates.toString();
+  assert.doesNotMatch(
+    finalizeSource,
+    /skillSafetyRelief|endDiscardOpportunityRelief|maximumSkillSafetyRelief|maximumDiscardOpportunityRelief/u
+  );
+  assert.match(finalizeSource, /endOpportunityPoints/u);
+
+  const evaluator = new Evaluator();
+  const endTerms = {
+    dangerBefore:1,
+    endOpportunityInputs:{
+      energy:4,
+      turnEnergyGain:0,
+      maxEnergy:4,
+      activeSkillCost:4,
+      hasActiveSkill:true
+    },
+    discardOpportunityInputs:{ beforeOverflow:1, afterOverflow:0, stateDelta:0 }
+  };
+  const siblingTerms = [
+    {
+      actionType:"skill",
+      transitionTerms:{
+        safetyBeforePoints:0,
+        safetyAfterPoints:2,
+        discardOpportunityInputs:{ beforeOverflow:1, afterOverflow:0, stateDelta:2 }
+      }
+    },
+    {
+      actionType:"skill",
+      transitionTerms:{
+        safetyBeforePoints:0,
+        safetyAfterPoints:5,
+        discardOpportunityInputs:{ beforeOverflow:1, afterOverflow:0, stateDelta:3 }
+      }
+    },
+    {
+      actionType:"card",
+      transitionTerms:{
+        safetyBeforePoints:0,
+        safetyAfterPoints:0,
+        discardOpportunityInputs:{ beforeOverflow:1, afterOverflow:0, stateDelta:2.5 }
+      }
+    }
+  ];
+  assert.equal(evaluator.endOpportunityPoints(endTerms, siblingTerms), 8);
+  assert.equal(evaluator.endOpportunityPoints(endTerms, [...siblingTerms].reverse()), 8);
 });
 
 /*
