@@ -298,6 +298,7 @@ export function createTurnWorkflow(dependencies) {
   边界与不变量
   每个真实 Action 后必须从最新 World 重新调用 selectAction；每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
   canonical non-END 的定义、目标、实体或真实结算绑定失败必须显式记录，不能静默伪装成正常 END。
+  null 表示 SEARCH_FAILURE，必须中止当前 turn workflow，不能进入战略 END 或强制弃牌阶段。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
@@ -315,11 +316,19 @@ export function createTurnWorkflow(dependencies) {
             searchTimeBudgetMs:decisionWindow.maximumMs
           });
         } catch (error) {
-          runtime.diagnostics.reportWorkflowError("AI", `${player.name}规划行动失败，安全结束出牌阶段`, error);
-          action = null;
+          runtime.diagnostics.reportWorkflowError("AI", `${player.name}规划行动失败，已中止当前回合`, error);
+          throw error;
         }
         if (!runtime.isSessionValid(gameId)) return;
-        if (!action) break;
+        if (!action) {
+          const searchFailure = new Error("AI Searcher 未返回可验收 Action（SEARCH_FAILURE）");
+          runtime.diagnostics.reportWorkflowError(
+            "AI",
+            `${player.name}规划行动失败，已中止当前回合`,
+            searchFailure
+          );
+          throw searchFailure;
+        }
         const decisionElapsedMs = Math.max(0, runtime.now() - decisionStartedAt);
         const remainingSearchDelay = runtime.getRemainingAiDecisionDelay(
           decisionWindow,

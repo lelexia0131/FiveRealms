@@ -312,8 +312,81 @@ export class Searcher {
   */
   selectFinal({ stopReason, completedCandidates, bestSeenCandidate }) {
     if (stopReason === "COMPLETE") return this.bestCandidate(completedCandidates);
-    if (["TIME", "NODE", "CANCELLED"].includes(stopReason)) return bestSeenCandidate;
+    if (["TIME", "NODE", "CANCELLED", "FAULT"].includes(stopReason)) {
+      return bestSeenCandidate;
+    }
     return null;
+  }
+
+  /*
+  功能
+  把普通搜索运行时异常收束为本轮 FAULT，并保留首个故障诊断。
+
+  调用方
+  candidate preparation、深层动作生成、Simulator 构造与 cooperative yield 边界。
+
+  输入
+  当前 SearchBudget 与捕获到的异常。
+
+  输出
+  冻结的 data-only fault diagnostics。
+
+  读取状态
+  当前搜索已有 searchFault。
+
+  写入状态
+  SearchBudget.stopReason 与本次 Searcher.searchFault。
+
+  调用函数
+  SearchBudget.fault、Object.freeze。
+
+  边界与不变量
+  cooperative interruption 不是 FAULT；首个普通异常后不得启动任何新搜索工作。
+  */
+  recordSearchFault(budget, error) {
+    if (budget.isCurrentWorkInterruption?.(error)) return null;
+    budget.fault();
+    this.searchFault ??= Object.freeze({
+      name:error instanceof Error ? error.name : "Error",
+      message:error instanceof Error ? error.message : String(error)
+    });
+    return this.searchFault;
+  }
+
+  /*
+  功能
+  执行一次 cooperative yield，并把拒绝与普通异常分别收束为 CANCELLED 或 FAULT。
+
+  调用方
+  根候选与深层候选完成后的让步边界。
+
+  输入
+  当前 SearchBudget 与 gameId。
+
+  输出
+  可继续搜索返回 true；取消或故障返回 false。
+
+  读取状态
+  注入的 yieldControl。
+
+  写入状态
+  SearchBudget.stopReason 与可选 searchFault。
+
+  调用函数
+  yieldControl、SearchBudget.cancel、recordSearchFault。
+
+  边界与不变量
+  false 是正常 cooperative cancellation；throw 是 FAULT，二者都不得清空已有完整 incumbent。
+  */
+  async continueAfterYield(budget, gameId) {
+    try {
+      if (await this.yieldControl(gameId)) return true;
+      budget.cancel();
+      return false;
+    } catch (error) {
+      this.recordSearchFault(budget, error);
+      return false;
+    }
   }
 
   /*
@@ -639,31 +712,40 @@ export class Searcher {
   普通/X skill state-value opportunity、discard relief、END opportunity 与 Final Utility 公式全部由 Evaluator 聚合；
   partial sibling 集合不得给 END 赋值，responseNet 只作诊断。
   */
-  finalizeCandidates(candidates, siblingActions = candidates.map((entry) => entry.action)) {
-    const siblingContextComplete = siblingActions.every((siblingAction) => (
-      candidates.some((candidate) => candidate.action === siblingAction)
-    ));
-    const siblingTransitionTerms = candidates.map((candidate) => ({
-      actionType:candidate.action?.type ?? null,
-      transitionTerms:candidate.baseTerms,
-      nextEnergyStateDelta:candidate.nextEnergyStateDelta
-    }));
-    for (const candidate of candidates) {
-      if (candidate.action?.type === "end" && !siblingContextComplete) {
-        candidate.transitionValue = null;
-        continue;
+  finalizeCandidates(
+    candidates,
+    siblingActions = candidates.map((entry) => entry.action),
+    searchBudget = null
+  ) {
+    try {
+      const siblingContextComplete = siblingActions.every((siblingAction) => (
+        candidates.some((candidate) => candidate.action === siblingAction)
+      ));
+      const siblingTransitionTerms = candidates.map((candidate) => ({
+        actionType:candidate.action?.type ?? null,
+        transitionTerms:candidate.baseTerms,
+        nextEnergyStateDelta:candidate.nextEnergyStateDelta
+      }));
+      for (const candidate of candidates) {
+        if (candidate.action?.type === "end" && !siblingContextComplete) {
+          candidate.transitionValue = null;
+          continue;
+        }
+        const endOpportunityPoints = candidate.action?.type === "end"
+          ? this.evaluator.endOpportunityPoints(
+              candidate.baseTerms,
+              siblingTransitionTerms
+            )
+          : 0;
+        candidate.transitionValue = this.evaluator.composeTransitionValue({
+          baseTransition:candidate.baseTransition,
+          frontierValue:candidate.frontierValue,
+          endOpportunityPoints
+        });
       }
-      const endOpportunityPoints = candidate.action?.type === "end"
-        ? this.evaluator.endOpportunityPoints(
-            candidate.baseTerms,
-            siblingTransitionTerms
-          )
-        : 0;
-      candidate.transitionValue = this.evaluator.composeTransitionValue({
-        baseTransition:candidate.baseTransition,
-        frontierValue:candidate.frontierValue,
-        endOpportunityPoints
-      });
+    } catch (error) {
+      if (!searchBudget) throw error;
+      this.recordSearchFault(searchBudget, error);
     }
     return candidates;
   }
@@ -744,7 +826,7 @@ export class Searcher {
   当前 SearchBudget、搜索深度与返回 { state, candidate } 的同步 preparation。
 
   输出
-  完整 preparation 结果；预算 signal 中断时返回 null；其他错误原样抛出。
+  完整 preparation 结果；预算 signal 或普通运行时故障时返回 null。
 
   读取状态
   SearchBudget 当前停止原因与 preparation 诊断。
@@ -756,7 +838,7 @@ export class Searcher {
   SearchBudget.beginPreparation/finishPreparation/isCurrentWorkInterruption、prepare。
 
   边界与不变量
-  只有完整 candidate 才标记 completed；任何 partial World/world 都随异常栈回退且不得进入 best-seen。
+  只有完整 candidate 才标记 completed；任何 partial World/world 都必须丢弃；普通异常立即把本轮搜索标记为 FAULT。
   */
   prepareCandidate(budget, depth, prepare) {
     budget.beginPreparation(depth);
@@ -767,7 +849,8 @@ export class Searcher {
     } catch (error) {
       budget.finishPreparation(false);
       if (budget.isCurrentWorkInterruption?.(error)) return null;
-      throw error;
+      this.recordSearchFault(budget, error);
+      return null;
     }
   }
 
@@ -1152,7 +1235,9 @@ export class Searcher {
         depth - 1
       );
     } catch (error) {
-      if (!budget.isCurrentWorkInterruption?.(error)) throw error;
+      if (!budget.isCurrentWorkInterruption?.(error)) {
+        this.recordSearchFault(budget, error);
+      }
       // 深层 Generator 与 candidate preparation 使用同一 cooperative abort 语义；
       // 中断只能丢弃当前未完成 child，不能把已经完成的 root incumbent 升级成 Worker fault。
       workDiagnostics.abortedCandidateCount += 1;
@@ -1247,8 +1332,7 @@ export class Searcher {
       budget.observeNode();
       if (budget.expandedNodes % structure.yieldEvery === 0) {
         budget.observeYield();
-        if (!(await this.yieldControl(options.gameId))) {
-          budget.cancel();
+        if (!(await this.continueAfterYield(budget, options.gameId))) {
           return {
             actions:followActions,
             candidates:[],
@@ -1259,7 +1343,7 @@ export class Searcher {
         }
       }
     }
-    this.finalizeCandidates(candidates, followActions);
+    this.finalizeCandidates(candidates, followActions, budget);
     const completeCandidateCount = candidates.filter(
       (candidate) => candidate.transitionValue !== null
     ).length;
@@ -1297,8 +1381,7 @@ export class Searcher {
   SearchBudget、结构配置、完整候选、provisional root、context、根诊断条目与本次搜索工作诊断。
 
   输出
-  返回完整候选动作；TIME/NODE 零完整 root 时返回明确标记的 provisional root；
-  CANCELLED 已有完整 incumbent 时保留该动作，否则返回 null。
+  返回完整候选动作；TIME/NODE/CANCELLED/FAULT 零完整 root 时返回明确标记的 provisional root。
 
   读取状态
   budget 计数、候选序列、root/work diagnostics 与 bounded counterfactual context diagnostics。
@@ -1324,7 +1407,7 @@ export class Searcher {
     const budgetStats = budget.diagnostics();
     const provisionalFallbackUsed = !choice
       && workDiagnostics.completedRootCandidateCount === 0
-      && ["TIME", "NODE"].includes(budgetStats.stopReason)
+      && ["TIME", "NODE", "CANCELLED", "FAULT"].includes(budgetStats.stopReason)
       && Boolean(provisionalRootFallback);
     const provisionalFallbackReason = provisionalFallbackUsed
       ? `NO_COMPLETED_ROOT_${budgetStats.stopReason}`
@@ -1355,6 +1438,7 @@ export class Searcher {
       timeBudget:budgetStats.timeBudget,
       nodeBudget:budgetStats.nodeBudget,
       stopReason:budgetStats.stopReason,
+      searchFault:this.searchFault,
       timeoutObserved:budgetStats.stopReason === "TIME",
       simulationCalls:budgetStats.simulationCalls,
       simulatorTransitions:budgetStats.simulationCalls,
@@ -1469,6 +1553,7 @@ export class Searcher {
     this.comparisonActor = player;
     this.comparisonWorld = world;
     this.lastSequence = [];
+    this.searchFault = null;
     const collectDiagnostics = Boolean(options.collectAiDecisionDiagnostics);
     const budget = this.searchBudgetFactory();
     const structure = this.structure();
@@ -1504,10 +1589,7 @@ export class Searcher {
       ? ordinaryNonTerminalFallback ?? rootTerminalAction
       : rootTerminalAction ?? ordinaryNonTerminalFallback
       ?? null;
-    const context = this.createContext(
-      player,
-      world
-    );
+    let context;
     const requestedRootCandidateCount = Number(options.rootCandidateCount);
     const rootCandidateCount = Number.isFinite(requestedRootCandidateCount)
       ? Math.max(rootActions.length, Math.floor(requestedRootCandidateCount))
@@ -1540,6 +1622,21 @@ export class Searcher {
       rootWork:[]
     };
 
+    try {
+      context = this.createContext(player, world);
+    } catch (error) {
+      this.recordSearchFault(budget, error);
+      return this.recordResult({
+        budget,
+        structure,
+        choice:null,
+        provisionalRootFallback,
+        context:{ unknownHandEstimate:null },
+        rootLedgers:[],
+        workDiagnostics
+      });
+    }
+
     // hidden-world context 之后重新观察预算；TIME 已到时不得再启动 root clone 或分布初始化。
     if (budget.shouldStop()) {
       return this.recordResult({
@@ -1557,7 +1654,9 @@ export class Searcher {
       // 每次规划只从组合根注入的工厂创建一个 Simulator，所有节点复用该生命周期。
       simulator = this.simulatorFactory({ searchBudget:budget });
     } catch (error) {
-      if (!budget.isCurrentWorkInterruption?.(error)) throw error;
+      if (!budget.isCurrentWorkInterruption?.(error)) {
+        this.recordSearchFault(budget, error);
+      }
       return this.recordResult({
         budget,
         structure,
@@ -1617,7 +1716,7 @@ export class Searcher {
       candidate.completedAtWorkCount = budget.simulationCalls;
       rootCandidates.push(candidate);
       budget.observeNode();
-      this.finalizeCandidates(rootCandidates, scheduledRootActions);
+      this.finalizeCandidates(rootCandidates, scheduledRootActions, budget);
       workDiagnostics.completedRootCandidateCount = rootCandidates.filter(
         (entry) => entry.transitionValue !== null
       ).length;
@@ -1677,8 +1776,7 @@ export class Searcher {
       }
       if (budget.expandedNodes % structure.yieldEvery === 0) {
         budget.observeYield();
-        if (!(await this.yieldControl(options.gameId))) {
-          budget.cancel();
+        if (!(await this.continueAfterYield(budget, options.gameId))) {
           return this.recordResult({
             budget,
             structure,
@@ -1697,7 +1795,7 @@ export class Searcher {
     }
 
     // 同层转移项是 SearchNode 最终价值的一部分；完成它之后候选才具备 best-seen 资格。
-    this.finalizeCandidates(rootCandidates, scheduledRootActions);
+    this.finalizeCandidates(rootCandidates, scheduledRootActions, budget);
     for (const rootWork of workDiagnostics.rootWork) {
       const materialized = rootCandidates.find((candidate) => candidate.action === rootWork.action);
       if (materialized) rootWork.completed = materialized.transitionValue !== null;
@@ -2313,12 +2411,14 @@ export class Searcher {
 const DEFAULT_SEARCH_TIME_BUDGET_MS = 900;
 
 // COMPLETE 表示自然完成；TIME/NODE 分别表示时间或完整节点预算耗尽；
-// CANCELLED 表示会话让步检测到取消。停止原因只决定收束方式，不修改候选价值。
+// CANCELLED 表示会话让步检测到取消；FAULT 表示普通运行时异常终止新增工作。
+// 停止原因只决定收束方式，不修改已经完成的候选价值。
 const SEARCH_STOP_REASON = Object.freeze({
   COMPLETE:"COMPLETE",
   TIME:"TIME",
   NODE:"NODE",
-  CANCELLED:"CANCELLED"
+  CANCELLED:"CANCELLED",
+  FAULT:"FAULT"
 });
 
 export class SearchBudget {
@@ -3187,6 +3287,36 @@ export class SearchBudget {
   */
   cancel() {
     this.stopReason = SEARCH_STOP_REASON.CANCELLED;
+    return this.stopReason;
+  }
+
+  /*
+  功能
+  标记普通运行时异常已终止本轮新增搜索工作。
+
+  调用方
+  Searcher 的统一 fault boundary。
+
+  输入
+  无。
+
+  输出
+  FAULT。
+
+  读取状态
+  无。
+
+  写入状态
+  stopReason 写为 FAULT。
+
+  调用函数
+  无。
+
+  边界与不变量
+  FAULT 不修改已完成候选、incumbent 或预算计数；后续 shouldStop 必须立即返回 true。
+  */
+  fault() {
+    this.stopReason = SEARCH_STOP_REASON.FAULT;
     return this.stopReason;
   }
 

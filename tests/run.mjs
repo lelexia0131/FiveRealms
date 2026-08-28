@@ -18006,7 +18006,7 @@ function testTacticResolutionChance(simulator, state, actor, card, targets, sele
 
 
 
-test("AI·搜索：规划异常会安全结束出牌并清理观察状态", async () => {
+test("AI·搜索：规划异常显式传播 SEARCH_FAILURE 并清理观察状态", async () => {
   const ai = makePlayer("planner-fallback-ai", 0, "dawn"),
     enemy = makePlayer("planner-fallback-enemy", 1, "dusk"),
     { game, ui }
@@ -18018,8 +18018,12 @@ test("AI·搜索：规划异常会安全结束出牌并清理观察状态", asyn
   game.aiController.selectAction = async () => {
     throw new Error("planner test failure");
   };
-  await game.takeAiPlayPhase(ai, game.state.gameId);
+  await assert.rejects(
+    game.takeAiPlayPhase(ai, game.state.gameId),
+    /planner test failure/u
+  );
   assert.equal(ui.thinking.at(-1)[0], false);
+  assert.equal(game.state.phase, "play", "SEARCH_FAILURE 不得伪装为 END 后进入弃牌阶段");
   assert.match(ui.logs.join("\n"), /^(?!.*planner test failure)/s);
 });
 
@@ -18709,6 +18713,174 @@ async function runEndSiblingBudgetFixture(
     rootActions
   };
 }
+
+/*
+功能
+运行 root candidate 普通故障、首 root 取消或正常 COMPLETE 的确定性 Searcher 夹具。
+
+调用方
+Searcher FAULT/CANCELLED incumbent、provisional 与 strategic END 回归测试。
+
+输入
+mode 为 after-incumbent-fault、before-incumbent-fault、before-incumbent-cancel 或 complete-end。
+
+输出
+选择的 canonical Action、搜索诊断与 Simulator apply 轨迹。
+
+读取状态
+最小 canonical World、Action 与测试 Evaluator 固定 transition value。
+
+写入状态
+独立 SearchBudget、Searcher fault diagnostics 与 apply 轨迹。
+
+调用函数
+Searcher.search、SearchBudget、PatternMatcher。
+
+边界与不变量
+故障只由 Simulator 抛出普通异常；取消只使用当前 SearchBudget 的 cooperative interruption；END 不得因故障被补算。
+*/
+async function runSearcherFaultBoundaryFixture(mode) {
+  const actorId = `fault-boundary-${mode}`;
+  const assault = createAction({
+    type:"card",
+    actorId,
+    cardId:"assault",
+    cardInstanceId:`${actorId}-assault`,
+    targetIds:[`${actorId}-enemy`]
+  });
+  const charge = createAction({
+    type:"card",
+    actorId,
+    cardId:"charge",
+    cardInstanceId:`${actorId}-charge`
+  });
+  const end = createAction({ type:"end", actorId });
+  const rootActions = mode === "after-incumbent-fault"
+    ? [assault, charge, end]
+    : [assault, end];
+  const applied = [];
+  const preferEnd = mode === "complete-end";
+  const scheduling = new Map([
+    [assault, 100],
+    [charge, 90],
+    [end, 0]
+  ]);
+  const transitionValue = (action) => {
+    if (action.type === "end") return preferEnd ? 2 : 0;
+    if (action.cardId === "assault") return preferEnd ? -1 : 5;
+    return 1;
+  };
+  const evaluator = {
+    rootSchedulingScore:(action) => scheduling.get(action) ?? 0,
+    initialTransitionProvenance:() => null,
+    exposeMarginalStackDelta:() => 0,
+    assaultMarginalStackCount:() => 0,
+    advanceTransitionProvenance:() => null,
+    adaptiveInformationTarget:() => null,
+    evaluateTransition:({ action }) => ({
+      baseTransition:transitionValue(action),
+      stateDelta:transitionValue(action),
+      dangerBefore:0,
+      endOpportunityInputs:action.type === "end" ? {} : null
+    }),
+    frontierResidual:() => null,
+    terminalFrontierValue:() => 0,
+    requiresActionLightningOutcomes:() => false,
+    requiresHiddenWorldPrior:() => false,
+    composeSearchPrior:() => ({ domainPrior:0, searchCredit:0, prior:0 }),
+    resourceSelectionPreference:() => null,
+    endOpportunityPoints:() => 0,
+    composeTransitionValue:({ baseTransition, frontierValue, endOpportunityPoints }) => (
+      baseTransition + frontierValue - endOpportunityPoints
+    ),
+    compareCandidates:(left, right) => left.valueScore - right.valueScore
+  };
+  const searcher = new Searcher({
+    evaluator,
+    patternMatcher:new PatternMatcher({ definitions:[] }),
+    getResolutionScale:() => 1,
+    config:{ depth:1, beamWidth:3, hiddenSamples:0, yieldEvery:100 },
+    simulatorFactory:({ searchBudget }) => ({
+      apply:(state, action) => {
+        applied.push(action.type === "end" ? "end" : action.cardId);
+        if (mode === "after-incumbent-fault" && action === charge) {
+          throw new Error("synthetic Simulator fault after incumbent");
+        }
+        if (mode === "before-incumbent-fault" && action === assault) {
+          throw new Error("synthetic Simulator fault before incumbent");
+        }
+        if (mode === "before-incumbent-cancel" && action === assault) {
+          searchBudget.cancel();
+          throw searchBudget.currentWorkInterruption;
+        }
+        return { ...state, playPhaseEnded:action.type === "end" };
+      },
+      buildLightningOutcomeSets:() => []
+    }),
+    searchBudgetFactory:() => new SearchBudget({ nodeBudget:100 }),
+    deduplicateActions:(actions) => actions,
+    generateActions:() => [],
+    sampleUnknownHands:() => ({
+      classification:PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE,
+      worlds:[],
+      sampleCount:0
+    }),
+    yieldControl:async () => true
+  });
+  const selected = await searcher.search(
+    { id:actorId, hand:Array(5).fill({}) },
+    {
+      playPhaseEnded:false,
+      probabilityState:null,
+      players:[
+        { id:actorId, battleTeam:"dawn", alive:true, hp:2, handCount:5 },
+        { id:`${actorId}-enemy`, battleTeam:"dusk", alive:true, hp:4, handCount:0 }
+      ]
+    },
+    rootActions,
+    { gameId:actorId }
+  );
+  return { selected, stats:searcher.lastSearchStats, applied, assault, charge, end };
+}
+
+test("AI·搜索：FAULT 保留已完成 Assault incumbent 且不补算 END", async () => {
+  const result = await runSearcherFaultBoundaryFixture("after-incumbent-fault");
+  assert.equal(result.stats.stopReason, "FAULT");
+  assert.match(result.stats.searchFault.message, /after incumbent/u);
+  assert.equal(result.selected, result.assault);
+  assert.equal(result.stats.completedRootCandidateCount, 1);
+  assert.equal(result.stats.provisionalFallbackUsed, false);
+  assert.deepEqual(result.applied, ["assault", "charge"]);
+});
+
+test("AI·搜索：首个完整 root 前 FAULT 使用 Searcher provisional non-END", async () => {
+  const result = await runSearcherFaultBoundaryFixture("before-incumbent-fault");
+  assert.equal(result.stats.stopReason, "FAULT");
+  assert.equal(result.stats.completedRootCandidateCount, 0);
+  assert.equal(result.stats.provisionalFallbackUsed, true);
+  assert.equal(result.stats.provisionalFallbackReason, "NO_COMPLETED_ROOT_FAULT");
+  assert.equal(result.selected, result.assault);
+  assert.notEqual(result.selected.type, "end");
+  assert.deepEqual(result.applied, ["assault"]);
+});
+
+test("AI·搜索：首个完整 root 前 CANCELLED 使用 Searcher provisional non-END", async () => {
+  const result = await runSearcherFaultBoundaryFixture("before-incumbent-cancel");
+  assert.equal(result.stats.stopReason, "CANCELLED");
+  assert.equal(result.stats.completedRootCandidateCount, 0);
+  assert.equal(result.stats.provisionalFallbackUsed, true);
+  assert.equal(result.stats.provisionalFallbackReason, "NO_COMPLETED_ROOT_CANCELLED");
+  assert.equal(result.selected, result.assault);
+  assert.notEqual(result.selected.type, "end");
+});
+
+test("AI·搜索：COMPLETE 正常选择 canonical END", async () => {
+  const result = await runSearcherFaultBoundaryFixture("complete-end");
+  assert.equal(result.stats.stopReason, "COMPLETE");
+  assert.equal(result.stats.searchFault, null);
+  assert.equal(result.selected, result.end);
+  assert.equal(result.selected.type, "end");
+});
 
 test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序无关", () => {
   const opportunityCalls = [];
@@ -20219,71 +20391,115 @@ test("AI·搜索：Pattern proposals 服从既有 depth 与 beamWidth 上限", (
 
 
 
-test("AI·搜索：Worker 故障时 only-End 合法局面仍可确定结束", async () => {
-  const actor = makePlayer("worker-fallback-end-actor", 0, "dawn", "ai", 3);
-  const enemy = makePlayer("worker-fallback-end-enemy", 1, "dusk", "ai", 5);
+test("AI·Worker：Assault 与 searchFault diagnostics 同时完整运输", async () => {
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const actor = makePlayer("worker-fault-actor", 0, "dawn", "ai", 3);
+  const enemy = makePlayer("worker-fault-enemy", 1, "dusk", "ai", 1);
+  actor.hp = 1;
+  enemy.hp = 1;
+  actor.hand.push(instance("assault"), instance("counter"), instance("counter"));
   const { game } = makeGame([actor, enemy]);
-  let rootGenerationCalls = 0;
-  const generate = game.aiController.actionGenerator.generate.bind(
-    game.aiController.actionGenerator
-  );
-  game.aiController.actionGenerator.generate = (...args) => {
-    rootGenerationCalls += 1;
-    return generate(...args);
-  };
-  game.aiController.searchExecutor = {
-    search:async () => { throw new Error("AI Worker crashed"); }
-  };
-
-  const chosen = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
-
-  assert.equal(chosen.type, "end");
-  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.FALLBACK);
-  assert.equal(game.aiController.lastSearchFallback.source, "generator-safe-end");
-  assert.equal(game.aiController.lastSearchFallback.action.type, "end");
-  assert.equal(game.aiController.searchDiagnostics.FALLBACK, 1);
-  assert.equal(rootGenerationCalls, 1);
-  assert.equal(game.aiController.lastDecisionDiagnostics.physicalRootCount, 1);
-  assert.equal(game.aiController.lastDecisionDiagnostics.uniqueRootCount, 1);
+  const roots = game.aiController.getActionCandidates(actor);
+  const request = createSearchRequest({
+    requestId:"worker-fault-transport",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    world:createInitialWorld(actor.id, game.state),
+    searchConfig:{
+      ...game.aiController.buildSearchConfig(),
+      nodeBudget:100,
+      yieldEvery:1
+    },
+    rng:game.aiController.searchRng.snapshot(),
+    rootActions:roots
+  });
+  const outcome = await runSearchRequest(request, {
+    yieldControl:async () => {
+      throw new Error("synthetic Worker yield fault");
+    }
+  });
+  assert.equal(outcome.action.cardId, "assault");
+  assert.equal(outcome.searchStopReason, "FAULT");
+  assert.deepEqual(outcome.searchFault, {
+    name:"Error",
+    message:"synthetic Worker yield fault"
+  });
+  assert.equal(outcome.workerError, null);
+  game.dispose();
 });
 
-test("AI·搜索：Worker 主动取消不会进入 fault fallback 执行动作", async () => {
-  const actor = makePlayer("worker-cancel-actor", 0, "dawn", "ai", 3);
-  const enemy = makePlayer("worker-cancel-enemy", 1, "dusk", "ai", 5);
+test("AI·Controller：合法 Assault 与 FAULT diagnostics 仍按 root acceptance 接受", async () => {
+  const { createSearchRequest, createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
+  const actor = makePlayer("controller-fault-actor", 0, "dawn", "ai", 3);
+  const enemy = makePlayer("controller-fault-enemy", 1, "dusk", "ai", 2);
   actor.hand.push(instance("assault"));
   const { game } = makeGame([actor, enemy]);
-  game.aiController.searchExecutor = {
-    search:async () => { throw new Error("AI search cancelled"); }
-  };
-
-  const chosen = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
-
-  assert.equal(chosen.type, "end");
-  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.CANCELLED);
+  const roots = game.aiController.getActionCandidates(actor);
+  const action = roots.find((entry) => entry.cardId === "assault");
+  const request = createSearchRequest({
+    requestId:"controller-fault-accepted",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    world:createInitialWorld(actor.id, game.state),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActions:roots
+  });
+  const accepted = game.aiController.acceptWorkerSearchOutcome(request, createWorkerSearchOutcome({
+    request,
+    action,
+    stats:{ stopReason:"FAULT" },
+    searchStopReason:"FAULT",
+    searchFault:{ name:"Error", message:"synthetic Simulator fault" },
+    rngAfter:request.rng
+  }), roots);
+  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.equal(accepted.action, action);
+  assert.equal(accepted.result.searchFault.message, "synthetic Simulator fault");
   assert.equal(game.aiController.lastSearchFallback, null);
-  assert.equal(game.aiController.searchDiagnostics.CANCEL, 1);
-  assert.equal(game.aiController.searchDiagnostics.FALLBACK, 0);
 });
 
-test("AI·搜索：Worker 故障时 Controller 不评分且只返回 Generator 安全结束", async () => {
-  const actor = makePlayer("worker-fallback-safe-actor", 0, "dawn", "ai", 3);
-  const enemy = makePlayer("worker-fallback-safe-enemy", 1, "dusk", "ai", 2);
+test("AI·Controller：Worker 无 Searcher action 返回显式 SEARCH_FAILURE 而非 END", async () => {
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const actor = makePlayer("controller-empty-actor", 0, "dawn", "ai", 3);
+  const enemy = makePlayer("controller-empty-enemy", 1, "dusk", "ai", 2);
   actor.hand.push(instance("assault"));
   const { game } = makeGame([actor, enemy]);
-  game.aiController.searchExecutor = {
-    search:async () => { throw new Error("AI Worker crashed"); }
-  };
-
-  const chosen = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
-  assert.equal(chosen.type, "end");
-  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.FALLBACK);
-  assert.equal(game.aiController.lastSearchFallback.source, "generator-safe-end");
+  const roots = game.aiController.getActionCandidates(actor);
+  const initialWorld = createInitialWorld(actor.id, game.state);
+  const brokenWorld = Object.freeze({
+    ...initialWorld,
+    players:Object.freeze(initialWorld.players.filter((entry) => entry.id !== actor.id))
+  });
+  const request = createSearchRequest({
+    requestId:"controller-empty-action",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    world:brokenWorld,
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActions:roots
+  });
+  const outcome = await runSearchRequest(request);
+  assert.equal(outcome.action, null);
+  assert.match(outcome.workerError, /缺少 actor/u);
+  const failed = game.aiController.acceptWorkerSearchOutcome(request, outcome, roots);
+  assert.equal(failed.result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+  assert.equal(failed.action, null);
+  assert.equal(failed.result.action, null);
   const source = await readFile(projectFile("js/ai/Controller.js"), "utf8");
-  const fallbackSource = source.slice(
-    source.indexOf("selectWorkerFailureFallback("),
-    source.indexOf("acceptWorkerSearchOutcome(")
-  );
-  assert.doesNotMatch(fallbackSource, /SearchPrior|\.reduce\(|\.sort\(|score\s*:/);
+  assert.doesNotMatch(source, /selectWorkerFailureFallback|generator-safe-end/u);
 });
 test("AI·资源身份：转移 Action 只保存可执行选择 ID", () => {
   const actor = makePlayer("transfer-rebind-actor", 0, "dawn"),
@@ -20551,7 +20767,7 @@ test("AI·SearchRequest：structured clone / data-only / no hidden leak", frArch
 createSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome、bumpStateVersion。
 
 边界与不变量
-任一失败只能返回安全 end；接受边界只允许本次 request root set 中的 canonical Action。
+任一失败必须返回 null Action 与显式 rejection status；接受边界只允许本次 request root set 中的 canonical Action。
 */
 async function frArch13StaleResultRejection() {
   const { createSearchRequest, createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
@@ -20601,7 +20817,7 @@ async function frArch13StaleResultRejection() {
     rngAfter:request.rng
   }), request.rootActions);
   assert.equal(stale.result.status, SEARCH_RESULT_STATUS.STALE_VERSION);
-  assert.equal(stale.action.type, "end");
+  assert.equal(stale.action, null);
   bumpStateVersion(game.state);
   const freshRequest = makeRequest();
   game.state.isDisposed = true;
@@ -20616,7 +20832,7 @@ async function frArch13StaleResultRejection() {
     freshRequest.rootActions
   );
   assert.equal(invalidSession.result.status, SEARCH_RESULT_STATUS.INVALID_SESSION);
-  assert.equal(invalidSession.action.type, "end");
+  assert.equal(invalidSession.action, null);
   game.state.isDisposed = false;
 
   const versionNow = game.state.stateVersion;
@@ -20634,7 +20850,7 @@ async function frArch13StaleResultRejection() {
     validAgain.rootActions
   );
   assert.equal(deadActor.result.status, SEARCH_RESULT_STATUS.INVALID_ACTOR);
-  assert.equal(deadActor.action.type, "end");
+  assert.equal(deadActor.action, null);
   actor.alive = true;
 
   const phaseNowRequest = makeRequest();
@@ -20650,7 +20866,7 @@ async function frArch13StaleResultRejection() {
     phaseNowRequest.rootActions
   );
   assert.equal(wrongPhase.result.status, SEARCH_RESULT_STATUS.INVALID_PHASE);
-  assert.equal(wrongPhase.action.type, "end");
+  assert.equal(wrongPhase.action, null);
   game.state.phase = "play";
 
   const invalidRequest = makeRequest();
@@ -20671,7 +20887,7 @@ async function frArch13StaleResultRejection() {
     invalidRequest.rootActions
   );
   assert.equal(invalid.result.status, SEARCH_RESULT_STATUS.INVALID_ACTION);
-  assert.equal(invalid.action.type, "end");
+  assert.equal(invalid.action, null);
 }
 
 test("AI·陈旧结果拒绝：session/stateVersion/actor/phase/root identity 全拒绝", frArch13StaleResultRejection);
@@ -20749,7 +20965,7 @@ Controller Worker outcome acceptance contract。
 createSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome。
 
 边界与不变量
-cancelled/invalid 只允许安全 end，不执行真实 Card/Player。
+cancelled/invalid 必须返回显式 SEARCH_FAILURE 与 null Action，不执行真实 Card/Player。
 */
 async function frArch13CancellationContract() {
   const { createSearchRequest, createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
@@ -20778,9 +20994,8 @@ async function frArch13CancellationContract() {
     rngAfter:request.rng,
     cancelled:true
   }), request.rootActions);
-  assert.equal(cancelled.result.status, SEARCH_RESULT_STATUS.CANCELLED);
-  assert.equal(cancelled.action.type, "end");
-  assert.equal(cancelled.action.cardId, null);
+  assert.equal(cancelled.result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+  assert.equal(cancelled.action, null);
 }
 
 test("AI·搜索取消：cancelled result 不执行真实 action", frArch13CancellationContract);
@@ -21775,7 +21990,7 @@ test("AI·Worker 搜索一致性：只运输 root Action 且多步序列仅保�
 
 /*
 功能
-验证连续 accepted Worker search 的 RNG continuation，以及 Worker fault fallback 不提交 RNG。
+验证连续 accepted Worker search 的 RNG continuation，以及 Worker SEARCH_FAILURE 不提交 RNG。
 
 调用方
 FR-ARCH-14 RNG continuity runtime audit。
@@ -21796,7 +22011,7 @@ AIController selectAction/acceptWorkerSearchOutcome、SearchPrior fallback 与 S
 makeGame、instance、selectAction、acceptWorkerSearchOutcome、createWorkerSearchOutcome。
 
 边界与不变量
-正常结果只提交一次 RNG；Worker fault 使用确定性合法根候选 fallback，不提交失败 outcome 的 RNG。
+正常结果只提交一次 RNG；Worker fault 返回 null Action 与 SEARCH_FAILURE，不提交失败 outcome 的 RNG。
 */
 async function frArch14RngContinuityAcceptedSearches() {
   const { createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
@@ -21836,14 +22051,12 @@ async function frArch14RngContinuityAcceptedSearches() {
     })
   };
   const rejectedAction = await game.aiController.selectAction(player, { gameId: game.state.gameId });
-  assert.equal(rejectedAction.type, "end");
-  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.FALLBACK);
-  assert.equal(game.aiController.lastSearchFallback.source, "generator-safe-end");
-  assert.equal(game.aiController.lastSearchFallback.action, rejectedAction);
+  assert.equal(rejectedAction, null);
+  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+  assert.equal(game.aiController.lastSearchFallback, null);
   assert.deepEqual(game.aiController.searchRng.snapshot(), beforeRejected, "rejected outcome 不得 commit RNG");
   assert.equal(game.aiController.searchDiagnostics.WORKER_ERROR, 1);
   assert.equal(game.aiController.searchDiagnostics.WATCHDOG, 1);
-  assert.equal(game.aiController.searchDiagnostics.FALLBACK, 1);
   game.dispose();
 }
 

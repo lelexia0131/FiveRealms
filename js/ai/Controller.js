@@ -26,7 +26,7 @@ import {
   Generator,
   deduplicateSearchEquivalentActions
 } from "./Generator/Generator.js";
-import { createAction, sameAction } from "./Generator/Action.js";
+import { sameAction } from "./Generator/Action.js";
 import {
   Evaluator,
   chooseDiscardCandidates,
@@ -192,6 +192,7 @@ export function createWorkerSearchOutcome({ request, ...result }) {
     action:result.action ?? null,
     stats:result.stats ? Object.freeze({ ...result.stats }) : null,
     searchStopReason:result.searchStopReason ?? null,
+    searchFault:result.searchFault ? Object.freeze({ ...result.searchFault }) : null,
     rngAfter:result.rngAfter ? Object.freeze({ ...result.rngAfter }) : null,
     cancelled:Boolean(result.cancelled),
     workerError:result.workerError ?? null
@@ -238,12 +239,12 @@ export function workerOutcomeViolations(outcome, request = null) {
 
 export const SEARCH_RESULT_STATUS = Object.freeze({
   ACCEPTED:"ACCEPTED",
+  SEARCH_FAILURE:"SEARCH_FAILURE",
   STALE_VERSION:"STALE_VERSION",
   INVALID_SESSION:"INVALID_SESSION",
   INVALID_ACTOR:"INVALID_ACTOR",
   INVALID_PHASE:"INVALID_PHASE",
   INVALID_ACTION:"INVALID_ACTION",
-  FALLBACK:"FALLBACK",
   CANCELLED:"CANCELLED"
 });
 
@@ -278,6 +279,7 @@ function createSearchResult({
   stats = null,
   status,
   rejectionReason = null,
+  searchFault = null,
   rngAfter = null
 }) {
   return Object.freeze({
@@ -287,6 +289,7 @@ function createSearchResult({
     actorId:request.actorId,
     status,
     rejectionReason,
+    searchFault:searchFault ? Object.freeze({ ...searchFault }) : null,
     action,
     stats:stats ? Object.freeze({ ...stats }) : null,
     rngAfter:rngAfter ? Object.freeze({ ...rngAfter }) : null
@@ -532,6 +535,7 @@ export async function executeSearchRequest(request, runtimeControl = {}) {
     action,
     stats:engine.searcher.lastSearchStats,
     searchStopReason:engine.searcher.lastSearchStats?.stopReason ?? null,
+    searchFault:engine.searcher.lastSearchStats?.searchFault ?? null,
     rngAfter:rng.snapshot(),
     cancelled
   };
@@ -612,8 +616,7 @@ export class Controller {
       CANCEL:0,
       WATCHDOG:0,
       STALE:0,
-      WORKER_ERROR:0,
-      FALLBACK:0
+      WORKER_ERROR:0
     };
     this.actionGenerator = new Generator();
 
@@ -912,43 +915,7 @@ export class Controller {
 
   /*
   功能
-  在 Worker 基础设施失败时返回 Generator 定义的确定性安全结束动作。
-
-  调用方
-  acceptWorkerSearchOutcome 的 malformed/workerError 分支。
-
-  输入
-  当前真实 Player 与可选 decision-local canonical 根动作集合。
-
-  输出
-  { action }；优先复用根集合中的 canonical end，否则由 Generator 创建同语义 end。
-
-  读取状态
-  当前 decision-local canonical 根动作。
-
-  写入状态
-  无。
-
-  调用函数
-  createAction。
-
-  边界与不变量
-  该路径不评分、不排序、不执行 Searcher/Simulator，也不尝试替代 AI 决策；
-  基础设施故障只允许安全结束，避免 Controller 成为第二 final-selection authority。
-  */
-  selectWorkerFailureFallback(player, decisionRootActions = null) {
-    const candidates = Array.isArray(decisionRootActions)
-      ? decisionRootActions
-      : this.getActionCandidates(player);
-    return {
-      action:candidates.find((action) => action?.type === "end")
-        ?? createAction({ type:"end", actorId:player.id })
-    };
-  }
-
-  /*
-  功能
-  接受 WorkerSearchOutcome，并在基础设施故障时从本次根候选取安全 end fallback。
+  接受 WorkerSearchOutcome，并把 transport/search failure 与战略 Action 严格分离。
 
   调用方
   selectAction 与 worker result tests。
@@ -957,79 +924,62 @@ export class Controller {
   request、WorkerSearchOutcome 与可选 decision-local 合法根集合。
 
   输出
-  { action, result }；正常结果返回经身份、版本与根集合验证的 canonical Action，
-  cooperative CANCELLED 已带完整 incumbent 时走同一验证；Worker fault 返回合法 end fallback。
+  { action, result }；正常结果返回经身份、版本与根集合验证的 canonical Action；
+  无 Searcher Action 或 acceptance 拒绝时 action 为 null 并返回显式 failure result。
 
   读取状态
   current GameState、session、request、outcome 与 decision-local root set。
 
   写入状态
-  searchRng continuation、lastWorkerOutcome、lastSearchResult 与 lastSearchFallback。
+  searchRng continuation、lastWorkerOutcome、lastSearchResult 与 diagnostics。
 
   调用函数
-  workerOutcomeViolations、selectWorkerFailureFallback、commitWorkerRng、validateRequestAcceptance、
-  isActionInRootSet、createSearchResult。
+  workerOutcomeViolations、commitWorkerRng、validateRequestAcceptance、isActionInRootSet、createSearchResult。
 
   边界与不变量
   Worker 不宣布 ACCEPTED；Main Thread 验证全部身份/version/actor/phase/root membership；
-  CANCELLED 无完整 action 与 stale 状态安全结束；带完整 action 的 CANCELLED 仍必须通过全部 acceptance；
+  CANCELLED/FAULT 带完整 action 时仍必须通过全部 acceptance；没有 action 时必须返回 SEARCH_FAILURE；
   validation 通过时允许复用同一 decision 已生成的合法实体根，
-  但不得跨 stateVersion 或跨 decision 缓存。
+  但不得跨 stateVersion 或跨 decision 缓存；Controller 绝不创建战略 END。
   */
   acceptWorkerSearchOutcome(request, outcome, decisionRootActions = null) {
     this.lastWorkerOutcome = outcome;
     this.lastSearchFallback = null;
     this.lastSearchStats = outcome?.stats ? { ...outcome.stats } : null;
+    const acceptedRootActions = Array.isArray(decisionRootActions)
+      ? decisionRootActions
+      : request.rootActions;
     const malformed = workerOutcomeViolations(outcome, request);
     if (malformed.length || outcome?.workerError) {
       this.searchDiagnostics.WORKER_ERROR += 1;
-      const fallbackReason = outcome?.workerError ?? malformed.join(", ");
-      if (String(fallbackReason).includes("watchdog")) this.searchDiagnostics.WATCHDOG += 1;
-      const player = this.getState().players.find((entry) => entry.id === request.actorId) ?? null;
-      const validation = this.validateRequestAcceptance(player, request);
-      if (validation.status) {
-        const result = createSearchResult({
-          request,
-          action:null,
-          stats:outcome?.stats ?? null,
-          status:validation.status,
-          rejectionReason:validation.reason,
-          rngAfter:null
-        });
-        this.lastSearchResult = result;
-        return { action:createAction({ type:"end", actorId:request.actorId }), result };
-      }
-      const fallback = this.selectWorkerFailureFallback(player, decisionRootActions);
+      const failureReason = outcome?.workerError ?? malformed.join(", ");
+      if (String(failureReason).includes("watchdog")) this.searchDiagnostics.WATCHDOG += 1;
       const result = createSearchResult({
         request,
-        action:fallback.action,
+        action:null,
         stats:outcome?.stats ?? null,
-        status:SEARCH_RESULT_STATUS.FALLBACK,
-        rejectionReason:fallbackReason,
+        status:SEARCH_RESULT_STATUS.SEARCH_FAILURE,
+        rejectionReason:failureReason,
+        searchFault:outcome?.searchFault ?? null,
         rngAfter:null
       });
-      this.lastSearchFallback = Object.freeze({
-        source:"generator-safe-end",
-        reason:fallbackReason,
-        action:fallback.action
-      });
-      this.searchDiagnostics.FALLBACK += 1;
       this.lastSearchResult = result;
-      return { action:fallback.action, result };
+      return { action:null, result };
     }
     const cancelled = outcome.cancelled || outcome.searchStopReason === "CANCELLED";
     if (cancelled) this.searchDiagnostics.CANCEL += 1;
-    if (cancelled && !outcome.action) {
+    if (!outcome.action) {
       const result = createSearchResult({
         request,
         action:null,
         stats:outcome.stats,
-        status:SEARCH_RESULT_STATUS.CANCELLED,
-        rejectionReason:"cancelled",
+        status:SEARCH_RESULT_STATUS.SEARCH_FAILURE,
+        rejectionReason:cancelled ? "cancelled without Searcher action" : "Worker returned no Searcher action",
+        searchFault:outcome.searchFault,
         rngAfter:null
       });
       this.lastSearchResult = result;
-      return { action:createAction({ type:"end", actorId:request.actorId }), result };
+      return { action:null, result };
     }
 
     const player = this.getState().players.find((entry) => entry.id === request.actorId) ?? null;
@@ -1041,24 +991,26 @@ export class Controller {
         stats:outcome.stats,
         status:validation.status,
         rejectionReason:validation.reason,
+        searchFault:outcome.searchFault,
         rngAfter:null
       });
       this.lastSearchResult = result;
-      return { action:createAction({ type:"end", actorId:request.actorId }), result };
+      return { action:null, result };
     }
 
     const action = outcome.action;
-    if (!action || !this.isActionInRootSet(action, request.rootActions)) {
+    if (!this.isActionInRootSet(action, acceptedRootActions)) {
       const result = createSearchResult({
         request,
         action:null,
         stats:outcome.stats,
         status:SEARCH_RESULT_STATUS.INVALID_ACTION,
         rejectionReason:"action not in request root set",
+        searchFault:outcome.searchFault,
         rngAfter:null
       });
       this.lastSearchResult = result;
-      return { action:createAction({ type:"end", actorId:request.actorId }), result };
+      return { action:null, result };
     }
 
     const rngCommitted = this.commitWorkerRng(request, outcome);
@@ -1067,6 +1019,7 @@ export class Controller {
       action,
       stats:outcome.stats,
       status:SEARCH_RESULT_STATUS.ACCEPTED,
+      searchFault:outcome.searchFault,
       rngAfter:rngCommitted ? outcome.rngAfter : null
     });
     this.lastSearchResult = result;
@@ -1085,25 +1038,37 @@ export class Controller {
   player 与可选 options/signal/searchTimeBudgetMs。
 
   输出
-  当前可执行 action；executor fault 进入确定性 root fallback；stale 或无完整 incumbent 的 cancel 安全返回 end。
+  当前可执行 action；搜索或 transport failure 返回 null，并在 lastSearchResult 中记录显式 failure status。
 
   读取状态
   current GameState、Fact、search configuration 与 searchRng。
 
   写入状态
-  lastSearchRequest、lastDecisionDiagnostics、worker/fallback diagnostics、RNG continuation 与当前 search result。
+  lastSearchRequest、lastDecisionDiagnostics、worker diagnostics、RNG continuation 与当前 search result。
 
   调用函数
   createInitialWorld、getActionCandidates、createSearchRequest、searchExecutor.search、acceptWorkerSearchOutcome、decisionNow。
 
   边界与不变量
-  生产 Searcher execution 由 executor 负责；正常 TIME 与 cooperative CANCELLED 可由 Worker 返回完整 incumbent；Main Thread 只在
-  infrastructure fault 时使用 Generator 定义的安全 end，且不执行 Searcher/Simulator。
+  生产 Searcher execution 由 executor 负责；TIME/CANCELLED/FAULT 可由 Worker 同时返回完整 incumbent 与 diagnostics；
+  Main Thread 只验收 Searcher Action，任何 failure 都不得制造 canonical END。
   */
   async selectAction(player, options = {}) {
     const state = this.getState();
     if (!this.isSessionValid(options.gameId ?? state.gameId)) {
-      return createAction({ type:"end", actorId:player.id });
+      this.lastSearchResult = Object.freeze({
+        requestId:null,
+        gameId:state.gameId,
+        stateVersion:state.stateVersion,
+        actorId:player.id,
+        status:SEARCH_RESULT_STATUS.INVALID_SESSION,
+        rejectionReason:"invalid session before search",
+        action:null,
+        stats:null,
+        searchFault:null,
+        rngAfter:null
+      });
+      return null;
     }
     const preWorkerStartedAt = decisionNow();
     const mainThreadOperations = [];
