@@ -244,8 +244,7 @@ export const SEARCH_RESULT_STATUS = Object.freeze({
   INVALID_SESSION:"INVALID_SESSION",
   INVALID_ACTOR:"INVALID_ACTOR",
   INVALID_PHASE:"INVALID_PHASE",
-  INVALID_ACTION:"INVALID_ACTION",
-  CANCELLED:"CANCELLED"
+  INVALID_ACTION:"INVALID_ACTION"
 });
 
 /*
@@ -605,7 +604,6 @@ export class Controller {
     this.lastSearchRequest = null;
     this.lastSearchResult = null;
     this.lastWorkerOutcome = null;
-    this.lastSearchFallback = null;
     this.lastDecisionDiagnostics = null;
     this.lastMainThreadOperationDiagnostics = null;
     this.lastSearchStats = null;
@@ -944,7 +942,6 @@ export class Controller {
   */
   acceptWorkerSearchOutcome(request, outcome, decisionRootActions = null) {
     this.lastWorkerOutcome = outcome;
-    this.lastSearchFallback = null;
     this.lastSearchStats = outcome?.stats ? { ...outcome.stats } : null;
     const acceptedRootActions = Array.isArray(decisionRootActions)
       ? decisionRootActions

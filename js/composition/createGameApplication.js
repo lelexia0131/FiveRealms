@@ -877,6 +877,7 @@ class MatchApplication {
       choiceContexts: this.choiceContexts,
       createId,
       selectAction: (player, options) => this.aiController.selectAction(player, options),
+      getAiSearchResultStatus: () => this.aiController.lastSearchResult?.status ?? null,
       playCard: (...args) => this.actionWorkflow.playCard(...args),
       useActiveSkill: (...args) => this.actionWorkflow.useActiveSkill(...args),
       getAiMaxActions: () => this.aiMaxActionsPerTurn,

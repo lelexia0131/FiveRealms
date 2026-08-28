@@ -17619,7 +17619,6 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     });
     assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
     assert.equal(accepted.action, outcome.action);
-    assert.equal(game.aiController.lastSearchFallback, null);
   } finally {
     disposeBenchmarkGame(fixture.game);
   }
@@ -17679,7 +17678,6 @@ test("AI·搜索：TIME 深层生成中断保留赌命者已完成突袭/孤注 
     });
     assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
     assert.equal(accepted.action, outcome.action);
-    assert.equal(game.aiController.lastSearchFallback, null);
   } finally {
     disposeBenchmarkGame(fixture.game);
   }
@@ -18006,7 +18004,7 @@ function testTacticResolutionChance(simulator, state, actor, card, targets, sele
 
 
 
-test("AI·搜索：规划异常显式传播 SEARCH_FAILURE 并清理观察状态", async () => {
+test("AI·搜索：规划 ordinary exception 仍显式传播并清理观察状态", async () => {
   const ai = makePlayer("planner-fallback-ai", 0, "dawn"),
     enemy = makePlayer("planner-fallback-enemy", 1, "dusk"),
     { game, ui }
@@ -18025,6 +18023,182 @@ test("AI·搜索：规划异常显式传播 SEARCH_FAILURE 并清理观察状态
   assert.equal(ui.thinking.at(-1)[0], false);
   assert.equal(game.state.phase, "play", "SEARCH_FAILURE 不得伪装为 END 后进入弃牌阶段");
   assert.match(ui.logs.join("\n"), /^(?!.*planner test failure)/s);
+});
+
+/*
+功能
+运行一次由测试指定 AI search outcome 的完整 canonical 回合。
+
+调用方
+SEARCH_FAILURE、strategic END 与普通 non-END 的 TurnWorkflow 回归测试。
+
+输入
+行动者 HP、初始手牌定义，以及按调用次数生成 Action/status 的 outcome factory。
+
+输出
+Game、行动者、搜索/弃牌调用数与 playPhaseEnd/turnEnd 事件计数。
+
+读取状态
+测试 Game 的既有 TurnWorkflow、ChoiceCoordinator 与 discard authority。
+
+写入状态
+只推进独立测试 Game 的完整回合状态。
+
+调用函数
+makeGame、takeTurn、discardCardFromHand。
+
+边界与不变量
+禁用回合摸牌只为固定手牌数量；弃牌仍必须经过既有 handleDiscardPhase 和 discardCardFromHand。
+*/
+async function runAiSearchOutcomeTurnFixture({
+  hp,
+  handDefinitions,
+  outcomeAt
+}) {
+  const actor = makePlayer("search-failure-turn-actor", 0, "dawn", "ai", 3);
+  const enemy = makePlayer("search-failure-turn-enemy", 1, "dusk", "ai", 1);
+  actor.hp = hp;
+  actor.hand.push(...handDefinitions.map((definitionId) => instance(definitionId)));
+  const { game } = makeGame([actor, enemy]);
+  game.drawCards = async () => [];
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  game.aiController.selectAction = async () => {
+    const outcome = outcomeAt(searchCalls, actor);
+    searchCalls += 1;
+    game.aiController.lastSearchResult = Object.freeze({
+      status:outcome.status,
+      action:outcome.action ?? null
+    });
+    return outcome.action ?? null;
+  };
+  let discardCalls = 0;
+  const discardCardFromHand = game.discardCardFromHand.bind(game);
+  game.discardCardFromHand = async (...args) => {
+    discardCalls += 1;
+    return discardCardFromHand(...args);
+  };
+  let playPhaseEndCount = 0;
+  let turnEndCount = 0;
+  game.eventDispatcher.on("playPhaseEnd", "test:search-failure-play-end", () => {
+    playPhaseEndCount += 1;
+  });
+  game.eventDispatcher.on("turnEnd", "test:search-failure-turn-end", () => {
+    turnEndCount += 1;
+  });
+  await game.takeTurn(actor, game.state.gameId);
+  return {
+    game,
+    actor,
+    searchCalls,
+    discardCalls,
+    playPhaseEndCount,
+    turnEndCount
+  };
+}
+
+test("AI·回合收尾：SEARCH_FAILURE 后仍执行强制弃牌与 turnEnd", async () => {
+  const fixture = await runAiSearchOutcomeTurnFixture({
+    hp:3,
+    handDefinitions:["counter", "counter", "block", "charge", "shield"],
+    outcomeAt:() => ({ status:SEARCH_RESULT_STATUS.SEARCH_FAILURE, action:null })
+  });
+  try {
+    assert.equal(fixture.searchCalls, 1);
+    assert.equal(fixture.actor.statistics.cardsPlayed, 0, "SEARCH_FAILURE 不得伪装 strategic END 或其它 Action");
+    assert.equal(fixture.playPhaseEndCount, 1);
+    assert.equal(fixture.discardCalls, 2);
+    assert.equal(fixture.actor.hand.length, fixture.actor.hp);
+    assert.equal(fixture.turnEndCount, 1);
+    assert.equal(fixture.game.state.phase, "turnEnd");
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·回合收尾：无需弃牌的 SEARCH_FAILURE 正常完成且不产生游戏动作", async () => {
+  const fixture = await runAiSearchOutcomeTurnFixture({
+    hp:4,
+    handDefinitions:["counter", "block"],
+    outcomeAt:() => ({ status:SEARCH_RESULT_STATUS.SEARCH_FAILURE, action:null })
+  });
+  try {
+    assert.equal(fixture.searchCalls, 1);
+    assert.equal(fixture.discardCalls, 0);
+    assert.equal(fixture.actor.hand.length, 2);
+    assert.equal(fixture.actor.statistics.cardsPlayed, 0);
+    assert.equal(fixture.playPhaseEndCount, 1);
+    assert.equal(fixture.turnEndCount, 1);
+    assert.equal(fixture.game.state.phase, "turnEnd");
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·回合收尾：正常 strategic END 仍沿原路径完成回合", async () => {
+  const fixture = await runAiSearchOutcomeTurnFixture({
+    hp:4,
+    handDefinitions:["counter"],
+    outcomeAt:(_index, actor) => ({
+      status:SEARCH_RESULT_STATUS.ACCEPTED,
+      action:createAction({ type:"end", actorId:actor.id })
+    })
+  });
+  try {
+    assert.equal(fixture.searchCalls, 1);
+    assert.equal(fixture.actor.statistics.cardsPlayed, 0);
+    assert.equal(fixture.playPhaseEndCount, 1);
+    assert.equal(fixture.turnEndCount, 1);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·回合收尾：正常 non-END Action 结算后继续重搜并正常结束", async () => {
+  let chargeAction = null;
+  const fixture = await runAiSearchOutcomeTurnFixture({
+    hp:4,
+    handDefinitions:["charge"],
+    outcomeAt:(index, actor) => {
+      if (index === 0) {
+        const card = actor.hand.find((entry) => entry.definitionId === "charge");
+        chargeAction = createAction({
+          type:"card",
+          actorId:actor.id,
+          cardId:"charge",
+          cardInstanceId:card.id
+        });
+        return { status:SEARCH_RESULT_STATUS.ACCEPTED, action:chargeAction };
+      }
+      return {
+        status:SEARCH_RESULT_STATUS.ACCEPTED,
+        action:createAction({ type:"end", actorId:actor.id })
+      };
+    }
+  });
+  try {
+    assert.ok(chargeAction);
+    assert.equal(fixture.searchCalls, 2);
+    assert.equal(fixture.actor.statistics.cardsPlayed, 1);
+    assert.equal(fixture.actor.hand.length, 0);
+    assert.equal(fixture.playPhaseEndCount, 1);
+    assert.equal(fixture.turnEndCount, 1);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·回合收尾：SEARCH_FAILURE 分支不创建 END 或复制弃牌实现", async () => {
+  const source = await readFile(projectFile("js/application/turn/TurnWorkflow.js"), "utf8");
+  const failureBranchStart = source.indexOf(
+    'if (runtime.getAiSearchResultStatus() === "SEARCH_FAILURE")'
+  );
+  const failureBranch = source.slice(
+    failureBranchStart,
+    source.indexOf("break;", failureBranchStart) + "break;".length
+  );
+  assert.doesNotMatch(failureBranch, /createAction|type\s*:\s*["']end["']|player\.hand|discardCardFromHand|handleDiscardPhase/u);
+  assert.match(source, /setMatchPhase\(state, "discard"\);\s*await handleDiscardPhase\(player, gameId\);/u);
 });
 
 test("AI·搜索：深层节点能发现先聚能再发动主动技能", () => {
@@ -18235,7 +18409,6 @@ async function acceptedNonEndBindingFailureIsExplicit() {
   assert.equal(returnedAction.cardId, "assault");
   assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
   assert.deepEqual(game.aiController.lastSearchResult.action, returnedAction);
-  assert.equal(game.aiController.lastSearchFallback, null);
   assert.equal(actor.statistics.cardsPlayed, 0);
   assert.ok(
     ui.logs.some((message) => message.includes("计划行动执行失败")),
@@ -18722,7 +18895,7 @@ async function runEndSiblingBudgetFixture(
 Searcher FAULT/CANCELLED incumbent、provisional 与 strategic END 回归测试。
 
 输入
-mode 为 after-incumbent-fault、before-incumbent-fault、before-incumbent-cancel 或 complete-end。
+mode 为 incumbent 前后 fault、cooperative cancel、only-END fault 或正常 COMPLETE 场景标识。
 
 输出
 选择的 canonical Action、搜索诊断与 Simulator apply 轨迹。
@@ -18737,7 +18910,7 @@ mode 为 after-incumbent-fault、before-incumbent-fault、before-incumbent-cance
 Searcher.search、SearchBudget、PatternMatcher。
 
 边界与不变量
-故障只由 Simulator 抛出普通异常；取消只使用当前 SearchBudget 的 cooperative interruption；END 不得因故障被补算。
+局部故障由 Simulator 抛出，后半段故障由 prune 抛出；取消只使用当前 SearchBudget interruption；END 不得因故障被补算。
 */
 async function runSearcherFaultBoundaryFixture(mode) {
   const actorId = `fault-boundary-${mode}`;
@@ -18755,10 +18928,18 @@ async function runSearcherFaultBoundaryFixture(mode) {
     cardInstanceId:`${actorId}-charge`
   });
   const end = createAction({ type:"end", actorId });
-  const rootActions = mode === "after-incumbent-fault"
-    ? [assault, charge, end]
-    : [assault, end];
+  const rootActions = mode === "only-end-fault"
+    ? [end]
+    : mode === "after-incumbent-fault"
+      ? [assault, charge, end]
+      : [assault, end];
   const applied = [];
+  const workCalls = {
+    finalizeCandidates:0,
+    buildRootNodes:0,
+    prune:0,
+    compareCandidates:0
+  };
   const preferEnd = mode === "complete-end";
   const scheduling = new Map([
     [assault, 100],
@@ -18793,13 +18974,21 @@ async function runSearcherFaultBoundaryFixture(mode) {
     composeTransitionValue:({ baseTransition, frontierValue, endOpportunityPoints }) => (
       baseTransition + frontierValue - endOpportunityPoints
     ),
-    compareCandidates:(left, right) => left.valueScore - right.valueScore
+    compareCandidates:(left, right) => {
+      workCalls.compareCandidates += 1;
+      return left.valueScore - right.valueScore;
+    }
   };
   const searcher = new Searcher({
     evaluator,
     patternMatcher:new PatternMatcher({ definitions:[] }),
     getResolutionScale:() => 1,
-    config:{ depth:1, beamWidth:3, hiddenSamples:0, yieldEvery:100 },
+    config:{
+      depth:1,
+      beamWidth:3,
+      hiddenSamples:0,
+      yieldEvery:mode === "post-incumbent-cancel" ? 1 : 100
+    },
     simulatorFactory:({ searchBudget }) => ({
       apply:(state, action) => {
         applied.push(action.type === "end" ? "end" : action.cardId);
@@ -18808,6 +18997,9 @@ async function runSearcherFaultBoundaryFixture(mode) {
         }
         if (mode === "before-incumbent-fault" && action === assault) {
           throw new Error("synthetic Simulator fault before incumbent");
+        }
+        if (mode === "only-end-fault" && action === end) {
+          throw new Error("synthetic Simulator fault with only END provisional");
         }
         if (mode === "before-incumbent-cancel" && action === assault) {
           searchBudget.cancel();
@@ -18825,8 +19017,34 @@ async function runSearcherFaultBoundaryFixture(mode) {
       worlds:[],
       sampleCount:0
     }),
-    yieldControl:async () => true
+    yieldControl:async () => mode !== "post-incumbent-cancel"
   });
+  const finalizeCandidates = searcher.finalizeCandidates.bind(searcher);
+  searcher.finalizeCandidates = (...args) => {
+    workCalls.finalizeCandidates += 1;
+    return finalizeCandidates(...args);
+  };
+  const buildRootNodes = searcher.buildRootNodes.bind(searcher);
+  searcher.buildRootNodes = (...args) => {
+    workCalls.buildRootNodes += 1;
+    return buildRootNodes(...args);
+  };
+  const prune = searcher.prune.bind(searcher);
+  searcher.prune = (...args) => {
+    workCalls.prune += 1;
+    return prune(...args);
+  };
+  if (mode === "post-incumbent-pattern-fault") {
+    searcher.advancePatternState = () => {
+      throw new Error("synthetic Pattern construction fault after incumbent");
+    };
+  }
+  if (mode === "post-incumbent-prune-fault") {
+    searcher.prune = () => {
+      workCalls.prune += 1;
+      throw new Error("synthetic prune fault after incumbent");
+    };
+  }
   const selected = await searcher.search(
     { id:actorId, hand:Array(5).fill({}) },
     {
@@ -18840,7 +19058,15 @@ async function runSearcherFaultBoundaryFixture(mode) {
     rootActions,
     { gameId:actorId }
   );
-  return { selected, stats:searcher.lastSearchStats, applied, assault, charge, end };
+  return {
+    selected,
+    stats:searcher.lastSearchStats,
+    applied,
+    workCalls,
+    assault,
+    charge,
+    end
+  };
 }
 
 test("AI·搜索：FAULT 保留已完成 Assault incumbent 且不补算 END", async () => {
@@ -18851,6 +19077,34 @@ test("AI·搜索：FAULT 保留已完成 Assault incumbent 且不补算 END", as
   assert.equal(result.stats.completedRootCandidateCount, 1);
   assert.equal(result.stats.provisionalFallbackUsed, false);
   assert.deepEqual(result.applied, ["assault", "charge"]);
+  assert.deepEqual(result.workCalls, {
+    finalizeCandidates:1,
+    buildRootNodes:0,
+    prune:0,
+    compareCandidates:0
+  });
+});
+
+test("AI·搜索：完整 Assault 在 Pattern 构造故障前已登记且收束不重跑 comparator", async () => {
+  const result = await runSearcherFaultBoundaryFixture("post-incumbent-pattern-fault");
+  assert.equal(result.stats.stopReason, "FAULT");
+  assert.match(result.stats.searchFault.message, /Pattern construction fault/u);
+  assert.equal(result.selected, result.assault);
+  assert.equal(result.workCalls.buildRootNodes, 1);
+  assert.equal(result.workCalls.prune, 0);
+  assert.equal(result.workCalls.compareCandidates, 1);
+});
+
+test("AI·搜索：后半段 prune 异常由最外层 FAULT boundary 保留 Assault incumbent", async () => {
+  const result = await runSearcherFaultBoundaryFixture("post-incumbent-prune-fault");
+  assert.equal(result.stats.stopReason, "FAULT");
+  assert.match(result.stats.searchFault.message, /prune fault after incumbent/u);
+  assert.equal(result.selected, result.assault);
+  assert.equal(result.stats.completedRootCandidateCount, 2);
+  assert.equal(result.stats.provisionalFallbackUsed, false);
+  assert.equal(result.workCalls.buildRootNodes, 1);
+  assert.equal(result.workCalls.prune, 1);
+  assert.equal(result.workCalls.compareCandidates, 2);
 });
 
 test("AI·搜索：首个完整 root 前 FAULT 使用 Searcher provisional non-END", async () => {
@@ -18874,12 +19128,54 @@ test("AI·搜索：首个完整 root 前 CANCELLED 使用 Searcher provisional n
   assert.notEqual(result.selected.type, "end");
 });
 
+test("AI·搜索：已有完整 root 的 CANCELLED 直接收束 incumbent 且不重建 root nodes", async () => {
+  const result = await runSearcherFaultBoundaryFixture("post-incumbent-cancel");
+  assert.equal(result.stats.stopReason, "CANCELLED");
+  assert.equal(result.selected, result.assault);
+  assert.equal(result.stats.provisionalFallbackUsed, false);
+  assert.deepEqual(result.applied, ["assault"]);
+  assert.deepEqual(result.workCalls, {
+    finalizeCandidates:1,
+    buildRootNodes:0,
+    prune:0,
+    compareCandidates:0
+  });
+});
+
+test("AI·搜索：零完整 root 的 FAULT 只有 END provisional 时返回 null", async () => {
+  const result = await runSearcherFaultBoundaryFixture("only-end-fault");
+  assert.equal(result.stats.stopReason, "FAULT");
+  assert.match(result.stats.searchFault.message, /only END provisional/u);
+  assert.equal(result.stats.completedRootCandidateCount, 0);
+  assert.equal(result.stats.provisionalFallbackUsed, false);
+  assert.equal(result.stats.provisionalFallbackAction, null);
+  assert.equal(result.selected, null);
+  assert.deepEqual(result.applied, ["end"]);
+});
+
 test("AI·搜索：COMPLETE 正常选择 canonical END", async () => {
   const result = await runSearcherFaultBoundaryFixture("complete-end");
   assert.equal(result.stats.stopReason, "COMPLETE");
   assert.equal(result.stats.searchFault, null);
   assert.equal(result.selected, result.end);
   assert.equal(result.selected.type, "end");
+});
+
+test("AI·架构边界：failure fallback residue 与废弃 Controller CANCELLED status 为零", async () => {
+  const productionSources = await Promise.all(
+    (await listJavaScriptFiles()).map((file) => readFile(file, "utf8"))
+  );
+  const production = productionSources.join("\n");
+  const searcherSource = await readFile(projectFile("js/ai/Searcher/Searcher.js"), "utf8");
+  assert.doesNotMatch(production, /lastSearchFallback/u);
+  assert.doesNotMatch(production, /SEARCH_RESULT_STATUS\.CANCELLED/u);
+  assert.doesNotMatch(searcherSource, /rootSafety|root-safety|safe end|安全补评估/u);
+  assert.doesNotMatch(searcherSource, /bestCandidate\(this\.buildRootNodes/u);
+  assert.equal(
+    [...searcherSource.matchAll(/recordSearchFault\(/gu)].length,
+    2,
+    "recordSearchFault 只能保留方法定义和 search outer boundary 调用"
+  );
 });
 
 test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序无关", () => {
@@ -19153,7 +19449,6 @@ async function recoverBeforeMandatoryDiscardRegression() {
     const decision = await runBenchmarkAiDecision(game, actor.id);
     assert.equal(decision.stats.stopReason, "COMPLETE");
     assert.equal(decision.stats.provisionalFallbackUsed, false);
-    assert.equal(game.aiController.lastSearchFallback, null);
     assert.equal(decision.action.cardId, "recover");
   } finally {
     disposeBenchmarkGame(game);
@@ -19302,7 +19597,6 @@ async function multiOverflowDiscardOpportunityRegression() {
     assert.notEqual(decision.action.type, "end");
     assert.ok(decision.stats.bestSequence.length >= 2);
     assert.equal(decision.stats.provisionalFallbackUsed, false);
-    assert.equal(game.aiController.lastSearchFallback, null);
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -19457,7 +19751,6 @@ async function overflowCompletedNonEndIncumbentRegression() {
     assert.deepEqual(decision.action, decision.stats.bestSequence[0]);
     assert.deepEqual(decision.action, decision.stats.rootWork[0].action);
     assert.equal(decision.stats.rootWork[0].completed, true);
-    assert.equal(game.aiController.lastSearchFallback, null);
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -19565,7 +19858,6 @@ async function overflowAssaultDecisionChainContract() {
     assert.equal(complete.action.cardId, "assault");
     assert.deepEqual(completeGame.aiController.lastWorkerOutcome.action, complete.action);
     assert.equal(completeGame.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
-    assert.equal(completeGame.aiController.lastSearchFallback, null);
 
     const card = actor.hand.find((entry) => entry.id === complete.action.cardInstanceId);
     const targets = complete.action.targetIds.map(
@@ -19591,7 +19883,6 @@ async function overflowAssaultDecisionChainContract() {
     assert.equal(node.action.cardId, "assault");
     assert.deepEqual(node.action, node.stats.bestSequence[0]);
     assert.equal(nodeGame.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
-    assert.equal(nodeGame.aiController.lastSearchFallback, null);
   } finally {
     disposeBenchmarkGame(nodeGame);
   }
@@ -19642,7 +19933,6 @@ async function overflowAssaultDecisionChainContract() {
     );
     assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
     assert.equal(accepted.action, outcome.action);
-    assert.equal(cancelledGame.aiController.lastSearchFallback, null);
   } finally {
     disposeBenchmarkGame(cancelledGame);
   }
@@ -20463,7 +20753,6 @@ test("AI·Controller：合法 Assault 与 FAULT diagnostics 仍按 root acceptan
   assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
   assert.equal(accepted.action, action);
   assert.equal(accepted.result.searchFault.message, "synthetic Simulator fault");
-  assert.equal(game.aiController.lastSearchFallback, null);
 });
 
 test("AI·Controller：Worker 无 Searcher action 返回显式 SEARCH_FAILURE 而非 END", async () => {
@@ -22053,7 +22342,6 @@ async function frArch14RngContinuityAcceptedSearches() {
   const rejectedAction = await game.aiController.selectAction(player, { gameId: game.state.gameId });
   assert.equal(rejectedAction, null);
   assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
-  assert.equal(game.aiController.lastSearchFallback, null);
   assert.deepEqual(game.aiController.searchRng.snapshot(), beforeRejected, "rejected outcome 不得 commit RNG");
   assert.equal(game.aiController.searchDiagnostics.WORKER_ERROR, 1);
   assert.equal(game.aiController.searchDiagnostics.WATCHDOG, 1);

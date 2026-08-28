@@ -37,7 +37,7 @@ const REQUIRED_DEPENDENCIES = [
   "choiceContexts", "createId",
   "selectAction", "playCard", "useActiveSkill", "getAiMaxActions",
   "getActionTargetLabel", "resetActionLocks", "discardCardFromHand",
-  "cancelPendingInteractions"
+  "cancelPendingInteractions", "getAiSearchResultStatus"
 ];
 
 /*
@@ -287,18 +287,19 @@ export function createTurnWorkflow(dependencies) {
   Promise。
 
   读取状态
-  MatchState、注入 AI action capability、时延配置与 Application session。
+  MatchState、注入 AI action/search-result capability、时延配置与 Application session。
 
   写入状态
   thinking/prompt 经 PresentationPort；真实卡牌/技能经注入 action collaborators。
 
   调用函数
-  selectAction、playCard、useActiveSkill。
+  selectAction、getAiSearchResultStatus、playCard、useActiveSkill。
 
   边界与不变量
   每个真实 Action 后必须从最新 World 重新调用 selectAction；每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
   canonical non-END 的定义、目标、实体或真实结算绑定失败必须显式记录，不能静默伪装成正常 END。
-  null 表示 SEARCH_FAILURE，必须中止当前 turn workflow，不能进入战略 END 或强制弃牌阶段。
+  明确 SEARCH_FAILURE 的 null 只终止 AI action loop，随后必须由 takeTurn 继续 canonical play-phase/discard/turnEnd 收尾；
+  其它异常或无明确 failure status 的 null 仍显式失败。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
@@ -322,6 +323,18 @@ export function createTurnWorkflow(dependencies) {
         if (!runtime.isSessionValid(gameId)) return;
         if (!action) {
           const searchFailure = new Error("AI Searcher 未返回可验收 Action（SEARCH_FAILURE）");
+          if (runtime.getAiSearchResultStatus() === "SEARCH_FAILURE") {
+            runtime.diagnostics.reportWorkflowError(
+              "AI",
+              `${player.name}搜索失败，停止继续请求行动并进入回合收尾`,
+              searchFailure
+            );
+            runtime.presentation.log(
+              `${player.name}本次搜索失败，停止继续出牌并进入回合收尾。`,
+              "important"
+            );
+            break;
+          }
           runtime.diagnostics.reportWorkflowError(
             "AI",
             `${player.name}规划行动失败，已中止当前回合`,
