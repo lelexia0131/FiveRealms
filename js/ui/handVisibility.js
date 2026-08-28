@@ -93,19 +93,19 @@ function compareDisplayEntries(left, right) {
 
 /*
 功能
-生成本地真人可合法观察的对手手牌展示序列。
+生成本地真人可合法观察的其他玩家手牌展示序列。
 
 调用方
 UIManager.render 与 playerTemplate。
 
 输入
-观察者与手牌所有者。
+观察者与手牌所有者；双方存活状态和阵营仅用于观战展示覆盖。
 
 输出
 由已知牌面和无信息背面组成的展示数组。
 
 读取状态
-owner.hand 与 viewer.aiMemory.knownCardsByPlayer。
+owner.hand、双方 alive/battleTeam 与 viewer.aiMemory.knownCardsByPlayer。
 
 写入状态
 无。
@@ -114,17 +114,21 @@ owner.hand 与 viewer.aiMemory.knownCardsByPlayer。
 knownCardView、compareDisplayEntries。
 
 边界与不变量
-记忆必须同时匹配实体 ID 与当前 definitionId；未知牌不携带任何定义或实体事实。
+真人存活时记忆必须同时匹配实体 ID 与当前 definitionId；真人阵亡后只亮出存活队友牌面，
+敌方和阵亡队友仍按原知识显示；该覆盖不得写入知识或携带实体 ID。
 */
 export function createOpponentHandView(viewer, owner) {
   const knownByEntity = viewer?.aiMemory?.knownCardsByPlayer?.[owner?.id] ?? {};
+  const revealLivingAllyHand = viewer?.alive === false
+    && owner?.alive === true
+    && viewer.battleTeam === owner.battleTeam;
   return (owner?.hand ?? []).map((card, originalIndex) => {
-    const rememberedDefinitionId = knownByEntity[card.id];
-    if (rememberedDefinitionId !== card.definitionId) return {
+    const visibleDefinitionId = revealLivingAllyHand ? card.definitionId : knownByEntity[card.id];
+    if (visibleDefinitionId !== card.definitionId) return {
       view:Object.freeze({ known:false }), originalIndex,
       categoryOrder:CARD_CATEGORY_DISPLAY_ORDER.unknown, definitionOrder:Number.MAX_SAFE_INTEGER
     };
-    const definition = CARD_DEFINITIONS[rememberedDefinitionId];
+    const definition = CARD_DEFINITIONS[visibleDefinitionId];
     if (!definition) return {
       view:Object.freeze({ known:false }), originalIndex,
       categoryOrder:CARD_CATEGORY_DISPLAY_ORDER.unknown, definitionOrder:Number.MAX_SAFE_INTEGER

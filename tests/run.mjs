@@ -18198,7 +18198,7 @@ Pattern ID 与 exploration priority。
 */
 /*
 功能
-创建只记录 END sibling terms 交接的 Evaluator 替身。
+创建只记录 END 完整 sibling terms 交接的 Evaluator 替身。
 
 调用方
 END sibling 顺序与预算中断回归测试。
@@ -18219,7 +18219,7 @@ END sibling 顺序与预算中断回归测试。
 statePointsToUtility。
 
 边界与不变量
-替身不解释 HP、盾、危险、手牌或能量公式；它只验证 Searcher 是否等待完整 sibling 并交出全部 terms。
+替身不解释 HP、盾、危险、手牌或能量公式；它只验证 Searcher 是否等待全部 sibling 并交出完整 terms。
 */
 function createEndSiblingEvaluator(opportunityCalls = []) {
   return {
@@ -18261,7 +18261,7 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
 END sibling 预算中断回归测试。
 
 输入
-`NODE` 或 `TIME`。
+`NODE` 或 `TIME`，以及 sibling 类型和是否存在强制弃牌溢出。
 
 输出
 选择结果、诊断、apply 轨迹与 canonical root Actions。
@@ -18276,9 +18276,13 @@ data-only root World 与测试 Evaluator scalar。
 Searcher.search、SearchBudget、PatternMatcher。
 
 边界与不变量
-END 调度在 skill 前且能完整 apply，但预算到达后不得继续 materialize skill；返回 END 只能来自既有 provisional fallback。
+END 调度在 sibling 前且能完整 apply，但预算到达后不得继续 materialize sibling；
+无溢出时 provisional 可安全 END，有溢出时必须返回 ordinary non-END sibling。
 */
-async function runEndSiblingBudgetFixture(stopReason) {
+async function runEndSiblingBudgetFixture(
+  stopReason,
+  { siblingType = "skill", forcesDiscard = false } = {}
+) {
   const actorId = "end-sibling-actor";
   const end = {
     type:"end",
@@ -18288,10 +18292,11 @@ async function runEndSiblingBudgetFixture(stopReason) {
     baseValue:10,
     schedulingScore:100
   };
-  const skill = {
-    type:"skill",
+  const sibling = {
+    type:siblingType,
     actorId,
-    skillId:"barrier",
+    skillId:siblingType === "skill" ? "barrier" : null,
+    cardId:siblingType === "card" ? "assault" : null,
     targetIds:[actorId],
     selection:null,
     baseValue:1,
@@ -18328,7 +18333,7 @@ async function runEndSiblingBudgetFixture(stopReason) {
     yieldControl:async () => true
   });
   const selected = await searcher.search(
-    { id:actorId, hand:[] },
+    { id:actorId, hand:forcesDiscard ? Array(6).fill({}) : [] },
     {
       playPhaseEnded:false,
       probabilityState:null,
@@ -18336,17 +18341,17 @@ async function runEndSiblingBudgetFixture(stopReason) {
         id:actorId,
         battleTeam:"dawn",
         alive:true,
-        hp:4,
-        handCount:0
+        hp:forcesDiscard ? 2 : 4,
+        handCount:forcesDiscard ? 6 : 0
       }]
     },
-    [skill, end],
+    [sibling, end],
     { gameId:"end-sibling-budget" }
   );
-  return { selected, stats:searcher.lastSearchStats, applied, end, skill };
+  return { selected, stats:searcher.lastSearchStats, applied, end, sibling };
 }
 
-test("AI·搜索：END Final Utility 只使用完整 skill sibling 集合且与顺序无关", () => {
+test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序无关", () => {
   const opportunityCalls = [];
   const searcher = Object.create(Searcher.prototype);
   searcher.evaluator = createEndSiblingEvaluator(opportunityCalls);
@@ -18368,6 +18373,15 @@ test("AI·搜索：END Final Utility 只使用完整 skill sibling 集合且与�
   );
   assert.equal(partialEnd.transitionValue, null);
   assert.equal(partialSkill.transitionValue, 1);
+  assert.deepEqual(opportunityCalls, []);
+
+  const assault = { type:"card", cardId:"assault" };
+  const cardIncompleteEnd = candidate(endAction, 10);
+  searcher.finalizeCandidates(
+    [cardIncompleteEnd],
+    [endAction, assault]
+  );
+  assert.equal(cardIncompleteEnd.transitionValue, null);
   assert.deepEqual(opportunityCalls, []);
 
   const evaluateOrder = (orderedSkills) => {
@@ -18442,6 +18456,60 @@ test("AI·搜索：END Final Utility 只使用完整 skill sibling 集合且与�
   ];
   assert.equal(evaluator.endOpportunityPoints(endTerms, siblingTerms), 8);
   assert.equal(evaluator.endOpportunityPoints(endTerms, [...siblingTerms].reverse()), 8);
+  assertClose(evaluator.composeTransitionValue({
+    baseTransition:10,
+    frontierValue:2,
+    endOpportunityPoints:8
+  }), 10.4, 1e-12);
+
+  const overflowThreeEnd = candidate(endAction, 0.8);
+  overflowThreeEnd.frontierValue = 0.2;
+  overflowThreeEnd.baseTerms = {
+    dangerBefore:0,
+    endOpportunityInputs:{ maxEnergy:0 },
+    discardOpportunityInputs:{ beforeOverflow:3, afterOverflow:0, stateDelta:0 }
+  };
+  const consumableActions = ["assault-a", "assault-b", "provoke"].map(
+    (cardId, index) => ({ type:"card", cardId, index })
+  );
+  const overflowReducingSiblings = consumableActions.map((action, index) => {
+    const entry = candidate(action, 0.6);
+    entry.baseTerms = {
+      safetyBeforePoints:0,
+      safetyAfterPoints:0,
+      discardOpportunityInputs:{
+        beforeOverflow:3,
+        afterOverflow:2,
+        stateDelta:3 + index
+      }
+    };
+    return entry;
+  });
+  const completeOverflowCandidates = [overflowThreeEnd, ...overflowReducingSiblings];
+  searcher.finalizeCandidates(
+    completeOverflowCandidates,
+    [endAction, ...consumableActions]
+  );
+  assert.equal(
+    evaluator.endOpportunityPoints(
+      overflowThreeEnd.baseTerms,
+      completeOverflowCandidates.map((entry) => ({
+        actionType:entry.action.type,
+        transitionTerms:entry.baseTerms
+      }))
+    ),
+    5
+  );
+  assert.ok(
+    overflowThreeEnd.transitionValue
+      < Math.max(...overflowReducingSiblings.map((entry) => entry.transitionValue)),
+    "三个完整的 3→2 sibling 仍应让继续行动优于直接 END"
+  );
+  assert.ok(
+    overflowReducingSiblings.reduce((sum, entry) => sum + entry.transitionValue, 0)
+      > overflowThreeEnd.transitionValue,
+    "现有 continuation 累计值不得被缺失的 Pd 掩盖"
+  );
 });
 
 /*
@@ -18567,18 +18635,331 @@ async function recoverBeforeMandatoryDiscardRegression() {
 
 test("AI·搜索：Recover 避免 END 强制弃牌时按真实状态机会优先", recoverBeforeMandatoryDiscardRegression);
 
-test("AI·搜索：TIME/NODE 遇到 skill-incomplete END 不登记 incumbent 且不突破预算", async () => {
+/*
+功能
+验证 overflow=3 时三个完整合法的单步消耗动作都以 3→2 的真实转移进入 Pd。
+
+调用方
+AI 搜索 END opportunity 与 continuation 回归测试。
+
+输入
+无；构造已装备回收站、两侧均有突袭目标且持有突袭/挑衅的影客局面。
+
+输出
+无返回值；断言失败时抛错。
+
+读取状态
+生产 Generator、Simulator、Evaluator、Searcher 与完整搜索诊断。
+
+写入状态
+只推进独立 benchmark Game 的 World clones 与搜索诊断。
+
+调用函数
+createInitialWorld、getActionCandidates、Simulator.apply、Evaluator.evaluateTransition、
+Searcher.finalizeCandidates、runBenchmarkAiDecision。
+
+边界与不变量
+三个 canonical non-END siblings 必须全部完整；每个动作只减少一张 overflow，
+Pd 仍只取真实 state delta 差的最大值；完整 continuation 继续沿既有 valueScore 累加。
+*/
+async function multiOverflowDiscardOpportunityRegression() {
+  const game = makeBenchmarkGame({
+    players:[
+      {
+        id:"pd-three-actor",
+        team:"dawn",
+        character:"shade-agent",
+        hp:3,
+        energy:0,
+        hand:["assault", "assault", "provoke", "counter", "counter", "block"]
+          .map((definitionId, index) => makeBenchmarkCard(
+            definitionId,
+            `pd-three-${index}`
+          )),
+        equipment:makeBenchmarkCard("recycleDevice", "pd-three-recycle"),
+        turnFlags:{ attackLimit:2, recycleDeviceUses:2 }
+      },
+      { id:"pd-three-enemy-a", team:"dusk", character:"oath-warden", hp:4 },
+      { id:"pd-three-ally", team:"dawn", character:"spirit-medic", hp:4 },
+      { id:"pd-three-enemy-b", team:"dusk", character:"fate-gambler", hp:4 },
+      { id:"pd-three-enemy-c", team:"dusk", character:"blade-walker", hp:4 }
+    ],
+    options:{ actorId:"pd-three-actor", seed:2731, nodeBudget:1000 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const actions = game.aiController.getActionCandidates(actor, world);
+    const consumableActions = actions.filter((action) => (
+      action.type === "card" && ["assault", "provoke"].includes(action.cardId)
+    ));
+    const endAction = actions.find((action) => action.type === "end");
+    assert.deepEqual(
+      consumableActions.map((action) => [action.cardId, action.targetIds[0] ?? null]),
+      [
+        ["assault", "pd-three-enemy-a"],
+        ["assault", "pd-three-enemy-c"],
+        ["provoke", "pd-three-enemy-a"]
+      ]
+    );
+    assert.ok(endAction);
+
+    const evaluator = game.aiController.evaluator;
+    const simulator = game.aiController.simulatorFactory();
+    const candidates = [];
+    for (const action of [...consumableActions, endAction]) {
+      const state = simulator.apply(world, action);
+      const baseTerms = evaluator.evaluateTransition({
+        action,
+        player:world.players[0],
+        beforeState:world,
+        afterState:state
+      });
+      const frontierResidual = state.playPhaseEnded
+        ? evaluator.frontierResidual(state, actor.id)
+        : null;
+      candidates.push({
+        action,
+        state,
+        baseTerms,
+        baseTransition:baseTerms.baseTransition,
+        frontierValue:evaluator.terminalFrontierValue(
+          frontierResidual,
+          Boolean(state.playPhaseEnded)
+        ),
+        transitionValue:null
+      });
+    }
+    for (const candidate of candidates.filter((entry) => entry.action.type !== "end")) {
+      assert.deepEqual(
+        {
+          before:candidate.baseTerms.discardOpportunityInputs.beforeOverflow,
+          after:candidate.baseTerms.discardOpportunityInputs.afterOverflow
+        },
+        { before:3, after:2 }
+      );
+    }
+    const searcher = Object.create(Searcher.prototype);
+    searcher.evaluator = evaluator;
+    searcher.finalizeCandidates(candidates, [
+      ...consumableActions,
+      endAction
+    ]);
+    const endCandidate = candidates.find((candidate) => candidate.action === endAction);
+    const expectedPd = Math.max(...candidates
+      .filter((candidate) => candidate.action.type !== "end")
+      .map((candidate) => Math.max(
+        0,
+        candidate.baseTerms.stateDelta - endCandidate.baseTerms.stateDelta
+      )));
+    assert.ok(expectedPd > 0);
+    assert.equal(
+      evaluator.endOpportunityPoints(
+        endCandidate.baseTerms,
+        candidates.map((candidate) => ({
+          actionType:candidate.action.type,
+          transitionTerms:candidate.baseTerms
+        }))
+      ),
+      expectedPd
+    );
+    assert.equal(endCandidate.frontierValue, 0, "已用满回收站次数时 terminal frontier 不放大 END");
+
+    const decision = await runBenchmarkAiDecision(game, actor.id);
+    assert.equal(decision.stats.stopReason, "COMPLETE");
+    assert.equal(decision.stats.completedRootCandidateCount, actions.length);
+    assert.notEqual(decision.action.type, "end");
+    assert.ok(decision.stats.bestSequence.length >= 2);
+    assert.equal(decision.stats.provisionalFallbackUsed, false);
+    assert.equal(game.aiController.lastSearchFallback, null);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test(
+  "AI·搜索：overflow=3 的三个完整 3→2 sibling 进入 Pd 且 continuation 保持累加",
+  multiOverflowDiscardOpportunityRegression
+);
+
+/*
+功能
+验证大手牌下已完整评估的确定致死突袭不会在 NODE 中断后丢给 END。
+
+调用方
+AI 搜索预算、END sibling 与 Controller acceptance 回归测试。
+
+输入
+无；构造手牌超出生命上限六张、存在确定致死突袭且另有多个合法候选的固定局面。
+
+输出
+无返回值；断言失败时抛错。
+
+读取状态
+生产 Generator、Simulator、Evaluator、Searcher、SearchBudget 与 Controller outcome。
+
+写入状态
+只推进独立 benchmark Game 的搜索诊断和 World clones。
+
+调用函数
+makeBenchmarkGame、createInitialWorld、getActionCandidates、Simulator.apply、runBenchmarkAiDecision。
+
+边界与不变量
+END 必须一次结算全部强制弃牌；突袭必须真实生成并模拟为击杀；node budget 只完成首个正式候选，
+主 NODE 预算停止后只能沿用已有的有界 root-safety 语义；后续工作不得丢失致死候选，
+也不得触发 Searcher provisional 或 Controller worker fallback。
+*/
+async function overflowLethalAssaultIncumbentRegression() {
+  const game = makeBenchmarkGame({
+    players:[
+      {
+        id:"overflow-lethal-actor",
+        team:"dawn",
+        character:"shade-agent",
+        hp:2,
+        energy:0,
+        hand:[
+          "assault",
+          "harvest",
+          "shield",
+          "mutualBenefit",
+          "symbiosis",
+          "counter",
+          "counter",
+          "block"
+        ].map((definitionId, index) => makeBenchmarkCard(
+          definitionId,
+          `overflow-lethal-${index}`
+        ))
+      },
+      {
+        id:"overflow-lethal-target",
+        team:"dusk",
+        character:"oath-warden",
+        hp:1,
+        energy:0,
+        hand:[]
+      },
+      {
+        id:"overflow-lethal-ally",
+        team:"dawn",
+        character:"spirit-medic",
+        hp:3,
+        energy:0,
+        hand:[]
+      },
+      {
+        id:"overflow-enemy-b",
+        team:"dusk",
+        character:"fate-gambler",
+        hp:4,
+        energy:0,
+        hand:[]
+      },
+      {
+        id:"overflow-enemy-c",
+        team:"dusk",
+        character:"blade-walker",
+        hp:4,
+        energy:0,
+        hand:[]
+      }
+    ],
+    options:{ actorId:"overflow-lethal-actor", seed:1827, nodeBudget:1 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const rootActions = game.aiController.getActionCandidates(actor, world);
+    const assault = rootActions.find((action) => (
+      action.cardId === "assault"
+      && action.targetIds?.[0] === "overflow-lethal-target"
+    ));
+    const end = rootActions.find((action) => action.type === "end");
+    assert.ok(rootActions.length > 4, "大手牌必须生成多个 root 候选");
+    assert.ok(assault, "确定致死突袭必须由 Generator 生成");
+    assert.ok(end);
+
+    const simulator = game.aiController.simulatorFactory();
+    const assaultWorld = simulator.apply(world, assault);
+    const endWorld = simulator.apply(world, end);
+    assert.equal(
+      assaultWorld.players.find((player) => player.id === "overflow-lethal-target").alive,
+      false,
+      "突袭必须完整模拟为确定击杀"
+    );
+    assert.equal(world.players[0].handCount, 8);
+    assert.equal(endWorld.players[0].handCount, 2);
+    assert.equal(world.players[0].handCount - endWorld.players[0].handCount, 6);
+    const evaluator = game.aiController.evaluator;
+    const assaultTerms = evaluator.evaluateTransition({
+      action:assault,
+      player:world.players[0],
+      beforeState:world,
+      afterState:assaultWorld
+    });
+    const endTerms = evaluator.evaluateTransition({
+      action:end,
+      player:world.players[0],
+      beforeState:world,
+      afterState:endWorld
+    });
+    assert.equal(assaultTerms.discardOpportunityInputs.beforeOverflow, 6);
+    assert.ok(assaultTerms.discardOpportunityInputs.afterOverflow > 0);
+    assert.equal(
+      evaluator.endDiscardOpportunityRelief(endTerms, assaultTerms),
+      0,
+      "致死突袭消耗一张并获得一张击杀奖励，overflow 未减少时不得伪造 Pd"
+    );
+
+    const decision = await runBenchmarkAiDecision(game, actor.id);
+    assert.equal(decision.stats.stopReason, "NODE");
+    assert.ok(decision.stats.expanded >= 1);
+    assert.ok(decision.stats.completedRootCandidateCount >= 1);
+    assert.equal(decision.stats.provisionalFallbackUsed, false);
+    assert.equal(decision.stats.bestSequence.length, 1);
+    assert.equal(decision.stats.bestSequence[0].cardId, "assault");
+    assert.ok(decision.stats.incumbentUpdateCount >= 1);
+    assert.equal(decision.action.cardId, "assault");
+    assert.equal(decision.action.targetIds[0], "overflow-lethal-target");
+    assert.equal(game.aiController.lastSearchFallback, null);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test(
+  "AI·搜索：大手牌确定致死突袭 incumbent 在 NODE 中断后仍压过多张强制弃牌 END",
+  overflowLethalAssaultIncumbentRegression
+);
+
+test("AI·搜索：TIME/NODE 遇到不完整 sibling 时 END 不登记 incumbent 且不突破预算", async () => {
   for (const stopReason of ["NODE", "TIME"]) {
-    const result = await runEndSiblingBudgetFixture(stopReason);
-    assert.equal(result.selected, result.end, `${stopReason} 只可沿用 provisional END`);
-    assert.deepEqual(result.applied, ["end"], `${stopReason} 不得补算 skill sibling`);
-    assert.equal(result.stats.stopReason, stopReason);
-    assert.equal(result.stats.completedRootCandidateCount, 0);
-    assert.equal(result.stats.bestValueScore, null);
-    assert.equal(result.stats.incumbentUpdateCount, 0);
-    assert.equal(result.stats.provisionalFallbackUsed, true);
-    assert.equal(result.stats.provisionalFallbackAction, result.end);
-    assert.equal(result.stats.rootWork[0].completed, false);
+    for (const siblingType of ["skill", "card"]) {
+      const forcesDiscard = siblingType === "card";
+      const result = await runEndSiblingBudgetFixture(
+        stopReason,
+        { siblingType, forcesDiscard }
+      );
+      const expectedFallback = forcesDiscard ? result.sibling : result.end;
+      assert.equal(result.selected, expectedFallback, `${stopReason}/${siblingType} provisional 错误`);
+      assert.deepEqual(result.applied, ["end"], `${stopReason}/${siblingType} 不得补算 sibling`);
+      assert.equal(result.stats.stopReason, stopReason);
+      assert.equal(result.stats.completedRootCandidateCount, 0);
+      assert.equal(result.stats.bestValueScore, null);
+      assert.equal(result.stats.incumbentUpdateCount, 0);
+      assert.equal(result.stats.provisionalFallbackUsed, true);
+      assert.equal(result.stats.provisionalFallbackAction, expectedFallback);
+      assert.equal(result.stats.rootWork[0].completed, false);
+    }
   }
 });
 
@@ -33325,6 +33706,81 @@ test("UI·玩家面板：阵亡角色面板不显示残留状态和距离环文�
   assert.doesNotMatch(markup, /破势|猎印|孤注|连势|已离开距离环|距离Infinity|距离 Infinity|射程/);
 });
 
+/*
+功能
+验证本地真人阵亡后整张战场不再生成或渲染距离字段。
+
+调用方
+UI 玩家面板回归测试。
+
+输入
+无；构造一名阵亡真人、一名存活队友和一名存活敌人。
+
+输出
+无返回值；断言失败时抛错。
+
+读取状态
+UIManager.render 读取的对局公开状态。
+
+写入状态
+只写入测试 DOM 替身，并临时替换 globalThis.document。
+
+调用函数
+makeGame、UIManager.render。
+
+边界与不变量
+测试替身的 getDistanceState 会直接抛错，确保观战渲染没有先生成再隐藏距离文案。
+*/
+function localDeathHidesDistanceFields() {
+  const previousDocument = globalThis.document;
+  const human = makePlayer("dead-viewer", 0, "dawn", "human"),
+    ally = makePlayer("living-ally", 1, "dawn"),
+    enemy = makePlayer("living-enemy", 2, "dusk");
+  human.hp = 0;
+  human.alive = false;
+  const { game } = makeGame([human, ally, enemy]);
+  const cpuGrid = { innerHTML: "", querySelectorAll: () => [] };
+  const fake = {
+    game,
+    horizontalCardScrollGameId: null,
+    targetState: null,
+    thinkingPlayerId: null,
+    elements: {
+      status_metrics: { innerHTML: "" },
+      cpu_grid: cpuGrid,
+      human_panel: { innerHTML: "" }
+    },
+    isGameAttached: () => true,
+    getDistanceState() { throw new Error("观战状态不得生成距离文案"); },
+    renderHand() { },
+    renderControls() { },
+    animationController: { flush() { } }
+  };
+  globalThis.document = {};
+  try {
+    UIManager.prototype.render.call(fake, game);
+    assert.doesNotMatch(`${cpuGrid.innerHTML}${fake.elements.human_panel.innerHTML}`, /距离\s*(?:Infinity|∞|\d)|射程/);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+}
+
+test("UI·玩家面板：本地角色阵亡后所有面板隐藏距离字段", localDeathHidesDistanceFields);
+
+test("UI·玩家面板：同阵营距离只显示编号且不误标为可突袭", () => {
+  const source = makePlayer("distance-source", 0, "dawn", "human"),
+    ally = makePlayer("distance-ally", 1, "dawn"),
+    { game } = makeGame([source, ally]);
+  const text = UIManager.prototype.getDistanceState.call(
+    { game, targetState: { meta: { card: instance("assault") } } },
+    source,
+    ally
+  );
+  assert.equal(text, "距离 1");
+  assert.doesNotMatch(text, /同阵营|可突袭|超出攻击范围/);
+});
+
 test("UI·玩家面板：技能详情使用结构化的每回合发动次数", () => {
   const warden = makePlayer("warden", 0, "dawn", "human", 1), markup = skillDetailsTemplate(warden);
   assert.match(markup, /能量消耗<\/dt><dd>2点能量/);
@@ -33988,6 +34444,62 @@ test("UI·手牌：未知对手手牌展示模型和 DOM 均不含真实牌面�
   assert.match(markup, /hidden-card-back/);
   assert.doesNotMatch(markup, /未知手牌|\?牌|牌背\s*\d/);
 });
+
+/*
+功能
+验证观战覆盖只亮出存活队友手牌，且不会改变真人的牌知识。
+
+调用方
+UI 手牌可见性回归测试。
+
+输入
+无；构造真人、队友和敌人的独立手牌。
+
+输出
+无返回值；断言失败时抛错。
+
+读取状态
+createOpponentHandView 使用的玩家存活、阵营、手牌和知识状态。
+
+写入状态
+只切换测试玩家的 alive，并将测试队友标记为阵亡以验证边界。
+
+调用函数
+createOpponentHandView、opponentHandStripTemplate。
+
+边界与不变量
+真人存活时队友仍隐藏；真人阵亡后敌方与阵亡队友仍隐藏；知识对象序列化结果必须不变。
+*/
+function localDeathRevealsLivingAllyHandsOnly() {
+  const human = makePlayer("spectator", 0, "dawn", "human"),
+    ally = makePlayer("spectator-ally", 1, "dawn"),
+    enemy = makePlayer("spectator-enemy", 2, "dusk"),
+    allyCard = instance("block"),
+    enemyCard = instance("counter");
+  ally.hand.push(allyCard);
+  enemy.hand.push(enemyCard);
+  const knowledgeBefore = JSON.stringify(human.aiMemory.knownCardsByPlayer);
+
+  assert.deepEqual(createOpponentHandView(human, ally), [{ known: false }]);
+  human.hp = 0;
+  human.alive = false;
+  const allyView = createOpponentHandView(human, ally),
+    enemyView = createOpponentHandView(human, enemy);
+  assert.equal(allyView[0].known, true);
+  assert.equal(allyView[0].name, allyCard.name);
+  assert.deepEqual(enemyView, [{ known: false }]);
+  assert.match(opponentHandStripTemplate(allyView), new RegExp(allyCard.name));
+  assert.doesNotMatch(opponentHandStripTemplate(enemyView), new RegExp(enemyCard.name));
+
+  ally.alive = false;
+  assert.deepEqual(createOpponentHandView(human, ally), [{ known: false }]);
+  assert.equal(JSON.stringify(human.aiMemory.knownCardsByPlayer), knowledgeBefore);
+}
+
+test(
+  "UI·手牌：本地角色阵亡后只亮出存活队友手牌且不写入知识",
+  localDeathRevealsLivingAllyHandsOnly
+);
 
 test("UI·手牌：真人识别实体牌后显示已知小卡面和说明", () => {
   const human = makePlayer("h", 0, "dawn", "human"),

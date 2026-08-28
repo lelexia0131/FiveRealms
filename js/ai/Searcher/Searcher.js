@@ -551,27 +551,26 @@ export class Searcher {
   候选命名 value terms。
 
   写入状态
-  只写候选 transitionValue；skill siblings 不完整时 END 保持 null。
+  只写候选 transitionValue；任一 sibling 不完整时 END 保持 null。
 
   调用函数
   Evaluator.endOpportunityPoints、composeTransitionValue。
 
   边界与不变量
-  Searcher 只确认 skill sibling 完整并提供同 parent 的完整 transition terms；
+  Searcher 只确认全部 sibling 完整并提供同 parent 的完整 transition terms；
   最大 relief、END opportunity 与 Final Utility 公式全部由 Evaluator 聚合；
-  partial skill 集合不得给 END 赋值，responseNet 只作诊断。
+  partial sibling 集合不得给 END 赋值，responseNet 只作诊断。
   */
   finalizeCandidates(candidates, siblingActions = candidates.map((entry) => entry.action)) {
-    const legalSkillActions = siblingActions.filter((action) => action?.type === "skill");
-    const skillSiblingsComplete = legalSkillActions.every((skillAction) => (
-      candidates.some((candidate) => candidate.action === skillAction)
+    const siblingContextComplete = siblingActions.every((siblingAction) => (
+      candidates.some((candidate) => candidate.action === siblingAction)
     ));
     const siblingTransitionTerms = candidates.map((candidate) => ({
       actionType:candidate.action?.type ?? null,
       transitionTerms:candidate.baseTerms
     }));
     for (const candidate of candidates) {
-      if (candidate.action?.type === "end" && !skillSiblingsComplete) {
+      if (candidate.action?.type === "end" && !siblingContextComplete) {
         candidate.transitionValue = null;
         continue;
       }

@@ -774,7 +774,8 @@ export class UIManager {
   isGameAttached、playerPanelTemplate、createOpponentHandView、restoreHorizontalCardScroll、renderHand、renderControls、AnimationController.flush。
 
   边界与不变量
-  对手未知手牌只能经脱敏 ViewModel；同一 gameId 按玩家 ID 独立恢复位置，新对局不得继承旧位置。
+  对手未知手牌只能经脱敏 ViewModel；真人阵亡后不生成任何距离展示事实；
+  同一 gameId 按玩家 ID 独立恢复位置，新对局不得继承旧位置。
   */
   render(game = this.game) {
     if (!this.isGameAttached(game) || !game.state.players.length || !game.state.players[0].character) return false;
@@ -803,8 +804,8 @@ export class UIManager {
       isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)),
       isSelectedTarget: this.targetState?.selected?.id === player.id,
       isThinking: this.thinkingPlayerId === player.id,
-      distanceInfo: ActionLegality.describeDistance(game, targetSource, player),
-      distanceState: this.getDistanceState(targetSource, player),
+      distanceInfo: human.alive ? ActionLegality.describeDistance(game, targetSource, player) : null,
+      distanceState: human.alive ? this.getDistanceState(targetSource, player) : null,
       opponentHandSlots: createOpponentHandView(human, player)
     })).join("");
     for (const panel of this.elements.cpu_grid.querySelectorAll?.("[data-player-id]") ?? []) {
@@ -818,8 +819,8 @@ export class UIManager {
       isLegalTarget: Boolean(this.targetState?.legalIds.has(human.id)),
       isSelectedTarget: this.targetState?.selected?.id === human.id,
       isThinking: this.thinkingPlayerId === human.id,
-      distanceInfo:this.targetState && targetSource.id !== human.id ? ActionLegality.describeDistance(game, targetSource, human) : null,
-      distanceState:this.targetState && targetSource.id !== human.id ? this.getDistanceState(targetSource, human) : null
+      distanceInfo:human.alive && this.targetState && targetSource.id !== human.id ? ActionLegality.describeDistance(game, targetSource, human) : null,
+      distanceState:human.alive && this.targetState && targetSource.id !== human.id ? this.getDistanceState(targetSource, human) : null
     });
     this.renderHand(game, human, { preserveScroll: preserveCardScroll });
     this.renderControls(game, human);
@@ -920,7 +921,7 @@ export class UIManager {
   getDistanceState(source, target) {
     if (!target.alive) return "已阵亡";
     const distance = ActionLegality.getDistance(this.game, source, target);
-    if (target.battleTeam === source.battleTeam) return `距离 ${distance} · 同阵营`;
+    if (target.battleTeam === source.battleTeam) return `距离 ${distance}`;
     const card = this.targetState?.meta?.card;
     if (card?.definitionId === "assault") return distance <= source.attackRange ? `距离 ${distance} · 可突袭` : `距离 ${distance} · 超出攻击范围`;
     return `距离 ${distance}`;

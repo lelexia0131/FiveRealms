@@ -3825,14 +3825,15 @@ export class Evaluator {
   无。
 
   边界与不变量
-  只有 END 确实触发弃牌且 sibling 通过真实 HP/手牌变化完全消除同一溢出时才产生机会；
+  只有 END 确实触发弃牌且 sibling 通过真实 HP/手牌变化减少同一溢出时才产生机会；
   数值严格取两个已物化状态差的正向差，不读取牌名、CardValue 或固定奖励。
   */
   endDiscardOpportunityRelief(endTerms, siblingTerms) {
     const end = endTerms?.discardOpportunityInputs;
     const sibling = siblingTerms?.discardOpportunityInputs;
     if (!end || !sibling || end.beforeOverflow <= 0 || end.afterOverflow !== 0) return 0;
-    if (sibling.beforeOverflow !== end.beforeOverflow || sibling.afterOverflow > 0) return 0;
+    if (sibling.beforeOverflow !== end.beforeOverflow
+      || sibling.afterOverflow >= sibling.beforeOverflow) return 0;
     return Math.max(0, sibling.stateDelta - end.stateDelta);
   }
 
@@ -3841,7 +3842,7 @@ export class Evaluator {
   从同 parent 的完整 sibling transition terms 聚合 END 的全部机会惩罚点数。
 
   调用方
-  Searcher.finalizeCandidates 在 skill sibling 完整后请求 END Final Utility。
+  Searcher.finalizeCandidates 在全部 sibling 完整后请求 END Final Utility。
 
   输入
   END transition terms，以及带 actionType 与 transitionTerms 的完整 sibling terms 数组。

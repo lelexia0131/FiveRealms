@@ -1406,14 +1406,23 @@ BaseTransition
 TerminalHeldOptionUtility
   = terminal ? statePointsToUtility(heldRecover + heldRecycle) : 0
 
+EndOpportunityPoints
+  = Pf + Ps + Pd
+
+Pd
+  = max(a in EligibleSibling) max(0, RawStateDelta(a) - RawStateDelta(END))
+
 FinalTransition
   = BaseTransition
   + TerminalHeldOptionUtility
+  - (action is END ? statePointsToUtility(EndOpportunityPoints) : 0)
 ```
+
+`EligibleSibling` 必须来自同一 parent 的完整 canonical sibling 集合：END 确实把正 overflow 结算到零，且 sibling 与 END 具有相同的 `beforeOverflow`，并通过真实 HP/手牌变化满足 `afterOverflow < beforeOverflow`。单个 sibling 不必一次把全部 overflow 清零；只要仍能减少当前强制弃牌量，就代表 END 会丢失的真实继续行动机会。任一 canonical sibling 尚未完整物化时，END 不具备 Final Utility，也不能进入 incumbent/best-seen。`Pd` 仍只比较已物化 World 的 Raw State delta，不读取静态 CardValue、不按 overflow 张数乘固定常量，也不替代 Searcher 已有 continuation `valueScore` 累加。
 
 Adaptive information 仍保持 `E[max U] - max E[U]`：Searcher 只执行 hidden-world/follow-up traversal，Evaluator 只拥有具体角色/技能识别、公式与价值分类。物化结果作为 generic `TransitionOptionPoints` 进入 `evaluateTransition`；Searcher candidate schema 与 `composeTransitionValue` 不再知道 SpyGap。
 
-`responseNet`、raw owner ledger、forced-discard information、static CardValue、Search Prior 以及 expose/assault 的有限 beam 前瞻只用于诊断或搜索排序，不进入 final composition。`STATE_UTILITY_PRIOR_WEIGHT=0.4` 只是为保持 beam 相对排序的 heuristic：它可消费按 HP 基线归一化的输入，但不是 Final Utility 换算，也不是 `0.08` 的替代。Raw State delta 在路径上严格 telescoping；depth 不缩放动作价值。
+`responseNet`、raw owner ledger、static CardValue、Search Prior 以及 expose/assault 的有限 beam 前瞻只用于诊断或搜索排序，不进入 final composition。强制弃牌机会只通过上述完整 sibling 的 `Pd` 进入 END，不能复制为另一份牌值或 fallback 评分。`STATE_UTILITY_PRIOR_WEIGHT=0.4` 只是为保持 beam 相对排序的 heuristic：它可消费按 HP 基线归一化的输入，但不是 Final Utility 换算，也不是 `0.08` 的替代。Raw State delta 在路径上严格 telescoping；depth 不缩放动作价值。
 
 ### 33.6 `0.08` 历史结论与剩余常数
 
