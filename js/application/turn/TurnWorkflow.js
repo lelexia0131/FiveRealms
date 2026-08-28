@@ -297,6 +297,7 @@ export function createTurnWorkflow(dependencies) {
 
   边界与不变量
   每个真实 Action 后必须从最新 World 重新调用 selectAction；每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
+  canonical non-END 的定义、目标、实体或真实结算绑定失败必须显式记录，不能静默伪装成正常 END。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
@@ -338,7 +339,14 @@ export function createTurnWorkflow(dependencies) {
           .map((id) => runtime.getState().players.find((entry) => entry.id === id))
           .filter(Boolean);
         if (!definition || targets.length !== (action.targetIds?.length ?? 0)) {
-          continue;
+          const bindingError = new Error("AI canonical Action 的定义或目标绑定失败");
+          runtime.diagnostics.reportWorkflowError(
+            "AI",
+            `${player.name}的计划行动绑定失败，提前结束出牌阶段`,
+            bindingError
+          );
+          runtime.presentation.log(`${player.name}的计划行动已失效，本次出牌阶段提前结束。`, "important");
+          break;
         }
         const actionName = action.type === "card"
           ? `准备使用「${definition.name}」`
@@ -358,17 +366,15 @@ export function createTurnWorkflow(dependencies) {
         try {
           if (action.type === "card") {
             const card = player.hand.find((entry) => entry.id === action.cardInstanceId) ?? null;
-            executed = card
-              ? await runtime.playCard(player, card, targets, action.selection ?? null)
-              : false;
+            if (!card) throw new Error("AI canonical Action 的实体牌绑定失败");
+            executed = await runtime.playCard(player, card, targets, action.selection ?? null);
           } else if (action.type === "skill") {
             executed = await runtime.useActiveSkill(player, action.skillId, targets);
           }
+          if (!executed) throw new Error("AI canonical Action 未能开始真实结算");
         } catch (error) {
           runtime.diagnostics.reportWorkflowError("AI", `${player.name}执行行动失败，安全结束出牌阶段`, error);
-          break;
-        }
-        if (!executed) {
+          runtime.presentation.log(`${player.name}的计划行动执行失败，本次出牌阶段提前结束。`, "important");
           break;
         }
         if (!runtime.isSessionValid(gameId)) return;

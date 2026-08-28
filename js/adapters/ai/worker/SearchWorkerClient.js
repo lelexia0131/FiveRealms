@@ -213,9 +213,12 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
           : message.outcome?.searchStopReason === "CANCELLED"
             ? "CANCELLED"
             : "RESULT";
-        settlePending(kind, kind === "CANCELLED"
-          ? new Error("AI search cancelled")
-          : message.outcome);
+        settlePending(
+          kind === "CANCELLED" && message.outcome?.action ? "RESULT" : kind,
+          kind === "CANCELLED" && !message.outcome?.action
+            ? new Error("AI search cancelled")
+            : message.outcome
+        );
       } else if (message.type === "ERROR") {
         settlePending("FAULT", new Error(message.workerError ?? "AI Worker error"));
       }

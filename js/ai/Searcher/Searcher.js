@@ -197,6 +197,55 @@ export class Searcher {
 
   /*
   功能
+  把已完成 Final Utility 的根候选转换为可参与 incumbent 收束的根节点。
+
+  调用方
+  search 的正常根 beam 构造与根阶段取消收束。
+
+  输入
+  已物化根候选、Pattern proposals 与根 World。
+
+  输出
+  只包含 transitionValue 已完成候选的根节点数组。
+
+  读取状态
+  候选 Final Utility、prior、provenance、diagnostics 与 Pattern 状态。
+
+  写入状态
+  无。
+
+  调用函数
+  pruneScore、advancePatternState。
+
+  边界与不变量
+  incomplete END 或其它 partial candidate 永远不会生成节点；该投影不重新比较或重算价值。
+  */
+  buildRootNodes(rootCandidates, patternProposals, world) {
+    return rootCandidates
+      .filter((candidate) => candidate.transitionValue !== null)
+      .map((candidate) => {
+        const valueScore = candidate.transitionValue;
+        return {
+          action:candidate.action,
+          state:candidate.state,
+          comparisonTerms:candidate.comparisonTerms,
+          terminal:candidate.terminal,
+          valueScore,
+          pruneScore:this.pruneScore(valueScore, candidate.prior, 1),
+          searchCredit:candidate.searchCredit,
+          sequence:[candidate.action],
+          remainingProvenance:candidate.remainingProvenance,
+          remainingHistory:[candidate.remainingProvenance],
+          candidateLedger:candidate.candidateLedger,
+          frontierResidual:candidate.frontierResidual,
+          completedAtWorkCount:candidate.completedAtWorkCount,
+          ...this.advancePatternState(patternProposals, candidate.action, 0, [], world)
+        };
+      });
+  }
+
+  /*
+  功能
   按探索分数截取有限 beam，同时保留当前 Evaluator incumbent。
 
   调用方
@@ -247,7 +296,7 @@ export class Searcher {
   stopReason、完整 final beam 与全局 best-seen candidate。
 
   输出
-  COMPLETE 时返回 Evaluator incumbent；TIME/NODE 返回中断前的全局完整 incumbent；取消返回 null。
+  COMPLETE 时返回 Evaluator incumbent；TIME/NODE/CANCELLED 返回中断前的全局完整 incumbent。
 
   读取状态
   注入的 Evaluator comparator。
@@ -263,7 +312,7 @@ export class Searcher {
   */
   selectFinal({ stopReason, completedCandidates, bestSeenCandidate }) {
     if (stopReason === "COMPLETE") return this.bestCandidate(completedCandidates);
-    if (stopReason === "TIME" || stopReason === "NODE") return bestSeenCandidate;
+    if (["TIME", "NODE", "CANCELLED"].includes(stopReason)) return bestSeenCandidate;
     return null;
   }
 
@@ -403,7 +452,7 @@ export class Searcher {
   动作前后 World、行动者、深度、provenance、Simulator、上下文、诊断开关与 SearchBudget。
 
   输出
-  完整候选；反事实中断时返回 null。
+  完整候选；X 技能另带同 World 下 E+1 的完整 StateDelta；反事实中断时返回 null。
 
   读取状态
   Searcher 反事实项、Evaluator 与搜索上下文。
@@ -412,10 +461,12 @@ export class Searcher {
   只写独立候选记录和显式诊断。
 
   调用函数
-  materializeValueTerms、Evaluator.evaluateTransition/frontierResidual/composeSearchPrior。
+  materializeValueTerms、Simulator.clone/apply、
+  Evaluator.evaluateTransition/transitionDelta/frontierResidual/composeSearchPrior。
 
   边界与不变量
-  Searcher 只机械组装各 owner 的结果；不定义 value formula，partial candidate 不得返回。
+  Searcher 只机械组装各 owner 的结果；X 技能反事实仅 clone 同一 before World 并替换行动者能量，
+  不模拟回合、摸牌或敌方行动；不定义 value formula，partial candidate 不得返回。
   */
   evaluateCandidate({
     action,
@@ -460,6 +511,34 @@ export class Searcher {
       beforeLightningOutcomeSets,
       afterLightningOutcomeSets
     });
+    let nextEnergyStateDelta = null;
+    if (Number.isFinite(baseTerms.xSkillNextEnergy)) {
+      const currentEnergy = Math.max(
+        0,
+        Number(beforeState.players.find((entry) => entry.id === player.id)?.energy) || 0
+      );
+      if (baseTerms.xSkillNextEnergy === currentEnergy) {
+        nextEnergyStateDelta = baseTerms.stateDelta;
+      } else {
+        searchBudget?.observeSimulation();
+        // 反事实与当前候选共用同一 before World，只替换该技能结算时的能量。
+        const counterfactualBefore = simulator.clone(beforeState);
+        const counterfactualActor = counterfactualBefore.players.find(
+          (entry) => entry.id === player.id
+        );
+        counterfactualActor.energy = baseTerms.xSkillNextEnergy;
+        const counterfactualAfter = simulator.apply(counterfactualBefore, action);
+        if (this.isInterrupted(searchBudget)) return null;
+        nextEnergyStateDelta = this.evaluator.transitionDelta(
+          counterfactualBefore,
+          counterfactualAfter,
+          player.id,
+          simulator.buildLightningOutcomeSets(counterfactualBefore),
+          simulator.buildLightningOutcomeSets(counterfactualAfter)
+        );
+        searchBudget?.observeCounterfactual(2);
+      }
+    }
     const responseAttributions = collectDiagnostics
       ? this.evaluateResponseAttributions(
           beforeState,
@@ -519,6 +598,7 @@ export class Searcher {
       ) ?? null,
       terminal,
       baseTerms,
+      nextEnergyStateDelta,
       baseTransition:baseTerms.baseTransition,
       exposeMarginal:terms.exposeMarginal,
       assaultStacksCredit:terms.assaultStacksCredit,
@@ -548,7 +628,7 @@ export class Searcher {
   同一数组。
 
   读取状态
-  候选命名 value terms。
+  候选命名 value terms 与 X 技能已结算的 E+1 StateDelta。
 
   写入状态
   只写候选 transitionValue；任一 sibling 不完整时 END 保持 null。
@@ -558,7 +638,7 @@ export class Searcher {
 
   边界与不变量
   Searcher 只确认全部 sibling 完整并提供同 parent 的完整 transition terms；
-  legal skill state-value opportunity、discard relief、END opportunity 与 Final Utility 公式全部由 Evaluator 聚合；
+  普通/X skill state-value opportunity、discard relief、END opportunity 与 Final Utility 公式全部由 Evaluator 聚合；
   partial sibling 集合不得给 END 赋值，responseNet 只作诊断。
   */
   finalizeCandidates(candidates, siblingActions = candidates.map((entry) => entry.action)) {
@@ -567,7 +647,8 @@ export class Searcher {
     ));
     const siblingTransitionTerms = candidates.map((candidate) => ({
       actionType:candidate.action?.type ?? null,
-      transitionTerms:candidate.baseTerms
+      transitionTerms:candidate.baseTerms,
+      nextEnergyStateDelta:candidate.nextEnergyStateDelta
     }));
     for (const candidate of candidates) {
       if (candidate.action?.type === "end" && !siblingContextComplete) {
@@ -1218,7 +1299,8 @@ export class Searcher {
   SearchBudget、结构配置、完整候选、provisional root、context、根诊断条目与本次搜索工作诊断。
 
   输出
-  返回完整候选动作；TIME/NODE 零完整 root 时返回明确标记的 provisional root；取消仍返回终止动作。
+  返回完整候选动作；TIME/NODE 零完整 root 时返回明确标记的 provisional root；
+  CANCELLED 已有完整 incumbent 时保留该动作，否则返回 null。
 
   读取状态
   budget 计数、候选序列、root/work diagnostics 与 bounded counterfactual context diagnostics。
@@ -1359,7 +1441,8 @@ export class Searcher {
   行动者、根 World、根候选动作与可选会话/诊断上下文。
 
   输出
-  当前最佳完整根动作；TIME/NODE 零完整 root 时返回不受 Pattern promotion 影响的合法 provisional root，取消时安全终止。
+  当前最佳完整根动作；TIME/NODE 零完整 root 时返回不受 Pattern promotion 影响的合法 provisional root；
+  CANCELLED 只保留中断前已完整物化的 incumbent。
 
   读取状态
   World、Pattern proposal、显式搜索归属模块、动作生成、预算与会话能力。
@@ -1380,7 +1463,8 @@ export class Searcher {
   TIME/NODE 零完整 root 时，结束不会强制弃牌则优先返回合法 terminal；已知会强制弃牌时才退回基础调度首个 non-end；
   Pattern promotion 不得把未完整物化的 guided root 变成实际选择；provisional fallback 不登记成 candidate/计划；
   根层已物化 end 可作为安全基线；未物化 end 只有在所有 non-end roots 都已比较且全为负时才能补算。
-  NODE 中断且已知候选全为负时，只通过 SearchBudget 授权剩余 roots 的有限 depth-1 安全阶段；
+  NODE/TIME 中断后只返回已完整物化的 incumbent，不再启动剩余 root 或 END 的安全补评估；
+  CANCELLED 同样不得清空已有完整 incumbent；外部 session/state acceptance 仍由 Controller 决定是否可执行；
   TIME 只返回 deadline 前已经完整 materialize 的 incumbent，绝不启动未物化 root；
   TIME 下任何进入隐藏世界、后续候选或 paired simulation 的 root 必须 cooperative abort，
   安全阶段不得继续束搜索、深层扩展或随机选择。
@@ -1583,7 +1667,11 @@ export class Searcher {
           return this.recordResult({
             budget,
             structure,
-            choice:null,
+            choice:this.bestCandidate(this.buildRootNodes(
+              rootCandidates,
+              patternProposals,
+              world
+            )),
             provisionalRootFallback,
             context,
             rootLedgers,
@@ -1599,7 +1687,11 @@ export class Searcher {
           return this.recordResult({
             budget,
             structure,
-            choice:null,
+            choice:this.bestCandidate(this.buildRootNodes(
+              rootCandidates,
+              patternProposals,
+              world
+            )),
             provisionalRootFallback,
             context,
             rootLedgers,
@@ -1637,7 +1729,8 @@ export class Searcher {
       unmaterializedRootTerminal
         && bestMaterializedNonTerminal?.transitionValue < 0
     ));
-    const rootSafetyCompletionGranted = rootSafetyNeeded
+    const rootSafetyCompletionGranted = budget.stopReason === null
+      && rootSafetyNeeded
       && remainingRootSafetyCount > 0
       && typeof budget.requestRootSafetyCompletion === "function"
       && budget.requestRootSafetyCompletion({
@@ -1714,27 +1807,7 @@ export class Searcher {
         .filter((candidate) => candidate.transitionValue !== null)
         .map((candidate) => this.diagnosticEntry(candidate)));
     }
-    const beam = rootCandidates
-      .filter((candidate) => candidate.transitionValue !== null)
-      .map((candidate) => {
-      const valueScore = candidate.transitionValue;
-      return {
-        action:candidate.action,
-        state:candidate.state,
-        comparisonTerms:candidate.comparisonTerms,
-        terminal:candidate.terminal,
-        valueScore,
-        pruneScore:this.pruneScore(valueScore, candidate.prior, 1),
-        searchCredit:candidate.searchCredit,
-        sequence:[candidate.action],
-        remainingProvenance:candidate.remainingProvenance,
-        remainingHistory:[candidate.remainingProvenance],
-        candidateLedger:candidate.candidateLedger,
-        frontierResidual:candidate.frontierResidual,
-        completedAtWorkCount:candidate.completedAtWorkCount,
-        ...this.advancePatternState(patternProposals, candidate.action, 0, [], world)
-      };
-    });
+    const beam = this.buildRootNodes(rootCandidates, patternProposals, world);
     for (const node of beam) this.observeCompletedPatterns(node, workDiagnostics);
     let activeBeam = this.prune(beam, structure.beamWidth);
     let bestSeenCandidate = null;
@@ -1862,7 +1935,7 @@ export class Searcher {
           return this.recordResult({
             budget,
             structure,
-            choice:null,
+            choice:bestSeenCandidate,
             provisionalRootFallback,
             context,
             rootLedgers,

@@ -40,7 +40,7 @@ $$
 | **常量当前值含义**         |       |                                                     |
 | -------------------------- | ----- | --------------------------------------------------- |
 | `HP_VALUE`                 | `5`   | 1 HP = 5 SP = 1u                                    |
-| `ENERGY_STATE_WEIGHT`      | `1.2` | 充能桩有效未来增益与 END 能量溢出的每点 SP          |
+| `ENERGY_STATE_WEIGHT`      | `1.2` | 充能桩有效未来增益、END 能量溢出与 X 技能忍耐值的每点 SP |
 | `DANGER_VALUE`             | `7`   | Danger 基值；进入 StateValue 时作为 `-7 SP = -1.4u` |
 | `DEATH_VALUE`              | `28`  | Death 基值；进入 StateValue 时作为 `-28 SP = -5.6u` |
 | `SHIELD_RESERVE_WEIGHT`    | `2`   | 第一层护盾的储备价值                                |
@@ -133,7 +133,11 @@ $$
 $$
 
 $$
-\boxed{P_s=S(E)D'(X)\Delta_s^+}
+\boxed{P_s^{normal}=S(E)D'(X)\Delta_s^+}
+$$
+
+$$
+\boxed{P_s^X=1.2-(\Delta_{E+1}-\Delta_E)}
 $$
 
 $$
@@ -151,7 +155,7 @@ $$
 $$
 
 $$
-\boxed{D'(X)=\max(0.25,D(X))}
+\boxed{D'(X)=\max(0.75,D(X))}
 $$
 
 $$
@@ -931,10 +935,10 @@ $$
 
 因此只要任一己方角色处于高风险，团队危险度不会被其它安全队友平均稀释。
 
-END 技能机会损失使用最低危险系数：
+END 的普通技能机会损失使用最低危险系数：
 
 $$
-\boxed{ D'(X)=\max(0.25,D(X)) }
+\boxed{ D'(X)=\max(0.75,D(X)) }
 $$
 
 # 15. Lightning 生命周期价值
@@ -1352,9 +1356,9 @@ $$
 | 3 | √(2/3) ≈ 0.8165 |
 | 4 | 1 |
 
-## 18.3 Legal skill state-value opportunity
+## 18.3 普通 Legal skill state-value opportunity
 
-每个 legal skill sibling 直接复用**同一次 transition evaluation**已经得到的完整 raw StateValue delta：
+除 X 技能外，每个普通 legal skill sibling 直接复用**同一次 transition evaluation**已经得到的完整 raw StateValue delta：
 
 $$
 \Delta_s=V_{state}(Y_s)-V_{state}(X)
@@ -1376,9 +1380,43 @@ $$
 
 ## 18.4 技能机会损失 Ps
 
+普通主动技能：
+
 $$
-\boxed{P_s=S(E)D'(X)\Delta_s^+}
+\boxed{P_s^{normal}=S(E)\max(0.75,D(X))\Delta_s^+}
 $$
+
+X 技能（孤注）不使用 `S(E)` 或 `D(X)`。令当前能量真实结算的 StateDelta 为：
+
+$$
+\Delta_E
+$$
+
+在同一当前 World 上仅将用于该技能结算的能量改为：
+
+$$
+E_{next}=\min(E+1,E_{max})
+$$
+
+再结算同一技能，得：
+
+$$
+\Delta_{E+1}
+$$
+
+反事实不推进回合，不加入摸牌阶段、敌方行动或任何其它 World 变化。X 技能的 END 机会项为：
+
+$$
+\boxed{P_s^X=ENERGY\_STATE\_WEIGHT-(\Delta_{E+1}-\Delta_E)}
+$$
+
+当前 `ENERGY_STATE_WEIGHT=1.2`。满能量时 `E_next=E`，因此：
+
+$$
+\Delta_{E+1}=\Delta_E\Rightarrow P_s^X=1.2
+$$
+
+`P_s^X` 不做非负截断；当下一点能量的边际技能收益大于 `1.2` 时，负值会提高 END 的相对吸引力，表示继续等待。
 
 该项**只减 END candidate**。
 
@@ -1431,7 +1469,7 @@ $$
 以 Utility 直接表示：
 
 $$
-\boxed{ P_{END,u} =0.24\times Overflow +\frac{S(E)D'(X)\Delta_s^+}{5}+\frac {P_d}5 }
+\boxed{ P_{END,u} =0.24\times Overflow +\frac{P_s}{5}+\frac {P_d}5 }
 $$
 
 # 19. Candidate 比较语义
@@ -2982,7 +3020,8 @@ $$
 
 ## 47.3 `activeSkillCost`
 
-Canonical World 已携带正式技能费用；END `S(E)` 不重新读取/解释技能定义。
+Canonical World 已携带正式技能费用；普通技能的 END `S(E)` 不重新读取/解释技能定义。
+X 技能反事实只使用 canonical World 的 `energy/maxEnergy` 与真实 Simulator 结算。
 
 ## 47.4 `getRecoverHealAmount()` / `calculateHealAmount()`
 
@@ -3002,7 +3041,7 @@ Canonical World 已携带正式技能费用；END `S(E)` 不重新读取/解释�
 | **常量值类型**             |      |                            |
 | -------------------------- | ---- | -------------------------- |
 | `HP_VALUE`                 | 5    | State/Final 单位 authority |
-| `ENERGY_STATE_WEIGHT`      | 1.2  | EnergyDeviceFuture / END overflow |
+| `ENERGY_STATE_WEIGHT`      | 1.2  | EnergyDeviceFuture / END overflow / X-skill patience |
 | `DANGER_VALUE`             | 7    | State Value                |
 | `DEATH_VALUE`              | 28   | State Value                |
 | `SHIELD_RESERVE_WEIGHT`    | 2    | State Value                |

@@ -3648,7 +3648,7 @@ export class Evaluator {
   与 Searcher 物化的 generic transition-option points。
 
   输出
-  各命名 term 与 baseTransition 的普通对象。
+  各命名 term、X 技能的下一能量反事实输入与 baseTransition 的普通对象。
 
   读取状态
   只读 before/after World 与 Evaluator state aggregation。
@@ -3662,6 +3662,7 @@ export class Evaluator {
   边界与不变量
   BaseTransition 只由 StateDeltaValue 与 TransitionOptionValue 构成；低于冻结门槛的 Transfer 只失去竞争资格；
   depth 只作诊断，不缩放价值，search-prior terms 不得进入；手牌溢出只作为后续同层真实状态比较输入，
+  X 技能只在此识别并以 min(E+1,Emax) 交给 Searcher 构造同 World 反事实；
   不在本函数产生固定 END 或卡牌分数。
   */
   evaluateTransition({
@@ -3709,6 +3710,12 @@ export class Evaluator {
     const afterActor = afterState.players.find(
       (entry) => entry.id === player.id
     ) ?? beforeActor;
+    const xSkillNextEnergy = action?.type === "skill" && action?.skillId === "allIn"
+      ? Math.min(
+          Math.max(0, Number(beforeActor.maxEnergy) || 0),
+          Math.max(0, Number(beforeActor.energy) || 0) + 1
+        )
+      : null;
     const discardOpportunityInputs = {
       beforeOverflow:Math.max(
         0,
@@ -3748,6 +3755,7 @@ export class Evaluator {
       transitionOptionValue,
       depth,
       dangerBefore:beforeSnapshot.teamDanger,
+      xSkillNextEnergy,
       discardOpportunityInputs,
       endOpportunityInputs,
       baseTransition:transferCompetitive
@@ -3802,10 +3810,11 @@ export class Evaluator {
   END transition terms，以及带 actionType 与 transitionTerms 的完整 sibling terms 数组。
 
   输出
-  Pf、Ps 与 Pd 相加后的非负 StateValue penalty points。
+  Pf、Ps 与 Pd 相加后的 StateValue penalty points；X 技能可使结果为负。
 
   读取状态
-  legal skill sibling 的完整 StateValue delta、强制弃牌状态差，以及 END 的能量和危险输入。
+  legal skill sibling 的完整 StateValue delta、X 技能的 E/E+1 配对 delta、
+  强制弃牌状态差，以及 END 的能量和危险输入。
 
   写入状态
   无。
@@ -3814,16 +3823,31 @@ export class Evaluator {
   endDiscardOpportunityRelief、endEnergyOpportunityPenalty。
 
   边界与不变量
-  Searcher 只提供完整集合；legal skill state-value opportunity、Pd 最大值及 Pf + Ps + Pd 仅在 Evaluator 聚合；
+  Searcher 只提供完整集合和已结算的 X 技能配对 delta；普通技能机会、X 技能边际收益、
+  Pd 最大值及 Pf + Ps + Pd 仅在 Evaluator 聚合；
   sibling 顺序不得改变结果，单项公式、单位换算和零 sibling 行为保持不变。
   */
   endOpportunityPoints(endTransitionTerms, siblingTransitionTerms = []) {
     const maximumLegalSkillStateValueOpportunity = siblingTransitionTerms
-      .filter((sibling) => sibling?.actionType === "skill")
+      .filter((sibling) => (
+        sibling?.actionType === "skill"
+          && !Number.isFinite(sibling.transitionTerms?.xSkillNextEnergy)
+      ))
       .reduce((maximum, sibling) => Math.max(
         maximum,
         Math.max(0, Number(sibling.transitionTerms?.stateDelta) || 0)
       ), 0);
+    const xSkillSibling = siblingTransitionTerms.find((sibling) => (
+      sibling?.actionType === "skill"
+        && Number.isFinite(sibling.transitionTerms?.xSkillNextEnergy)
+    ));
+    const xSkillStateDeltaPair = xSkillSibling
+      && Number.isFinite(xSkillSibling.nextEnergyStateDelta)
+      ? {
+          current:Number(xSkillSibling.transitionTerms.stateDelta) || 0,
+          next:xSkillSibling.nextEnergyStateDelta
+        }
+      : null;
     const maximumDiscardOpportunityRelief = siblingTransitionTerms
       .filter((sibling) => sibling?.actionType !== "end")
       .reduce((maximum, sibling) => Math.max(
@@ -3836,25 +3860,28 @@ export class Evaluator {
     return this.endEnergyOpportunityPenalty(
       endTransitionTerms,
       maximumLegalSkillStateValueOpportunity,
-      maximumDiscardOpportunityRelief
+      maximumDiscardOpportunityRelief,
+      xSkillStateDeltaPair
     );
   }
 
   /*
   功能
-  计算 END 的能量溢出、legal skill state-value opportunity 与强制弃牌状态机会惩罚。
+  计算 END 的能量溢出、分类后的 legal skill state-value opportunity 与强制弃牌状态机会惩罚。
 
   调用方
   endOpportunityPoints。
 
   输入
-  END transition terms，以及同一 Evaluator 聚合出的最大 legal skill StateValue 正变化与 discard opportunity relief。
+  END transition terms，以及同一 Evaluator 聚合出的最大普通技能 StateValue 正变化、
+  discard opportunity relief 与可选 X 技能 E/E+1 StateDelta 对。
 
   输出
-  三类互斥来源相加后的非负 StateValue penalty points。
+  三类来源相加后的 StateValue penalty points；Ps^X 不截断，因此总值可为负。
 
   读取状态
-  Evaluator 已物化的能量规则输入、队伍危险、skill StateValue opportunity 与 discard relief scalars。
+  Evaluator 已物化的能量规则输入、队伍危险、普通技能 StateValue opportunity、
+  X 技能配对 StateDelta 与 discard relief scalars。
 
   写入状态
   无。
@@ -3864,14 +3891,16 @@ export class Evaluator {
 
   边界与不变量
   maxEnergy<=0、无主动技能或当前能量不足费用时 readiness 为零；
-  技能机会的危险系数严格为 max(0.25, D(X))，其中 D(X) 已归一化到零至一；
+  普通技能危险系数严格为 max(0.75, D(X))，其中 D(X) 已归一化到零至一；
+  X 技能不使用 readiness 或危险系数，严格为 1.2-(Delta(E+1)-Delta(E)) 且允许负值；
   discard relief 已由 endDiscardOpportunityRelief 从真实状态差得出，不再缩放或读取 CardValue；
   无合法 sibling 由最大 relief 为零自然表达；调用方不得在 Evaluator 外部重复聚合。
   */
   endEnergyOpportunityPenalty(
     transitionTerms,
     maximumLegalSkillStateValueOpportunity = 0,
-    maximumDiscardOpportunityRelief = 0
+    maximumDiscardOpportunityRelief = 0,
+    xSkillStateDeltaPair = null
   ) {
     const inputs = transitionTerms?.endOpportunityInputs;
     const discardOpportunityPoints = Math.max(
@@ -3883,20 +3912,26 @@ export class Evaluator {
       0,
       inputs.energy + inputs.turnEnergyGain - inputs.maxEnergy
     );
-    let readiness = 0;
-    if (inputs.hasActiveSkill && inputs.energy >= inputs.activeSkillCost) {
-      const denominator = inputs.maxEnergy - inputs.activeSkillCost + 1;
-      readiness = Math.sqrt(
-        (inputs.energy - inputs.activeSkillCost + 1) / denominator
+    let legalSkillOpportunityPoints;
+    if (xSkillStateDeltaPair) {
+      legalSkillOpportunityPoints = ENERGY_STATE_WEIGHT
+        - (xSkillStateDeltaPair.next - xSkillStateDeltaPair.current);
+    } else {
+      let readiness = 0;
+      if (inputs.hasActiveSkill && inputs.energy >= inputs.activeSkillCost) {
+        const denominator = inputs.maxEnergy - inputs.activeSkillCost + 1;
+        readiness = Math.sqrt(
+          (inputs.energy - inputs.activeSkillCost + 1) / denominator
+        );
+      }
+      const dangerCoefficient = Math.max(
+        0.75,
+        clampProbability(Number(transitionTerms.dangerBefore) || 0)
       );
+      legalSkillOpportunityPoints = readiness
+        * dangerCoefficient
+        * Math.max(0, Number(maximumLegalSkillStateValueOpportunity) || 0);
     }
-    const dangerCoefficient = Math.max(
-      0.25,
-      clampProbability(Number(transitionTerms.dangerBefore) || 0)
-    );
-    const legalSkillOpportunityPoints = readiness
-      * dangerCoefficient
-      * Math.max(0, Number(maximumLegalSkillStateValueOpportunity) || 0);
     return overflowPoints + legalSkillOpportunityPoints + discardOpportunityPoints;
   }
 

@@ -529,7 +529,7 @@ export async function executeSearchRequest(request, runtimeControl = {}) {
   );
   const cancelled = engine.searcher.lastSearchStats?.stopReason === "CANCELLED";
   return {
-    action:cancelled ? null : action,
+    action,
     stats:engine.searcher.lastSearchStats,
     searchStopReason:engine.searcher.lastSearchStats?.stopReason ?? null,
     rngAfter:rng.snapshot(),
@@ -958,7 +958,7 @@ export class Controller {
 
   输出
   { action, result }；正常结果返回经身份、版本与根集合验证的 canonical Action，
-  Worker fault 返回合法 end fallback。
+  cooperative CANCELLED 已带完整 incumbent 时走同一验证；Worker fault 返回合法 end fallback。
 
   读取状态
   current GameState、session、request、outcome 与 decision-local root set。
@@ -972,7 +972,8 @@ export class Controller {
 
   边界与不变量
   Worker 不宣布 ACCEPTED；Main Thread 验证全部身份/version/actor/phase/root membership；
-  CANCELLED 与 stale 状态仍安全结束；validation 通过时允许复用同一 decision 已生成的合法实体根，
+  CANCELLED 无完整 action 与 stale 状态安全结束；带完整 action 的 CANCELLED 仍必须通过全部 acceptance；
+  validation 通过时允许复用同一 decision 已生成的合法实体根，
   但不得跨 stateVersion 或跨 decision 缓存。
   */
   acceptWorkerSearchOutcome(request, outcome, decisionRootActions = null) {
@@ -1016,8 +1017,9 @@ export class Controller {
       this.lastSearchResult = result;
       return { action:fallback.action, result };
     }
-    if (outcome.cancelled || outcome.searchStopReason === "CANCELLED") {
-      this.searchDiagnostics.CANCEL += 1;
+    const cancelled = outcome.cancelled || outcome.searchStopReason === "CANCELLED";
+    if (cancelled) this.searchDiagnostics.CANCEL += 1;
+    if (cancelled && !outcome.action) {
       const result = createSearchResult({
         request,
         action:null,
@@ -1083,7 +1085,7 @@ export class Controller {
   player 与可选 options/signal/searchTimeBudgetMs。
 
   输出
-  当前可执行 action；executor fault 进入确定性 root fallback，stale/cancel 安全返回 end。
+  当前可执行 action；executor fault 进入确定性 root fallback；stale 或无完整 incumbent 的 cancel 安全返回 end。
 
   读取状态
   current GameState、Fact、search configuration 与 searchRng。
@@ -1095,7 +1097,7 @@ export class Controller {
   createInitialWorld、getActionCandidates、createSearchRequest、searchExecutor.search、acceptWorkerSearchOutcome、decisionNow。
 
   边界与不变量
-  生产 Searcher execution 由 executor 负责；正常 TIME 仍由 Worker 返回 incumbent；Main Thread 只在
+  生产 Searcher execution 由 executor 负责；正常 TIME 与 cooperative CANCELLED 可由 Worker 返回完整 incumbent；Main Thread 只在
   infrastructure fault 时使用 Generator 定义的安全 end，且不执行 Searcher/Simulator。
   */
   async selectAction(player, options = {}) {

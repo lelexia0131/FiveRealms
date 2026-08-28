@@ -14222,22 +14222,22 @@ async function valueResidueClosure() {
     });
     assertClose(
       evaluator.endEnergyOpportunityPenalty(withInputs(), 20),
-      5 / Math.sqrt(3),
+      15 / Math.sqrt(3),
       1e-12,
-      "D(X)=0 时危险系数必须保持 0.25 下限"
+      "D(X)=0 时普通技能危险系数必须保持 0.75 下限"
     );
     const minimumDangerWithOverflow = evaluator.endEnergyOpportunityPenalty(
       withInputs({ energy:4 }),
       20
     );
-    assert.equal(minimumDangerWithOverflow, ENERGY_STATE_WEIGHT + 5);
+    assert.equal(minimumDangerWithOverflow, ENERGY_STATE_WEIGHT + 15);
     assert.equal(
       evaluator.endEnergyOpportunityPenalty(
         { ...withInputs({ energy:4 }), dangerBefore:0.1 },
         20
       ),
       minimumDangerWithOverflow,
-      "低于 0.25 的 D(X) 必须统一提升到 0.25"
+      "低于 0.75 的 D(X) 必须统一提升到 0.75"
     );
     const dangerFull = evaluator.endEnergyOpportunityPenalty(
       { ...withInputs({ energy:4 }), dangerBefore:1 },
@@ -14463,6 +14463,173 @@ async function legalSkillStateValueOpportunityContract() {
 test(
   "AI·价值归属：Ps 聚合 legal skill 的完整 StateValue 最佳正变化",
   legalSkillStateValueOpportunityContract
+);
+
+/*
+功能
+验证 X 技能使用同一当前 World 的 E/E+1 真实 StateDelta，并由 Evaluator 套用独立 Ps 公式。
+
+调用方
+AI 价值归属回归测试。
+
+输入
+无；函数内构造当前能量可发动孤注的 canonical World。
+
+输出
+Promise；反事实 World、边际收益、满能量或负 Ps 语义错误时抛出断言。
+
+读取状态
+canonical World、Searcher 已物化 sibling terms 与 Evaluator StateValue。
+
+写入状态
+仅独立 Simulator clone 和测试内的 Evaluator 调用记录。
+
+调用函数
+createSearchEngine、Searcher.search、Simulator.clone/apply、Evaluator.transitionDelta/endOpportunityPoints。
+
+边界与不变量
+E+1 世界只修改行动者用于孤注结算的能量；满能量时两个 delta 相等；
+Ps^X 不读取 S(E)/D(X) 且不对负值截断。
+*/
+async function xSkillEnergyCounterfactualContract() {
+  const game = makeBenchmarkGame({
+    players:[
+      { id:"x-skill-actor", team:"dawn", character:"fate-gambler", energy:2, hand:[] },
+      { id:"x-skill-enemy", team:"dusk", character:"oath-warden", hand:[] }
+    ],
+    options:{ actorId:"x-skill-actor", seed:20260814, nodeBudget:100 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const worldActor = world.players.find((player) => player.id === actor.id);
+    const xSkillAction = createAction({
+      type:"skill",
+      actorId:actor.id,
+      skillId:"allIn",
+      energyCost:worldActor.energy
+    });
+    const endAction = createAction({ type:"end", actorId:actor.id });
+    const engine = createSearchEngine({
+      world,
+      searchConfig:{
+        ...game.aiController.buildSearchConfig(),
+        depth:1,
+        nodeBudget:100,
+        timeBudgetMs:null,
+        enableRandomness:false,
+        randomnessRange:0
+      }
+    }, { next:() => 0 });
+    const evaluator = engine.searcher.evaluator;
+    const originalEndOpportunityPoints = evaluator.endOpportunityPoints.bind(evaluator);
+    let capturedSiblingTerms = null;
+    evaluator.endOpportunityPoints = (endTerms, siblingTerms) => {
+      capturedSiblingTerms = siblingTerms;
+      return originalEndOpportunityPoints(endTerms, siblingTerms);
+    };
+    await engine.searcher.search(
+      worldActor,
+      world,
+      [xSkillAction, endAction],
+      { gameId:world.gameId, rootCandidateCount:2 }
+    );
+    assert.equal(engine.searcher.lastSearchStats.counterfactualCalls, 1);
+    assert.equal(engine.searcher.lastSearchStats.stateUtilityCalls, 2);
+
+    const xSkillSibling = capturedSiblingTerms.find((sibling) => (
+      Number.isFinite(sibling.transitionTerms?.xSkillNextEnergy)
+    ));
+    const endSibling = capturedSiblingTerms.find((sibling) => sibling.actionType === "end");
+    assert.ok(xSkillSibling);
+    assert.ok(endSibling);
+    assert.equal(
+      xSkillSibling.transitionTerms.xSkillNextEnergy,
+      Math.min(worldActor.energy + 1, worldActor.maxEnergy)
+    );
+
+    const simulator = engine.searcher.simulatorFactory();
+    const counterfactualBefore = simulator.clone(world);
+    const counterfactualActor = counterfactualBefore.players.find(
+      (player) => player.id === actor.id
+    );
+    counterfactualActor.energy = Math.min(counterfactualActor.energy + 1, counterfactualActor.maxEnergy);
+    const counterfactualAfter = simulator.apply(counterfactualBefore, xSkillAction);
+    const expectedNextEnergyStateDelta = evaluator.transitionDelta(
+      counterfactualBefore,
+      counterfactualAfter,
+      actor.id,
+      simulator.buildLightningOutcomeSets(counterfactualBefore),
+      simulator.buildLightningOutcomeSets(counterfactualAfter)
+    );
+    assertClose(xSkillSibling.nextEnergyStateDelta, expectedNextEnergyStateDelta, 1e-12);
+
+    const currentStateDelta = xSkillSibling.transitionTerms.stateDelta;
+    const expectedXSkillOpportunity = ENERGY_STATE_WEIGHT
+      - (expectedNextEnergyStateDelta - currentStateDelta);
+    const safeEndTerms = { ...endSibling.transitionTerms, dangerBefore:0 };
+    const dangerousEndTerms = { ...endSibling.transitionTerms, dangerBefore:1 };
+    assertClose(
+      evaluator.endOpportunityPoints(safeEndTerms, [xSkillSibling]),
+      expectedXSkillOpportunity,
+      1e-12
+    );
+    assertClose(
+      evaluator.endOpportunityPoints(dangerousEndTerms, [xSkillSibling]),
+      expectedXSkillOpportunity,
+      1e-12,
+      "Ps^X 不得读取 D(X)"
+    );
+
+    const fullEnergyXSkillSibling = {
+      actionType:"skill",
+      transitionTerms:{
+        stateDelta:3,
+        xSkillNextEnergy:worldActor.maxEnergy
+      },
+      nextEnergyStateDelta:3
+    };
+    const noOverflowFullEnergyEnd = {
+      ...endSibling.transitionTerms,
+      dangerBefore:0,
+      endOpportunityInputs:{
+        ...endSibling.transitionTerms.endOpportunityInputs,
+        energy:worldActor.maxEnergy,
+        turnEnergyGain:0,
+        maxEnergy:worldActor.maxEnergy
+      }
+    };
+    assert.equal(
+      evaluator.endOpportunityPoints(noOverflowFullEnergyEnd, [fullEnergyXSkillSibling]),
+      ENERGY_STATE_WEIGHT,
+      "满能量时 Delta(E+1)=Delta(E)，Ps^X 必须自然为 1.2"
+    );
+
+    const negativeXSkillSibling = {
+      ...fullEnergyXSkillSibling,
+      transitionTerms:{ ...fullEnergyXSkillSibling.transitionTerms, stateDelta:2 },
+      nextEnergyStateDelta:4
+    };
+    assert.equal(
+      evaluator.endOpportunityPoints(safeEndTerms, [negativeXSkillSibling]),
+      ENERGY_STATE_WEIGHT - 2
+    );
+    assert.ok(
+      evaluator.endOpportunityPoints(safeEndTerms, [negativeXSkillSibling]) < 0,
+      "Ps^X 必须保留负值"
+    );
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test(
+  "AI·价值归属：X 技能使用同 World E/E+1 StateDelta 且 Ps 可为负",
+  xSkillEnergyCounterfactualContract
 );
 
 /*
@@ -17474,7 +17641,7 @@ test("AI·搜索：TIME 深层生成中断保留赌命者已完成突袭/孤注 
     assert.equal(outcome.stats.uniqueRootCandidateCount, 3);
     assert.equal(outcome.stats.completedRootCandidateCount, 3);
     assert.equal(outcome.stats.expanded, 5);
-    assert.equal(outcome.stats.bestValueScore, 0.07999999999999971);
+    assert.equal(outcome.stats.bestValueScore, 0.15124999999999955);
     assert.ok(outcome.stats.elapsedMs >= 40);
     assert.ok(outcome.stats.rootWork.every((entry) => entry.completed));
     assert.equal(outcome.stats.provisionalFallbackUsed, false);
@@ -17976,6 +18143,84 @@ async function realActionAlwaysTriggersFreshSearch() {
 
 test("AI·搜索：真实 Action 后强制重搜且合法旧后续不得自动执行", realActionAlwaysTriggersFreshSearch);
 
+/*
+功能
+验证 Worker/Controller 已接受 non-END 后，真实实体绑定失败会显式报告而不是伪装成正常 END。
+
+调用方
+AI 搜索与真实执行边界回归测试。
+
+输入
+无；构造一个合法 Assault，并在 acceptance 后、执行前的 pacing 边界移除实体牌。
+
+输出
+Promise；若失败被静默吞掉、错误执行或被记录为正常 END 时抛出断言。
+
+读取状态
+SearchRequest roots、Controller result、TurnWorkflow pacing 与公开日志。
+
+写入状态
+测试在 pacing callback 中移除待绑定实体牌，不提交任何真实 Action。
+
+调用函数
+makeGame、createWorkerSearchOutcome、AIController.selectAction、takeAiPlayPhase。
+
+边界与不变量
+该夹具只模拟 acceptance 后的实体失效；生产必须保留 non-END 搜索证据，并输出明确执行失败日志。
+*/
+async function acceptedNonEndBindingFailureIsExplicit() {
+  const { createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
+  const actor = makePlayer("binding-failure-actor", 0, "dawn", "ai", 5);
+  const enemy = makePlayer("binding-failure-enemy", 1, "dusk", "ai", 1);
+  const assault = instance("assault");
+  actor.hand.push(assault);
+  const { game, ui } = makeGame([actor, enemy]);
+  let returnedAction = null;
+  game.aiController.searchExecutor = {
+    async search(request) {
+      returnedAction = request.rootActions.find((action) => action.cardId === "assault");
+      assert.ok(returnedAction);
+      return createWorkerSearchOutcome({
+        request,
+        action:returnedAction,
+        stats:{
+          stopReason:"COMPLETE",
+          completedRootCandidateCount:request.rootActions.length,
+          bestSequence:[returnedAction]
+        },
+        searchStopReason:"COMPLETE",
+        rngAfter:request.rng
+      });
+    }
+  };
+  let invalidated = false;
+  game.cleanupManager.delay = async () => {
+    if (!invalidated) {
+      invalidated = true;
+      actor.hand.splice(actor.hand.indexOf(assault), 1);
+    }
+    return true;
+  };
+
+  await game.takeAiPlayPhase(actor, game.state.gameId);
+
+  assert.equal(returnedAction.type, "card");
+  assert.equal(returnedAction.cardId, "assault");
+  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.deepEqual(game.aiController.lastSearchResult.action, returnedAction);
+  assert.equal(game.aiController.lastSearchFallback, null);
+  assert.equal(actor.statistics.cardsPlayed, 0);
+  assert.ok(
+    ui.logs.some((message) => message.includes("计划行动执行失败")),
+    "non-END 实体绑定失败必须留下明确日志"
+  );
+}
+
+test(
+  "AI·执行边界：accepted non-END 实体绑定失败不静默伪装为 END",
+  acceptedNonEndBindingFailureIsExplicit
+);
+
 
 
 test("AI·搜索：模拟 end 会设置终止状态且终止快照不再生成动作", () => {
@@ -18316,13 +18561,13 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
 
 /*
 功能
-运行只允许 materialize END 一个 root 的 NODE 或 TIME 搜索夹具。
+运行可控 root 顺序与预算停止点的 NODE、TIME 或 CANCELLED 搜索夹具。
 
 调用方
 END sibling 预算中断回归测试。
 
 输入
-`NODE` 或 `TIME`，以及 sibling 类型和是否存在强制弃牌溢出。
+`NODE`、`TIME` 或 `CANCELLED`，以及 sibling 类型、强制弃牌溢出和是否先完成 non-END。
 
 输出
 选择结果、诊断、apply 轨迹与 canonical root Actions。
@@ -18337,12 +18582,16 @@ data-only root World 与测试 Evaluator scalar。
 Searcher.search、SearchBudget、PatternMatcher。
 
 边界与不变量
-END 调度在 sibling 前且能完整 apply，但预算到达后不得继续 materialize sibling；
-无溢出时 provisional 可安全 END，有溢出时必须返回 ordinary non-END sibling。
+默认让 END 先完成以验证 incomplete END；preserveNonEndIncumbent 模式让突袭先完成，
+验证预算停止后不得补算其余 non-END 或 END。
 */
 async function runEndSiblingBudgetFixture(
   stopReason,
-  { siblingType = "skill", forcesDiscard = false } = {}
+  {
+    siblingType = "skill",
+    forcesDiscard = false,
+    preserveNonEndIncumbent = false
+  } = {}
 ) {
   const actorId = "end-sibling-actor";
   const end = {
@@ -18350,8 +18599,8 @@ async function runEndSiblingBudgetFixture(
     actorId,
     targetIds:[],
     selection:null,
-    baseValue:10,
-    schedulingScore:100
+    baseValue:preserveNonEndIncumbent ? 2 : 10,
+    schedulingScore:preserveNonEndIncumbent ? 80 : 100
   };
   const sibling = {
     type:siblingType,
@@ -18360,17 +18609,33 @@ async function runEndSiblingBudgetFixture(
     cardId:siblingType === "card" ? "assault" : null,
     targetIds:[actorId],
     selection:null,
-    baseValue:1,
+    baseValue:preserveNonEndIncumbent ? -1 : 1,
     stateDelta:10,
-    schedulingScore:10
+    schedulingScore:preserveNonEndIncumbent ? 100 : 10
   };
+  const remainingSibling = preserveNonEndIncumbent ? {
+    type:"card",
+    actorId,
+    cardId:"exposeWeakness",
+    targetIds:[actorId],
+    selection:null,
+    baseValue:-2,
+    stateDelta:5,
+    schedulingScore:90
+  } : null;
+  const rootActions = remainingSibling ? [sibling, remainingSibling, end] : [sibling, end];
   const applied = [];
   let clockCalls = 0;
   const searcher = new Searcher({
     evaluator:createEndSiblingEvaluator(),
     patternMatcher:new PatternMatcher({ definitions:[] }),
     getResolutionScale:() => 1,
-    config:{ depth:1, beamWidth:2, hiddenSamples:0, yieldEvery:100 },
+    config:{
+      depth:1,
+      beamWidth:2,
+      hiddenSamples:0,
+      yieldEvery:stopReason === "CANCELLED" ? 1 : 100
+    },
     simulatorFactory:() => ({
       apply:(state, action) => {
         applied.push(action.type);
@@ -18380,7 +18645,9 @@ async function runEndSiblingBudgetFixture(
     }),
     searchBudgetFactory:() => stopReason === "NODE"
       ? new SearchBudget({ nodeBudget:1 })
-      : new SearchBudget({
+      : stopReason === "CANCELLED"
+        ? new SearchBudget({ nodeBudget:100 })
+        : new SearchBudget({
           timeBudget:1,
           now:() => (clockCalls++ < 2 ? 0 : 1)
         }),
@@ -18391,7 +18658,7 @@ async function runEndSiblingBudgetFixture(
       worlds:[],
       sampleCount:0
     }),
-    yieldControl:async () => true
+    yieldControl:async () => stopReason !== "CANCELLED"
   });
   const selected = await searcher.search(
     { id:actorId, hand:forcesDiscard ? Array(6).fill({}) : [] },
@@ -18406,10 +18673,18 @@ async function runEndSiblingBudgetFixture(
         handCount:forcesDiscard ? 6 : 0
       }]
     },
-    [sibling, end],
+    rootActions,
     { gameId:"end-sibling-budget" }
   );
-  return { selected, stats:searcher.lastSearchStats, applied, end, sibling };
+  return {
+    selected,
+    stats:searcher.lastSearchStats,
+    applied,
+    end,
+    sibling,
+    remainingSibling,
+    rootActions
+  };
 }
 
 test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序无关", () => {
@@ -18845,7 +19120,7 @@ test(
 
 /*
 功能
-验证大手牌下已完整评估的确定致死突袭不会在 NODE 中断后丢给 END。
+验证大手牌下首个已完成 non-END root 不会在 NODE 中断后丢给越预算补算的 END。
 
 调用方
 AI 搜索预算、END sibling 与 Controller acceptance 回归测试。
@@ -18866,11 +19141,10 @@ AI 搜索预算、END sibling 与 Controller acceptance 回归测试。
 makeBenchmarkGame、createInitialWorld、getActionCandidates、Simulator.apply、runBenchmarkAiDecision。
 
 边界与不变量
-END 必须一次结算全部强制弃牌；突袭必须真实生成并模拟为击杀；node budget 只完成首个正式候选，
-主 NODE 预算停止后只能沿用已有的有界 root-safety 语义；后续工作不得丢失致死候选，
-也不得触发 Searcher provisional 或 Controller worker fallback。
+END 必须一次结算全部强制弃牌；突袭必须真实生成并模拟为击杀；node budget 只完成首个正式候选；
+NODE 后不得补算其他 root 或 END，也不得触发 Searcher provisional 或 Controller worker fallback。
 */
-async function overflowLethalAssaultIncumbentRegression() {
+async function overflowCompletedNonEndIncumbentRegression() {
   const game = makeBenchmarkGame({
     players:[
       {
@@ -18979,14 +19253,17 @@ async function overflowLethalAssaultIncumbentRegression() {
 
     const decision = await runBenchmarkAiDecision(game, actor.id);
     assert.equal(decision.stats.stopReason, "NODE");
-    assert.ok(decision.stats.expanded >= 1);
-    assert.ok(decision.stats.completedRootCandidateCount >= 1);
+    assert.equal(decision.stats.expanded, 1);
+    assert.equal(decision.stats.completedRootCandidateCount, 1);
     assert.equal(decision.stats.provisionalFallbackUsed, false);
     assert.equal(decision.stats.bestSequence.length, 1);
-    assert.equal(decision.stats.bestSequence[0].cardId, "assault");
     assert.ok(decision.stats.incumbentUpdateCount >= 1);
-    assert.equal(decision.action.cardId, "assault");
-    assert.equal(decision.action.targetIds[0], "overflow-lethal-target");
+    assert.notEqual(decision.action.type, "end");
+    assert.deepEqual(decision.action, decision.stats.bestSequence[0]);
+    assert.deepEqual(decision.action, decision.stats.rootWork[0].action);
+    assert.equal(decision.stats.rootWork[0].completed, true);
+    assert.equal(decision.stats.rootSafetyExpandedNodes, 0);
+    assert.equal(decision.stats.rootSafetySimulationCalls, 0);
     assert.equal(game.aiController.lastSearchFallback, null);
   } finally {
     disposeBenchmarkGame(game);
@@ -18994,8 +19271,195 @@ async function overflowLethalAssaultIncumbentRegression() {
 }
 
 test(
-  "AI·搜索：大手牌确定致死突袭 incumbent 在 NODE 中断后仍压过多张强制弃牌 END",
-  overflowLethalAssaultIncumbentRegression
+  "AI·搜索：大手牌 NODE 中断保留预算内已完成 non-END incumbent",
+  overflowCompletedNonEndIncumbentRegression
+);
+
+/*
+功能
+构造追猎者手牌超过 HP、含两个 Assault 与 MutualBenefit、END 会立即强制弃牌的最小真实局面。
+
+调用方
+overflowAssaultDecisionChainContract。
+
+输入
+搜索节点预算；高预算自然 COMPLETE，1 节点触发 NODE。
+
+输出
+使用生产 Controller/Generator/Searcher/Worker local transport 的 benchmark Game。
+
+读取状态
+正式角色、卡牌、团队与搜索配置。
+
+写入状态
+仅创建独立测试 Game。
+
+调用函数
+makeBenchmarkGame、makeBenchmarkCard。
+
+边界与不变量
+行动者 HP=3、手牌=5，END 必须弃两张；测试不改 SearchBudget、Pattern 或任何价值公式。
+*/
+function makeOverflowAssaultInterruptionGame(nodeBudget) {
+  return makeBenchmarkGame({
+    players:[
+      {
+        id:"overflow-chain-actor",
+        team:"dawn",
+        character:"trail-hunter",
+        hp:3,
+        hand:["assault", "mutualBenefit", "assault", "counter", "block"].map(
+          (definitionId, index) => makeBenchmarkCard(definitionId, `overflow-chain-${index}`)
+        )
+      },
+      { id:"overflow-chain-enemy-a", team:"dusk", character:"oath-warden", hp:4 },
+      { id:"overflow-chain-ally", team:"dawn", character:"spirit-medic", hp:4 },
+      { id:"overflow-chain-enemy-b", team:"dusk", character:"blade-walker", hp:4 },
+      { id:"overflow-chain-enemy-c", team:"dusk", character:"fate-gambler", hp:4 }
+    ],
+    options:{ actorId:"overflow-chain-actor", seed:1827, nodeBudget }
+  });
+}
+
+/*
+功能
+沿 Generator→Searcher→Worker→Controller→真实执行证明超限 Assault 在 COMPLETE/NODE/CANCELLED 不被改写为 END。
+
+调用方
+AI 搜索与规划回归测试。
+
+输入
+无；内部复用同一最小局面语义并为每种停止原因创建隔离 Game。
+
+输出
+Promise；任一层丢失 canonical non-END、错误 fallback 或真实绑定失败时抛出断言。
+
+读取状态
+生产 World、root Actions、Searcher stats、WorkerSearchOutcome、Controller acceptance 与 Game execution。
+
+写入状态
+COMPLETE 局面真实执行一次 Assault；其余只写隔离搜索诊断。
+
+调用函数
+createInitialWorld、getActionCandidates、Simulator.apply、runBenchmarkAiDecision、
+createSearchRequest、runSearchRequest、acceptWorkerSearchOutcome、Game.playCard。
+
+边界与不变量
+COMPLETE 必须完成全部 roots 并选择 non-END；NODE/CANCELLED 只允许已有完整 incumbent；
+incomplete END 不参与比较，Worker/Controller 不得 fallback，真实实体与目标必须绑定成功。
+*/
+async function overflowAssaultDecisionChainContract() {
+  const completeGame = makeOverflowAssaultInterruptionGame(1000);
+  try {
+    const actor = completeGame.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      completeGame.state,
+      deriveCurrentCardCounts(actor, completeGame.state)
+    );
+    const roots = completeGame.aiController.getActionCandidates(actor, world);
+    const assaultRoots = roots.filter((action) => action.cardId === "assault");
+    const end = roots.find((action) => action.type === "end");
+    assert.ok(assaultRoots.length >= 1, "Generator 必须生成合法 Assault root");
+    assert.ok(end);
+    const endWorld = completeGame.aiController.simulatorFactory().apply(world, end);
+    assert.equal(world.players[0].handCount, 5);
+    assert.equal(endWorld.players[0].handCount, 3, "END 必须立即强制弃两张牌");
+
+    const complete = await runBenchmarkAiDecision(completeGame, actor.id);
+    assert.equal(complete.stats.stopReason, "COMPLETE");
+    assert.equal(complete.stats.completedRootCandidateCount, roots.length);
+    assert.equal(complete.action.cardId, "assault");
+    assert.deepEqual(completeGame.aiController.lastWorkerOutcome.action, complete.action);
+    assert.equal(completeGame.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.equal(completeGame.aiController.lastSearchFallback, null);
+
+    const card = actor.hand.find((entry) => entry.id === complete.action.cardInstanceId);
+    const targets = complete.action.targetIds.map(
+      (targetId) => completeGame.state.players.find((player) => player.id === targetId)
+    );
+    assert.ok(card);
+    assert.equal(targets.every(Boolean), true);
+    assert.equal(
+      await completeGame.playCard(actor, card, targets, complete.action.selection ?? null),
+      true
+    );
+    assert.equal(actor.statistics.cardsPlayed, 1);
+  } finally {
+    disposeBenchmarkGame(completeGame);
+  }
+
+  const nodeGame = makeOverflowAssaultInterruptionGame(1);
+  try {
+    const node = await runBenchmarkAiDecision(nodeGame, "overflow-chain-actor");
+    assert.equal(node.stats.stopReason, "NODE");
+    assert.equal(node.stats.expanded, 1);
+    assert.equal(node.stats.completedRootCandidateCount, 1);
+    assert.equal(node.action.cardId, "assault");
+    assert.deepEqual(node.action, node.stats.bestSequence[0]);
+    assert.equal(node.stats.rootSafetyExpandedNodes, 0);
+    assert.equal(node.stats.rootSafetySimulationCalls, 0);
+    assert.equal(nodeGame.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.equal(nodeGame.aiController.lastSearchFallback, null);
+  } finally {
+    disposeBenchmarkGame(nodeGame);
+  }
+
+  const cancelledGame = makeOverflowAssaultInterruptionGame(100);
+  try {
+    const { createSearchRequest } = await import("../js/ai/Controller.js");
+    const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+    const actor = cancelledGame.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      cancelledGame.state,
+      deriveCurrentCardCounts(actor, cancelledGame.state)
+    );
+    const roots = cancelledGame.aiController.getActionCandidates(actor, world);
+    const request = createSearchRequest({
+      requestId:"overflow-chain-cancelled",
+      gameId:cancelledGame.state.gameId,
+      stateVersion:cancelledGame.state.stateVersion,
+      actorId:actor.id,
+      phase:cancelledGame.state.phase,
+      currentRound:cancelledGame.state.currentRound,
+      world,
+      searchConfig:{
+        ...cancelledGame.aiController.buildSearchConfig(),
+        depth:1,
+        yieldEvery:1,
+        nodeBudget:100,
+        timeBudgetMs:30000
+      },
+      rng:new SearchRng(1827).snapshot(),
+      rootActions:roots
+    });
+    const outcome = await runSearchRequest(request, {
+      now:() => 0,
+      yieldControl:async () => false
+    });
+    assert.equal(outcome.workerError, null);
+    assert.equal(outcome.searchStopReason, "CANCELLED");
+    assert.equal(outcome.cancelled, true);
+    assert.equal(outcome.action.cardId, "assault");
+    assert.equal(outcome.stats.completedRootCandidateCount, 1);
+    assert.deepEqual(outcome.stats.bestSequence, [outcome.action]);
+    const accepted = cancelledGame.aiController.acceptWorkerSearchOutcome(
+      request,
+      outcome,
+      roots
+    );
+    assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.equal(accepted.action, outcome.action);
+    assert.equal(cancelledGame.aiController.lastSearchFallback, null);
+  } finally {
+    disposeBenchmarkGame(cancelledGame);
+  }
+}
+
+test(
+  "AI·搜索：超限 Assault 在 COMPLETE/NODE/CANCELLED 全链保持 non-END",
+  overflowAssaultDecisionChainContract
 );
 
 test("AI·搜索：TIME/NODE 遇到不完整 sibling 时 END 不登记 incumbent 且不突破预算", async () => {
@@ -19017,6 +19481,45 @@ test("AI·搜索：TIME/NODE 遇到不完整 sibling 时 END 不登记 incumbent
       assert.equal(result.stats.provisionalFallbackAction, expectedFallback);
       assert.equal(result.stats.rootWork[0].completed, false);
     }
+  }
+});
+
+test("AI·搜索：NODE 中断保留已完成 non-END incumbent 且不补算 END", async () => {
+  const result = await runEndSiblingBudgetFixture("NODE", {
+    siblingType:"card",
+    forcesDiscard:true,
+    preserveNonEndIncumbent:true
+  });
+  assert.equal(result.sibling.cardId, "assault");
+  assert.equal(result.remainingSibling.cardId, "exposeWeakness");
+  assert.equal(result.selected, result.sibling);
+  assert.deepEqual(result.applied, ["card"], "NODE 后不得再模拟破势或 END");
+  assert.equal(result.stats.stopReason, "NODE");
+  assert.equal(result.stats.expanded, 1);
+  assert.equal(result.stats.completedRootCandidateCount, 1);
+  assert.deepEqual(result.stats.bestSequence, [result.sibling]);
+  assert.equal(result.stats.bestValueScore, -1);
+  assert.equal(result.stats.provisionalFallbackUsed, false);
+  assert.equal(result.stats.rootSafetyExpandedNodes, 0);
+  assert.equal(result.stats.rootSafetySimulationCalls, 0);
+});
+
+test("AI·搜索：TIME/CANCELLED 保留已完成 non-END incumbent 且 incomplete END 不参与", async () => {
+  for (const stopReason of ["TIME", "CANCELLED"]) {
+    const result = await runEndSiblingBudgetFixture(stopReason, {
+      siblingType:"card",
+      forcesDiscard:true,
+      preserveNonEndIncumbent:true
+    });
+    assert.equal(result.selected, result.sibling, stopReason);
+    assert.deepEqual(result.applied, ["card"], `${stopReason} 后不得模拟破势或 END`);
+    assert.equal(result.stats.stopReason, stopReason);
+    assert.equal(result.stats.expanded, 1);
+    assert.equal(result.stats.completedRootCandidateCount, 1);
+    assert.deepEqual(result.stats.bestSequence, [result.sibling]);
+    assert.equal(result.stats.provisionalFallbackUsed, false);
+    assert.equal(result.stats.rootSafetyExpandedNodes, 0);
+    assert.equal(result.stats.rootSafetySimulationCalls, 0);
   }
 });
 

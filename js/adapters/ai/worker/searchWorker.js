@@ -71,7 +71,7 @@ activeRequestId/cancelled。
 runSearchRequest、postMessage。
 
 边界与不变量
-一个 requestId 只允许一个 terminal outcome；CANCEL 后不返回可执行 result。
+一个 requestId 只允许一个 terminal outcome；CANCEL 后只运输 Searcher 已完成的 incumbent，Main Thread 仍负责状态验收。
 */
 async function handleMessage(message) {
   const type = message?.type;
@@ -98,11 +98,7 @@ async function handleMessage(message) {
         return !cancelled;
       }
     });
-    if (cancelled) {
-      postMessage({ type:"ERROR", requestId, workerError:"cancelled" });
-    } else {
-      postMessage({ type:"RESULT", requestId, outcome });
-    }
+    postMessage({ type:"RESULT", requestId, outcome });
   } catch (error) {
     postMessage({
       type:"ERROR",
