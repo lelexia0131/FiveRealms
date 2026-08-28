@@ -13952,7 +13952,8 @@ Action、Simulator、Response、Searcher、StateValue、Evaluator production sou
 readFile、dynamic import。
 
 边界与不变量
-检查 owner+capability 精确残余，不禁止合法 assault transition、Counter transition 或 Pool 内部概率 clamp。
+检查 owner+capability 精确残余，不禁止合法 assault transition、Counter transition 或 Pool 内部概率 clamp；
+Searcher 不得写反事实 World，root-safety production symbol/caller 必须清零。
 */
 async function finalAiResidueApiClosure() {
   const paths = {
@@ -13981,6 +13982,28 @@ async function finalAiResidueApiClosure() {
     source.searcher,
     /\b(?:rootAssaultTargets|discoveredDynamicTarget|observeCounterfactualCandidate)\b/
   );
+  const searcherCode = source.searcher.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  assert.doesNotMatch(searcherCode, /\.energy\s*=/, "Searcher 不得写 World/player.energy");
+  assert.doesNotMatch(searcherCode, /simulator\.clone\s*\(/, "Searcher 不得 clone World");
+  assert.match(searcherCode, /simulator\.buildSkillEnergyCounterfactualWorlds\s*\(/);
+  for (const symbol of [
+    "requestRootSafetyCompletion",
+    "beginRootSafetyCandidate",
+    "abortRootSafetyCandidate",
+    "rootSafetyCompletion",
+    "rootSafetyCandidateActive",
+    "rootSafetyExpandedNodes",
+    "rootSafetySimulationCalls"
+  ]) {
+    assert.doesNotMatch(source.searcher, new RegExp(`\\b${symbol}\\b`, "u"), symbol);
+  }
+  const counterfactualStart = source.simulator.indexOf("buildSkillEnergyCounterfactualWorlds(");
+  const counterfactualEnd = source.simulator.indexOf("\n  }", counterfactualStart) + 4;
+  const counterfactualMethod = source.simulator.slice(counterfactualStart, counterfactualEnd);
+  assert.ok(counterfactualStart >= 0);
+  assert.match(counterfactualMethod, /const beforeWorld = this\.clone\(state\)/);
+  assert.match(counterfactualMethod, /actor\.energy = energy/);
+  assert.match(counterfactualMethod, /afterWorld:this\.apply\(beforeWorld, action\)/);
   assert.doesNotMatch(source.stateValue, /class\s+ThreatCalculator/);
   assert.match(source.stateValue, /export\s+function\s+threatScore\s*\(/);
   assert.match(
@@ -14485,7 +14508,8 @@ canonical World、Searcher 已物化 sibling terms 与 Evaluator StateValue。
 仅独立 Simulator clone 和测试内的 Evaluator 调用记录。
 
 调用函数
-createSearchEngine、Searcher.search、Simulator.clone/apply、Evaluator.transitionDelta/endOpportunityPoints。
+createSearchEngine、Searcher.search、Simulator.buildSkillEnergyCounterfactualWorlds、
+Evaluator.transitionDelta/endOpportunityPoints。
 
 边界与不变量
 E+1 世界只修改行动者用于孤注结算的能量；满能量时两个 delta 相等；
@@ -14553,18 +14577,17 @@ async function xSkillEnergyCounterfactualContract() {
     );
 
     const simulator = engine.searcher.simulatorFactory();
-    const counterfactualBefore = simulator.clone(world);
-    const counterfactualActor = counterfactualBefore.players.find(
-      (player) => player.id === actor.id
+    const counterfactual = simulator.buildSkillEnergyCounterfactualWorlds(
+      world,
+      xSkillAction,
+      Math.min(worldActor.energy + 1, worldActor.maxEnergy)
     );
-    counterfactualActor.energy = Math.min(counterfactualActor.energy + 1, counterfactualActor.maxEnergy);
-    const counterfactualAfter = simulator.apply(counterfactualBefore, xSkillAction);
     const expectedNextEnergyStateDelta = evaluator.transitionDelta(
-      counterfactualBefore,
-      counterfactualAfter,
+      counterfactual.beforeWorld,
+      counterfactual.afterWorld,
       actor.id,
-      simulator.buildLightningOutcomeSets(counterfactualBefore),
-      simulator.buildLightningOutcomeSets(counterfactualAfter)
+      simulator.buildLightningOutcomeSets(counterfactual.beforeWorld),
+      simulator.buildLightningOutcomeSets(counterfactual.afterWorld)
     );
     assertClose(xSkillSibling.nextEnergyStateDelta, expectedNextEnergyStateDelta, 1e-12);
 
@@ -19262,8 +19285,6 @@ async function overflowCompletedNonEndIncumbentRegression() {
     assert.deepEqual(decision.action, decision.stats.bestSequence[0]);
     assert.deepEqual(decision.action, decision.stats.rootWork[0].action);
     assert.equal(decision.stats.rootWork[0].completed, true);
-    assert.equal(decision.stats.rootSafetyExpandedNodes, 0);
-    assert.equal(decision.stats.rootSafetySimulationCalls, 0);
     assert.equal(game.aiController.lastSearchFallback, null);
   } finally {
     disposeBenchmarkGame(game);
@@ -19397,8 +19418,6 @@ async function overflowAssaultDecisionChainContract() {
     assert.equal(node.stats.completedRootCandidateCount, 1);
     assert.equal(node.action.cardId, "assault");
     assert.deepEqual(node.action, node.stats.bestSequence[0]);
-    assert.equal(node.stats.rootSafetyExpandedNodes, 0);
-    assert.equal(node.stats.rootSafetySimulationCalls, 0);
     assert.equal(nodeGame.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
     assert.equal(nodeGame.aiController.lastSearchFallback, null);
   } finally {
@@ -19500,8 +19519,6 @@ test("AI·搜索：NODE 中断保留已完成 non-END incumbent 且不补算 END
   assert.deepEqual(result.stats.bestSequence, [result.sibling]);
   assert.equal(result.stats.bestValueScore, -1);
   assert.equal(result.stats.provisionalFallbackUsed, false);
-  assert.equal(result.stats.rootSafetyExpandedNodes, 0);
-  assert.equal(result.stats.rootSafetySimulationCalls, 0);
 });
 
 test("AI·搜索：TIME/CANCELLED 保留已完成 non-END incumbent 且 incomplete END 不参与", async () => {
@@ -19518,8 +19535,6 @@ test("AI·搜索：TIME/CANCELLED 保留已完成 non-END incumbent 且 incomple
     assert.equal(result.stats.completedRootCandidateCount, 1);
     assert.deepEqual(result.stats.bestSequence, [result.sibling]);
     assert.equal(result.stats.provisionalFallbackUsed, false);
-    assert.equal(result.stats.rootSafetyExpandedNodes, 0);
-    assert.equal(result.stats.rootSafetySimulationCalls, 0);
   }
 });
 
@@ -20270,55 +20285,6 @@ test("AI·搜索：Worker 故障时 Controller 不评分且只返回 Generator �
   );
   assert.doesNotMatch(fallbackSource, /SearchPrior|\.reduce\(|\.sort\(|score\s*:/);
 });
-
-
-
-
-
-
-
-
-test("AI·搜索 Root Safety：SearchBudget 只授权一次有界 depth1 完成并如实记录统计", () => {
-  const timed = new SearchBudget({ timeBudget:0, now:() => 0 });
-  assert.equal(timed.shouldStop(), true);
-  assert.equal(timed.requestRootSafetyCompletion({ depth:1, candidateCount:2 }), false);
-  assert.equal(timed.beginRootSafetyCandidate(1), false);
-  assert.equal(timed.shouldAbortCurrentWork(), true);
-  assert.equal(timed.abortRootSafetyCandidate(), false);
-
-  const budget = new SearchBudget({ nodeBudget:1, now:() => 0 });
-  budget.observeNode();
-  assert.equal(budget.shouldStop(), true);
-  assert.equal(budget.requestRootSafetyCompletion({ depth:2, candidateCount:2 }), false);
-  assert.equal(budget.requestRootSafetyCompletion({ depth:1, candidateCount:2 }), true);
-  assert.equal(budget.beginRootSafetyCandidate(2), false);
-  assert.equal(budget.beginRootSafetyCandidate(1), true);
-  budget.observeSimulation(2);
-  budget.observeNode();
-  assert.equal(budget.beginRootSafetyCandidate(1), true);
-  budget.observeSimulation();
-  budget.observeNode();
-  assert.equal(budget.beginRootSafetyCandidate(1), false);
-  assert.equal(budget.requestRootSafetyCompletion({ depth:1, candidateCount:1 }), false);
-  assert.deepEqual(
-    {
-      expandedNodes:budget.diagnostics().expandedNodes,
-      simulationCalls:budget.diagnostics().simulationCalls,
-      rootSafetyExpandedNodes:budget.diagnostics().rootSafetyExpandedNodes,
-      rootSafetySimulationCalls:budget.diagnostics().rootSafetySimulationCalls,
-      stopReason:budget.diagnostics().stopReason
-    },
-    {
-      expandedNodes:3,
-      simulationCalls:3,
-      rootSafetyExpandedNodes:2,
-      rootSafetySimulationCalls:3,
-      stopReason:"NODE"
-    }
-  );
-});
-
-
 test("AI·资源身份：转移 Action 只保存可执行选择 ID", () => {
   const actor = makePlayer("transfer-rebind-actor", 0, "dawn"),
     from = makePlayer("transfer-rebind-from", 1, "dusk"),

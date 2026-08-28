@@ -719,6 +719,42 @@ class SimulatorCore {
 
   /*
   功能
+  构造只替换技能结算能量的配对反事实 World，并通过正常技能 transition 得到结果。
+
+  调用方
+  Searcher 的 X 技能 E+1 transition 编排。
+
+  输入
+  当前 canonical World、同一 canonical skill Action 与反事实结算能量。
+
+  输出
+  `{ beforeWorld, afterWorld }` 配对 transition Worlds。
+
+  读取状态
+  输入 World、Action 行动者 ID 与指定能量。
+
+  写入状态
+  只写独立 clone 中行动者的能量及 apply 产生的独立 after World。
+
+  调用函数
+  clone、apply。
+
+  边界与不变量
+  反事实只替换同一当前 World 的技能结算能量；不得模拟下一回合、摸牌或敌方行动，
+  技能费用、抽牌和状态效果仍由既有 apply 技能路径唯一结算。
+  */
+  buildSkillEnergyCounterfactualWorlds(state, action, energy) {
+    const beforeWorld = this.clone(state);
+    const actor = beforeWorld.players.find((player) => player.id === action?.actorId);
+    actor.energy = energy;
+    return {
+      beforeWorld,
+      afterWorld:this.apply(beforeWorld, action)
+    };
+  }
+
+  /*
+  功能
   把一个合法匿名手牌样本专化为敌方身份确定的独立 World。
 
   调用方

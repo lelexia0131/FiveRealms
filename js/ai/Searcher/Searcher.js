@@ -163,7 +163,7 @@ export class Searcher {
   机械保留候选集合中由 Evaluator comparator 判定的 incumbent。
 
   调用方
-  considerIncumbent、selectProgressiveSpine、search root safety 与最终收束。
+  considerIncumbent、selectProgressiveSpine 与 search 最终收束。
 
   输入
   只含完整物化节点的候选数组。
@@ -446,13 +446,13 @@ export class Searcher {
   把一次已经模拟完成的 canonical Action 组装为完整可比较搜索候选。
 
   调用方
-  根、root safety 与深层 candidate preparation。
+  根与深层 candidate preparation。
 
   输入
   动作前后 World、行动者、深度、provenance、Simulator、上下文、诊断开关与 SearchBudget。
 
   输出
-  完整候选；X 技能另带同 World 下 E+1 的完整 StateDelta；反事实中断时返回 null。
+  完整候选；X 技能另带由 Simulator 构造的同 World E+1 完整 StateDelta；反事实中断时返回 null。
 
   读取状态
   Searcher 反事实项、Evaluator 与搜索上下文。
@@ -461,12 +461,12 @@ export class Searcher {
   只写独立候选记录和显式诊断。
 
   调用函数
-  materializeValueTerms、Simulator.clone/apply、
+  materializeValueTerms、Simulator.buildSkillEnergyCounterfactualWorlds、
   Evaluator.evaluateTransition/transitionDelta/frontierResidual/composeSearchPrior。
 
   边界与不变量
-  Searcher 只机械组装各 owner 的结果；X 技能反事实仅 clone 同一 before World 并替换行动者能量，
-  不模拟回合、摸牌或敌方行动；不定义 value formula，partial candidate 不得返回。
+  Searcher 只机械组装各 owner 的结果；X 技能 World clone、能量替换与技能结算全部归 Simulator，
+  Searcher 不写 World、不定义 value formula，partial candidate 不得返回。
   */
   evaluateCandidate({
     action,
@@ -521,20 +521,18 @@ export class Searcher {
         nextEnergyStateDelta = baseTerms.stateDelta;
       } else {
         searchBudget?.observeSimulation();
-        // 反事实与当前候选共用同一 before World，只替换该技能结算时的能量。
-        const counterfactualBefore = simulator.clone(beforeState);
-        const counterfactualActor = counterfactualBefore.players.find(
-          (entry) => entry.id === player.id
+        const counterfactual = simulator.buildSkillEnergyCounterfactualWorlds(
+          beforeState,
+          action,
+          baseTerms.xSkillNextEnergy
         );
-        counterfactualActor.energy = baseTerms.xSkillNextEnergy;
-        const counterfactualAfter = simulator.apply(counterfactualBefore, action);
         if (this.isInterrupted(searchBudget)) return null;
         nextEnergyStateDelta = this.evaluator.transitionDelta(
-          counterfactualBefore,
-          counterfactualAfter,
+          counterfactual.beforeWorld,
+          counterfactual.afterWorld,
           player.id,
-          simulator.buildLightningOutcomeSets(counterfactualBefore),
-          simulator.buildLightningOutcomeSets(counterfactualAfter)
+          simulator.buildLightningOutcomeSets(counterfactual.beforeWorld),
+          simulator.buildLightningOutcomeSets(counterfactual.afterWorld)
         );
         searchBudget?.observeCounterfactual(2);
       }
@@ -619,7 +617,7 @@ export class Searcher {
   让 Evaluator 为同层完整候选组合唯一 Final Utility。
 
   调用方
-  根、root safety 与深层 sibling materialization 完成点。
+  根与深层 sibling materialization 完成点。
 
   输入
   已物化候选数组与同 parent 的完整 legal Action 集合。
@@ -1383,8 +1381,6 @@ export class Searcher {
       actionGenerationPhysicalCandidates:budgetStats.actionGenerationPhysicalCandidates,
       actionGenerationUniqueCandidates:budgetStats.actionGenerationUniqueCandidates,
       yieldCount:budgetStats.yieldCount,
-      rootSafetyExpandedNodes:budgetStats.rootSafetyExpandedNodes,
-      rootSafetySimulationCalls:budgetStats.rootSafetySimulationCalls,
       preparationCount:budgetStats.preparations.length,
       slowestPreparation,
       deadlineCrossingPreparation,
@@ -1616,7 +1612,6 @@ export class Searcher {
           completed:false,
           simulatorTransitions:budget.simulationCalls - rootWorkStarted
         });
-        budget.abortRootSafetyCandidate?.();
         break;
       }
       candidate.completedAtWorkCount = budget.simulationCalls;
@@ -1703,98 +1698,6 @@ export class Searcher {
 
     // 同层转移项是 SearchNode 最终价值的一部分；完成它之后候选才具备 best-seen 资格。
     this.finalizeCandidates(rootCandidates, scheduledRootActions);
-    const initiallyMaterializedRootActions = new Set(
-      rootCandidates.map((candidate) => candidate.action)
-    );
-    const unmaterializedNonTerminalRoots = scheduledRootActions.filter((action) => (
-      action?.type !== "end"
-      && !initiallyMaterializedRootActions.has(action)
-    ));
-    const unmaterializedRootTerminal = rootTerminalAction
-      && !initiallyMaterializedRootActions.has(rootTerminalAction);
-    const materializedNonTerminalRoots = rootCandidates
-      .filter((candidate) => candidate.action?.type !== "end");
-    const bestMaterializedNonTerminal = this.bestCandidate(
-      materializedNonTerminalRoots
-    );
-    const remainingRootSafetyCount = unmaterializedNonTerminalRoots.length
-      + (unmaterializedRootTerminal ? 1 : 0);
-    const unresolvedRootTerminal = rootCandidates.some((candidate) => (
-      candidate.action?.type === "end" && candidate.transitionValue === null
-    ));
-    const rootSafetyNeeded = !unresolvedRootTerminal && ((
-      unmaterializedNonTerminalRoots.length > 0
-        && !(bestMaterializedNonTerminal?.transitionValue >= 0)
-    ) || (
-      unmaterializedRootTerminal
-        && bestMaterializedNonTerminal?.transitionValue < 0
-    ));
-    const rootSafetyCompletionGranted = budget.stopReason === null
-      && rootSafetyNeeded
-      && remainingRootSafetyCount > 0
-      && typeof budget.requestRootSafetyCompletion === "function"
-      && budget.requestRootSafetyCompletion({
-        depth:1,
-        candidateCount:remainingRootSafetyCount
-      });
-    if (rootSafetyCompletionGranted) {
-      // SearchBudget 冻结当前剩余根数并逐个授权；Searcher 只编排已授权的
-      // depth-1 物化，不建立新 beam、深层循环或采样上下文。
-      for (const action of unmaterializedNonTerminalRoots) {
-        if (!budget.beginRootSafetyCandidate?.(1)) break;
-        const rootDescriptor = action;
-        const rootWorkStarted = budget.simulationCalls;
-        workDiagnostics.activeRoot = rootDescriptor;
-        budget.observeRootCandidateStarted?.();
-        const prepared = this.prepareCandidate(budget, 1, () => {
-          budget.observeSimulation();
-          const state = simulator.apply(world, action);
-          const candidate = this.evaluateCandidate({
-            action,
-            beforeState:world,
-            afterState:state,
-            player,
-            depth:1,
-            remainingProvenance:context.rootProvenance,
-            simulator,
-            context,
-            collectDiagnostics,
-            searchBudget:budget
-          });
-          return { state, candidate };
-        });
-        const state = prepared?.state ?? null;
-        const candidate = prepared?.candidate ?? null;
-        if (!candidate) {
-          workDiagnostics.abortedRootCandidateCount += 1;
-          workDiagnostics.abortedCandidateCount += 1;
-          workDiagnostics.rootWork.push({
-            action:rootDescriptor,
-            completed:false,
-            simulatorTransitions:budget.simulationCalls - rootWorkStarted
-          });
-          budget.abortRootSafetyCandidate?.();
-          continue;
-        }
-        candidate.completedAtWorkCount = budget.simulationCalls;
-        rootCandidates.push(candidate);
-        budget.observeNode();
-        this.finalizeCandidates(rootCandidates, scheduledRootActions);
-        workDiagnostics.completedRootCandidateCount = rootCandidates.filter(
-          (entry) => entry.transitionValue !== null
-        ).length;
-        if (workDiagnostics.completedRootCandidateCount > 0) {
-          workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, 1);
-        }
-        workDiagnostics.activeRoot = null;
-        workDiagnostics.rootWork.push({
-          action:rootDescriptor,
-          completed:candidate.transitionValue !== null,
-          simulatorTransitions:budget.simulationCalls - rootWorkStarted
-        });
-      }
-      this.finalizeCandidates(rootCandidates, scheduledRootActions);
-    }
     for (const rootWork of workDiagnostics.rootWork) {
       const materialized = rootCandidates.find((candidate) => candidate.action === rootWork.action);
       if (materialized) rootWork.completed = materialized.transitionValue !== null;
@@ -1968,23 +1871,14 @@ export class Searcher {
     }
 
     budget.complete();
-    const materializedRootActions = new Set(rootCandidates.map((candidate) => candidate.action));
     let choice = this.selectFinal({
       stopReason:budget.stopReason,
       completedCandidates:activeBeam,
       bestSeenCandidate
     });
 
-    // 已物化 end 可在任何停止原因下比较；未物化 end 只有在全部 non-end
-    // 根动作都已物化后才能恢复，不得越过同样未比较的 card/skill sibling。
+    // 已物化 end 可在任何停止原因下比较；未物化或 sibling 不完整的 end 不得恢复。
     if (rootTerminalAction) {
-      const allNonTerminalRootsMaterialized = scheduledRootActions.every((action) => (
-        action?.type === "end"
-        || materializedRootActions.has(action)
-      ));
-      const allMaterializedNonTerminalRootsNegative = rootCandidates
-        .filter((candidate) => candidate.action?.type !== "end")
-        .every((candidate) => candidate.transitionValue < 0);
       const terminalInFinalBeam = activeBeam.find(
         (node) => node.action?.type === "end"
       );
@@ -1993,73 +1887,7 @@ export class Searcher {
         : beam.find(
             (node) => node.action?.type === "end"
           );
-      let terminalChoice = terminalInFinalBeam ?? materializedRootTerminal;
-      if (!terminalChoice && allNonTerminalRootsMaterialized
-        && allMaterializedNonTerminalRootsNegative
-        && rootSafetyCompletionGranted
-        && budget.beginRootSafetyCandidate?.(1)) {
-        const rootDescriptor = rootTerminalAction;
-        const rootWorkStarted = budget.simulationCalls;
-        workDiagnostics.activeRoot = rootDescriptor;
-        budget.observeRootCandidateStarted?.();
-        const prepared = this.prepareCandidate(budget, 1, () => {
-          budget.observeSimulation();
-          const state = simulator.apply(
-            world,
-            rootTerminalAction
-          );
-          const candidate = this.evaluateCandidate({
-            action:rootTerminalAction,
-            beforeState:world,
-            afterState:state,
-            player,
-            depth:1,
-            remainingProvenance:context.rootProvenance,
-            simulator,
-            context,
-            collectDiagnostics:false,
-            searchBudget:budget
-          });
-          if (candidate) this.finalizeCandidates(
-            [...rootCandidates, candidate],
-            scheduledRootActions
-          );
-          return { state, candidate };
-        });
-        const terminalState = prepared?.state ?? null;
-        const fallback = prepared?.candidate ?? null;
-        if (!fallback) {
-          budget.abortRootSafetyCandidate?.();
-          return this.recordResult({
-            budget,
-            structure,
-            choice,
-            provisionalRootFallback,
-            context,
-            rootLedgers,
-            workDiagnostics
-          });
-        }
-        budget.observeNode();
-        workDiagnostics.completedRootCandidateCount += 1;
-        workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, 1);
-        workDiagnostics.activeRoot = null;
-        workDiagnostics.rootWork.push({
-          action:rootDescriptor,
-          completed:true,
-          simulatorTransitions:budget.simulationCalls - rootWorkStarted
-        });
-        terminalChoice = {
-          action:rootTerminalAction,
-          state:terminalState,
-          terminal:true,
-          valueScore:fallback.transitionValue,
-          pruneScore:fallback.transitionValue,
-          sequence:[rootTerminalAction],
-          remainingHistory:[],
-          frontierResidual:fallback.frontierResidual
-        };
-      }
+      const terminalChoice = terminalInFinalBeam ?? materializedRootTerminal;
       const bestFinalChoice = terminalChoice
         ? this.bestCandidate([choice, terminalChoice].filter(Boolean))
         : choice;
@@ -2553,10 +2381,6 @@ export class SearchBudget {
     this.actionGenerationUniqueCandidates = 0;
     this.yieldCount = 0;
     this.stopReason = null;
-    this.rootSafetyCompletion = null;
-    this.rootSafetyCandidateActive = false;
-    this.rootSafetyExpandedNodes = 0;
-    this.rootSafetySimulationCalls = 0;
     this.lastObservedAt = this.started;
     this.deadlineCrossedAt = null;
     this.deadlineCrossedWork = null;
@@ -2766,7 +2590,7 @@ export class SearchBudget {
   未中断时返回 true；中断时抛出本 SearchBudget 独占的 unwind signal。
 
   读取状态
-  当前预算、停止原因与根安全授权。
+  当前预算与停止原因。
 
   写入状态
   首次过期时写入 TIME/NODE stopReason。
@@ -2862,10 +2686,10 @@ export class SearchBudget {
   无。
 
   输出
-  时间/取消已停止时返回 true；NODE 根安全候选仍在正式授权内时返回 false。
+  TIME/NODE/CANCELLED 已停止时返回 true，否则返回 false。
 
   读取状态
-  stopReason 与 rootSafetyCandidateActive。
+  stopReason、节点或时间预算。
 
   写入状态
   尚未停止时可通过 shouldStop 首次写入 TIME/NODE。
@@ -2874,118 +2698,10 @@ export class SearchBudget {
   shouldStop。
 
   边界与不变量
-  TIME 一经观察必须穿透当前昂贵循环；NODE 的显式 depth-1 根安全授权保持既有结构语义。
+  任一停止原因一经观察必须穿透当前昂贵循环，不得为 root、sibling 或 END 放行新工作。
   */
   shouldAbortCurrentWork() {
-    if (this.rootSafetyCandidateActive && this.stopReason === SEARCH_STOP_REASON.NODE) {
-      return false;
-    }
     return this.shouldStop();
-  }
-
-  /*
-  功能
-  在主搜索已因 NODE 停止后，申请一次有界的根安全补评估。
-
-  调用方
-  Searcher 根候选首轮收束。
-
-  输入
-  评估深度与当前尚未完成的根候选数。
-
-  输出
-  SearchBudget 允许该阶段返回 true，否则返回 false。
-
-  读取状态
-  stopReason 与已有 rootSafetyCompletion。
-
-  写入状态
-  最多写入一次 depth=1 的候选数上限。
-
-  调用函数
-  无。
-
-  边界与不变量
-  只有已观察到的 NODE 可授权；只授权一次 depth=1，上限冻结为申请时的剩余根数。
-  TIME 只允许返回 deadline 前已经完整物化的 incumbent，绝不授权新的 root simulation。
-  SearchBudget 不读取根动作内容，也不授权深层、beam 或隐藏采样。
-  */
-  requestRootSafetyCompletion({ depth, candidateCount } = {}) {
-    const requestedCount = Number(candidateCount);
-    if (this.stopReason !== SEARCH_STOP_REASON.NODE || depth !== 1 || this.rootSafetyCompletion
-      || !Number.isFinite(requestedCount) || requestedCount < 1) return false;
-    this.rootSafetyCompletion = {
-      depth:1,
-      candidateLimit:Math.floor(requestedCount),
-      startedCandidates:0,
-      completedCandidates:0
-    };
-    return true;
-  }
-
-  /*
-  功能
-  从已授权的根安全阶段领取一个 depth-1 候选物化名额。
-
-  调用方
-  Searcher 在每个剩余根动作的 apply 之前。
-
-  输入
-  当前候选深度。
-
-  输出
-  尚有 depth-1 名额时返回 true，否则返回 false。
-
-  读取状态
-  rootSafetyCompletion 授权与当前活动候选。
-
-  写入状态
-  startedCandidates 加一并标记当前候选正在物化。
-
-  调用函数
-  无。
-
-  边界与不变量
-  同时只能有一个候选占用名额；深度不等于一或已达冻结上限时拒绝。
-  */
-  beginRootSafetyCandidate(depth) {
-    const completion = this.rootSafetyCompletion;
-    if (!completion || this.rootSafetyCandidateActive || depth !== completion.depth
-      || completion.startedCandidates >= completion.candidateLimit) return false;
-    completion.startedCandidates += 1;
-    this.rootSafetyCandidateActive = true;
-    return true;
-  }
-
-  /*
-  功能
-  释放未完成的根安全候选名额，避免异常或中断后残留活动状态。
-
-  调用方
-  Searcher 的候选 evaluation 中断路径。
-
-  输入
-  无。
-
-  输出
-  先前存在活动候选时返回 true，否则返回 false。
-
-  读取状态
-  rootSafetyCandidateActive。
-
-  写入状态
-  只把 rootSafetyCandidateActive 复位为 false。
-
-  调用函数
-  无。
-
-  边界与不变量
-  不把未完整物化的候选计为 completed/expanded，也不返还已经领取的名额。
-  */
-  abortRootSafetyCandidate() {
-    if (!this.rootSafetyCandidateActive) return false;
-    this.rootSafetyCandidateActive = false;
-    return true;
   }
 
   /*
@@ -3019,11 +2735,6 @@ export class SearchBudget {
     }
     this.lastFinishedPreparation = null;
     this.expandedNodes += 1;
-    if (this.rootSafetyCandidateActive) {
-      this.rootSafetyExpandedNodes += 1;
-      this.rootSafetyCompletion.completedCandidates += 1;
-      this.rootSafetyCandidateActive = false;
-    }
     return this.expandedNodes;
   }
 
@@ -3055,7 +2766,6 @@ export class SearchBudget {
   observeSimulation(count = 1) {
     const observed = Math.max(0, Number(count) || 0);
     this.simulationCalls += observed;
-    if (this.rootSafetyCandidateActive) this.rootSafetySimulationCalls += observed;
     return this.simulationCalls;
   }
 
@@ -3537,8 +3247,6 @@ export class SearchBudget {
       actionGenerationPhysicalCandidates:this.actionGenerationPhysicalCandidates,
       actionGenerationUniqueCandidates:this.actionGenerationUniqueCandidates,
       yieldCount:this.yieldCount,
-      rootSafetyExpandedNodes:this.rootSafetyExpandedNodes,
-      rootSafetySimulationCalls:this.rootSafetySimulationCalls,
       preparations:[...this.preparations],
       workAfterDeadline:this.deadlineCrossedWork
         ? this.workDelta(this.deadlineCrossedWork, finishedWork)
