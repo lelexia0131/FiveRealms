@@ -558,7 +558,7 @@ export class Searcher {
 
   边界与不变量
   Searcher 只确认全部 sibling 完整并提供同 parent 的完整 transition terms；
-  最大 relief、END opportunity 与 Final Utility 公式全部由 Evaluator 聚合；
+  legal skill state-value opportunity、discard relief、END opportunity 与 Final Utility 公式全部由 Evaluator 聚合；
   partial sibling 集合不得给 END 赋值，responseNet 只作诊断。
   */
   finalizeCandidates(candidates, siblingActions = candidates.map((entry) => entry.action)) {

@@ -914,7 +914,6 @@ export function statePlayerValueTerms(
       rescueOutlook,
       hp: player.hp * HP_VALUE,
       shield,
-      energy: Math.max(0, Number(player.energy) || 0) * ENERGY_STATE_WEIGHT,
       stacks: (player.exposeWeaknessStacks ?? 0) * 3,
       markThreat: -markThreat * 2,
       residualExposureValue: -residualExposure,

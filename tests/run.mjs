@@ -14220,12 +14220,25 @@ async function valueResidueClosure() {
         ...overrides
       }
     });
-    assert.equal(evaluator.endEnergyOpportunityPenalty(withInputs(), 20), 0);
-    const overflowOnly = evaluator.endEnergyOpportunityPenalty(
+    assertClose(
+      evaluator.endEnergyOpportunityPenalty(withInputs(), 20),
+      5 / Math.sqrt(3),
+      1e-12,
+      "D(X)=0 时危险系数必须保持 0.25 下限"
+    );
+    const minimumDangerWithOverflow = evaluator.endEnergyOpportunityPenalty(
       withInputs({ energy:4 }),
       20
     );
-    assert.equal(overflowOnly, ENERGY_STATE_WEIGHT);
+    assert.equal(minimumDangerWithOverflow, ENERGY_STATE_WEIGHT + 5);
+    assert.equal(
+      evaluator.endEnergyOpportunityPenalty(
+        { ...withInputs({ energy:4 }), dangerBefore:0.1 },
+        20
+      ),
+      minimumDangerWithOverflow,
+      "低于 0.25 的 D(X) 必须统一提升到 0.25"
+    );
     const dangerFull = evaluator.endEnergyOpportunityPenalty(
       { ...withInputs({ energy:4 }), dangerBefore:1 },
       5
@@ -14233,11 +14246,27 @@ async function valueResidueClosure() {
     assert.equal(dangerFull, ENERGY_STATE_WEIGHT + 5);
     assert.equal(
       evaluator.endEnergyOpportunityPenalty(
+        { ...withInputs({ energy:1 }), dangerBefore:1 },
+        5
+      ),
+      0,
+      "E<C 时 S(E) 必须为零"
+    );
+    assertClose(
+      evaluator.endEnergyOpportunityPenalty(
+        { ...withInputs({ energy:2 }), dangerBefore:1 },
+        5
+      ),
+      5 / Math.sqrt(3),
+      1e-12
+    );
+    assert.equal(
+      evaluator.endEnergyOpportunityPenalty(
         { ...withInputs({ energy:3 }), dangerBefore:1 },
         4
       ),
-      16 / 9,
-      "S(E) 在 (E-C+1)/(Emax-C+1)=2/3 时必须平方为 4/9"
+      4 * Math.sqrt(2 / 3),
+      "S(E) 在 (E-C+1)/(Emax-C+1)=2/3 时必须取平方根"
     );
     assert.equal(
       evaluator.endEnergyOpportunityPenalty(
@@ -14290,11 +14319,11 @@ async function valueResidueClosure() {
     )).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
     assert.doesNotMatch(
       searcherCode,
-      /ENERGY_STATE_WEIGHT|END_SKILL_SAFETY_WEIGHT|activeSkillCost|getMaxEnergy|getTurnEnergyBreakdown|dangerBefore/u
+      /ENERGY_STATE_WEIGHT|activeSkillCost|getMaxEnergy|getTurnEnergyBreakdown|dangerBefore/u
     );
     assert.doesNotMatch(
       searcherCode,
-      /candidate\.(?:skillSafetyRelief|dangerDelta|skillOpportunity)/u
+      /candidate\.(?:dangerDelta|skillOpportunity|legalSkillStateValueOpportunity)/u
     );
   } finally {
     disposeBenchmarkGame(game);
@@ -14305,30 +14334,31 @@ test("AI·价值归属：END 新机会公式不恢复旧价值 contract", valueR
 
 /*
 功能
-验证 skill safety relief 只投影当步生命、防护与威胁变化。
+验证 legal skill state-value opportunity 直接使用完整 StateValue 的最佳正变化。
 
 调用方
 AI 价值归属回归测试。
 
 输入
-无；函数内构造自己/队友危险、无直接改善、continuation 与当步击杀威胁场景。
+无；函数内构造正负技能、非技能与不同完整 StateValue 变化。
 
 输出
-Promise；Safety 投影遗漏直接救援或混入能量/continuation 时抛出断言。
+Promise；技能过滤、完整 StateValue delta 或最大正变化聚合错误时抛出断言。
 
 读取状态
 canonical before/after Worlds 与同一次 Evaluator transition terms。
 
 写入状态
-仅独立 after World clone。
+仅独立 after World clones。
 
 调用函数
-Evaluator.evaluateTransition、skillSafetyRelief。
+Evaluator.evaluateTransition、endOpportunityPoints。
 
 边界与不变量
-不调用第二次 Simulator；技能 ID 不决定 relief，只有 already-materialized World 的 safety 差决定。
+不新增价值计算；Ps 只读取 already-materialized skill transition 的完整 raw stateDelta，
+忽略非技能、负变化与 transition option，并由 Evaluator 选择最大正变化。
 */
-async function skillSafetyReliefProjectionContract() {
+async function legalSkillStateValueOpportunityContract() {
   const game = makeBenchmarkGame({
     players:[
       { id:"end-safety-actor", team:"dawn", character:"oath-warden", energy:3, hand:[] },
@@ -14350,57 +14380,89 @@ async function skillSafetyReliefProjectionContract() {
       deriveCurrentCardCounts(actor, game.state)
     );
     const evaluator = game.aiController.evaluator;
-    const action = createAction({
+    const skillAction = createAction({
       type:"skill",
       actorId:actor.id,
       skillId:"barrier",
       targetIds:[actor.id]
     });
-    const relief = (before, after, skillAction = action) => evaluator.skillSafetyRelief(
+    const cardAction = createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"charge",
+      cardInstanceId:"state-value-opportunity-card"
+    });
+    const baselineWorld = structuredClone(world);
+    baselineWorld.players.find((entry) => entry.id === actor.id).hp = 2;
+    const transitionTerms = (action, afterState, materializedTransitionOptionPoints = 0) => (
       evaluator.evaluateTransition({
-        action:skillAction,
-        player:before.players.find((entry) => entry.id === actor.id),
-        beforeState:before,
-        afterState:after
+        action,
+        player:baselineWorld.players.find((entry) => entry.id === actor.id),
+        beforeState:baselineWorld,
+        afterState,
+        materializedTransitionOptionPoints
       })
     );
 
-    const selfDanger = structuredClone(world);
-    selfDanger.players.find((entry) => entry.id === actor.id).hp = 1;
-    const selfProtected = structuredClone(selfDanger);
-    selfProtected.players.find((entry) => entry.id === actor.id).shield = 1;
-    assert.ok(relief(selfDanger, selfProtected) > 0);
+    const smallerGainWorld = structuredClone(baselineWorld);
+    smallerGainWorld.players.find((entry) => entry.id === actor.id).hp += 1;
+    const smallerSkillTerms = transitionTerms(skillAction, smallerGainWorld, 100);
+    assert.ok(smallerSkillTerms.stateDelta > 0, "生命正变化必须进入完整 StateValue delta");
+    assert.equal(
+      smallerSkillTerms.transitionOptionPoints,
+      100,
+      "generic transition option 只用于证明 Ps 不读取 baseTransition"
+    );
 
-    const allyDanger = structuredClone(world);
-    allyDanger.players.find((entry) => entry.id === "end-safety-ally").hp = 1;
-    const allyProtected = structuredClone(allyDanger);
-    allyProtected.players.find((entry) => entry.id === "end-safety-ally").shield = 1;
-    assert.ok(relief(allyDanger, allyProtected) > 0);
+    const largerGainWorld = structuredClone(smallerGainWorld);
+    largerGainWorld.players.find((entry) => entry.id === actor.id).shield += 1;
+    const largerSkillTerms = transitionTerms(skillAction, largerGainWorld);
+    assert.ok(largerSkillTerms.stateDelta > smallerSkillTerms.stateDelta);
 
-    const noDirectRelief = structuredClone(allyDanger);
-    const noReliefActor = noDirectRelief.players.find((entry) => entry.id === actor.id);
-    noReliefActor.energy = Math.max(0, noReliefActor.energy - 1);
-    noReliefActor.attackLimit = (noReliefActor.attackLimit ?? 1) + 1;
-    const breakArmy = createAction({
-      type:"skill",
-      actorId:actor.id,
-      skillId:"breakArmy"
-    });
-    assert.equal(relief(allyDanger, noDirectRelief, breakArmy), 0);
+    const lossWorld = structuredClone(baselineWorld);
+    lossWorld.players.find((entry) => entry.id === actor.id).hp -= 1;
+    const losingSkillTerms = transitionTerms(skillAction, lossWorld);
+    assert.ok(losingSkillTerms.stateDelta < 0);
 
-    const threatRemoved = structuredClone(world);
-    const removedEnemy = threatRemoved.players.find((entry) => entry.id === "end-safety-enemy");
-    removedEnemy.alive = false;
-    removedEnemy.hp = 0;
-    assert.ok(relief(world, threatRemoved) > 0);
+    const cardGainWorld = structuredClone(largerGainWorld);
+    const defeatedEnemy = cardGainWorld.players.find(
+      (entry) => entry.id === "end-safety-enemy"
+    );
+    defeatedEnemy.alive = false;
+    defeatedEnemy.hp = 0;
+    const cardTerms = transitionTerms(cardAction, cardGainWorld);
+    assert.ok(cardTerms.stateDelta > largerSkillTerms.stateDelta);
+
+    const endTerms = {
+      dangerBefore:1,
+      endOpportunityInputs:{
+        energy:4,
+        turnEnergyGain:0,
+        maxEnergy:4,
+        activeSkillCost:2,
+        hasActiveSkill:true
+      },
+      discardOpportunityInputs:{ beforeOverflow:0, afterOverflow:0, stateDelta:0 }
+    };
+    const opportunity = evaluator.endOpportunityPoints(endTerms, [
+      { actionType:"skill", transitionTerms:smallerSkillTerms },
+      { actionType:"skill", transitionTerms:losingSkillTerms },
+      { actionType:"card", transitionTerms:cardTerms },
+      { actionType:"skill", transitionTerms:largerSkillTerms }
+    ]);
+    assertClose(opportunity, largerSkillTerms.stateDelta, 1e-12);
+    assert.deepEqual(
+      Object.keys(smallerSkillTerms).filter((key) => /^safety.*Points$/u.test(key)),
+      []
+    );
   } finally {
     disposeBenchmarkGame(game);
   }
 }
 
 test(
-  "AI·价值归属：技能当步 Safety relief 覆盖自身队友与威胁击杀但排除 continuation",
-  skillSafetyReliefProjectionContract
+  "AI·价值归属：Ps 聚合 legal skill 的完整 StateValue 最佳正变化",
+  legalSkillStateValueOpportunityContract
 );
 
 /*
@@ -18210,7 +18272,7 @@ END sibling 顺序与预算中断回归测试。
 满足 Searcher root-only fixture 的 Evaluator capability 对象。
 
 读取状态
-测试 Action 上的 baseValue、safetyRelief 与 schedulingScore 标量。
+测试 Action 上的 baseValue、stateDelta 与 schedulingScore 标量。
 
 写入状态
 只向 opportunityCalls 追加 END terms 与完整 sibling terms。
@@ -18231,8 +18293,7 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
     adaptiveInformationTarget:() => null,
     evaluateTransition:({ action }) => ({
       baseTransition:action.baseValue,
-      safetyBeforePoints:0,
-      safetyAfterPoints:action.safetyRelief ?? 0,
+      stateDelta:action.stateDelta ?? 0,
       dangerBefore:1,
       endOpportunityInputs:action.type === "end" ? {} : null
     }),
@@ -18300,7 +18361,7 @@ async function runEndSiblingBudgetFixture(
     targetIds:[actorId],
     selection:null,
     baseValue:1,
-    safetyRelief:10,
+    stateDelta:10,
     schedulingScore:10
   };
   const applied = [];
@@ -18358,11 +18419,11 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
   const endAction = { type:"end" };
   const skillA = { type:"skill", skillId:"a" };
   const skillB = { type:"skill", skillId:"b" };
-  const candidate = (action, baseTransition, safetyRelief = 0) => ({
+  const candidate = (action, baseTransition, stateDelta = 0) => ({
     action,
     baseTransition,
     frontierValue:0,
-    baseTerms:{ safetyBeforePoints:0, safetyAfterPoints:safetyRelief },
+    baseTerms:{ stateDelta },
     transitionValue:null
   });
   const partialEnd = candidate(endAction, 10);
@@ -18404,7 +18465,7 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
     assert.deepEqual(
       call.siblingTerms
         .filter((sibling) => sibling.actionType === "skill")
-        .map((sibling) => sibling.transitionTerms.safetyAfterPoints)
+        .map((sibling) => sibling.transitionTerms.stateDelta)
         .sort((left, right) => left - right),
       [2, 5]
     );
@@ -18412,7 +18473,7 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
   const finalizeSource = Searcher.prototype.finalizeCandidates.toString();
   assert.doesNotMatch(
     finalizeSource,
-    /skillSafetyRelief|endDiscardOpportunityRelief|maximumSkillSafetyRelief|maximumDiscardOpportunityRelief/u
+    /endDiscardOpportunityRelief|maximumDiscardOpportunityRelief|maximumLegalSkillStateValueOpportunity/u
   );
   assert.match(finalizeSource, /endOpportunityPoints/u);
 
@@ -18432,24 +18493,21 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
     {
       actionType:"skill",
       transitionTerms:{
-        safetyBeforePoints:0,
-        safetyAfterPoints:2,
+        stateDelta:2,
         discardOpportunityInputs:{ beforeOverflow:1, afterOverflow:0, stateDelta:2 }
       }
     },
     {
       actionType:"skill",
       transitionTerms:{
-        safetyBeforePoints:0,
-        safetyAfterPoints:5,
+        stateDelta:5,
         discardOpportunityInputs:{ beforeOverflow:1, afterOverflow:0, stateDelta:3 }
       }
     },
     {
       actionType:"card",
       transitionTerms:{
-        safetyBeforePoints:0,
-        safetyAfterPoints:0,
+        stateDelta:2.5,
         discardOpportunityInputs:{ beforeOverflow:1, afterOverflow:0, stateDelta:2.5 }
       }
     }
@@ -18475,8 +18533,7 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
   const overflowReducingSiblings = consumableActions.map((action, index) => {
     const entry = candidate(action, 0.6);
     entry.baseTerms = {
-      safetyBeforePoints:0,
-      safetyAfterPoints:0,
+      stateDelta:3 + index,
       discardOpportunityInputs:{
         beforeOverflow:3,
         afterOverflow:2,
@@ -24932,7 +24989,7 @@ test("AI·灵医：R5 1HP danger 仍主导真正的生死边界", () => {
     `1HP danger 消除（${deltaDanger.toFixed(3)}）必须高于同暴露 2HP 治疗（${deltaExposed.toFixed(3)}）`);
 });
 
-test("AI·灵医：energyPressure 归因诊断——灵医花能量是相邻敌人的未来进攻威胁下降（VALID OPPORTUNITY COST）", () => {
+test("AI·灵医：energyPressure 归因保留且不生成静态当前能量价值", () => {
   const players = [
     {
       id: "a", team: "dawn", character: "spirit-medic", hp: 2, energy: 2, hand: [],
@@ -24956,13 +25013,20 @@ test("AI·灵医：energyPressure 归因诊断——灵医花能量是相邻敌�
   const after = new Simulator(visible).apply(visible, action, "a");
   const ledger = evaluator.ownerStateLedger(visible, after, "a");
   const owner = (id) => ledger.owners.find((entry) => entry.playerId === id);
+  const actorTerms = evaluator.playerValueTerms(
+    visible,
+    visible.players.find((entry) => entry.id === "a"),
+    "a",
+    0
+  ).terms;
   const adjacentEnemy = owner("b");
   const distantEnemy = owner("e");
   assert.ok(adjacentEnemy && distantEnemy, "应能找到相邻与不相邻敌人 owner");
   assertClose(adjacentEnemy.threat.residualExposureValue, 1.7730061349693251);
-  assertClose(adjacentEnemy.generic.energy, 0, 1e-9);
   assertClose(distantEnemy.threat.residualExposureValue, 0, 1e-9);
-  assertClose(owner("a").generic.energy, -2 * 1.2, 1e-9);
+  assert.equal(Object.hasOwn(actorTerms, "energy"), false);
+  assert.equal(Object.hasOwn(adjacentEnemy.generic, "energy"), false);
+  assert.equal(Object.hasOwn(owner("a").generic, "energy"), false);
 });
 
 // ---- AI 角色行为·影客 ----

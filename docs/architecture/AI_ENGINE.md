@@ -1409,6 +1409,19 @@ TerminalHeldOptionUtility
 EndOpportunityPoints
   = Pf + Ps + Pd
 
+SkillStateValueOpportunity
+  = max(s in LegalSkill) max(0, RawStateDelta(s))
+
+S(E)
+  = 0, E < C
+  = sqrt((E - C + 1) / (Emax - C + 1)), E >= C
+
+Ps
+  = S(E) * D'(X) * SkillStateValueOpportunity
+
+D'(X)
+  = max(0.25, D(X))
+
 Pd
   = max(a in EligibleSibling) max(0, RawStateDelta(a) - RawStateDelta(END))
 
@@ -1419,6 +1432,8 @@ FinalTransition
 ```
 
 `EligibleSibling` 必须来自同一 parent 的完整 canonical sibling 集合：END 确实把正 overflow 结算到零，且 sibling 与 END 具有相同的 `beforeOverflow`，并通过真实 HP/手牌变化满足 `afterOverflow < beforeOverflow`。单个 sibling 不必一次把全部 overflow 清零；只要仍能减少当前强制弃牌量，就代表 END 会丢失的真实继续行动机会。任一 canonical sibling 尚未完整物化时，END 不具备 Final Utility，也不能进入 incumbent/best-seen。`Pd` 仍只比较已物化 World 的 Raw State delta，不读取静态 CardValue、不按 overflow 张数乘固定常量，也不替代 Searcher 已有 continuation `valueScore` 累加。
+
+`Ps` 的 legal skill state-value opportunity 直接复用每个已物化技能 transition 的 `RawStateDelta`，包含完整 State Value 分项；不建立技能专属价值投影。最大正变化与 `Pf + Ps + Pd` 只由 Evaluator 聚合，Searcher 只交付同 parent 的完整 canonical sibling terms。`D(X)` 继续使用既有团队危险投影，技能机会损失使用 `D'(X)=max(0.25,D(X))` 保留最低危险系数。
 
 Adaptive information 仍保持 `E[max U] - max E[U]`：Searcher 只执行 hidden-world/follow-up traversal，Evaluator 只拥有具体角色/技能识别、公式与价值分类。物化结果作为 generic `TransitionOptionPoints` 进入 `evaluateTransition`；Searcher candidate schema 与 `composeTransitionValue` 不再知道 SpyGap。
 
@@ -1434,11 +1449,11 @@ Adaptive information 仍保持 `E[max U] - max E[U]`：Searcher 只执行 hidden
 B. historical magic number
 ```
 
-因此 `STATE_DELTA_SCALE` 已从生产 final path 删除，没有替换为 `1`、新 gamma 或另一个经验 scale。`END_OPPORTUNITY_CAP` 和 `SKILL_THRESHOLD_OPTION_VALUE` 也已从 final path 删除：结束后的弃牌/存量由 after-state 和 sibling 候选比较表达；聚能门槛由能量 state stock 与后续技能 transition 表达。
+因此 `STATE_DELTA_SCALE` 已从生产 final path 删除，没有替换为 `1`、新 gamma 或另一个经验 scale。`END_OPPORTUNITY_CAP` 和 `SKILL_THRESHOLD_OPTION_VALUE` 也已从 final path 删除：结束后的弃牌/存量由 after-state 和 sibling 候选比较表达；聚能门槛由 END 的 `S(E)` 与合法技能 transition 表达。
 
 仍保留的常数分两类：
 
-- `HP_VALUE=5` 是 state points 到 HP utility 的正式语义基线；`RESOURCE_MATERIAL_SCALE`、`ENERGY_STATE_WEIGHT`、死亡/危险/威胁权重属于 State Value 内部模型，只能经一次 state delta 进入 final；
+- `HP_VALUE=5` 是 state points 到 HP utility 的正式语义基线；`RESOURCE_MATERIAL_SCALE`、死亡/危险/威胁权重属于 State Value 内部模型，只能经一次 state delta 进入 final；`ENERGY_STATE_WEIGHT` 只服务充能桩未来有效增益与 END 能量溢出，不再为当前能量提供静态 State Value；
 - `STATE_UTILITY_PRIOR_WEIGHT`、`END_PRIOR_PENALTY`、`SKILL_THRESHOLD_PRIOR_BONUS` 与静态 CardValue 只属于 Search/Policy，不是 Final Utility 换算。
 
 这些类别不得再次混入同一个 final 加法公式。

@@ -40,7 +40,7 @@ $$
 | **常量当前值含义**         |       |                                                     |
 | -------------------------- | ----- | --------------------------------------------------- |
 | `HP_VALUE`                 | `5`   | 1 HP = 5 SP = 1u                                    |
-| `ENERGY_STATE_WEIGHT`      | `1.2` | 1 点能量                                            |
+| `ENERGY_STATE_WEIGHT`      | `1.2` | 充能桩有效未来增益与 END 能量溢出的每点 SP          |
 | `DANGER_VALUE`             | `7`   | Danger 基值；进入 StateValue 时作为 `-7 SP = -1.4u` |
 | `DEATH_VALUE`              | `28`  | Death 基值；进入 StateValue 时作为 `-28 SP = -5.6u` |
 | `SHIELD_RESERVE_WEIGHT`    | `2`   | 第一层护盾的储备价值                                |
@@ -114,7 +114,7 @@ BaseTransition
 
 若 A = END：
   - Energy overflow Pf
-  - Lost legal skill safety opportunity Ps
+  - Legal skill state-value opportunity Ps
   - Forced discard sibling opportunity Pd
 
 = Final Transition Utility
@@ -133,7 +133,7 @@ $$
 $$
 
 $$
-\boxed{P_s=S(E)D(X)M^*}
+\boxed{P_s=S(E)D'(X)\Delta_s^+}
 $$
 
 $$
@@ -143,7 +143,7 @@ $$
 其中 `EligibleSibling` 为通过真实 HP / 手牌状态变化完全消除 END 强制弃牌溢出的完整 sibling。
 
 $$
-\boxed{ S(E)= \begin{cases} 0,&E<C\\ \left(\frac{E-C+1}{E_{max}-C+1}\right)^2,&E\ge C \end{cases} }
+\boxed{ S(E)= \begin{cases} 0,&E<C\\ \sqrt{\frac{E-C+1}{E_{max}-C+1}},&E\ge C \end{cases} }
 $$
 
 $$
@@ -151,11 +151,15 @@ $$
 $$
 
 $$
+\boxed{D'(X)=\max(0.25,D(X))}
+$$
+
+$$
 \boxed{ R_i=clamp_{[0,1]}\left(\frac{\max(0,-AdverseSafety_i)}{5}\right) }
 $$
 
 $$
-\boxed{M^*=\max_s\max(0,Safety(Y_s)-Safety(X))}
+\boxed{\Delta_s^+=\max_{s\in LegalSkill}\max(0,V_{state}(Y_s)-V_{state}(X))}
 $$
 
 这就是当前 Evaluator 最终评分 authority 的完整骨架。
@@ -244,7 +248,7 @@ $$
 玩家存活时：
 
 $$
-\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+RescueOutlook\\ &+EnergyValue\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+HP2Risk\\ &+ShieldValue\\ &+EnergyDeviceFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentValue\\ &+EquipmentRoleDelta \end{aligned}
+\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+RescueOutlook\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+HP2Risk\\ &+ShieldValue\\ &+EnergyDeviceFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentValue\\ &+EquipmentRoleDelta \end{aligned}
 $$
 
 其中前半由 `StateValue.js` 唯一拥有，手牌/装备 intrinsic asset 由 `CardValue.js` 唯一拥有。
@@ -319,19 +323,7 @@ $$
 [-4SP，4SP]\\  [-0.8u,0.8u]
 $$
 
-## 5.4 能量
-
-$$
-{EnergyValue=Energy\times1.2}
-$$
-
-因此：
-
-$$
-{1Energy=1.2SP=0.24u}
-$$
-
-## 5.5 破势层 `Expose Weakness Stacks`
+## 5.4 破势层 `Expose Weakness Stacks`
 
 $$
 \boxed{ExposeStackValue=Stacks\times3}\ (Stacks代表层数)
@@ -343,7 +335,7 @@ $$
 1ExposeStackValue=3SP=0.6u
 $$
 
-## 5.6 Hunt Mark 威胁
+## 5.5 Hunt Mark 威胁
 
 猎杀标记概率质量，其中 P 表示玩家 i 被标记上猎印的概率：
 
@@ -887,19 +879,18 @@ $$
 
 源码：`StateValue.js:824`。
 
-# 14. 团队安全性与危险性
+# 14. 团队危险性
 
 源码：`Evaluator.js:1421,3502`。
 
-## 14.1 Safety term 集合
+## 14.1 Danger term 集合
 
-`TEAM_SAFETY_TERM_KEYS`：
+`TEAM_DANGER_TERM_KEYS`：
 
 ```
 Danger
 HP2Risk
 RescueOutlook
-HPValue
 ShieldValue
 MarkThreat
 ResidualExposureValue
@@ -908,7 +899,6 @@ ResidualExposureValue
 明确不包括：
 
 ```
-EnergyValue
 HandCountValue
 HandRoleDelta
 EquipmentValue
@@ -917,21 +907,7 @@ ExposeStackValue
 EnergyDeviceFuture
 ```
 
-## 14.2 Team Safety Points
-
-只对 viewer 阵营玩家：
-
-$$
-Safety_i =Death_i+\sum_{k\in SafetyKeys}Term_{i,k}
-$$
-
-$$
-\boxed{ TeamSafetyPoints=\sum_{i\in allies}Safety_i }
-$$
-
-## 14.3 单玩家风险度 R_i
-
-Danger keys = Safety keys 去掉 `HPValue`。
+## 14.2 单玩家风险度 R_i
 
 $$
 AdverseProjection_i =Death_i+\sum_{k\in DangerKeys}Term_{i,k}
@@ -947,13 +923,19 @@ $$
 \boxed{ R_i =clamp_{[0,1]}\left(\frac{DangerPoints_i}{5}\right) }
 $$
 
-## 14.4 团队危险度 D(X)
+## 14.3 团队危险度 D(X)
 
 $$
 \boxed{ D(X)=\max_{i\in allies}R_i }
 $$
 
 因此只要任一己方角色处于高风险，团队危险度不会被其它安全队友平均稀释。
+
+END 技能机会损失使用最低危险系数：
+
+$$
+\boxed{ D'(X)=\max(0.25,D(X)) }
+$$
 
 # 15. Lightning 生命周期价值
 
@@ -1317,8 +1299,6 @@ $$
 \boxed{ P_{END}=P_f+P_s+P_d }
 $$
 
-其中 `λ = END_SKILL_SAFETY_WEIGHT = 1`。
-
 ## 18.1 能量满溢 Pf
 
 设：
@@ -1358,62 +1338,46 @@ $$
 如果已具备发动权：
 
 $$
-\boxed{ S(E) =\left(\frac{E-C+1}{E_{max}-C+1}\right)^2 }
+\boxed{ S(E) =\sqrt{\frac{E-C+1}{E_{max}-C+1}} }
 $$
 
 当前代码没有额外经验归一化常量。
 
 例如 `C=2, Emax=4`：
 
-| **ES(E)** |              |
-| --------- | ------------ |
-| 1         | 0            |
-| 2         | 1/9 ≈ 0.1111 |
-| 3         | 4/9 ≈ 0.4444 |
-| 4         | 1            |
+| E | S(E) |
+| --- | --- |
+| 1 | 0 |
+| 2 | 1/√3 ≈ 0.5774 |
+| 3 | √(2/3) ≈ 0.8165 |
+| 4 | 1 |
 
-## 18.3 每个技能 sibling 的直接安全改善 Ms
+## 18.3 Legal skill state-value opportunity
 
-使用**同一次 transition evaluation**已经得到的 safety points：
-
-$$
-\boxed{ M_s =\max(0,Safety(Y_s)-Safety(X)) }
-$$
-
-不使用完整 StateDelta，因此不会把：
-
-- 能量；
-- 手牌；
-- 装备 intrinsic；
-- 普通经济收益；
-- continuation；
-
-重复塞进 `M_s`。
-
-## 18.4 最佳技能直接安全机会 M*
-
-Evaluator 对 Searcher 提供的完整 legal skill sibling transition terms 进行价值聚合：
+每个 legal skill sibling 直接复用**同一次 transition evaluation**已经得到的完整 raw StateValue delta：
 
 $$
-\boxed{ M^*=\max_sM_s }
+\Delta_s=V_{state}(Y_s)-V_{state}(X)
 $$
 
-若没有合法技能或没有直接安全改善：
+Evaluator 在完整 legal skill sibling 集合中选择最佳正变化：
 
 $$
-M^*=0
+\boxed{\Delta_s^+=\max_{s\in LegalSkill}\max(0,\Delta_s)}
 $$
 
-## 18.5 技能机会损失 Ps
+该值包含 StateValue 的全部既有分项；不新增第二套价值计算，也不读取 `baseTransition`、TransitionOption 或 continuation。Searcher 只提供完整 sibling transition terms，不聚合价值。
+
+若没有合法技能或所有 legal skill 的 StateValue delta 都不为正：
 
 $$
-\boxed{ P_s =1\times S(E)\times D(X)\times M^* }
+\Delta_s^+=0
 $$
 
-因为 `λ=1`，可写为：
+## 18.4 技能机会损失 Ps
 
 $$
-\boxed{P_s=S(E)D(X)M^*}
+\boxed{P_s=S(E)D'(X)\Delta_s^+}
 $$
 
 该项**只减 END candidate**。
@@ -1423,10 +1387,10 @@ $$
 如果先使用技能后再在新 World 中考虑 END，而主动技能已经不能再用，则此时 legal skill sibling 为空：
 
 $$
-M^*=0\Rightarrow P_s=0
+\Delta_s^+=0\Rightarrow P_s=0
 $$
 
-## 18.6 强制弃牌机会损失
+## 18.5 强制弃牌机会损失
 
 Pd 该项只在 END 的真实 Simulator 结果确实发生强制弃牌时考虑。 设 END 与同 parent sibling 的原始状态变化分别为：
 
@@ -1458,7 +1422,7 @@ $$
 
 该项使用 Raw StateDelta，不重复加入 terminal frontier，也不识别 Recover、装备或具体卡牌类型。
 
-## 18.7 END 最终公式
+## 18.6 END 最终公式
 
 $$
 \boxed{ V_{END} =V_{baseTransition} +V_{frontier} -\frac{P_f+P_s+P_d}{5} }
@@ -1467,7 +1431,7 @@ $$
 以 Utility 直接表示：
 
 $$
-\boxed{ P_{END,u} =0.24\times Overflow +S(E)D(X)M^*_u+\frac {P_d}5 }
+\boxed{ P_{END,u} =0.24\times Overflow +\frac{S(E)D'(X)\Delta_s^+}{5}+\frac {P_d}5 }
 $$
 
 # 19. Candidate 比较语义
@@ -3038,7 +3002,7 @@ Canonical World 已携带正式技能费用；END `S(E)` 不重新读取/解释�
 | **常量值类型**             |      |                            |
 | -------------------------- | ---- | -------------------------- |
 | `HP_VALUE`                 | 5    | State/Final 单位 authority |
-| `ENERGY_STATE_WEIGHT`      | 1.2  | State Value                |
+| `ENERGY_STATE_WEIGHT`      | 1.2  | EnergyDeviceFuture / END overflow |
 | `DANGER_VALUE`             | 7    | State Value                |
 | `DEATH_VALUE`              | 28   | State Value                |
 | `SHIELD_RESERVE_WEIGHT`    | 2    | State Value                |
@@ -3070,7 +3034,6 @@ Canonical World 已携带正式技能费用；END `S(E)` 不重新读取/解释�
 | `STATE_UTILITY_PRIOR_WEIGHT`          | 0.4  | Search prior             |
 | `END_PRIOR_PENALTY`                   | 0.8  | Search prior only        |
 | `SKILL_THRESHOLD_PRIOR_BONUS`         | 4    | Search prior             |
-| `END_SKILL_SAFETY_WEIGHT`             | 1    | END Final opportunity λ  |
 
 ## 48.4 Event
 

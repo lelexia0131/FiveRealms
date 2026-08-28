@@ -1397,19 +1397,14 @@ const STATE_UTILITY_PRIOR_WEIGHT = 0.4;
 
 const END_PRIOR_PENALTY = 0.8;
 const SKILL_THRESHOLD_PRIOR_BONUS = 4;
-const END_SKILL_SAFETY_WEIGHT = 1;
-const TEAM_SAFETY_TERM_KEYS = Object.freeze([
+const TEAM_DANGER_TERM_KEYS = Object.freeze([
   "danger",
   "hp2Risk",
   "rescueOutlook",
-  "hp",
   "shield",
   "markThreat",
   "residualExposureValue"
 ]);
-const TEAM_DANGER_TERM_KEYS = Object.freeze(
-  TEAM_SAFETY_TERM_KEYS.filter((key) => key !== "hp")
-);
 
 /*
 功能
@@ -3505,7 +3500,7 @@ export class Evaluator {
 
   /*
   功能
-  在一次 StateValue 聚合中同时产出完整状态点、队伍安全点与有界队伍危险。
+  在一次 StateValue 聚合中同时产出完整状态点与有界队伍危险。
 
   调用方
   stateUtility、evaluateTransition。
@@ -3514,7 +3509,7 @@ export class Evaluator {
   canonical World、viewer ID，以及调用层已准备的闪电与可选封印纯数值。
 
   输出
-  包含 statePoints、teamSafetyPoints 与零到一 teamDanger 的新对象。
+  包含 statePoints 与零到一 teamDanger 的新对象。
 
   读取状态
   只读 World、StateValue/CardValue 分项与显式领域值。
@@ -3526,19 +3521,17 @@ export class Evaluator {
   playerValueTerms、sealTeamBurden、lightningLifecycleValue、statePointsToUtility、clampProbability。
 
   边界与不变量
-  Safety 只投影现有生命、防护、救援和威胁分项；不含能量、手牌、装备资产或普通经济项。
   Danger 取队伍成员最大负向安全压力，并只用既有 HP-equivalent 尺度归一化。
   */
   stateValueSnapshot(state, viewerId, lightningOutcomeSets = [], sealValues = null) {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer) {
-      return { statePoints:Number.NEGATIVE_INFINITY, teamSafetyPoints:0, teamDanger:1 };
+      return { statePoints:Number.NEGATIVE_INFINITY, teamDanger:1 };
     }
     const radarTacticProbability = buildRadarJudgmentProbabilities(
       queryCurrentCardCounts(state.probabilityState)
     ).tactic;
     let statePoints = 0;
-    let teamSafetyPoints = 0;
     let teamDanger = 0;
     for (let playerIndex = 0; playerIndex < state.players.length; playerIndex += 1) {
       const player = state.players[playerIndex];
@@ -3556,10 +3549,6 @@ export class Evaluator {
         ? Number(sealValues[playerIndex]) || 0
         : sealTeamBurden(state, player, viewer.battleTeam));
       if (sign < 0) continue;
-      teamSafetyPoints += death + TEAM_SAFETY_TERM_KEYS.reduce(
-        (sum, key) => sum + (Number(terms[key]) || 0),
-        0
-      );
       const dangerPoints = Math.max(0, -(death + TEAM_DANGER_TERM_KEYS.reduce(
         (sum, key) => sum + (Number(terms[key]) || 0),
         0
@@ -3572,7 +3561,7 @@ export class Evaluator {
     for (const outcomeSet of lightningOutcomeSets) {
       statePoints += this.lightningLifecycleValue(state, outcomeSet, viewerId);
     }
-    return { statePoints, teamSafetyPoints, teamDanger };
+    return { statePoints, teamDanger };
   }
 
   /*
@@ -3758,8 +3747,6 @@ export class Evaluator {
       transitionOptionPoints,
       transitionOptionValue,
       depth,
-      safetyBeforePoints:beforeSnapshot.teamSafetyPoints,
-      safetyAfterPoints:afterSnapshot.teamSafetyPoints,
       dangerBefore:beforeSnapshot.teamDanger,
       discardOpportunityInputs,
       endOpportunityInputs,
@@ -3767,39 +3754,6 @@ export class Evaluator {
         ? stateDeltaValue + transitionOptionValue
         : Number.NEGATIVE_INFINITY
     };
-  }
-
-  /*
-  功能
-  从同一次 transition evaluation 的 safety-only 投影计算技能当步安全改善。
-
-  调用方
-  endOpportunityPoints。
-
-  输入
-  Evaluator.evaluateTransition 返回的完整命名 terms。
-
-  输出
-  非负 State Value points。
-
-  读取状态
-  transition terms 中的 before/after safety points。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  不读取完整 state delta；能量、手牌、装备、普通经济与 continuation 收益不会进入。
-  */
-  skillSafetyRelief(transitionTerms) {
-    return Math.max(
-      0,
-      (Number(transitionTerms?.safetyAfterPoints) || 0)
-        - (Number(transitionTerms?.safetyBeforePoints) || 0)
-    );
   }
 
   /*
@@ -3851,24 +3805,24 @@ export class Evaluator {
   Pf、Ps 与 Pd 相加后的非负 StateValue penalty points。
 
   读取状态
-  sibling 的 safety、强制弃牌状态差，以及 END 的能量和危险输入。
+  legal skill sibling 的完整 StateValue delta、强制弃牌状态差，以及 END 的能量和危险输入。
 
   写入状态
   无。
 
   调用函数
-  skillSafetyRelief、endDiscardOpportunityRelief、endEnergyOpportunityPenalty。
+  endDiscardOpportunityRelief、endEnergyOpportunityPenalty。
 
   边界与不变量
-  Searcher 只提供完整集合；M* 与 Pd 的最大值及 Pf + Ps + Pd 仅在 Evaluator 聚合；
+  Searcher 只提供完整集合；legal skill state-value opportunity、Pd 最大值及 Pf + Ps + Pd 仅在 Evaluator 聚合；
   sibling 顺序不得改变结果，单项公式、单位换算和零 sibling 行为保持不变。
   */
   endOpportunityPoints(endTransitionTerms, siblingTransitionTerms = []) {
-    const maximumSkillSafetyRelief = siblingTransitionTerms
+    const maximumLegalSkillStateValueOpportunity = siblingTransitionTerms
       .filter((sibling) => sibling?.actionType === "skill")
       .reduce((maximum, sibling) => Math.max(
         maximum,
-        this.skillSafetyRelief(sibling.transitionTerms)
+        Math.max(0, Number(sibling.transitionTerms?.stateDelta) || 0)
       ), 0);
     const maximumDiscardOpportunityRelief = siblingTransitionTerms
       .filter((sibling) => sibling?.actionType !== "end")
@@ -3881,26 +3835,26 @@ export class Evaluator {
       ), 0);
     return this.endEnergyOpportunityPenalty(
       endTransitionTerms,
-      maximumSkillSafetyRelief,
+      maximumLegalSkillStateValueOpportunity,
       maximumDiscardOpportunityRelief
     );
   }
 
   /*
   功能
-  计算 END 的能量溢出、已完整技能 sibling 安全机会与强制弃牌状态机会惩罚。
+  计算 END 的能量溢出、legal skill state-value opportunity 与强制弃牌状态机会惩罚。
 
   调用方
   endOpportunityPoints。
 
   输入
-  END transition terms，以及同一 Evaluator 聚合出的最大 skill safety relief 与 discard opportunity relief。
+  END transition terms，以及同一 Evaluator 聚合出的最大 legal skill StateValue 正变化与 discard opportunity relief。
 
   输出
   三类互斥来源相加后的非负 StateValue penalty points。
 
   读取状态
-  Evaluator 已物化的能量规则输入、队伍危险、safety relief 与 discard relief scalars。
+  Evaluator 已物化的能量规则输入、队伍危险、skill StateValue opportunity 与 discard relief scalars。
 
   写入状态
   无。
@@ -3909,13 +3863,14 @@ export class Evaluator {
   clampProbability。
 
   边界与不变量
-  λ 唯一由 Evaluator 的 END_SKILL_SAFETY_WEIGHT 拥有；maxEnergy<=0、无主动技能或当前能量不足费用时 readiness 为零；
+  maxEnergy<=0、无主动技能或当前能量不足费用时 readiness 为零；
+  技能机会的危险系数严格为 max(0.25, D(X))，其中 D(X) 已归一化到零至一；
   discard relief 已由 endDiscardOpportunityRelief 从真实状态差得出，不再缩放或读取 CardValue；
   无合法 sibling 由最大 relief 为零自然表达；调用方不得在 Evaluator 外部重复聚合。
   */
   endEnergyOpportunityPenalty(
     transitionTerms,
-    maximumSkillSafetyRelief = 0,
+    maximumLegalSkillStateValueOpportunity = 0,
     maximumDiscardOpportunityRelief = 0
   ) {
     const inputs = transitionTerms?.endOpportunityInputs;
@@ -3931,15 +3886,18 @@ export class Evaluator {
     let readiness = 0;
     if (inputs.hasActiveSkill && inputs.energy >= inputs.activeSkillCost) {
       const denominator = inputs.maxEnergy - inputs.activeSkillCost + 1;
-      readiness = (
+      readiness = Math.sqrt(
         (inputs.energy - inputs.activeSkillCost + 1) / denominator
-      ) ** 2;
+      );
     }
-    const lostSkillPoints = END_SKILL_SAFETY_WEIGHT
-      * readiness
-      * clampProbability(Number(transitionTerms.dangerBefore) || 0)
-      * Math.max(0, Number(maximumSkillSafetyRelief) || 0);
-    return overflowPoints + lostSkillPoints + discardOpportunityPoints;
+    const dangerCoefficient = Math.max(
+      0.25,
+      clampProbability(Number(transitionTerms.dangerBefore) || 0)
+    );
+    const legalSkillOpportunityPoints = readiness
+      * dangerCoefficient
+      * Math.max(0, Number(maximumLegalSkillStateValueOpportunity) || 0);
+    return overflowPoints + legalSkillOpportunityPoints + discardOpportunityPoints;
   }
 
   /*
@@ -4632,7 +4590,7 @@ export class Evaluator {
         playerId: afterPlayer.id,
         relation,
         total,
-        generic: { handCount: fields.handCount ?? 0, energy: fields.energy ?? 0 },
+        generic: { handCount: fields.handCount ?? 0 },
         material: {
           hp: fields.hp ?? 0,
           shield: fields.shield ?? 0,
