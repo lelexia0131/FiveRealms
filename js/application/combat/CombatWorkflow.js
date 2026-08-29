@@ -92,10 +92,12 @@ export function createCombatWorkflow(dependencies) {
   shield/hp 经 ResourceTransitions；telemetry 经 DiagnosticsPort/AI observation collaborator。
 
   调用函数
-  getBlockRequirement、judgeDefense、askForBlock、emitEvent、calculateDamageResult、changeShield、changeHp、diagnostics.recordDamage、observeDamage、enterDying。
+  getBlockRequirement、judgeDefense、askForBlock、emitEvent、calculateDamageResult、changeShield、changeHp、
+  PresentationPort、diagnostics.recordDamage、observeDamage、enterDying。
 
   边界与不变量
-  每个格挡需求独立进行雷达判定；正常格挡结束且预览生命伤害为正后才发布 beforeHpDamage；HP mutation 前保留 session 检查点。
+  每个格挡需求独立进行雷达判定；正常格挡结束且预览生命伤害为正后才发布 beforeHpDamage；
+  mitigation feedback 只消费 listener 已确认的正 contribution，且必须在 1→0 分支仍提交；HP mutation 前保留 session 检查点。
   */
   async function damage(source, target, amount, context = {}) {
     const state = runtime.getState();
@@ -159,6 +161,15 @@ export function createCombatWorkflow(dependencies) {
       await runtime.emitEvent("beforeHpDamage", event);
       if (!runtime.isSessionValid(gameId)) return 0;
       if (event.cancelled || !target.alive) return 0;
+      for (const contribution of event.metadata.mitigationContributions ?? []) {
+        if (contribution.amount > 0) {
+          runtime.presentation.showMitigationFeedback(
+            target.id,
+            contribution.amount,
+            contribution.effectDefinitionId
+          );
+        }
+      }
       if (event.amount <= 0) {
         runtime.presentation.log(`${target.name}没有受到生命伤害。`);
         await runtime.emitEvent("afterDamage", {

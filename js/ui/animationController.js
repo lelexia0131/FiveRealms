@@ -7,13 +7,15 @@ const DAMAGE_FEEDBACK_DURATION_MS = 360;
 const RESOLUTION_VFX_DURATION_MS = 800;
 const HUNT_HIT_DURATION_MS = 720;
 const BURNING_FIELD_HIT_DURATION_MS = 880;
+const GUARDIAN_AID_DURATION_MS = 680;
 const POSITIVE_RESOLUTION_VFX_DURATION_MS = 1000;
 const RESOLUTION_VFX_CLEANUP_BUFFER_MS = 60;
-const NUMERIC_FEEDBACK_TYPES = new Set(["damage", "heal", "energy", "shield"]);
+const NUMERIC_FEEDBACK_TYPES = new Set(["damage", "mitigation", "heal", "energy", "shield"]);
 const SEQUENTIAL_DAMAGE_VFX = new Set(["burning-field"]);
 const RESOLUTION_VFX_DURATION_BY_EFFECT = Object.freeze({
   hunt: HUNT_HIT_DURATION_MS,
-  "burning-field": BURNING_FIELD_HIT_DURATION_MS
+  "burning-field": BURNING_FIELD_HIT_DURATION_MS,
+  "guardian-aid": GUARDIAN_AID_DURATION_MS
 });
 const POSITIVE_VFX_ART_BY_EFFECT = Object.freeze({
   heal: CARD_PRESENTATION.recover.glyph,
@@ -531,7 +533,7 @@ export class AnimationController {
   已创建 overlay 时返回 true，否则返回 false。
 
   读取状态
-  当前人物框矩形与正向效果的 presentation asset 映射。
+  当前人物框矩形、feedback variant 与正向效果的 presentation asset 映射。
 
   写入状态
   body overlay、fallback timer 与 activeResolutionEffects。
@@ -540,7 +542,8 @@ export class AnimationController {
   playerPanel、DOM 创建/定位/事件 API、setTimeout。
 
   边界与不变量
-  overlay 不参与布局且不接收指针；零变化不创建成功效果；多个目标和连续触发各自独立清理。
+  overlay 不参与布局且不接收指针；零变化不创建成功效果；mitigation 不伪造伤害或护盾数值；
+  多个目标和连续触发各自独立清理。
   */
   startResolutionEffect(feedback, root = globalThis.document) {
     const amount = Number(feedback?.amount);
@@ -550,6 +553,7 @@ export class AnimationController {
     if (!panel) return false;
     let effectName = null;
     if (feedback.type === "damage") effectName = feedback.variant;
+    else if (feedback.type === "mitigation") effectName = feedback.variant;
     else if (feedback.type === "heal" || feedback.type === "energy") effectName = feedback.type;
     else if (feedback.variant === "gain") effectName = "shield";
     const duration = ["heal", "shield", "energy"].includes(effectName)
@@ -575,11 +579,13 @@ export class AnimationController {
       overlay.append(visual);
     }
 
-    const signedAmount = feedback.type === "damage" ? -Math.abs(amount) : amount;
-    const floating = doc.createElement("span");
-    floating.className = `floating-feedback is-${feedback.type}`;
-    floating.textContent = `${signedAmount < 0 ? "−" : "+"}${Math.abs(signedAmount)}`;
-    overlay.append(floating);
+    if (feedback.type !== "mitigation") {
+      const signedAmount = feedback.type === "damage" ? -Math.abs(amount) : amount;
+      const floating = doc.createElement("span");
+      floating.className = `floating-feedback is-${feedback.type}`;
+      floating.textContent = `${signedAmount < 0 ? "−" : "+"}${Math.abs(signedAmount)}`;
+      overlay.append(floating);
+    }
 
     const entry = { overlay, timer:null, cleanup:null };
     const rect = panel.getBoundingClientRect?.();
@@ -659,7 +665,8 @@ export class AnimationController {
   enqueueSequentialDamageFeedback、startDamageFeedback、startResolutionEffect、startLightning 与 DOM animation API。
 
   边界与不变量
-  pending 每项只消费一次；焚场伤害按到达顺序逐个展示；新结算 overlay 与负护盾数字不得叠加旧人物框动画；DOM 重绘不得延长闪电原到期时间。
+  pending 每项只消费一次；焚场伤害按到达顺序逐个展示；mitigation 只展示 variant overlay，
+  不触发受伤震动或数值反馈；新结算 overlay 与负护盾数字不得叠加旧人物框动画；DOM 重绘不得延长闪电原到期时间。
   */
   flush(root = document) {
     for (const feedback of this.pending.splice(0)) {
@@ -673,6 +680,10 @@ export class AnimationController {
       const panel = feedback.playerId ? this.playerPanel(root, feedback.playerId) : null;
       const target = panel || root.querySelector(".command-deck");
       if (!target) continue;
+      if (feedback.type === "mitigation") {
+        this.startResolutionEffect(feedback, root);
+        continue;
+      }
       if (feedback.type === "damage" && SEQUENTIAL_DAMAGE_VFX.has(feedback.variant)) {
         this.enqueueSequentialDamageFeedback(feedback, root);
         continue;

@@ -4989,6 +4989,7 @@ function frArch8PortsMinimalSurface() {
   const presentation = createPresentationPort({
     log: (...args) => presentationCalls.push(["log", ...args]),
     showDamageFeedback: (...args) => presentationCalls.push(["damage", ...args]),
+    showMitigationFeedback: (...args) => presentationCalls.push(["mitigation", ...args]),
     showShieldFeedback: (...args) => presentationCalls.push(["shield", ...args]),
     showHealFeedback: (...args) => presentationCalls.push(["heal", ...args]),
     showDying: (...args) => presentationCalls.push(["dying", ...args]),
@@ -5012,9 +5013,11 @@ function frArch8PortsMinimalSurface() {
     refresh: () => presentationCalls.push(["refresh"])
   });
   presentation.showDamageFeedback("p1", 1, "assault", "normal");
+  presentation.showMitigationFeedback("p1", 1, "guardianAid");
   presentation.refresh();
-  assert.deepEqual(presentationCalls.slice(0, 2), [
+  assert.deepEqual(presentationCalls.slice(0, 3), [
     ["damage", "p1", 1, "assault", "normal"],
+    ["mitigation", "p1", 1, "guardianAid"],
     ["refresh"]
   ]);
   assert.throws(() => createPresentationPort({ log() { } }), /showDamageFeedback/);
@@ -10245,9 +10248,11 @@ test("守誓者：护盾预览后仅对仍会造成生命伤害的事件开放�
       target = makePlayer(`aid-shield-target-${amount}`, 1, "dawn", "ai", 3),
       guardian = makePlayer(`aid-shield-guardian-${amount}`, 2, "dawn", "human", 1),
       cost = instance("charge"),
-      { game } = makeGame([source, target, guardian], {
+      { game, ui } = makeGame([source, target, guardian], {
         response: (request) => request.type === "skill"
-      });
+      }),
+      feedback = [];
+    ui.queueFeedback = (...args) => feedback.push(args);
     registerPassiveSkills(game);
     target.shield = 1;
     guardian.hand.push(cost);
@@ -10255,7 +10260,7 @@ test("守誓者：护盾预览后仅对仍会造成生命伤害的事件开放�
     await game.damage(source, target, amount, {
       canBlock: false, damageType: "skill", actionName: "测试"
     });
-    return { game, target, guardian, cost, hp };
+    return { game, target, guardian, cost, hp, feedback };
   };
 
   const reducedToZero = await run(1);
@@ -10264,12 +10269,17 @@ test("守誓者：护盾预览后仅对仍会造成生命伤害的事件开放�
   assert.equal(reducedToZero.guardian.hand.includes(reducedToZero.cost), true);
   assert.equal(reducedToZero.guardian.turnFlags.guardianAidUsed, false);
   assert.ok(!reducedToZero.game.state.logs.some((entry) => entry.message.includes("「护援」")));
+  assert.equal(reducedToZero.feedback.some((entry) => entry[0] === "mitigation"), false);
 
   const absorbedAfterAid = await run(2);
   assert.equal(absorbedAfterAid.target.hp, absorbedAfterAid.hp);
   assert.equal(absorbedAfterAid.target.shield, 0);
   assert.equal(absorbedAfterAid.guardian.hand.includes(absorbedAfterAid.cost), false);
   assert.equal(absorbedAfterAid.guardian.turnFlags.guardianAidUsed, true);
+  assert.deepEqual(
+    absorbedAfterAid.feedback.filter((entry) => entry[0] === "mitigation"),
+    [["mitigation", absorbedAfterAid.target.id, 1, "guardian-aid"]]
+  );
 });
 
 test("守誓者：护援减伤至0仍完成统一伤害收尾且只记录一次零伤害", async () => {
@@ -10278,13 +10288,19 @@ test("守誓者：护援减伤至0仍完成统一伤害收尾且只记录一次�
     guardian = makePlayer("aid-zero-guardian", 2, "dawn", "human", 1),
     discarded = instance("charge");
   guardian.hand.push(discarded);
-  const { game } = makeGame([source, target, guardian], {
-    response: (request) => request.type === "skill"
-  });
+  const { game, ui } = makeGame([source, target, guardian], {
+      response: (request) => request.type === "skill"
+    }),
+    feedback = [];
+  ui.queueFeedback = (...args) => feedback.push(args);
   registerPassiveSkills(game);
   const afterDamage = [];
   game.eventDispatcher.on("afterDamage", "test:guardian-aid-zero-finalization", (event) => {
-    afterDamage.push({ actualAmount: event.actualAmount, shieldAbsorbed: event.shieldAbsorbed });
+    afterDamage.push({
+      actualAmount:event.actualAmount,
+      shieldAbsorbed:event.shieldAbsorbed,
+      mitigationContributions:event.metadata.mitigationContributions
+    });
   });
   const hp = target.hp;
   assert.equal(await game.damage(source, target, 1, {
@@ -10293,7 +10309,16 @@ test("守誓者：护援减伤至0仍完成统一伤害收尾且只记录一次�
   assert.equal(target.hp, hp);
   assert.equal(guardian.hand.length, 0);
   assert.ok(game.state.deck.discardPile.includes(discarded));
-  assert.deepEqual(afterDamage, [{ actualAmount: 0, shieldAbsorbed: 0 }]);
+  assert.deepEqual(afterDamage, [{
+    actualAmount:0,
+    shieldAbsorbed:0,
+    mitigationContributions:[{ effectDefinitionId:"guardianAid", amount:1 }]
+  }]);
+  assert.deepEqual(
+    feedback.filter((entry) => entry[0] === "mitigation"),
+    [["mitigation", target.id, 1, "guardian-aid"]]
+  );
+  assert.equal(feedback.some((entry) => entry[0] === "damage"), false);
   assert.ok(game.state.logs.some(
     (entry) => entry.message === `${guardian.name}因「护援」弃置了「${discarded.name}」。`
   ));
@@ -13814,6 +13839,36 @@ test("UI·区域选牌：手牌按已知基础、已知战术、未知稳定分�
       "unknown-1",
       "unknown-2"
     ]
+  );
+});
+
+test("守誓者：护援真实减伤只提交一次被保护目标反馈且不改变结算", async () => {
+  const source = makePlayer("aid-vfx-source", 0, "dusk", "ai", 6),
+    target = makePlayer("aid-vfx-target", 1, "dawn", "ai", 0),
+    guardian = makePlayer("aid-vfx-guardian", 2, "dawn", "human", 1),
+    { game, ui } = makeGame([source, target, guardian], {
+      response: (request) => request.type === "skill"
+    }),
+    feedback = [];
+  guardian.hand.push(instance("charge"));
+  ui.queueFeedback = (...args) => feedback.push(args);
+  registerPassiveSkills(game);
+  const hp = target.hp;
+
+  assert.equal(await game.damage(source, target, 2, {
+    canBlock:false, damageType:"skill", actionName:"测试"
+  }), 1);
+  assert.equal(target.hp, hp - 1);
+  assert.deepEqual(
+    feedback.filter((entry) => entry[0] === "mitigation" || entry[0] === "damage"),
+    [
+      ["mitigation", target.id, 1, "guardian-aid"],
+      ["damage", target.id, 1, null]
+    ]
+  );
+  assert.equal(
+    feedback.some((entry) => entry[0] === "mitigation" && entry[1] === guardian.id),
+    false
   );
 });
 
@@ -19175,6 +19230,7 @@ END sibling 预算中断回归测试。
 
 输入
 `NODE`、`TIME` 或 `CANCELLED`，以及 sibling 类型、强制弃牌溢出和是否先完成 non-END。
+可选在首个或已有 incumbent 后的 candidate 内触发 cooperative interruption。
 
 输出
 选择结果、诊断、apply 轨迹与 canonical root Actions。
@@ -19198,7 +19254,8 @@ async function runEndSiblingBudgetFixture(
     siblingType = "skill",
     forcesDiscard = false,
     preserveNonEndIncumbent = false,
-    interruptFirstCandidate = false
+    interruptFirstCandidate = false,
+    interruptAfterFirstCandidate = false
   } = {}
 ) {
   const actorId = "end-sibling-actor";
@@ -19247,7 +19304,8 @@ async function runEndSiblingBudgetFixture(
     simulatorFactory:({ searchBudget }) => ({
       apply:(state, action) => {
         applied.push(action.type);
-        if (interruptFirstCandidate && applied.length === 1) {
+        if ((interruptFirstCandidate && applied.length === 1)
+          || (interruptAfterFirstCandidate && applied.length === 2)) {
           if (stopReason === "NODE") searchBudget.observeNode();
           else if (stopReason === "TIME") clockCalls = Number.POSITIVE_INFINITY;
           else searchBudget.cancel();
@@ -19258,7 +19316,7 @@ async function runEndSiblingBudgetFixture(
       buildLightningOutcomeSets:() => []
     }),
     searchBudgetFactory:() => stopReason === "NODE"
-      ? new SearchBudget({ nodeBudget:1 })
+      ? new SearchBudget({ nodeBudget:interruptAfterFirstCandidate ? 2 : 1 })
       : stopReason === "CANCELLED"
         ? new SearchBudget({ nodeBudget:100 })
         : new SearchBudget({
@@ -19611,6 +19669,7 @@ test("AI·搜索：首个 Assault candidate fault 后继续并返回完整 Charg
   assert.equal(result.selected, result.charge);
   assert.equal(result.stats.candidateFaults.length, 1);
   assert.equal(result.stats.candidateFaults[0].action, result.assault);
+  assert.equal(result.stats.candidateFaults[0].stage, "materialize");
   assert.deepEqual(result.applied, ["assault", "charge", "end"]);
 });
 
@@ -20534,6 +20593,34 @@ test("AI·搜索：TIME/CANCELLED 只在候选边界停止并保留 non-END incu
       stopReason === "TIME" ? 2 : 1
     );
     assert.deepEqual(result.stats.bestSequence, [result.sibling]);
+  }
+});
+
+test("AI·搜索：TIME/NODE cooperative materialize interruption 不记录 candidate fault", async () => {
+  for (const stopReason of ["TIME", "NODE"]) {
+    const result = await runEndSiblingBudgetFixture(stopReason, {
+      siblingType:"card",
+      interruptFirstCandidate:true
+    });
+    assert.equal(result.selected, null, stopReason);
+    assert.equal(result.stats.stopReason, stopReason);
+    assert.equal(result.stats.candidateFaults.length, 0, stopReason);
+    assert.equal(result.stats.completedRootCandidateCount, 0, stopReason);
+  }
+});
+
+test("AI·搜索：已有 complete incumbent 后的 TIME/NODE interruption 保留 incumbent", async () => {
+  for (const stopReason of ["TIME", "NODE"]) {
+    const result = await runEndSiblingBudgetFixture(stopReason, {
+      siblingType:"card",
+      preserveNonEndIncumbent:true,
+      interruptAfterFirstCandidate:true
+    });
+    assert.equal(result.selected, result.sibling, stopReason);
+    assert.equal(result.stats.stopReason, stopReason);
+    assert.equal(result.stats.candidateFaults.length, 0, stopReason);
+    assert.equal(result.stats.completedRootCandidateCount, 1, stopReason);
+    assert.deepEqual(result.stats.bestSequence, [result.sibling], stopReason);
   }
 });
 
@@ -38069,6 +38156,8 @@ function frVfxAdapterMapping() {
     presentation.showDamageFeedback("target", 1, effectDefinitionId, "normal");
     assert.deepEqual(queued.at(-1), ["damage", "target", 1, variant]);
   }
+  presentation.showMitigationFeedback("target", 1, "guardianAid");
+  assert.deepEqual(queued.at(-1), ["mitigation", "target", 1, "guardian-aid"]);
   presentation.showShieldFeedback("target", 2, "gain");
   presentation.showShieldFeedback("target", -1, "absorb");
   presentation.showHealFeedback("target", 1);
@@ -38079,7 +38168,7 @@ function frVfxAdapterMapping() {
   ]);
 }
 
-test("UI·结算特效：adapter 映射卡牌与技能伤害并区分护盾获得与吸收", frVfxAdapterMapping);
+test("UI·结算特效：adapter 统一映射伤害、护援减伤与护盾反馈", frVfxAdapterMapping);
 
 /*
 功能
@@ -38396,7 +38485,8 @@ fake DOM overlay、class 与控制器短生命周期记录。
 AnimationController.queue、flush、clear。
 
 边界与不变量
-多个目标可并存；新正向 overlay 与 shield loss 不得叠加旧人物框动画；damage 与 draw 保持原反馈语义。
+多个目标可并存；护援复用同一 overlay/cleanup 且不显示数值；新正向 overlay 与 shield loss 不得叠加旧人物框动画；
+damage 与 draw 保持原反馈语义。
 */
 function frVfxOverlayLifecycle() {
   const panels = new Map();
@@ -38542,6 +38632,24 @@ function frVfxOverlayLifecycle() {
   assert.ok(replacement.classList.contains("feedback-damage"), "猎杀保留统一受伤震动");
   controller.clear();
 
+  controller.queue("mitigation", "target-a", 1, "guardian-aid");
+  controller.flush(doc);
+  let guardianAidOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-guardian-aid"));
+  assert.equal(guardianAidOverlay.style.getPropertyValue("--resolution-vfx-duration"), "680ms");
+  assert.equal(guardianAidOverlay.children.length, 0, "护援屏障不伪造伤害或护盾数值");
+  assert.equal(replacement.classList.contains("feedback-damage"), false);
+  guardianAidOverlay.listeners.get("animationend")({
+    target:guardianAidOverlay, animationName:"resolutionVfxLifetime"
+  });
+  assert.equal(guardianAidOverlay.isConnected, false);
+  assert.equal(controller.activeResolutionEffects.size, 0);
+  controller.queue("mitigation", "target-a", 1, "guardian-aid");
+  controller.flush(doc);
+  guardianAidOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-guardian-aid"));
+  assert.ok(guardianAidOverlay, "连续护援可创建全新 overlay");
+  controller.clear();
+  assert.equal(guardianAidOverlay.isConnected, false, "清场不得残留护援 overlay");
+
   controller.queue("damage", "target-a", 1, "burning-field");
   controller.queue("damage", "target-b", 1, "burning-field");
   controller.flush(doc);
@@ -38676,13 +38784,25 @@ async function frVfxCssContract() {
   assert.match(source, /\.resolution-vfx-overlay\.is-burning-field\s*\{[^}]*burningFieldFlash \.88s/);
   assert.match(source, /\.resolution-vfx-overlay\.is-burning-field::before\s*\{[^}]*burningFieldFlame \.88s/);
   assert.match(source, /\.resolution-vfx-overlay\.is-burning-field::after\s*\{[^}]*burningFieldRing \.88s/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-guardian-aid\s*\{[^}]*resolutionVfxLifetime/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-guardian-aid::before\s*\{[^}]*guardianAidBarrier \.68s/);
+  assert.match(source, /\.resolution-vfx-overlay\.is-guardian-aid::after\s*\{[^}]*guardianAidRipple \.68s/);
   const huntDurationMs = Number(controllerSource.match(/const HUNT_HIT_DURATION_MS = (\d+);/)?.[1]);
   const burningFieldDurationMs = Number(
     controllerSource.match(/const BURNING_FIELD_HIT_DURATION_MS = (\d+);/)?.[1]
   );
+  const guardianAidDurationMs = Number(
+    controllerSource.match(/const GUARDIAN_AID_DURATION_MS = (\d+);/)?.[1]
+  );
   assert.ok(huntDurationMs >= 600 && huntDurationMs <= 800);
   assert.ok(burningFieldDurationMs >= 750 && burningFieldDurationMs <= 950);
+  assert.ok(guardianAidDurationMs >= 500 && guardianAidDurationMs <= 800);
   assert.match(controllerSource, /const SEQUENTIAL_DAMAGE_VFX = new Set\(\["burning-field"\]\)/);
+  assert.match(controllerSource, /"guardian-aid": GUARDIAN_AID_DURATION_MS/);
+  assert.doesNotMatch(
+    controllerSource,
+    /guardianAid(?:Queue|Timer|Scheduler)|GuardianAid(?:AnimationQueue|VfxController|PresentationManager)/
+  );
   assert.match(positiveMotion, /from\s*\{\s*opacity:\s*\.96;[^}]*scale\(\.55\)/);
   assert.match(positiveMotion, /to\s*\{\s*opacity:\s*0;[^}]*scale\(1\.45\)/);
   assert.doesNotMatch(positiveMotion, /(?:^|})\s*\d+%\s*\{|rotate|spin|steps\(/);

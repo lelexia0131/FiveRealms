@@ -20,13 +20,14 @@ application/ports/PresentationPort 与 UIManager。
 import { presentCard } from "./CardPresentationDefinitions.js";
 import { createPresentationPort } from "../../application/ports/PresentationPort.js";
 
-const DAMAGE_VFX_BY_EFFECT_ID = Object.freeze({
+const RESOLUTION_VFX_BY_EFFECT_ID = Object.freeze({
   assault: "slash",
   shockwave: "explosion",
   provoke: "red-impact",
   duel: "cross-slash",
   hunt: "hunt",
-  burningField: "burning-field"
+  burningField: "burning-field",
+  guardianAid: "guardian-aid"
 });
 
 /*
@@ -52,7 +53,8 @@ getPlayerById、getCardById 与静态卡牌展示定义。
 createPresentationPort、UIManager 的语义展示方法与 render。
 
 边界与不变量
-Application 传入 data-only DTO；本 adapter 只映射 UI 调用与视觉变体，不决定结算是否生效。
+Application 传入 data-only DTO；伤害与减伤从同一 descriptor map 选择平级视觉变体；
+本 adapter 只映射 UI 调用，不决定结算是否生效。
 */
 export function createGamePresentationAdapter({ log, getPlayerById, getCardById, ui, renderTarget }) {
   if (typeof log !== "function" || typeof getPlayerById !== "function"
@@ -65,7 +67,13 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
       "damage",
       playerId,
       amount,
-      DAMAGE_VFX_BY_EFFECT_ID[effectDefinitionId] ?? null
+      RESOLUTION_VFX_BY_EFFECT_ID[effectDefinitionId] ?? null
+    ),
+    showMitigationFeedback: (playerId, amount, effectDefinitionId) => ui.queueFeedback?.(
+      "mitigation",
+      playerId,
+      amount,
+      RESOLUTION_VFX_BY_EFFECT_ID[effectDefinitionId] ?? null
     ),
     showShieldFeedback: (playerId, amount, mode) => ui.queueFeedback?.("shield", playerId, amount, mode),
     showHealFeedback: (playerId, amount) => ui.queueFeedback?.("heal", playerId, amount),

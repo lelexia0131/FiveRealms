@@ -832,7 +832,8 @@ considerIncumbent 与 prune。
   Simulator.apply、evaluateCandidate、finalizeCandidate、recordCandidateFault。
 
   边界与不变量
-  普通 candidate 一旦开始不再检查 TIME/NODE；任何异常只丢弃当前 candidate；
+  普通 candidate 一旦开始不再检查 TIME/NODE；当前 SearchBudget cooperative interruption
+  只丢弃当前 candidate，真实异常才记录 candidate fault；
   END 必须由 sibling group 在完整上下文中单独 finalize。
   */
   materializeCandidate({
@@ -863,6 +864,7 @@ considerIncumbent 与 prune。
       });
       return action.type === "end" ? candidate : this.finalizeCandidate(candidate);
     } catch (error) {
+      if (budget.isCurrentWorkInterruption(error)) return null;
       this.recordCandidateFault(action, "materialize", error);
       return null;
     }
@@ -1369,7 +1371,8 @@ search 的 root 与逐层 beam 完整节点登记点。
   行动者、canonical World、canonical root Actions 与可选会话/诊断上下文。
 
   输出
-  Evaluator 选出的最佳完整 root Action；没有完整候选时抛出 invariant failure。
+  Evaluator 选出的最佳完整 root Action；TIME/NODE 在没有完整候选时返回 null，
+  其它 root invariant failure 继续抛出。
 
   读取状态
   World、Pattern proposals、Generator、Simulator、Evaluator 与 SearchBudget。
@@ -1464,6 +1467,17 @@ search 的 root 与逐层 beam 完整节点登记点。
     const rootCandidates = rootResult.candidates;
     workDiagnostics.completedRootCandidateCount = rootCandidates.length;
     if (!rootCandidates.length) {
+      if (budget.stopReason === SEARCH_STOP_REASON.TIME
+        || budget.stopReason === SEARCH_STOP_REASON.NODE) {
+        return this.recordResult({
+          budget,
+          structure,
+          choice:null,
+          context,
+          rootLedgers,
+          workDiagnostics
+        });
+      }
       throw new Error("Searcher root invariant 失败：所有 root candidates 均发生 candidate fault");
     }
     workDiagnostics.depthReached = 1;
@@ -1991,6 +2005,35 @@ export class SearchBudget {
     this.lastObservedAt = this.started;
     this.deadlineCrossedAt = null;
     this.currentWorkInterruption = new Error("AI search current work interrupted");
+  }
+
+  /*
+  功能
+  判断异常是否为当前 SearchBudget 发出的 cooperative interruption signal。
+
+  调用方
+  materializeCandidate 的 candidate-local 异常边界。
+
+  输入
+  任意捕获的异常对象。
+
+  输出
+  当前预算 signal 返回 true，否则返回 false。
+
+  读取状态
+  当前 SearchBudget 的 interruption signal。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只识别同一 SearchBudget 实例的 signal，不把普通异常误判为控制流。
+  */
+  isCurrentWorkInterruption(error) {
+    return error === this.currentWorkInterruption;
   }
 
   /*

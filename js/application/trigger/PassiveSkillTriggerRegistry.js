@@ -141,13 +141,14 @@ const PASSIVE_SKILLS = {
   EventDispatcher、响应系统与手牌。
 
   写入状态
-  guardianAidUsed 经 RuleUsageTransition。
+  guardianAidUsed 经 RuleUsageTransition；真实减伤 contribution 写入当前 damage event metadata。
 
   调用函数
   setGuardianAidUsed、runtime.discardCardFromHand。
 
   边界与不变量
-  只消费 CombatWorkflow 已确认的 pending HP damage；响应与弃牌顺序不变，不能护援自己。
+  只消费 CombatWorkflow 已确认的 pending HP damage；响应与弃牌顺序不变，不能护援自己；
+  只有实际降低 pending HP damage 时才记录一次 data-only presentation contribution。
   */
   guardianAid(game, owner) {
     runtime.onEvent("beforeHpDamage", `${owner.id}:guardianAid`, async (event) => {
@@ -184,8 +185,17 @@ const PASSIVE_SKILLS = {
       if (!runtime.isSessionValid(gameId) || !moved) return;
       setGuardianAidUsed(runtime.getState(), owner, true);
       const reduction = PASSIVE_SKILL_DEFINITIONS.guardianAid.damageReduction;
+      const pendingHpDamageBeforeAid = event.pendingHpDamage;
       event.amount = Math.max(0, event.amount - reduction);
       event.pendingHpDamage = Math.max(0, event.pendingHpDamage - reduction);
+      const actualReduction = pendingHpDamageBeforeAid - event.pendingHpDamage;
+      if (actualReduction > 0) {
+        event.metadata.mitigationContributions ??= [];
+        event.metadata.mitigationContributions.push({
+          effectDefinitionId:"guardianAid",
+          amount:actualReduction
+        });
+      }
       runtime.presentation.log(`${owner.name}发动「护援」，令${event.target.name}受到的伤害减少${reduction}点。`, "important");
     });
   },

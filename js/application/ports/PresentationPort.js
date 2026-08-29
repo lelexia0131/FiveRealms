@@ -1,6 +1,6 @@
 /*
 模块职责
-定义 Application 的 minimal Presentation boundary：玩家可见日志、伤害/治疗/护盾反馈、濒死与判定 overlay、延迟状态当前卡、闪电命中语义与 render 刷新；不吞并 Choice 或 Audio。
+定义 Application 的 minimal Presentation boundary：玩家可见日志、伤害/减伤/治疗/护盾反馈、濒死与判定 overlay、延迟状态当前卡、闪电命中语义与 render 刷新；不吞并 Choice 或 Audio。
 
 上游
 application/combat、application/judgment 与 composition root。
@@ -21,6 +21,7 @@ concrete UI/presentation adapter（当前由 MatchApplication composition 桥接
 const REQUIRED_METHODS = [
   "log",
   "showDamageFeedback",
+  "showMitigationFeedback",
   "showShieldFeedback",
   "showHealFeedback",
   "showDying",
@@ -79,6 +80,7 @@ export function createPresentationPort(implementation) {
   return Object.freeze({
     log: implementation.log,
     showDamageFeedback: implementation.showDamageFeedback,
+    showMitigationFeedback: implementation.showMitigationFeedback,
     showShieldFeedback: implementation.showShieldFeedback,
     showHealFeedback: implementation.showHealFeedback,
     showDying: implementation.showDying,
