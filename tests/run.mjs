@@ -80,6 +80,7 @@ import {
   queryCurrentCardCounts,
   queryPlayerHandProbability,
   queryProbability,
+  sampleProbabilityWorlds,
   sealOutcomeProbabilities,
   statusPresence,
   tacticJudgmentProbability,
@@ -90,7 +91,10 @@ import { SearchBudget, Searcher } from "../js/ai/Searcher/Searcher.js";
 import { Pattern as PatternMatcher } from "../js/ai/Searcher/Pattern.js";
 import { Generator as ActionGenerator } from "../js/ai/Generator/Generator.js";
 import { Rng as SearchRng } from "../js/ai/Searcher/Rng.js";
-import { SEARCH_RESULT_STATUS } from "../js/ai/Controller.js";
+import {
+  SEARCH_RESULT_STATUS,
+  createWorkerSearchOutcome
+} from "../js/ai/Controller.js";
 import {
   actionIntentKey,
   actionSearchKey,
@@ -18116,6 +18120,43 @@ test("AI·回合收尾：SEARCH_FAILURE 后仍执行强制弃牌与 turnEnd", as
   }
 });
 
+test("AI·回合收尾：pre-worker Fact failure 进入既有 canonical cleanup", async () => {
+  const actor = makePlayer("pre-worker-turn-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("pre-worker-turn-enemy", 1, "dusk", "ai", 1);
+  actor.hp = 3;
+  actor.hand = Array.from(
+    { length:CARD_COUNTS.assault + 1 },
+    () => instance("assault")
+  );
+  const { game } = makeGame([actor, enemy]);
+  game.drawCards = async () => [];
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  game.aiController.searchExecutor = {
+    search:async () => {
+      searchCalls += 1;
+      throw new Error("Worker 不应收到 pre-worker failure request");
+    }
+  };
+  let turnEndCount = 0;
+  game.eventDispatcher.on("turnEnd", "test:pre-worker-failure-turn-end", () => {
+    turnEndCount += 1;
+  });
+  try {
+    await game.takeTurn(actor, game.state.gameId);
+    assert.equal(searchCalls, 0);
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(game.aiController.lastSearchResult.action, null);
+    assert.equal(game.aiController.lastSearchResult.searchFault.stage, "PREPARATION");
+    assert.equal(actor.statistics.cardsPlayed, 0);
+    assert.equal(actor.hand.length, actor.hp);
+    assert.equal(turnEndCount, 1);
+    assert.equal(game.state.phase, "turnEnd");
+  } finally {
+    game.dispose();
+  }
+});
+
 test("AI·回合收尾：无需弃牌的 SEARCH_FAILURE 正常完成且不产生游戏动作", async () => {
   const fixture = await runAiSearchOutcomeTurnFixture({
     hp:4,
@@ -20753,6 +20794,204 @@ test("AI·Controller：合法 Assault 与 FAULT diagnostics 仍按 root acceptan
   assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
   assert.equal(accepted.action, action);
   assert.equal(accepted.result.searchFault.message, "synthetic Simulator fault");
+});
+
+test("AI·Controller：Fact over-consumption RangeError 转为 pre-worker SEARCH_FAILURE", async () => {
+  const actor = makePlayer("pre-worker-fact-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("pre-worker-fact-enemy", 1, "dusk", "ai", 1);
+  actor.hand = Array.from(
+    { length:CARD_COUNTS.assault + 1 },
+    () => instance("assault")
+  );
+  const { game } = makeGame([actor, enemy]);
+  let searchCalls = 0;
+  game.aiController.searchExecutor = {
+    search:async () => {
+      searchCalls += 1;
+      throw new Error("Worker 不应收到 Fact failure request");
+    }
+  };
+  try {
+    const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
+    const result = game.aiController.lastSearchResult;
+    assert.equal(action, null);
+    assert.equal(result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(result.action, null);
+    assert.equal(result.searchFault.stage, "PREPARATION");
+    assert.equal(result.searchFault.operation, "remaining-counts");
+    assert.equal(result.searchFault.name, "RangeError");
+    assert.match(result.searchFault.message, /AI Fact 有限牌池守恒失败/u);
+    assert.equal(result.rejectionReason, result.searchFault.message);
+    assert.equal(game.aiController.lastWorkerOutcome, null);
+    assert.equal(searchCalls, 0);
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·Controller：createInitialWorld ordinary fault 转为 pre-worker SEARCH_FAILURE", async () => {
+  const actor = makePlayer("pre-worker-world-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("pre-worker-world-enemy", 1, "dusk", "ai", 1);
+  actor.hand = Object.entries(CARD_COUNTS).flatMap(([definitionId, count]) => (
+    Array.from({ length:count }, () => instance(definitionId))
+  ));
+  enemy.hand.push(instance("assault"));
+  const { game } = makeGame([actor, enemy]);
+  let searchCalls = 0;
+  game.aiController.searchExecutor = {
+    search:async () => {
+      searchCalls += 1;
+      throw new Error("Worker 不应收到 World failure request");
+    }
+  };
+  try {
+    const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
+    const result = game.aiController.lastSearchResult;
+    assert.equal(action, null);
+    assert.equal(result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(result.action, null);
+    assert.equal(result.searchFault.stage, "PREPARATION");
+    assert.equal(result.searchFault.operation, "create-world");
+    assert.match(result.searchFault.message, /assignedAnonymousSlots 超过 populationSize/u);
+    assert.equal(searchCalls, 0);
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·Controller：Generator ordinary fault 转为 pre-worker SEARCH_FAILURE", async () => {
+  const actor = makePlayer("pre-worker-generator-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("pre-worker-generator-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  let searchCalls = 0;
+  game.aiController.actionGenerator.generate = () => {
+    throw new Error("synthetic Generator preparation fault");
+  };
+  game.aiController.searchExecutor = {
+    search:async () => {
+      searchCalls += 1;
+      throw new Error("Worker 不应收到 Generator failure request");
+    }
+  };
+  try {
+    const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
+    const result = game.aiController.lastSearchResult;
+    assert.equal(action, null);
+    assert.equal(result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(result.action, null);
+    assert.equal(result.searchFault.stage, "PREPARATION");
+    assert.equal(result.searchFault.operation, "root-candidates");
+    assert.equal(result.searchFault.message, "synthetic Generator preparation fault");
+    assert.equal(searchCalls, 0);
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·Controller：createSearchRequest ordinary fault 转为 pre-worker SEARCH_FAILURE", async () => {
+  const actor = makePlayer("pre-worker-request-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("pre-worker-request-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  let searchCalls = 0;
+  game.aiController.createId = () => "";
+  game.aiController.searchExecutor = {
+    search:async () => {
+      searchCalls += 1;
+      throw new Error("Worker 不应收到 invalid SearchRequest");
+    }
+  };
+  try {
+    const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
+    const result = game.aiController.lastSearchResult;
+    assert.equal(action, null);
+    assert.equal(result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(result.action, null);
+    assert.equal(result.requestId, null);
+    assert.equal(result.searchFault.stage, "PREPARATION");
+    assert.equal(result.searchFault.operation, "create-search-request");
+    assert.equal(result.searchFault.message, "SearchRequest 需要 requestId");
+    assert.equal(searchCalls, 0);
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·Controller：正常 preparation 与 Worker action 保持原 acceptance", async () => {
+  const actor = makePlayer("pre-worker-success-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("pre-worker-success-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"));
+  const { game } = makeGame([actor, enemy]);
+  game.aiController.searchExecutor = {
+    search:async (request) => createWorkerSearchOutcome({
+      request,
+      action:request.rootActions.find((entry) => entry.cardId === "charge"),
+      stats:{ workerSearchMs:0 },
+      searchStopReason:"COMPLETE",
+      rngAfter:request.rng
+    })
+  };
+  try {
+    const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
+    assert.equal(action.cardId, "charge");
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.equal(game.aiController.lastSearchResult.action, action);
+    assert.equal(game.aiController.lastSearchResult.searchFault, null);
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·Controller：正常 preparation 与 Worker SEARCH_FAILURE 保持原语义", async () => {
+  const actor = makePlayer("pre-worker-worker-failure-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("pre-worker-worker-failure-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  game.aiController.searchExecutor = {
+    search:async () => {
+      throw new Error("synthetic Worker transport fault");
+    }
+  };
+  try {
+    const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
+    assert.equal(action, null);
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(game.aiController.lastSearchResult.action, null);
+    assert.equal(
+      game.aiController.lastSearchResult.rejectionReason,
+      "synthetic Worker transport fault"
+    );
+    assert.equal(game.aiController.lastSearchResult.searchFault, null);
+    assert.equal(game.aiController.lastWorkerOutcome.workerError, "synthetic Worker transport fault");
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·Controller：非法 Player 调用合同不降级为 SEARCH_FAILURE", async () => {
+  const actor = makePlayer("pre-worker-contract-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("pre-worker-contract-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  try {
+    await assert.rejects(
+      game.aiController.selectAction(null, { gameId:game.state.gameId }),
+      /Controller\.selectAction 需要合法 Player/u
+    );
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·Controller：pre-worker failure boundary 不创建 END fallback 或新状态", async () => {
+  const source = await readFile(projectFile("js/ai/Controller.js"), "utf8");
+  const selectActionStart = source.indexOf("  async selectAction(player, options = {})");
+  const selectActionEnd = source.indexOf("\n  /*\n  功能\n  选择需要弃置的实体牌", selectActionStart);
+  const selectActionSource = source.slice(selectActionStart, selectActionEnd);
+
+  assert.match(selectActionSource, /stage:"PREPARATION"/u);
+  assert.doesNotMatch(
+    selectActionSource,
+    /createAction\s*\(\s*\{\s*type\s*:\s*["']end["']/u
+  );
+  assert.doesNotMatch(source, /PREPARATION_FAILURE/u);
 });
 
 test("AI·Controller：Worker 无 Searcher action 返回显式 SEARCH_FAILURE 而非 END", async () => {
@@ -28181,6 +28420,163 @@ test("AI·资源身份：掠夺 unknown 时目标减少量等于行动者增加�
 
 
 // ---- AI 剩余牌池 ----
+
+test("AI·剩余牌池：合法根状态严格守恒并保留真实 drawPool 差值", () => {
+  const counts = { block:1, assault:2 };
+  const probabilityState = createProbabilityState({
+    viewerId:"viewer",
+    players:[
+      {
+        id:"viewer",
+        handCount:1,
+        hand:[{ id:"viewer-card", definitionId:"recover" }]
+      },
+      { id:"enemy", handCount:1 }
+    ],
+    knownCardsByPlayer:{ viewer:[], enemy:[] },
+    currentCardCounts:counts
+  });
+
+  assert.equal(probabilityState.factors[0].populationSize, 3);
+  assert.equal(expectedAnonymousSlots(probabilityState, "enemy"), 1);
+  assert.equal(expectedAnonymousSlots(probabilityState, "outside/drawPool"), 2);
+  assert.deepEqual(queryCurrentCardCounts(probabilityState), counts);
+});
+
+test("AI·剩余牌池：Fact 首次超额扣减立即报告定义与来源", () => {
+  const viewer = makePlayer("viewer", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk");
+  viewer.hand = Array.from(
+    { length:CARD_COUNTS.assault + 1 },
+    () => instance("assault")
+  );
+  const { game } = makeGame([viewer, enemy]);
+
+  assert.throws(
+    () => deriveCurrentCardCounts(viewer, game.state),
+    (error) => {
+      assert.match(error.message, /definitionId=assault/);
+      assert.match(error.message, /currentRemainingCount=0/);
+      assert.match(error.message, /sourceCategory=viewer-hand/);
+      return true;
+    }
+  );
+});
+
+test("AI·剩余牌池：非法 definition count 在根 ProbabilityState 创建时失败", () => {
+  assert.throws(
+    () => createProbabilityState({
+      viewerId:"viewer",
+      players:[{ id:"viewer", handCount:0, hand:[] }],
+      knownCardsByPlayer:{ viewer:[] },
+      currentCardCounts:{ assault:-1 }
+    }),
+    (error) => {
+      assert.match(error.message, /currentCardCounts 必须是有限非负整数/);
+      assert.match(error.message, /"definitionId":"assault"/);
+      assert.match(error.message, /"currentCount":-1/);
+      return true;
+    }
+  );
+});
+
+test("AI·剩余牌池：knownCount 超过 handCount 时根构造立即失败", () => {
+  assert.throws(
+    () => createProbabilityState({
+      viewerId:"viewer",
+      players:[
+        { id:"viewer", handCount:0, hand:[] },
+        { id:"enemy", handCount:1 }
+      ],
+      knownCardsByPlayer:{
+        viewer:[],
+        enemy:[
+          { cardId:"known-1", definitionId:"block" },
+          { cardId:"known-2", definitionId:"counter" }
+        ]
+      },
+      currentCardCounts:{ assault:3 }
+    }),
+    (error) => {
+      assert.match(error.message, /handCount、knownCount 与 unknownCount 非法/);
+      assert.match(error.message, /"playerId":"enemy","handCount":1,"knownCount":2,"unknownCount":-1/);
+      return true;
+    }
+  );
+});
+
+test("AI·剩余牌池：匿名槽超过总体时不再伪造零 drawPool", () => {
+  assert.throws(
+    () => createProbabilityState({
+      viewerId:"viewer",
+      players:[
+        { id:"viewer", handCount:0, hand:[] },
+        { id:"enemy", handCount:2 }
+      ],
+      knownCardsByPlayer:{ viewer:[], enemy:[] },
+      currentCardCounts:{ assault:1 }
+    }),
+    (error) => {
+      assert.match(error.message, /assignedAnonymousSlots 超过 populationSize/);
+      assert.match(error.message, /"viewerId":"viewer"/);
+      assert.match(error.message, /"populationSize":1/);
+      assert.match(error.message, /"assignedAnonymousSlots":2/);
+      assert.match(error.message, /"deckCount":-1/);
+      return true;
+    }
+  );
+});
+
+test("AI·剩余牌池：匿名槽等于总体时合法且 drawPool 为零", () => {
+  const probabilityState = createProbabilityState({
+    viewerId:"viewer",
+    players:[
+      { id:"viewer", handCount:0, hand:[] },
+      { id:"enemy", handCount:2 }
+    ],
+    knownCardsByPlayer:{ viewer:[], enemy:[] },
+    currentCardCounts:{ assault:1, block:1 }
+  });
+
+  assert.equal(probabilityState.factors[0].populationSize, 2);
+  assert.equal(expectedAnonymousSlots(probabilityState, "enemy"), 2);
+  assert.equal(expectedAnonymousSlots(probabilityState, "outside/drawPool"), 0);
+});
+
+test("AI·剩余牌池：合法根状态仍可执行最小隐藏世界抽样", () => {
+  const players = [
+    { id:"viewer", handCount:0, hand:[], knownCards:[] },
+    { id:"enemy", handCount:1, knownCards:[] }
+  ];
+  const probabilityState = createProbabilityState({
+    viewerId:"viewer",
+    players,
+    knownCardsByPlayer:{ viewer:[], enemy:[] },
+    currentCardCounts:{ block:1, assault:1 }
+  });
+  const samples = sampleProbabilityWorlds({
+    viewerId:"viewer",
+    probabilityState,
+    players,
+    sampleCount:2,
+    random:() => 0
+  });
+
+  assert.equal(samples.classification, PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE);
+  assert.equal(samples.sampleCount, 2);
+  assert.deepEqual(samples.worlds, [{ enemy:["block"] }, { enemy:["block"] }]);
+});
+
+test("AI·剩余牌池：根构造源码不再静默截断物理负差值", async () => {
+  const factSource = await readFile(projectFile("js/ai/Event/Fact.js"), "utf8");
+  const poolSource = await readFile(projectFile("js/ai/Event/Probability/Pool.js"), "utf8");
+
+  assert.doesNotMatch(
+    factSource,
+    /remaining\[entry\.definitionId\]\s*=\s*Math\.max\(0/
+  );
+  assert.ok(!poolSource.includes("Math.max(0, populationSize - assigned"));
+  assert.match(poolSource, /const deckCount = assignedAnonymousSlots === null[\s\S]*populationSize - assignedAnonymousSlots/);
+});
 
 
 

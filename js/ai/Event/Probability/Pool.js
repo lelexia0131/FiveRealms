@@ -644,33 +644,87 @@ Fact 的匿名手牌槽与当前有限牌池计数。
 canonicalSlotGroup、mergeProbabilityFactors。
 
 边界与不变量
-每个物理匿名槽只出现一次；未分配槽归 drawPool；不得创建 hidden allocation/world history。
+每个物理匿名槽只出现一次；PopulationSize 必须等于匿名手牌槽与 drawPool 之和；
+所有计数必须是有限非负整数，非法根状态不得进入 Probability query。
 */
 export function createFinitePoolState(fact, options = {}) {
   const currentCardCounts = { ...(fact?.currentCardCounts ?? {}) };
-  const populationSize = Object.values(currentCardCounts).reduce(
-    (sum, count) => sum + Math.max(0, Math.floor(Number(count) || 0)),
-    0
-  );
-  const playerGroups = (fact?.players ?? []).map((player) => {
+  const invalidCardCount = Object.entries(currentCardCounts).find(([, count]) => (
+    !Number.isSafeInteger(count) || count < 0
+  ));
+  if (invalidCardCount) {
+    const [definitionId, count] = invalidCardCount;
+    throw new RangeError(
+      "根 ProbabilityState 有限牌池守恒失败：currentCardCounts 必须是有限非负整数；"
+      + `diagnostics=${JSON.stringify({
+        viewerId:fact?.viewerId ?? null,
+        definitionId,
+        currentCount:Number.isFinite(count) ? count : String(count),
+        populationSize:null,
+        assignedAnonymousSlots:null,
+        deckCount:null,
+        currentCardCounts
+      })}`
+    );
+  }
+  const populationSize = Object.values(currentCardCounts).reduce((sum, count) => sum + count, 0);
+  const playerCapacities = (fact?.players ?? []).map((player) => {
     const knownCount = player.id === fact.viewerId
       ? (player.hand?.length ?? 0)
       : (fact.knownCardsByPlayer?.[player.id]?.length ?? 0);
-    return canonicalSlotGroup(
-      player.id,
-      player.id === fact.viewerId
-        ? 0
-        : Math.max(0, Math.floor(Number(player.handCount) || 0) - knownCount)
-    );
+    const handCount = player.handCount;
+    return {
+      playerId:player.id,
+      handCount,
+      knownCount,
+      unknownCount:Number.isSafeInteger(handCount) ? handCount - knownCount : null
+    };
   });
-  const assigned = playerGroups.reduce((sum, group) => sum + group.count, 0);
+  const canSummarizeAssigned = playerCapacities.every(
+    ({ unknownCount }) => Number.isSafeInteger(unknownCount)
+  );
+  const assignedAnonymousSlots = canSummarizeAssigned
+    ? playerCapacities.reduce((sum, player) => sum + player.unknownCount, 0)
+    : null;
+  const deckCount = assignedAnonymousSlots === null
+    ? null
+    : populationSize - assignedAnonymousSlots;
+  const diagnostics = {
+    viewerId:fact?.viewerId ?? null,
+    populationSize,
+    assignedAnonymousSlots,
+    deckCount,
+    players:playerCapacities,
+    currentCardCounts
+  };
+  const invalidPlayer = playerCapacities.find(({ handCount, knownCount, unknownCount }) => (
+    !Number.isSafeInteger(handCount)
+      || handCount < 0
+      || knownCount > handCount
+      || unknownCount < 0
+  ));
+  if (invalidPlayer) {
+    throw new RangeError(
+      "根 ProbabilityState 有限牌池守恒失败：玩家 handCount、knownCount 与 unknownCount 非法；"
+      + `diagnostics=${JSON.stringify(diagnostics)}`
+    );
+  }
+  if (assignedAnonymousSlots > populationSize) {
+    throw new RangeError(
+      "根 ProbabilityState 有限牌池守恒失败：assignedAnonymousSlots 超过 populationSize；"
+      + `diagnostics=${JSON.stringify(diagnostics)}`
+    );
+  }
+  const playerGroups = playerCapacities.map((player) => (
+    canonicalSlotGroup(player.playerId, player.unknownCount)
+  ));
   const factor = {
     probability:1,
     populationSize,
     cardCounts:currentCardCounts,
     slotGroups:[
       ...playerGroups,
-      canonicalSlotGroup(options.drawBucketId, Math.max(0, populationSize - assigned))
+      canonicalSlotGroup(options.drawBucketId, deckCount)
     ]
   };
   return {

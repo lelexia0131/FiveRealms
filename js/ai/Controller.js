@@ -1035,7 +1035,8 @@ export class Controller {
   player 与可选 options/signal/searchTimeBudgetMs。
 
   输出
-  当前可执行 action；搜索或 transport failure 返回 null，并在 lastSearchResult 中记录显式 failure status。
+  当前可执行 action；preparation、搜索或 transport failure 返回 null，
+  并在 lastSearchResult 中记录显式 failure status 与原始错误诊断。
 
   读取状态
   current GameState、Fact、search configuration 与 searchRng。
@@ -1044,13 +1045,18 @@ export class Controller {
   lastSearchRequest、lastDecisionDiagnostics、worker diagnostics、RNG continuation 与当前 search result。
 
   调用函数
-  createInitialWorld、getActionCandidates、createSearchRequest、searchExecutor.search、acceptWorkerSearchOutcome、decisionNow。
+  deriveCurrentCardCounts、createInitialWorld、getActionCandidates、createSearchRequest、
+  searchExecutor.search、acceptWorkerSearchOutcome、decisionNow。
 
   边界与不变量
+  调用者必须提供合法 Player；该调用合同在可恢复 AI preparation boundary 外显式失败。
   生产 Searcher execution 由 executor 负责；TIME/CANCELLED/FAULT 可由 Worker 同时返回完整 incumbent 与 diagnostics；
-  Main Thread 只验收 Searcher Action，任何 failure 都不得制造 canonical END。
+  Main Thread 只验收 Searcher Action，任何 preparation/search failure 都不得制造 canonical END。
   */
   async selectAction(player, options = {}) {
+    if (!player || typeof player.id !== "string" || !player.id) {
+      throw new TypeError("Controller.selectAction 需要合法 Player");
+    }
     const state = this.getState();
     if (!this.isSessionValid(options.gameId ?? state.gameId)) {
       this.lastSearchResult = Object.freeze({
@@ -1070,40 +1076,98 @@ export class Controller {
     const preWorkerStartedAt = decisionNow();
     const mainThreadOperations = [];
     let operationStartedAt = decisionNow();
-    const remainingCardCounts = deriveCurrentCardCounts(player, state);
-    mainThreadOperations.push(this.recordMainThreadOperation(
-      "Controller.selectAction:remaining-counts",
-      operationStartedAt
-    ));
-    operationStartedAt = decisionNow();
-    const world = createInitialWorld(player.id, state, remainingCardCounts);
-    mainThreadOperations.push(this.recordMainThreadOperation(
-      "Controller.selectAction:create-world",
-      operationStartedAt
-    ));
-    operationStartedAt = decisionNow();
-    const rootActions = this.getActionCandidates(player, world);
-    mainThreadOperations.push(this.recordMainThreadOperation(
-      "Controller.selectAction:root-candidates",
-      operationStartedAt,
-      { candidateCount:rootActions.length }
-    ));
-    const uniqueRootCount = deduplicateSearchEquivalentActions(rootActions).length;
-    const request = createSearchRequest({
-      requestId:this.createId("search-request"),
-      gameId:state.gameId,
-      stateVersion:state.stateVersion,
-      actorId:player.id,
-      phase:state.phase,
-      currentRound:state.currentRound,
-      world,
-      searchConfig:this.buildSearchConfig({ timeBudgetMs:options.searchTimeBudgetMs }),
-      rng:this.searchRng.snapshot(),
-      rootActions
-    });
-    this.lastSearchRequest = request;
-    this.searchDiagnostics.SEARCH += 1;
-    const preWorkerFinishedAt = decisionNow();
+    let preparationOperation = "remaining-counts";
+    let rootActions = null;
+    let uniqueRootCount = null;
+    let requestId = null;
+    let request = null;
+    let preWorkerFinishedAt = null;
+    try {
+      const remainingCardCounts = deriveCurrentCardCounts(player, state);
+      mainThreadOperations.push(this.recordMainThreadOperation(
+        "Controller.selectAction:remaining-counts",
+        operationStartedAt
+      ));
+      preparationOperation = "create-world";
+      operationStartedAt = decisionNow();
+      const world = createInitialWorld(player.id, state, remainingCardCounts);
+      mainThreadOperations.push(this.recordMainThreadOperation(
+        "Controller.selectAction:create-world",
+        operationStartedAt
+      ));
+      preparationOperation = "root-candidates";
+      operationStartedAt = decisionNow();
+      rootActions = this.getActionCandidates(player, world);
+      mainThreadOperations.push(this.recordMainThreadOperation(
+        "Controller.selectAction:root-candidates",
+        operationStartedAt,
+        { candidateCount:rootActions.length }
+      ));
+      preparationOperation = "root-deduplication";
+      uniqueRootCount = deduplicateSearchEquivalentActions(rootActions).length;
+      preparationOperation = "create-search-request";
+      requestId = this.createId("search-request");
+      request = createSearchRequest({
+        requestId,
+        gameId:state.gameId,
+        stateVersion:state.stateVersion,
+        actorId:player.id,
+        phase:state.phase,
+        currentRound:state.currentRound,
+        world,
+        searchConfig:this.buildSearchConfig({ timeBudgetMs:options.searchTimeBudgetMs }),
+        rng:this.searchRng.snapshot(),
+        rootActions
+      });
+      this.lastSearchRequest = request;
+      this.searchDiagnostics.SEARCH += 1;
+      preWorkerFinishedAt = decisionNow();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const searchFault = {
+        stage:"PREPARATION",
+        operation:preparationOperation,
+        name:error instanceof Error ? error.name : "Error",
+        message:errorMessage
+      };
+      const result = createSearchResult({
+        request:{
+          requestId:typeof requestId === "string" && requestId ? requestId : null,
+          gameId:state.gameId,
+          stateVersion:state.stateVersion,
+          actorId:player.id
+        },
+        action:null,
+        stats:null,
+        status:SEARCH_RESULT_STATUS.SEARCH_FAILURE,
+        rejectionReason:errorMessage,
+        searchFault,
+        rngAfter:null
+      });
+      const failedAt = decisionNow();
+      this.lastSearchRequest = null;
+      this.lastWorkerOutcome = null;
+      this.lastSearchStats = null;
+      this.lastSearchResult = result;
+      this.lastDecisionDiagnostics = Object.freeze({
+        requestId:result.requestId,
+        stage:"PREPARATION",
+        preWorkerMs:Math.max(0, failedAt - preWorkerStartedAt),
+        workerSearchMs:null,
+        workerRoundTripMs:null,
+        workerTransportMs:null,
+        postMessageMs:null,
+        postWorkerMs:null,
+        physicalRootCount:Array.isArray(rootActions) ? rootActions.length : null,
+        uniqueRootCount,
+        preWorkerProbabilityPreparations:"unavailable",
+        preWorkerConditionBranches:"unavailable",
+        mainThreadOperations:Object.freeze([...mainThreadOperations]),
+        searchStopReason:null,
+        resultStatus:result.status
+      });
+      return null;
+    }
     const workerRoundTripStartedAt = preWorkerFinishedAt;
     let outcome;
     try {

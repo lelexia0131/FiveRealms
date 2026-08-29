@@ -562,7 +562,7 @@ export function deriveCurrentCardCounts(viewer, gameState) {
   deriveCurrentCardCounts 的公开区域与合法记忆遍历。
 
   输入
-  带 definitionId 及可选实体 ID 的确定牌记录。
+  带 definitionId 及可选实体 ID 的确定牌记录，以及该记录的确定来源类别。
 
   输出
   无。
@@ -577,9 +577,9 @@ export function deriveCurrentCardCounts(viewer, gameState) {
   无。
 
   边界与不变量
-  同一实体最多消费一次，非法定义忽略，计数不得为负。
+  同一实体最多消费一次，非法定义忽略；首次超额消费必须立即暴露来源，不得截断为零。
   */
-  const consume = (entry) => {
+  const consume = (entry, sourceCategory) => {
     if (!entry || typeof entry.definitionId !== "string") return;
     if (!Object.hasOwn(remaining, entry.definitionId)) return;
     const entityId = entry.id ?? entry.cardId ?? null;
@@ -587,19 +587,26 @@ export function deriveCurrentCardCounts(viewer, gameState) {
       if (seenIds.has(entityId)) return;
       seenIds.add(entityId);
     }
-    remaining[entry.definitionId] = Math.max(0, remaining[entry.definitionId] - 1);
+    const currentRemainingCount = remaining[entry.definitionId];
+    if (currentRemainingCount <= 0) {
+      throw new RangeError(
+        `AI Fact 有限牌池守恒失败：definitionId=${entry.definitionId}, `
+        + `currentRemainingCount=${currentRemainingCount}, sourceCategory=${sourceCategory}`
+      );
+    }
+    remaining[entry.definitionId] = currentRemainingCount - 1;
   };
-  (viewer?.hand ?? []).forEach(consume);
-  (gameState?.deck?.discardPile ?? []).forEach(consume);
-  (gameState?.deck?.resolvingCards ?? []).forEach(consume);
-  (gameState?.deck?.judgmentZone ?? []).forEach(consume);
+  (viewer?.hand ?? []).forEach((entry) => consume(entry, "viewer-hand"));
+  (gameState?.deck?.discardPile ?? []).forEach((entry) => consume(entry, "discard-pile"));
+  (gameState?.deck?.resolvingCards ?? []).forEach((entry) => consume(entry, "resolving-cards"));
+  (gameState?.deck?.judgmentZone ?? []).forEach((entry) => consume(entry, "judgment-zone"));
   (gameState?.players ?? []).forEach((player) => {
-    if (player?.equipment) consume(player.equipment);
+    if (player?.equipment) consume(player.equipment, "public-equipment");
   });
-  (gameState?.publicCardPool ?? []).forEach(consume);
+  (gameState?.publicCardPool ?? []).forEach((entry) => consume(entry, "public-card-pool"));
   Object.values(viewer?.aiMemory?.knownCardsByPlayer ?? {}).forEach((records) => {
     Object.entries(records ?? {}).forEach(([cardId, definitionId]) => {
-      consume({ cardId, definitionId });
+      consume({ cardId, definitionId }, "known-card-memory");
     });
   });
   return remaining;
