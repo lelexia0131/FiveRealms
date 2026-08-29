@@ -355,6 +355,44 @@ export class Searcher {
 
   /*
   功能
+  记录一个已由原子 preparation 或 finalize 边界隔离的 candidate-local fault。
+
+  调用方
+  prepareCandidate 的调用方与 finalizeCandidates。
+
+  输入
+  失败的 canonical Action、故障阶段与原始异常。
+
+  输出
+  冻结的 data-only candidate fault diagnostics。
+
+  读取状态
+  本次搜索已记录的 candidateFaults。
+
+  写入状态
+  仅向本次搜索的 candidateFaults 追加诊断；不修改 SearchBudget stopReason。
+
+  调用函数
+  Object.freeze。
+
+  边界与不变量
+  只有输入 World 不变且 partial candidate 已被丢弃的原子工作才可在此隔离；
+  SearchBudget、root set、共享构造与全局搜索结构异常不得走本路径。
+  */
+  recordCandidateFault(action, stage, error) {
+    const fault = Object.freeze({
+      action,
+      stage,
+      name:error instanceof Error ? error.name : "Error",
+      message:error instanceof Error ? error.message : String(error)
+    });
+    this.candidateFaults ??= [];
+    this.candidateFaults.push(fault);
+    return fault;
+  }
+
+  /*
+  功能
   执行一次 cooperative yield，并把 false 结果收束为 CANCELLED。
 
   调用方
@@ -412,6 +450,45 @@ export class Searcher {
   schedulingScore(action, player, state) {
     const score = this.evaluator.rootSchedulingScore(action, player, state);
     return Number.isFinite(score) || score === Number.NEGATIVE_INFINITY ? score : 0;
+  }
+
+  /*
+  功能
+  验证一次根搜索拥有非空 canonical Action 集合和唯一 END。
+
+  调用方
+  search 在任何 Pattern、Simulator 或候选工作开始前。
+
+  输入
+  当前行动者与 Controller/Generator 提供的 root Actions。
+
+  输出
+  唯一 canonical END；违反输入 invariant 时抛出 TypeError。
+
+  读取状态
+  只读 player.id 与 Action type/actorId。
+
+  写入状态
+  无。
+
+  调用函数
+  Array.filter。
+
+  边界与不变量
+  合法出牌状态必须至少含一个 root，并且必须且只能包含一个属于当前行动者的 END；
+  输入错误必须在搜索前失败，不能以 COMPLETE + null 收束。
+  */
+  validateRootActions(player, rootActions) {
+    if (!Array.isArray(rootActions) || rootActions.length === 0) {
+      throw new TypeError("Searcher root invariant 失败：rootActions 必须非空");
+    }
+    const endActions = rootActions.filter((action) => action?.type === "end");
+    if (endActions.length !== 1 || endActions[0]?.actorId !== player?.id) {
+      throw new TypeError(
+        "Searcher root invariant 失败：rootActions 必须且只能包含一个 canonical END"
+      );
+    }
+    return endActions[0];
   }
 
   /*
@@ -691,47 +768,73 @@ export class Searcher {
   已物化候选数组与同 parent 的完整 legal Action 集合。
 
   输出
-  同一数组。
+  同一数组；candidate-local finalize fault 会留为 incomplete 并记录诊断。
 
   读取状态
   候选命名 value terms 与 X 技能已结算的 E+1 StateDelta。
 
   写入状态
-  只写候选 transitionValue；任一 sibling 不完整时 END 保持 null。
+  只写候选 transitionValue/finalizationFault 与本次搜索 candidate fault diagnostics；
+  任一 sibling 不完整或 finalize 失败时 END 保持 null。
 
   调用函数
-  Evaluator.endOpportunityPoints、composeTransitionValue。
+  Evaluator.endOpportunityPoints、composeTransitionValue、recordCandidateFault。
 
   边界与不变量
   Searcher 只确认全部 sibling 完整并提供同 parent 的完整 transition terms；
   普通/X skill state-value opportunity、discard relief、END opportunity 与 Final Utility 公式全部由 Evaluator 聚合；
-  partial sibling 集合不得给 END 赋值，responseNet 只作诊断。
+  partial/faulted sibling 集合不得给 END 赋值；一个候选 finalize 失败不得清空其它已完成候选，responseNet 只作诊断。
   */
   finalizeCandidates(candidates, siblingActions = candidates.map((entry) => entry.action)) {
+    const nonEndCandidates = candidates.filter((candidate) => candidate.action?.type !== "end");
+    for (const candidate of nonEndCandidates) {
+      if (candidate.finalizationFault || candidate.transitionValue !== null) continue;
+      try {
+        candidate.transitionValue = this.evaluator.composeTransitionValue({
+          baseTransition:candidate.baseTransition,
+          frontierValue:candidate.frontierValue,
+          endOpportunityPoints:0
+        });
+      } catch (error) {
+        candidate.transitionValue = null;
+        candidate.finalizationFault = true;
+        this.recordCandidateFault(candidate.action, "finalize", error);
+      }
+    }
     const siblingContextComplete = siblingActions.every((siblingAction) => (
-      candidates.some((candidate) => candidate.action === siblingAction)
+      candidates.some((candidate) => (
+        candidate.action === siblingAction
+          && !candidate.finalizationFault
+          && (siblingAction?.type === "end" || candidate.transitionValue !== null)
+      ))
     ));
+    const endCandidates = candidates.filter((candidate) => candidate.action?.type === "end");
+    if (!siblingContextComplete) {
+      for (const candidate of endCandidates) candidate.transitionValue = null;
+      return candidates;
+    }
     const siblingTransitionTerms = candidates.map((candidate) => ({
       actionType:candidate.action?.type ?? null,
       transitionTerms:candidate.baseTerms,
       nextEnergyStateDelta:candidate.nextEnergyStateDelta
     }));
-    for (const candidate of candidates) {
-      if (candidate.action?.type === "end" && !siblingContextComplete) {
+    for (const candidate of endCandidates) {
+      if (candidate.finalizationFault || candidate.transitionValue !== null) continue;
+      try {
+        const endOpportunityPoints = this.evaluator.endOpportunityPoints(
+          candidate.baseTerms,
+          siblingTransitionTerms
+        );
+        candidate.transitionValue = this.evaluator.composeTransitionValue({
+          baseTransition:candidate.baseTransition,
+          frontierValue:candidate.frontierValue,
+          endOpportunityPoints
+        });
+      } catch (error) {
         candidate.transitionValue = null;
-        continue;
+        candidate.finalizationFault = true;
+        this.recordCandidateFault(candidate.action, "finalize", error);
       }
-      const endOpportunityPoints = candidate.action?.type === "end"
-        ? this.evaluator.endOpportunityPoints(
-            candidate.baseTerms,
-            siblingTransitionTerms
-          )
-        : 0;
-      candidate.transitionValue = this.evaluator.composeTransitionValue({
-        baseTransition:candidate.baseTransition,
-        frontierValue:candidate.frontierValue,
-        endOpportunityPoints
-      });
     }
     return candidates;
   }
@@ -812,7 +915,7 @@ export class Searcher {
   当前 SearchBudget、搜索深度与返回 { state, candidate } 的同步 preparation。
 
   输出
-  完整 preparation 结果；预算 signal 时返回 null；普通异常向 search outer boundary 抛出。
+  完整 preparation 结果；预算 signal 时返回 null；candidate-local 异常返回带 candidateFault 的失败结果。
 
   读取状态
   SearchBudget 当前停止原因与 preparation 诊断。
@@ -824,7 +927,8 @@ export class Searcher {
   SearchBudget.beginPreparation/finishPreparation/isCurrentWorkInterruption、prepare。
 
   边界与不变量
-  只有完整 candidate 才标记 completed；任何 partial World 都必须丢弃；局部不得把普通异常转换为正常返回。
+  只有完整 candidate 才标记 completed；任何 partial World 都必须丢弃；
+  beginPreparation 的共享预算 invariant 异常发生在隔离边界外并继续上抛。
   */
   prepareCandidate(budget, depth, prepare) {
     budget.beginPreparation(depth);
@@ -835,7 +939,7 @@ export class Searcher {
     } catch (error) {
       budget.finishPreparation(false);
       if (budget.isCurrentWorkInterruption?.(error)) return null;
-      throw error;
+      return { state:null, candidate:null, candidateFault:error };
     }
   }
 
@@ -1293,6 +1397,9 @@ export class Searcher {
       });
       const candidate = prepared?.candidate ?? null;
       if (!candidate) {
+        if (prepared?.candidateFault) {
+          this.recordCandidateFault(action, "materialize", prepared.candidateFault);
+        }
         workDiagnostics.abortedCandidateCount += 1;
         for (const proposal of activePatternProposals) {
           if (!this.patternMatcher.matchesStep(
@@ -1305,6 +1412,11 @@ export class Searcher {
             || workDiagnostics.abortedPatternProposalKeys.has(proposal.semanticKey)) continue;
           workDiagnostics.abortedPatternProposalKeys.add(proposal.semanticKey);
           workDiagnostics.abortedPatternCount += 1;
+        }
+        if (prepared?.candidateFault) {
+          nextActionIndex += 1;
+          newCandidateCount += 1;
+          continue;
         }
         break;
       }
@@ -1373,11 +1485,10 @@ export class Searcher {
   search 的正常收束和 yield 取消路径。
 
   输入
-  SearchBudget、结构配置、完整候选、provisional root、context、根诊断条目与本次搜索工作诊断。
+  SearchBudget、结构配置、完整 incumbent、context、根诊断条目与本次搜索工作诊断。
 
   输出
-  返回完整候选动作；TIME/NODE/CANCELLED 零完整 root 时沿用既有 provisional；
-  FAULT 零完整 root 时只允许 ordinary non-END provisional，否则返回 null。
+  只返回完整 incumbent Action；任何停止原因下零完整 incumbent 都返回 null。
 
   读取状态
   budget 计数、候选序列、root/work diagnostics 与 bounded counterfactual context diagnostics。
@@ -1389,33 +1500,17 @@ export class Searcher {
   describeSequence、SearchBudget.diagnostics。
 
   边界与不变量
-  统计只描述已完成的搜索工作；provisional root 不得写入 bestSequence、best value 或完整候选计数；
-  FAULT 不得把 END provisional 伪装成战略选择。
+  统计只描述已完成的搜索工作；incomplete、interrupted 或 faulted candidate 永远不能成为返回 Action。
   */
   recordResult({
     budget,
     structure,
     choice,
-    provisionalRootFallback = null,
     context,
     rootLedgers,
     workDiagnostics
   }) {
     const budgetStats = budget.diagnostics();
-    const allowedProvisionalFallback = budgetStats.stopReason === "FAULT"
-      && provisionalRootFallback?.type === "end"
-      ? null
-      : provisionalRootFallback;
-    const provisionalFallbackUsed = !choice
-      && workDiagnostics.completedRootCandidateCount === 0
-      && ["TIME", "NODE", "CANCELLED", "FAULT"].includes(budgetStats.stopReason)
-      && Boolean(allowedProvisionalFallback);
-    const provisionalFallbackReason = provisionalFallbackUsed
-      ? `NO_COMPLETED_ROOT_${budgetStats.stopReason}`
-      : null;
-    const provisionalFallbackAction = provisionalFallbackUsed
-      ? allowedProvisionalFallback
-      : null;
     this.lastSequence = this.describeSequence(
       [...(choice?.sequence ?? [])]
     );
@@ -1440,6 +1535,7 @@ export class Searcher {
       nodeBudget:budgetStats.nodeBudget,
       stopReason:budgetStats.stopReason,
       searchFault:this.searchFault,
+      candidateFaults:Object.freeze([...(this.candidateFaults ?? [])]),
       timeoutObserved:budgetStats.stopReason === "TIME",
       simulationCalls:budgetStats.simulationCalls,
       simulatorTransitions:budgetStats.simulationCalls,
@@ -1499,16 +1595,11 @@ export class Searcher {
       selectedPatternId:choice?.completedPatternIds?.[0] ?? null,
       depthReached:workDiagnostics.depthReached,
       firstDepth2AtWorkCount:workDiagnostics.firstDepth2AtWorkCount,
-      provisionalFallbackUsed,
-      provisionalFallbackReason,
-      provisionalFallbackAction,
       activeRoot:workDiagnostics.activeRoot,
       rootWork:workDiagnostics.rootWork,
       rootLedgers
     };
-    return choice?.action
-      ?? (provisionalFallbackUsed ? allowedProvisionalFallback : null)
-      ?? null;
+    return choice?.action ?? null;
   }
 
   /*
@@ -1522,8 +1613,8 @@ export class Searcher {
   行动者、根 World、根候选动作与可选会话/诊断上下文。
 
   输出
-  当前最佳完整根动作；TIME/NODE/CANCELLED 零完整 root 时沿用既有 provisional；
-  FAULT 有完整 incumbent 时返回 incumbent，零完整 root 时只允许 ordinary non-END provisional。
+  当前最佳完整根动作；TIME/NODE/CANCELLED/FAULT 只保留停止前已有的完整 incumbent，
+  零完整 incumbent 时返回 null。
 
   读取状态
   World、Pattern proposal、显式搜索归属模块、动作生成、预算与会话能力。
@@ -1541,8 +1632,7 @@ export class Searcher {
   每个 continuation 从当前 post-state legal actions 解析，Pattern metadata 不进入 value 或 final incumbent rule；
   progressive 只缓存完整子候选；常规逐层 beam 必须复用或补齐原有展开，COMPLETE 仍只从标准 final beam 选择；
   一个候选完整物化并完成同层转移项后，才可登记为 best-seen candidate；未物化动作不得伪装成完整 incumbent；
-  TIME/NODE/CANCELLED 零完整 root 时沿用既有 terminal/non-END provisional；FAULT 永远不得 provisional END；
-  Pattern promotion 不得把未完整物化的 guided root 变成实际选择；provisional fallback 不登记成 candidate/计划；
+  任一停止原因下零完整 root 都返回 null；Pattern promotion 不得把未完整物化的 guided root 变成实际选择；
   根层已物化 END 只有完成全部 sibling terms 才具备比较资格，未物化 END 不得在停止后补充物化；
   NODE/TIME 中断后只返回已完整物化的 incumbent，不再启动剩余 root 或 END；
   CANCELLED 同样不得清空已有完整 incumbent；外部 session/state acceptance 仍由 Controller 决定是否可执行；
@@ -1555,7 +1645,10 @@ export class Searcher {
     this.comparisonActor = player;
     this.comparisonWorld = world;
     this.lastSequence = [];
+    this.lastSearchStats = null;
     this.searchFault = null;
+    this.candidateFaults = [];
+    const rootTerminalAction = this.validateRootActions(player, rootActions);
     const collectDiagnostics = Boolean(options.collectAiDecisionDiagnostics);
     const budget = this.searchBudgetFactory();
     const structure = this.structure();
@@ -1567,30 +1660,12 @@ export class Searcher {
       structure
     });
     const patternProposals = patternMatch.proposals ?? [];
-    const ordinaryRootActions = this.scheduleRootActions(
-      uniqueRootActions,
-      player,
-      world
-    );
     const scheduledRootActions = this.scheduleRootActions(
       uniqueRootActions,
       player,
       world,
       patternProposals
     );
-    const rootTerminalAction = ordinaryRootActions.find((action) => action?.type === "end");
-    const visiblePlayer = world.players?.find((entry) => entry.id === player.id) ?? player;
-    const visibleHandCount = Number(
-      visiblePlayer.handCount ?? visiblePlayer.hand?.length ?? player.hand?.length ?? 0
-    );
-    const terminalForcesDiscard = visibleHandCount > Math.max(0, Number(visiblePlayer.hp) || 0);
-    const ordinaryNonTerminalFallback = ordinaryRootActions.find(
-      (action) => action?.type !== "end"
-    );
-    const provisionalRootFallback = terminalForcesDiscard
-      ? ordinaryNonTerminalFallback ?? rootTerminalAction
-      : rootTerminalAction ?? ordinaryNonTerminalFallback
-      ?? null;
     let context;
     const requestedRootCandidateCount = Number(options.rootCandidateCount);
     const rootCandidateCount = Number.isFinite(requestedRootCandidateCount)
@@ -1639,7 +1714,6 @@ export class Searcher {
         budget,
         structure,
         choice:null,
-        provisionalRootFallback,
         context,
         rootLedgers:[],
         workDiagnostics
@@ -1655,7 +1729,6 @@ export class Searcher {
         budget,
         structure,
         choice:null,
-        provisionalRootFallback,
         context,
         rootLedgers:[],
         workDiagnostics
@@ -1677,7 +1750,6 @@ export class Searcher {
           budget,
           structure,
           choice:bestSeenCandidate,
-          provisionalRootFallback,
           context,
           rootLedgers,
           workDiagnostics
@@ -1704,7 +1776,18 @@ export class Searcher {
         });
         return { state, candidate };
       });
-      const state = prepared?.state ?? null;
+      if (prepared?.candidateFault) {
+        this.recordCandidateFault(action, "materialize", prepared.candidateFault);
+        workDiagnostics.abortedRootCandidateCount += 1;
+        workDiagnostics.abortedCandidateCount += 1;
+        workDiagnostics.activeRoot = null;
+        workDiagnostics.rootWork.push({
+          action:rootDescriptor,
+          completed:false,
+          simulatorTransitions:budget.simulationCalls - rootWorkStarted
+        });
+        continue;
+      }
       const candidate = prepared?.candidate ?? null;
       if (!candidate) {
         workDiagnostics.abortedRootCandidateCount += 1;
@@ -1719,7 +1802,6 @@ export class Searcher {
             budget,
             structure,
             choice:bestSeenCandidate,
-            provisionalRootFallback,
             context,
             rootLedgers,
             workDiagnostics
@@ -1794,7 +1876,6 @@ export class Searcher {
             budget,
             structure,
             choice:bestSeenCandidate,
-            provisionalRootFallback,
             context,
             rootLedgers,
             workDiagnostics
@@ -1809,7 +1890,6 @@ export class Searcher {
             budget,
             structure,
             choice:bestSeenCandidate,
-            provisionalRootFallback,
             context,
             rootLedgers,
             workDiagnostics
@@ -1827,6 +1907,22 @@ export class Searcher {
     workDiagnostics.completedRootCandidateCount = rootCandidates.filter(
       (candidate) => candidate.transitionValue !== null
     ).length;
+    if (workDiagnostics.completedRootCandidateCount === 0) {
+      if (!budget.shouldStop()) {
+        this.recordSearchFault(
+          budget,
+          new Error("Searcher root invariant 失败：所有 root candidates 均未形成完整 incumbent")
+        );
+      }
+      return this.recordResult({
+        budget,
+        structure,
+        choice:null,
+        context,
+        rootLedgers,
+        workDiagnostics
+      });
+    }
     if (collectDiagnostics) {
       rootLedgers.push(...rootCandidates
         .filter((candidate) => candidate.transitionValue !== null)
@@ -1898,7 +1994,6 @@ export class Searcher {
             budget,
             structure,
             choice:bestSeenCandidate,
-            provisionalRootFallback,
             context,
             rootLedgers,
             workDiagnostics
@@ -1965,7 +2060,6 @@ export class Searcher {
             budget,
             structure,
             choice:bestSeenCandidate,
-            provisionalRootFallback,
             context,
             rootLedgers,
             workDiagnostics
@@ -2024,7 +2118,6 @@ export class Searcher {
       budget,
       structure,
       choice,
-      provisionalRootFallback,
       context,
       rootLedgers,
       workDiagnostics
@@ -2037,7 +2130,6 @@ export class Searcher {
         budget,
         structure,
         choice:bestSeenCandidate,
-        provisionalRootFallback,
         context:context ?? { unknownHandEstimate:null },
         rootLedgers,
         workDiagnostics

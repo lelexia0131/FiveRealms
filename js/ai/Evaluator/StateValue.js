@@ -849,10 +849,11 @@ death 与不含 hand/equipment intrinsic asset 的 terms。
 无。
 
 调用函数
-Probability、Threat primitives 与 energyDeviceFutureUtility。
+Probability、Threat primitives、skillReadinessThreat 与 energyDeviceFutureUtility。
 
 边界与不变量
-不得计算手牌或装备资产价值；energyDeviceFuture 只表示装备造成的独立未来能量状态后果。
+不得计算手牌或装备资产价值；skillReadiness 只评价已有技能在当前/下一能量阶段的可用机会，
+不得恢复按当前能量线性计分；energyDeviceFuture 只表示装备造成的独立未来能量状态后果。
 */
 export function statePlayerValueTerms(
   state,
@@ -914,6 +915,7 @@ export function statePlayerValueTerms(
       rescueOutlook,
       hp: player.hp * HP_VALUE,
       shield,
+      skillReadiness: skillReadinessThreat(player),
       stacks: (player.exposeWeaknessStacks ?? 0) * 3,
       markThreat: -markThreat * 2,
       residualExposureValue: -residualExposure,

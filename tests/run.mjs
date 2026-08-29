@@ -242,31 +242,126 @@ import {
 带 probabilityState 的同一对象。
 
 读取状态
-players 的 handCount、合法已知身份与 remainingCardCounts。
+players 的 handCount期望、显式身份 availability 与 remainingCardCounts。
 
 写入状态
 仅写测试 fixture.probabilityState。
 
 调用函数
-createProbabilityState、cardAvailability。
+createProbabilityState、mutateProbability、cardAvailability、expectedAnonymousSlots。
 
 边界与不变量
-生产代码没有 fallback；自己 hand 与合法 knownCards 已是确定身份，不得再次计入匿名槽。
+生产代码没有 fallback；历史 World fixture 的 handCount 可以是当前混合的期望，
+但传入 createProbabilityState 的每个物理 factor 必须只含整数槽。显式身份与匿名槽互斥，
+匿名槽无法从有限池分配时必须失败，不得截断或伪造容量。
 */
 function upgradeProbabilityFixture(state) {
   if (!state || state.probabilityState) return state;
   const players = state.players ?? [];
-  const viewer = players.find((player) => Array.isArray(player.hand)) ?? null;
-  const knownCardsByPlayer = Object.fromEntries(players.map((player) => [
-    player.id,
-    Array.isArray(player.knownCards) ? player.knownCards : []
-  ]));
-  state.probabilityState = createProbabilityState({
-    viewerId:viewer?.id ?? null,
-    players,
-    knownCardsByPlayer,
-    currentCardCounts:state.remainingCardCounts ?? RULESET_DEFINITION.deckComposition
+  const hasCurrentCounts = state.remainingCardCounts !== null
+    && typeof state.remainingCardCounts === "object"
+    && !Array.isArray(state.remainingCardCounts);
+  const currentCardCounts = hasCurrentCounts
+    ? state.remainingCardCounts
+    : RULESET_DEFINITION.deckComposition;
+  const explicitExpectedByDefinition = new Map();
+  const anonymousExpectedByPlayer = players.map((player) => {
+    const resources = [
+      ...(Array.isArray(player.hand) ? player.hand : []),
+      ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+    ];
+    const explicitExpected = resources.reduce((sum, card) => {
+      const availability = cardAvailability(card);
+      if (!hasCurrentCounts && typeof card?.definitionId === "string") {
+        explicitExpectedByDefinition.set(
+          card.definitionId,
+          (explicitExpectedByDefinition.get(card.definitionId) ?? 0) + availability
+        );
+      }
+      return sum + availability;
+    }, 0);
+    const expectedHandCount = player.handCount === undefined
+      ? explicitExpected
+      : Number(player.handCount);
+    if (!Number.isFinite(expectedHandCount) || expectedHandCount < 0) {
+      throw new RangeError(`测试 Probability fixture 的 handCount 非法：playerId=${player.id}`);
+    }
+    const anonymousExpected = expectedHandCount - explicitExpected;
+    if (anonymousExpected < -1e-9) {
+      throw new RangeError(
+        `测试 Probability fixture 的显式身份超过 handCount：playerId=${player.id}, `
+        + `handCount=${expectedHandCount}, explicitExpected=${explicitExpected}`
+      );
+    }
+    return {
+      playerId:player.id,
+      expected:Math.abs(anonymousExpected) <= 1e-9 ? 0 : anonymousExpected
+    };
   });
+  if (!hasCurrentCounts) {
+    players.forEach((player) => {
+      if (typeof player.equipmentDefinitionId !== "string") return;
+      explicitExpectedByDefinition.set(
+        player.equipmentDefinitionId,
+        (explicitExpectedByDefinition.get(player.equipmentDefinitionId) ?? 0)
+          + cardAvailability({ availability:player.equipmentRetentionProbability ?? 1 })
+      );
+    });
+  }
+  state.probabilityState = createProbabilityState({
+    viewerId:null,
+    players:players.map((player) => ({ id:player.id, handCount:0 })),
+    knownCardsByPlayer:Object.fromEntries(players.map((player) => [player.id, []])),
+    currentCardCounts
+  });
+  if (!hasCurrentCounts) {
+    for (const [definitionId, expected] of explicitExpectedByDefinition) {
+      const available = currentCardCounts[definitionId];
+      if (!Number.isSafeInteger(available) || expected > available + 1e-9) {
+        throw new RangeError(
+          `测试 Probability fixture 的显式身份超过牌池：definitionId=${definitionId}, `
+          + `expected=${expected}, available=${available}`
+        );
+      }
+      const certainCount = Math.floor(expected);
+      const fractionalCount = expected - certainCount;
+      if (certainCount > 0) mutateProbability(state.probabilityState, {
+        type:"REMOVE",
+        sourceBucketId:"outside/drawPool",
+        definitionId,
+        count:certainCount
+      });
+      if (fractionalCount > 1e-9) mutateProbability(state.probabilityState, {
+        type:"REMOVE",
+        sourceBucketId:"outside/drawPool",
+        definitionId,
+        probability:fractionalCount
+      });
+    }
+  }
+  for (const { playerId, expected } of anonymousExpectedByPlayer) {
+    const certainCount = Math.floor(expected);
+    const fractionalCount = expected - certainCount;
+    if (certainCount > 0) mutateProbability(state.probabilityState, {
+      type:"MOVE",
+      sourceBucketId:"outside/drawPool",
+      targetBucketId:playerId,
+      count:certainCount
+    });
+    if (fractionalCount > 1e-9) mutateProbability(state.probabilityState, {
+      type:"MOVE",
+      sourceBucketId:"outside/drawPool",
+      targetBucketId:playerId,
+      probability:fractionalCount
+    });
+    const assigned = expectedAnonymousSlots(state.probabilityState, playerId);
+    if (Math.abs(assigned - expected) > 1e-9) {
+      throw new RangeError(
+        `测试 Probability fixture 的匿名槽无法从有限池分配：playerId=${playerId}, `
+        + `expected=${expected}, assigned=${assigned}`
+      );
+    }
+  }
   return state;
 }
 
@@ -17465,29 +17560,29 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
       entry.targetIds?.[0] ?? null
     ]), [
       ["skill", "stealSkill", "b"],
-      ["card", "seal", "c"],
       ["card", "assault", "b"],
+      ["card", "seal", "c"],
       ["end", null, null]
     ], JSON.stringify(stats));
     assert.deepEqual(stats.bestSequence[0], action);
     assert.notDeepEqual(stats.scheduledRootOrder[0], action,
       "最终 root 必须由完整未来价值决定，而不是照搬首个调度动作");
-    assert.equal(stats.expanded, 103);
+    assert.equal(stats.expanded, 101);
     assert.equal(stats.depth, 4);
     assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 2.7046625402770643);
+    assert.equal(stats.bestValueScore, 3.084662540277063);
     assert.equal(stats.stopReason, "COMPLETE");
-    assert.equal(stats.simulationCalls, 187);
-    assert.equal(stats.cloneCalls, 197);
-    assert.equal(stats.probabilityOperations, 1812);
+    assert.equal(stats.simulationCalls, 185);
+    assert.equal(stats.cloneCalls, 195);
+    assert.equal(stats.probabilityOperations, 1792);
     assert.equal(stats.rootCandidateCount, 9);
     assert.equal(stats.completedRootCandidateCount, 9);
     assert.equal(stats.timeoutObserved, false);
     assert.equal(stats.matchedPatternCount, 1);
     assert.equal(stats.patternProposalCount, 1);
     assert.equal(stats.completedPatternCount, 1);
-    assert.equal(stats.patternIncumbentUpdateCount, 0);
-    assert.equal(stats.selectedPatternId, "SEAL_LAST");
+    assert.equal(stats.patternIncumbentUpdateCount, 1);
+    assert.equal(stats.selectedPatternId, null);
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -17602,11 +17697,11 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.equal(outcome.stats.uniqueRootCandidateCount, 4);
     assert.equal(outcome.stats.completedRootCandidateCount, 4);
     assert.equal(outcome.stats.expanded, 4);
-    assert.equal(outcome.stats.bestValueScore, 0.5172121093750007);
+    assert.equal(outcome.stats.bestValueScore, 1.0909621093750004);
     assert.ok(outcome.stats.elapsedMs >= 30);
     assert.ok(outcome.stats.rootWork.every((entry) => entry.completed));
-    assert.equal(outcome.stats.provisionalFallbackUsed, false);
-    assert.equal(outcome.stats.provisionalFallbackAction, null);
+    assert.equal(Object.hasOwn(outcome.stats, "provisionalFallbackUsed"), false);
+    assert.equal(Object.hasOwn(outcome.stats, "provisionalFallbackAction"), false);
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
       type:"card",
       cardId:"plunder",
@@ -17667,11 +17762,11 @@ test("AI·搜索：TIME 深层生成中断保留赌命者已完成突袭/孤注 
     assert.equal(outcome.stats.uniqueRootCandidateCount, 3);
     assert.equal(outcome.stats.completedRootCandidateCount, 3);
     assert.equal(outcome.stats.expanded, 5);
-    assert.equal(outcome.stats.bestValueScore, 0.15124999999999955);
+    assert.equal(outcome.stats.bestValueScore, 0.07999999999999971);
     assert.ok(outcome.stats.elapsedMs >= 40);
     assert.ok(outcome.stats.rootWork.every((entry) => entry.completed));
-    assert.equal(outcome.stats.provisionalFallbackUsed, false);
-    assert.equal(outcome.stats.provisionalFallbackAction, null);
+    assert.equal(Object.hasOwn(outcome.stats, "provisionalFallbackUsed"), false);
+    assert.equal(Object.hasOwn(outcome.stats, "provisionalFallbackAction"), false);
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
       type:"card",
       cardId:"assault",
@@ -18933,7 +19028,7 @@ async function runEndSiblingBudgetFixture(
 运行 root candidate 普通故障、首 root 取消或正常 COMPLETE 的确定性 Searcher 夹具。
 
 调用方
-Searcher FAULT/CANCELLED incumbent、provisional 与 strategic END 回归测试。
+Searcher candidate fault 隔离、CANCELLED incumbent 与 strategic END 回归测试。
 
 输入
 mode 为 incumbent 前后 fault、cooperative cancel、only-END fault 或正常 COMPLETE 场景标识。
@@ -18969,11 +19064,20 @@ async function runSearcherFaultBoundaryFixture(mode) {
     cardInstanceId:`${actorId}-charge`
   });
   const end = createAction({ type:"end", actorId });
-  const rootActions = mode === "only-end-fault"
-    ? [end]
-    : mode === "after-incumbent-fault"
-      ? [assault, charge, end]
-      : [assault, end];
+  const rootActions = mode === "empty-roots"
+    ? []
+    : mode === "duplicate-end"
+      ? [end, createAction({ type:"end", actorId })]
+      : mode === "only-end-fault" || mode === "only-end-complete"
+        ? [end]
+        : [
+            "after-incumbent-fault",
+            "before-incumbent-fault",
+            "before-incumbent-evaluator-fault",
+            "before-incumbent-finalize-fault"
+          ].includes(mode)
+          ? [assault, charge, end]
+          : [assault, end];
   const applied = [];
   const workCalls = {
     finalizeCandidates:0,
@@ -18999,12 +19103,17 @@ async function runSearcherFaultBoundaryFixture(mode) {
     assaultMarginalStackCount:() => 0,
     advanceTransitionProvenance:() => null,
     adaptiveInformationTarget:() => null,
-    evaluateTransition:({ action }) => ({
-      baseTransition:transitionValue(action),
-      stateDelta:transitionValue(action),
-      dangerBefore:0,
-      endOpportunityInputs:action.type === "end" ? {} : null
-    }),
+    evaluateTransition:({ action }) => {
+      if (mode === "before-incumbent-evaluator-fault" && action === assault) {
+        throw new Error("synthetic Evaluator fault before incumbent");
+      }
+      return {
+        baseTransition:transitionValue(action),
+        stateDelta:transitionValue(action),
+        dangerBefore:0,
+        endOpportunityInputs:action.type === "end" ? {} : null
+      };
+    },
     frontierResidual:() => null,
     terminalFrontierValue:() => 0,
     requiresActionLightningOutcomes:() => false,
@@ -19012,9 +19121,12 @@ async function runSearcherFaultBoundaryFixture(mode) {
     composeSearchPrior:() => ({ domainPrior:0, searchCredit:0, prior:0 }),
     resourceSelectionPreference:() => null,
     endOpportunityPoints:() => 0,
-    composeTransitionValue:({ baseTransition, frontierValue, endOpportunityPoints }) => (
-      baseTransition + frontierValue - endOpportunityPoints
-    ),
+    composeTransitionValue:({ baseTransition, frontierValue, endOpportunityPoints }) => {
+      if (mode === "before-incumbent-finalize-fault" && baseTransition === 5) {
+        throw new Error("synthetic finalize fault before incumbent");
+      }
+      return baseTransition + frontierValue - endOpportunityPoints;
+    },
     compareCandidates:(left, right) => {
       workCalls.compareCandidates += 1;
       return left.valueScore - right.valueScore;
@@ -19040,7 +19152,7 @@ async function runSearcherFaultBoundaryFixture(mode) {
           throw new Error("synthetic Simulator fault before incumbent");
         }
         if (mode === "only-end-fault" && action === end) {
-          throw new Error("synthetic Simulator fault with only END provisional");
+          throw new Error("synthetic Simulator fault with only END candidate");
         }
         if (mode === "before-incumbent-cancel" && action === assault) {
           searchBudget.cancel();
@@ -19086,21 +19198,28 @@ async function runSearcherFaultBoundaryFixture(mode) {
       throw new Error("synthetic prune fault after incumbent");
     };
   }
-  const selected = await searcher.search(
-    { id:actorId, hand:Array(5).fill({}) },
-    {
-      playPhaseEnded:false,
-      probabilityState:null,
-      players:[
-        { id:actorId, battleTeam:"dawn", alive:true, hp:2, handCount:5 },
-        { id:`${actorId}-enemy`, battleTeam:"dusk", alive:true, hp:4, handCount:0 }
-      ]
-    },
-    rootActions,
-    { gameId:actorId }
-  );
+  let selected = null;
+  let searchError = null;
+  try {
+    selected = await searcher.search(
+      { id:actorId, hand:Array(5).fill({}) },
+      {
+        playPhaseEnded:false,
+        probabilityState:null,
+        players:[
+          { id:actorId, battleTeam:"dawn", alive:true, hp:2, handCount:5 },
+          { id:`${actorId}-enemy`, battleTeam:"dusk", alive:true, hp:4, handCount:0 }
+        ]
+      },
+      rootActions,
+      { gameId:actorId }
+    );
+  } catch (error) {
+    searchError = error;
+  }
   return {
     selected,
+    searchError,
     stats:searcher.lastSearchStats,
     applied,
     workCalls,
@@ -19110,20 +19229,16 @@ async function runSearcherFaultBoundaryFixture(mode) {
   };
 }
 
-test("AI·搜索：FAULT 保留已完成 Assault incumbent 且不补算 END", async () => {
+test("AI·搜索：后续 Charge candidate fault 被隔离且保留完整 Assault incumbent", async () => {
   const result = await runSearcherFaultBoundaryFixture("after-incumbent-fault");
-  assert.equal(result.stats.stopReason, "FAULT");
-  assert.match(result.stats.searchFault.message, /after incumbent/u);
+  assert.equal(result.stats.stopReason, "COMPLETE");
+  assert.equal(result.stats.searchFault, null);
   assert.equal(result.selected, result.assault);
   assert.equal(result.stats.completedRootCandidateCount, 1);
-  assert.equal(result.stats.provisionalFallbackUsed, false);
-  assert.deepEqual(result.applied, ["assault", "charge"]);
-  assert.deepEqual(result.workCalls, {
-    finalizeCandidates:1,
-    buildRootNodes:0,
-    prune:0,
-    compareCandidates:0
-  });
+  assert.equal(result.stats.candidateFaults.length, 1);
+  assert.equal(result.stats.candidateFaults[0].action, result.charge);
+  assert.match(result.stats.candidateFaults[0].message, /after incumbent/u);
+  assert.deepEqual(result.applied, ["assault", "charge", "end"]);
 });
 
 test("AI·搜索：完整 Assault 在 Pattern 构造故障前已登记且收束不重跑 comparator", async () => {
@@ -19142,38 +19257,50 @@ test("AI·搜索：后半段 prune 异常由最外层 FAULT boundary 保留 Assa
   assert.match(result.stats.searchFault.message, /prune fault after incumbent/u);
   assert.equal(result.selected, result.assault);
   assert.equal(result.stats.completedRootCandidateCount, 2);
-  assert.equal(result.stats.provisionalFallbackUsed, false);
+  assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
   assert.equal(result.workCalls.buildRootNodes, 1);
   assert.equal(result.workCalls.prune, 1);
   assert.equal(result.workCalls.compareCandidates, 2);
 });
 
-test("AI·搜索：首个完整 root 前 FAULT 使用 Searcher provisional non-END", async () => {
+test("AI·搜索：首个 Assault candidate fault 后继续并返回完整 Charge candidate", async () => {
   const result = await runSearcherFaultBoundaryFixture("before-incumbent-fault");
-  assert.equal(result.stats.stopReason, "FAULT");
-  assert.equal(result.stats.completedRootCandidateCount, 0);
-  assert.equal(result.stats.provisionalFallbackUsed, true);
-  assert.equal(result.stats.provisionalFallbackReason, "NO_COMPLETED_ROOT_FAULT");
-  assert.equal(result.selected, result.assault);
-  assert.notEqual(result.selected.type, "end");
-  assert.deepEqual(result.applied, ["assault"]);
+  assert.equal(result.stats.stopReason, "COMPLETE");
+  assert.equal(result.stats.searchFault, null);
+  assert.equal(result.stats.completedRootCandidateCount, 1);
+  assert.equal(result.selected, result.charge);
+  assert.equal(result.stats.candidateFaults.length, 1);
+  assert.equal(result.stats.candidateFaults[0].action, result.assault);
+  assert.deepEqual(result.applied, ["assault", "charge", "end"]);
 });
 
-test("AI·搜索：首个完整 root 前 CANCELLED 使用 Searcher provisional non-END", async () => {
+test("AI·搜索：首个 Evaluator/finalize candidate fault 后继续返回完整 Charge", async () => {
+  for (const mode of [
+    "before-incumbent-evaluator-fault",
+    "before-incumbent-finalize-fault"
+  ]) {
+    const result = await runSearcherFaultBoundaryFixture(mode);
+    assert.equal(result.stats.stopReason, "COMPLETE", mode);
+    assert.equal(result.stats.searchFault, null, mode);
+    assert.equal(result.selected, result.charge, mode);
+    assert.equal(result.stats.candidateFaults.length, 1, mode);
+    assert.equal(result.stats.candidateFaults[0].action, result.assault, mode);
+  }
+});
+
+test("AI·搜索：首个完整 root 前 CANCELLED 不返回 provisional Action", async () => {
   const result = await runSearcherFaultBoundaryFixture("before-incumbent-cancel");
   assert.equal(result.stats.stopReason, "CANCELLED");
   assert.equal(result.stats.completedRootCandidateCount, 0);
-  assert.equal(result.stats.provisionalFallbackUsed, true);
-  assert.equal(result.stats.provisionalFallbackReason, "NO_COMPLETED_ROOT_CANCELLED");
-  assert.equal(result.selected, result.assault);
-  assert.notEqual(result.selected.type, "end");
+  assert.equal(result.selected, null);
+  assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
 });
 
 test("AI·搜索：已有完整 root 的 CANCELLED 直接收束 incumbent 且不重建 root nodes", async () => {
   const result = await runSearcherFaultBoundaryFixture("post-incumbent-cancel");
   assert.equal(result.stats.stopReason, "CANCELLED");
   assert.equal(result.selected, result.assault);
-  assert.equal(result.stats.provisionalFallbackUsed, false);
+  assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
   assert.deepEqual(result.applied, ["assault"]);
   assert.deepEqual(result.workCalls, {
     finalizeCandidates:1,
@@ -19183,15 +19310,33 @@ test("AI·搜索：已有完整 root 的 CANCELLED 直接收束 incumbent 且不
   });
 });
 
-test("AI·搜索：零完整 root 的 FAULT 只有 END provisional 时返回 null", async () => {
+test("AI·搜索：only-END candidate fault 后零完整 root 明确收束 global FAULT", async () => {
   const result = await runSearcherFaultBoundaryFixture("only-end-fault");
   assert.equal(result.stats.stopReason, "FAULT");
-  assert.match(result.stats.searchFault.message, /only END provisional/u);
+  assert.match(result.stats.searchFault.message, /所有 root candidates 均未形成完整 incumbent/u);
   assert.equal(result.stats.completedRootCandidateCount, 0);
-  assert.equal(result.stats.provisionalFallbackUsed, false);
-  assert.equal(result.stats.provisionalFallbackAction, null);
+  assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
+  assert.equal(result.stats.candidateFaults.length, 1);
   assert.equal(result.selected, null);
   assert.deepEqual(result.applied, ["end"]);
+});
+
+test("AI·搜索：空 root set 与重复 END 明确触发 root invariant fault", async () => {
+  const empty = await runSearcherFaultBoundaryFixture("empty-roots");
+  assert.match(empty.searchError?.message ?? "", /rootActions 必须非空/u);
+  assert.equal(empty.stats, null);
+
+  const duplicate = await runSearcherFaultBoundaryFixture("duplicate-end");
+  assert.match(duplicate.searchError?.message ?? "", /必须且只能包含一个 canonical END/u);
+  assert.equal(duplicate.stats, null);
+});
+
+test("AI·搜索：only-END 正常形成完整合法结果", async () => {
+  const result = await runSearcherFaultBoundaryFixture("only-end-complete");
+  assert.equal(result.searchError, null);
+  assert.equal(result.stats.stopReason, "COMPLETE");
+  assert.equal(result.stats.completedRootCandidateCount, 1);
+  assert.equal(result.selected, result.end);
 });
 
 test("AI·搜索：COMPLETE 正常选择 canonical END", async () => {
@@ -19210,12 +19355,13 @@ test("AI·架构边界：failure fallback residue 与废弃 Controller CANCELLED
   const searcherSource = await readFile(projectFile("js/ai/Searcher/Searcher.js"), "utf8");
   assert.doesNotMatch(production, /lastSearchFallback/u);
   assert.doesNotMatch(production, /SEARCH_RESULT_STATUS\.CANCELLED/u);
+  assert.doesNotMatch(searcherSource, /provisionalRootFallback|provisionalFallback/u);
   assert.doesNotMatch(searcherSource, /rootSafety|root-safety|safe end|安全补评估/u);
   assert.doesNotMatch(searcherSource, /bestCandidate\(this\.buildRootNodes/u);
   assert.equal(
     [...searcherSource.matchAll(/recordSearchFault\(/gu)].length,
-    2,
-    "recordSearchFault 只能保留方法定义和 search outer boundary 调用"
+    3,
+    "recordSearchFault 只允许方法定义、零完整 root 收束与 search outer boundary 调用"
   );
 });
 
@@ -19400,7 +19546,7 @@ makeBenchmarkGame、createInitialWorld、Evaluator.evaluateTransition、Searcher
 
 边界与不变量
 Recover 与 END 都必须正式物化；选择变化只能来自 HP、手牌与强制弃牌后的真实状态差，
-且测试必须证明没有 Searcher provisional fallback 或 Controller worker fallback。
+且测试必须证明只使用完整 Searcher incumbent，Controller 不创建 worker fallback。
 */
 async function recoverBeforeMandatoryDiscardRegression() {
   const game = makeBenchmarkGame({
@@ -19489,7 +19635,7 @@ async function recoverBeforeMandatoryDiscardRegression() {
 
     const decision = await runBenchmarkAiDecision(game, actor.id);
     assert.equal(decision.stats.stopReason, "COMPLETE");
-    assert.equal(decision.stats.provisionalFallbackUsed, false);
+    assert.equal(Object.hasOwn(decision.stats, "provisionalFallbackUsed"), false);
     assert.equal(decision.action.cardId, "recover");
   } finally {
     disposeBenchmarkGame(game);
@@ -19637,7 +19783,7 @@ async function multiOverflowDiscardOpportunityRegression() {
     assert.equal(decision.stats.completedRootCandidateCount, actions.length);
     assert.notEqual(decision.action.type, "end");
     assert.ok(decision.stats.bestSequence.length >= 2);
-    assert.equal(decision.stats.provisionalFallbackUsed, false);
+    assert.equal(Object.hasOwn(decision.stats, "provisionalFallbackUsed"), false);
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -19672,7 +19818,7 @@ makeBenchmarkGame、createInitialWorld、getActionCandidates、Simulator.apply�
 
 边界与不变量
 END 必须一次结算全部强制弃牌；突袭必须真实生成并模拟为击杀；node budget 只完成首个正式候选；
-NODE 后不得补算其他 root 或 END，也不得触发 Searcher provisional 或 Controller worker fallback。
+NODE 后不得补算其他 root 或 END，也不得触发 incomplete Action 或 Controller worker fallback。
 */
 async function overflowCompletedNonEndIncumbentRegression() {
   const game = makeBenchmarkGame({
@@ -19785,7 +19931,7 @@ async function overflowCompletedNonEndIncumbentRegression() {
     assert.equal(decision.stats.stopReason, "NODE");
     assert.equal(decision.stats.expanded, 1);
     assert.equal(decision.stats.completedRootCandidateCount, 1);
-    assert.equal(decision.stats.provisionalFallbackUsed, false);
+    assert.equal(Object.hasOwn(decision.stats, "provisionalFallbackUsed"), false);
     assert.equal(decision.stats.bestSequence.length, 1);
     assert.ok(decision.stats.incumbentUpdateCount >= 1);
     assert.notEqual(decision.action.type, "end");
@@ -19984,23 +20130,22 @@ test(
   overflowAssaultDecisionChainContract
 );
 
-test("AI·搜索：TIME/NODE 遇到不完整 sibling 时 END 不登记 incumbent 且不突破预算", async () => {
-  for (const stopReason of ["NODE", "TIME"]) {
+test("AI·搜索：TIME/NODE/CANCELLED 零完整 incumbent 时不返回 provisional Action", async () => {
+  for (const stopReason of ["NODE", "TIME", "CANCELLED"]) {
     for (const siblingType of ["skill", "card"]) {
       const forcesDiscard = siblingType === "card";
       const result = await runEndSiblingBudgetFixture(
         stopReason,
         { siblingType, forcesDiscard }
       );
-      const expectedFallback = forcesDiscard ? result.sibling : result.end;
-      assert.equal(result.selected, expectedFallback, `${stopReason}/${siblingType} provisional 错误`);
+      assert.equal(result.selected, null, `${stopReason}/${siblingType} 不得返回 provisional`);
       assert.deepEqual(result.applied, ["end"], `${stopReason}/${siblingType} 不得补算 sibling`);
       assert.equal(result.stats.stopReason, stopReason);
       assert.equal(result.stats.completedRootCandidateCount, 0);
       assert.equal(result.stats.bestValueScore, null);
       assert.equal(result.stats.incumbentUpdateCount, 0);
-      assert.equal(result.stats.provisionalFallbackUsed, true);
-      assert.equal(result.stats.provisionalFallbackAction, expectedFallback);
+      assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
+      assert.equal(Object.hasOwn(result.stats, "provisionalFallbackAction"), false);
       assert.equal(result.stats.rootWork[0].completed, false);
     }
   }
@@ -20021,7 +20166,7 @@ test("AI·搜索：NODE 中断保留已完成 non-END incumbent 且不补算 END
   assert.equal(result.stats.completedRootCandidateCount, 1);
   assert.deepEqual(result.stats.bestSequence, [result.sibling]);
   assert.equal(result.stats.bestValueScore, -1);
-  assert.equal(result.stats.provisionalFallbackUsed, false);
+  assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
 });
 
 test("AI·搜索：TIME/CANCELLED 保留已完成 non-END incumbent 且 incomplete END 不参与", async () => {
@@ -20037,7 +20182,7 @@ test("AI·搜索：TIME/CANCELLED 保留已完成 non-END incumbent 且 incomple
     assert.equal(result.stats.expanded, 1);
     assert.equal(result.stats.completedRootCandidateCount, 1);
     assert.deepEqual(result.stats.bestSequence, [result.sibling]);
-    assert.equal(result.stats.provisionalFallbackUsed, false);
+    assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
   }
 });
 
@@ -20093,6 +20238,9 @@ async function runTacticalPatternFixture({
     secondNormalRoot = tacticalPatternAction("ordinary-two", normalValue - 1, 90, "root"),
     patternChild = tacticalPatternAction("pattern-b", continuationValue, 1, "post-state"),
     ordinaryChild = tacticalPatternAction("ordinary-child", 50, 100, "post-state");
+  const endRoot = createAction({ type:"end", actorId:"pattern-actor" });
+  tacticalPatternValues.set(endRoot, 0);
+  tacticalPatternPriors.set(endRoot, Number.NEGATIVE_INFINITY);
   const applied = [];
   const materialized = [];
   const generatedFromPaths = [];
@@ -20159,7 +20307,7 @@ async function runTacticalPatternFixture({
   const selected = await searcher.search(
     { id:"pattern-actor" },
     { path:[] },
-    [normalRoot, secondNormalRoot, patternRoot],
+    [normalRoot, secondNormalRoot, patternRoot, endRoot],
     { gameId:"pattern-fixture" }
   );
   return {
@@ -21899,7 +22047,9 @@ async function frArch14MainThreadResponsiveness() {
   const { createSearchRequest } = await import("../js/ai/Controller.js");
   const actor = makePlayer("heart-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("heart-enemy", 1, "dusk", "ai", 1);
-  for (let index = 0; index < 60; index += 1) actor.hand.push(instance("exposeWeakness"));
+  for (let index = 0; index < CARD_COUNTS.exposeWeakness; index += 1) {
+    actor.hand.push(instance("exposeWeakness"));
+  }
   const { game } = makeGame([actor, enemy]);
   game.aiSearchNodeBudgetOverride = 100;
   const roots = game.aiController.getActionCandidates(actor);
@@ -21999,7 +22149,7 @@ async function frArch14ControllerWorkerClientHeartbeat() {
   try {
     const actor = makePlayer("client-heart-actor", 0, "dawn", "ai", 0);
     const enemy = makePlayer("client-heart-enemy", 1, "dusk", "ai", 1);
-    for (let index = 0; index < 60; index += 1) {
+    for (let index = 0; index < CARD_COUNTS.exposeWeakness; index += 1) {
       actor.hand.push(instance("exposeWeakness"));
     }
     ({ game } = makeGame([actor, enemy]));
@@ -26127,8 +26277,10 @@ const medicRiskBoard = (exposedSeat, safeSeat, options = {}) => {
     { id: "y", team: "dawn", character: "resonance-tuner", hp: 2, energy: 1, hand: [] }
   ];
   for (const enemyId of knownAssaults) {
+    const knownAssault = makeBenchmarkCard("assault", `known-${enemyId}-assault`);
+    players.find((player) => player.id === enemyId).hand = [knownAssault];
     players[0].aiMemory.knownCardsByPlayer[enemyId] = [
-      { id: `known-${enemyId}-assault`, definitionId: "assault" }
+      { id:knownAssault.id, definitionId:knownAssault.definitionId }
     ];
   }
   // 威胁跟随目标身份而非座位：暴露目标的邻座放持突击敌人 p，安全目标邻座放无害敌人 q。
@@ -26160,7 +26312,7 @@ test("AI·灵医：R1/R2 暴露 2HP 治疗价值高于安全 2HP 且与座位顺
 
 test("AI·灵医：R3 同威胁目标不产生无理由目标偏向", () => {
   const players = medicRiskBoard(1, 5, { knownAssaults: ["p", "q"] })
-    .map((player) => (player.id === "q" ? { ...player, energy: 2, hand: [instance("assault")] } : player));
+    .map((player) => (player.id === "q" ? { ...player, energy:2 } : player));
   const deltaX = medicRiskHealDelta(players, "x");
   const deltaY = medicRiskHealDelta(players, "y");
   assertClose(deltaX, deltaY, 1e-6);
@@ -26277,8 +26429,9 @@ test("AI·影客：确定击杀与能量机会成本优先于窃取", async () =
     enemy = makePlayer("steal-kill-enemy", 1, "dusk", "ai", 0);
   shade.energy = 2;
   shade.hand = [instance("assault", "steal-kill-assault")];
-  enemy.hand = [];
-  enemy.equipment = instance("energyDevice", "steal-kill-equipment");
+  const lowValueResource = instance("counter", "steal-kill-counter");
+  enemy.hand = [lowValueResource];
+  shade.aiMemory.knownCardsByPlayer[enemy.id] = { [lowValueResource.id]: "counter" };
   enemy.hp = 1;
   const { game } = makeGame([shade, enemy], { random: () => 0 });
   game.aiRandomnessRange = 0;
@@ -27489,6 +27642,12 @@ test("AI·格挡概率：获得确定非格挡牌不能恢复旧概率", () => {
   },
     simulator = new Simulator({ players: [] }),
     target = state.players[1];
+  upgradeProbabilityFixture(state);
+  conditionProbability(state.probabilityState, {
+    definitionId:"block",
+    bucketId:target.id,
+    maximum:0
+  });
   simulator.addSimulatedKnownCard(
     state,
     target,
@@ -31987,9 +32146,11 @@ async function chooseResourceActionForTest(game, actor, card, target) {
     game.state,
     deriveCurrentCardCounts(actor, game.state)
   );
-  const roots = new ActionGenerator().generate(world, actor.id).filter((action) => (
+  const generatedActions = new ActionGenerator().generate(world, actor.id);
+  const roots = generatedActions.filter((action) => (
     action.cardInstanceId === card.id && action.targetIds?.[0] === target.id
   ));
+  roots.push(generatedActions.find((action) => action.type === "end"));
   const engine = createSearchEngine({
     world,
     searchConfig:{
@@ -32489,7 +32650,7 @@ test("AI·转移评分：转移敌方到己方已知与未知期望值4混合时
   );
   from.hand = [known, unknown];
   game.rememberPrivateCard(actor, from, known);
-  const candidate = chooseTransferHandCandidate(actor, from, receiver, null, {});
+  const candidate = chooseTransferHandCandidate(actor, from, receiver, null, { assault:1 });
   const chosen = await bindCanonicalZoneSelectionForTest(game, actor, from, candidate);
   assert.equal(reads, 0);
   assert.equal(chosen, known);
