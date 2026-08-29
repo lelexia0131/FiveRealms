@@ -1212,7 +1212,7 @@ function probabilityAnyAvailable(resources = []) {
 惰性查询一名玩家当前手牌中某定义的完整数量分布。
 
 调用方
-Response/Combat/Card Simulation、Evaluator search prior 与 Value 的真实未知消费点。
+Response、Damage、Simulator card transition、Evaluator search prior 与 StateValue 的真实未知消费点。
 
 输入
 ProbabilityState、玩家匿名 bucketId、当前确定身份资源、definitionId 与数量阈值。
@@ -1272,7 +1272,7 @@ export function queryHandProbability(state, query = {}) {
 从 canonical World 玩家和唯一 ProbabilityState 惰性查询当前手牌定义数量。
 
 调用方
-Simulation、Evaluator search prior、Policy 与 Value 的响应/资源消费点。
+Simulator、Evaluator search prior 与 StateValue 的响应/资源消费点。
 
 输入
 ProbabilityState、World 玩家、definitionId 与最小数量。

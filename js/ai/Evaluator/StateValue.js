@@ -311,7 +311,7 @@ turnOpportunityValue 与直接价值测试。
 futureSkillReadinessProbability。
 
 边界与不变量
-沿用既有 2 与 0.5 尺度，不代表真实技能效果价值。
+沿用既有 3 与 0.5 尺度，不代表真实技能效果价值。
 */
 export function skillReadinessThreat(player) {
   const readiness = futureSkillReadinessProbability(player);

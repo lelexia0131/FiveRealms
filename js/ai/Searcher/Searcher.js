@@ -20,7 +20,54 @@ Searcher 不读取 GameState 或领域隐藏事实；合法候选与全部数值
 import {
   PROBABILITY_CLASSIFICATION
 } from "../Event/Probability/Probability.js";
+import {
+  assertCompleteTransitionTerms,
+  isValidFinalUtility
+} from "../Evaluator/Evaluator.js";
 import { actionIntentKey, actionSearchKey } from "../Generator/Action.js";
+
+/*
+功能
+验证一次根搜索的 canonical Action 跨层 contract。
+
+调用方
+Searcher.search、Controller.createSearchRequest 与直接 contract 测试。
+
+输入
+当前行动者，以及 Generator/Controller 提供的 root Actions。
+
+输出
+唯一 canonical END；违反 invariant 时抛出 TypeError。
+
+读取状态
+只读 player.id 与 Action type/actorId。
+
+写入状态
+无。
+
+调用函数
+Array.find/filter。
+
+边界与不变量
+合法出牌状态必须非空、所有 root 都属于当前行动者，并且恰有一个 canonical END；
+这里只验证跨层 contract，不重新定义 Generator legality。
+*/
+export function validateRootActionContract(player, rootActions) {
+  if (!Array.isArray(rootActions) || rootActions.length === 0) {
+    throw new TypeError("Searcher root invariant 失败：rootActions 必须非空");
+  }
+  if (!player || typeof player.id !== "string" || !player.id
+    || rootActions.some((action) => action?.actorId !== player.id)) {
+    throw new TypeError("Searcher root invariant 失败：所有 root Actions 必须属于当前行动者");
+  }
+  const endActions = rootActions.filter((action) => action?.type === "end");
+  if (endActions.length !== 1) {
+    throw new TypeError(
+      "Searcher root invariant 失败：rootActions 必须且只能包含一个 canonical END"
+    );
+  }
+  return endActions[0];
+}
 
 export class Searcher {
   /*
@@ -222,7 +269,7 @@ export class Searcher {
   */
   buildRootNodes(rootCandidates, patternProposals, world) {
     return rootCandidates
-      .filter((candidate) => candidate.transitionValue !== null)
+      .filter((candidate) => isValidFinalUtility(candidate.transitionValue))
       .map((candidate) => {
         const valueScore = candidate.transitionValue;
         return {
@@ -454,7 +501,7 @@ export class Searcher {
 
   /*
   功能
-  验证一次根搜索拥有非空 canonical Action 集合和唯一 END。
+  验证一次根搜索的 canonical Action 跨层 contract。
 
   调用方
   search 在任何 Pattern、Simulator 或候选工作开始前。
@@ -466,29 +513,20 @@ export class Searcher {
   唯一 canonical END；违反输入 invariant 时抛出 TypeError。
 
   读取状态
-  只读 player.id 与 Action type/actorId。
+  无。
 
   写入状态
   无。
 
   调用函数
-  Array.filter。
+  validateRootActionContract。
 
   边界与不变量
-  合法出牌状态必须至少含一个 root，并且必须且只能包含一个属于当前行动者的 END；
+  合法出牌状态必须至少含一个 root、全部属于当前行动者，并且必须且只能包含一个 END；
   输入错误必须在搜索前失败，不能以 COMPLETE + null 收束。
   */
   validateRootActions(player, rootActions) {
-    if (!Array.isArray(rootActions) || rootActions.length === 0) {
-      throw new TypeError("Searcher root invariant 失败：rootActions 必须非空");
-    }
-    const endActions = rootActions.filter((action) => action?.type === "end");
-    if (endActions.length !== 1 || endActions[0]?.actorId !== player?.id) {
-      throw new TypeError(
-        "Searcher root invariant 失败：rootActions 必须且只能包含一个 canonical END"
-      );
-    }
-    return endActions[0];
+    return validateRootActionContract(player, rootActions);
   }
 
   /*
@@ -645,7 +683,7 @@ export class Searcher {
       player.id,
       simulator
     );
-    const baseTerms = this.evaluator.evaluateTransition({
+    const baseTerms = assertCompleteTransitionTerms(this.evaluator.evaluateTransition({
       action,
       player,
       beforeState,
@@ -655,7 +693,7 @@ export class Searcher {
       materializedTransitionOptionPoints:terms.adaptiveInformationOptionPoints ?? 0,
       beforeLightningOutcomeSets,
       afterLightningOutcomeSets
-    });
+    }));
     let nextEnergyStateDelta = null;
     if (Number.isFinite(baseTerms.xSkillNextEnergy)) {
       const currentEnergy = Math.max(
@@ -682,6 +720,10 @@ export class Searcher {
         searchBudget?.observeCounterfactual(2);
       }
     }
+    const completeTerms = assertCompleteTransitionTerms({
+      ...baseTerms,
+      nextEnergyStateDelta
+    });
     const responseAttributions = collectDiagnostics
       ? this.evaluateResponseAttributions(
           beforeState,
@@ -740,7 +782,7 @@ export class Searcher {
         afterState
       ) ?? null,
       terminal,
-      baseTerms,
+      baseTerms:completeTerms,
       nextEnergyStateDelta,
       baseTransition:baseTerms.baseTransition,
       exposeMarginal:terms.exposeMarginal,
@@ -788,7 +830,7 @@ export class Searcher {
   finalizeCandidates(candidates, siblingActions = candidates.map((entry) => entry.action)) {
     const nonEndCandidates = candidates.filter((candidate) => candidate.action?.type !== "end");
     for (const candidate of nonEndCandidates) {
-      if (candidate.finalizationFault || candidate.transitionValue !== null) continue;
+      if (candidate.finalizationFault || isValidFinalUtility(candidate.transitionValue)) continue;
       try {
         candidate.transitionValue = this.evaluator.composeTransitionValue({
           baseTransition:candidate.baseTransition,
@@ -805,7 +847,8 @@ export class Searcher {
       candidates.some((candidate) => (
         candidate.action === siblingAction
           && !candidate.finalizationFault
-          && (siblingAction?.type === "end" || candidate.transitionValue !== null)
+          && (siblingAction?.type === "end"
+            || isValidFinalUtility(candidate.transitionValue))
       ))
     ));
     const endCandidates = candidates.filter((candidate) => candidate.action?.type === "end");
@@ -819,7 +862,7 @@ export class Searcher {
       nextEnergyStateDelta:candidate.nextEnergyStateDelta
     }));
     for (const candidate of endCandidates) {
-      if (candidate.finalizationFault || candidate.transitionValue !== null) continue;
+      if (candidate.finalizationFault || isValidFinalUtility(candidate.transitionValue)) continue;
       try {
         const endOpportunityPoints = this.evaluator.endOpportunityPoints(
           candidate.baseTerms,
@@ -1049,7 +1092,7 @@ export class Searcher {
 
   /*
   功能
-  把 Pattern-guided roots 与既有 搜索先验 root 顺序进行公平交错。
+  把可完成 non-END baseline、Pattern-guided roots 与既有搜索先验顺序进行公平交错。
 
   调用方
   search 的 root scheduling 阶段。
@@ -1058,10 +1101,10 @@ export class Searcher {
   已去重合法 roots、行动者、根 World 与有界 proposals。
 
   输出
-  最多提升一个最高优先级 guided root，其余 roots 保持现有 搜索先验 顺序。
+  多 root 时先排可独立完成的 non-END，再最多提升其中一个 guided root；唯一 END 正常保留。
 
   读取状态
-  搜索先验 score 与 canonical Action keys。
+  搜索先验 score、Action type 与 canonical Action keys。
 
   写入状态
   无。
@@ -1070,7 +1113,8 @@ export class Searcher {
   schedulingScore、actionIntentKey、actionSearchKey。
 
   边界与不变量
-  空 proposal 必须严格保留既有顺序；Pattern 只有一个正向提升位，其他 proposals 不得挤占 ordinary coverage。
+  END 有 siblings 时必须位于 non-END 之后，避免把 sibling-incomplete END 当作首个 baseline；
+  Pattern 只有一个 non-END 正向提升位，其他 proposals 不得挤占 ordinary coverage。
   */
   scheduleRootActions(actions, player, state, proposals = []) {
     const scheduled = (actions ?? []).map((action) => ({
@@ -1084,18 +1128,25 @@ export class Searcher {
       if (intentOrder !== 0) return intentOrder;
       return left.secondaryKey.localeCompare(right.secondaryKey);
     });
-    if (!proposals.length) return scheduled.map((entry) => entry.action);
+    const baselineOrder = [
+      ...scheduled.filter((entry) => entry.action?.type !== "end"),
+      ...scheduled.filter((entry) => entry.action?.type === "end")
+    ];
+    if (!proposals.length) return baselineOrder.map((entry) => entry.action);
+    const promotableEntries = baselineOrder.filter(
+      (entry) => entry.action?.type !== "end" || baselineOrder.length === 1
+    );
     let promotedEntry = null;
     for (const proposal of proposals) {
-      promotedEntry = scheduled.find(
+      promotedEntry = promotableEntries.find(
         (entry) => this.patternMatcher.matchesStep(proposal, 0, entry.action, state)
       ) ?? null;
       if (promotedEntry) break;
     }
-    if (!promotedEntry) return scheduled.map((entry) => entry.action);
+    if (!promotedEntry) return baselineOrder.map((entry) => entry.action);
     return [
       promotedEntry.action,
-      ...scheduled.filter((entry) => entry !== promotedEntry).map((entry) => entry.action)
+      ...baselineOrder.filter((entry) => entry !== promotedEntry).map((entry) => entry.action)
     ];
   }
 
@@ -1332,7 +1383,7 @@ export class Searcher {
         actions:resumeExpansion?.actions ?? [],
         candidates:resumedCandidates,
         completeCandidateCount:resumedCandidates.filter(
-          (candidate) => candidate.transitionValue !== null
+          (candidate) => isValidFinalUtility(candidate.transitionValue)
         ).length,
         nextActionIndex:resumeExpansion?.nextActionIndex ?? 0,
         complete:false,
@@ -1443,7 +1494,7 @@ export class Searcher {
         actions:followActions,
         candidates,
         completeCandidateCount:candidates.filter(
-          (candidate) => candidate.transitionValue !== null
+          (candidate) => isValidFinalUtility(candidate.transitionValue)
         ).length,
         nextActionIndex,
         complete:false,
@@ -1452,7 +1503,7 @@ export class Searcher {
     }
     this.finalizeCandidates(candidates, followActions);
     const completeCandidateCount = candidates.filter(
-      (candidate) => candidate.transitionValue !== null
+      (candidate) => isValidFinalUtility(candidate.transitionValue)
     ).length;
     const previousCompleteCandidateCount = resumeExpansion?.completeCandidateCount ?? 0;
     const newlyCompletedCandidateCount = Math.max(
@@ -1463,7 +1514,9 @@ export class Searcher {
     if (newlyCompletedCandidateCount > 0) {
       workDiagnostics.depthReached = Math.max(workDiagnostics.depthReached, depth);
       if (depth === 2) {
-        const firstComplete = candidates.find((candidate) => candidate.transitionValue !== null);
+        const firstComplete = candidates.find(
+          (candidate) => isValidFinalUtility(candidate.transitionValue)
+        );
         workDiagnostics.firstDepth2AtWorkCount ??= firstComplete?.completedAtWorkCount ?? null;
       }
     }
@@ -1650,22 +1703,12 @@ export class Searcher {
     this.candidateFaults = [];
     const rootTerminalAction = this.validateRootActions(player, rootActions);
     const collectDiagnostics = Boolean(options.collectAiDecisionDiagnostics);
-    const budget = this.searchBudgetFactory();
-    const structure = this.structure();
-    const uniqueRootActions = this.deduplicateActions(rootActions);
-    const patternMatch = this.patternMatcher.match({
-      player,
-      state:world,
-      legalActions:uniqueRootActions,
-      structure
-    });
-    const patternProposals = patternMatch.proposals ?? [];
-    const scheduledRootActions = this.scheduleRootActions(
-      uniqueRootActions,
-      player,
-      world,
-      patternProposals
-    );
+    let budget = null;
+    let structure = null;
+    let uniqueRootActions = [];
+    let patternMatch = null;
+    let patternProposals = [];
+    let scheduledRootActions = [];
     let context;
     const requestedRootCandidateCount = Number(options.rootCandidateCount);
     const rootCandidateCount = Number.isFinite(requestedRootCandidateCount)
@@ -1673,8 +1716,8 @@ export class Searcher {
       : rootActions.length;
     const workDiagnostics = {
       rootCandidateCount,
-      uniqueRootCandidateCount:uniqueRootActions.length,
-      equivalentRootCandidatesEliminated:Math.max(0, rootCandidateCount - uniqueRootActions.length),
+      uniqueRootCandidateCount:null,
+      equivalentRootCandidatesEliminated:null,
       completedRootCandidateCount:0,
       abortedRootCandidateCount:0,
       abortedCandidateCount:0,
@@ -1683,8 +1726,8 @@ export class Searcher {
       incumbentUpdateCount:0,
       firstCompletedIncumbentAtWorkCount:null,
       finalIncumbentAtWorkCount:null,
-      matchedPatternCount:patternMatch.matchedPatternCount ?? 0,
-      patternProposalCount:patternProposals.length,
+      matchedPatternCount:0,
+      patternProposalCount:0,
       completedPatternCount:0,
       abortedPatternCount:0,
       patternIncumbentUpdateCount:0,
@@ -1692,9 +1735,7 @@ export class Searcher {
       abortedPatternProposalKeys:new Set(),
       depthReached:0,
       firstDepth2AtWorkCount:null,
-      scheduledRootOrder:scheduledRootActions.map(
-        (action) => action
-      ),
+      scheduledRootOrder:[],
       activeRoot:null,
       rootWork:[]
     };
@@ -1705,6 +1746,33 @@ export class Searcher {
     // 这是 search orchestration 的最终 fault-preservation boundary：局部 candidate interruption
     // 仍由专用路径处理，任何其余 ordinary exception 都统一收束为 FAULT 后返回最后完整 incumbent。
     try {
+
+    budget = this.searchBudgetFactory();
+    structure = this.structure();
+
+    uniqueRootActions = this.deduplicateActions(rootActions);
+    this.validateRootActions(player, uniqueRootActions);
+    workDiagnostics.uniqueRootCandidateCount = uniqueRootActions.length;
+    workDiagnostics.equivalentRootCandidatesEliminated = Math.max(
+      0,
+      rootCandidateCount - uniqueRootActions.length
+    );
+    patternMatch = this.patternMatcher.match({
+      player,
+      state:world,
+      legalActions:uniqueRootActions,
+      structure
+    });
+    patternProposals = patternMatch.proposals ?? [];
+    workDiagnostics.matchedPatternCount = patternMatch.matchedPatternCount ?? 0;
+    workDiagnostics.patternProposalCount = patternProposals.length;
+    scheduledRootActions = this.scheduleRootActions(
+      uniqueRootActions,
+      player,
+      world,
+      patternProposals
+    );
+    workDiagnostics.scheduledRootOrder = [...scheduledRootActions];
 
     context = this.createContext(player, world);
 
@@ -1814,10 +1882,10 @@ export class Searcher {
       budget.observeNode();
       this.finalizeCandidates(rootCandidates, scheduledRootActions);
       workDiagnostics.completedRootCandidateCount = rootCandidates.filter(
-        (entry) => entry.transitionValue !== null
+        (entry) => isValidFinalUtility(entry.transitionValue)
       ).length;
       for (const completeRootCandidate of rootCandidates) {
-        if (completeRootCandidate.transitionValue === null
+        if (!isValidFinalUtility(completeRootCandidate.transitionValue)
           || registeredRootCandidates.has(completeRootCandidate)) continue;
         // 这里只投影 comparator/结果收束需要的通用 node 字段；Pattern metadata
         // 仍在后续正常 traversal 构造，不参与这里的价值或完整性判断。
@@ -1840,7 +1908,7 @@ export class Searcher {
       workDiagnostics.activeRoot = null;
       workDiagnostics.rootWork.push({
         action:rootDescriptor,
-        completed:candidate.transitionValue !== null,
+        completed:isValidFinalUtility(candidate.transitionValue),
         simulatorTransitions:budget.simulationCalls - rootWorkStarted
       });
       if (!progressiveDepth2Expansions.size
@@ -1902,10 +1970,12 @@ export class Searcher {
     this.finalizeCandidates(rootCandidates, scheduledRootActions);
     for (const rootWork of workDiagnostics.rootWork) {
       const materialized = rootCandidates.find((candidate) => candidate.action === rootWork.action);
-      if (materialized) rootWork.completed = materialized.transitionValue !== null;
+      if (materialized) {
+        rootWork.completed = isValidFinalUtility(materialized.transitionValue);
+      }
     }
     workDiagnostics.completedRootCandidateCount = rootCandidates.filter(
-      (candidate) => candidate.transitionValue !== null
+      (candidate) => isValidFinalUtility(candidate.transitionValue)
     ).length;
     if (workDiagnostics.completedRootCandidateCount === 0) {
       if (!budget.shouldStop()) {
@@ -1925,7 +1995,7 @@ export class Searcher {
     }
     if (collectDiagnostics) {
       rootLedgers.push(...rootCandidates
-        .filter((candidate) => candidate.transitionValue !== null)
+        .filter((candidate) => isValidFinalUtility(candidate.transitionValue))
         .map((candidate) => this.diagnosticEntry(candidate)));
     }
     const beam = this.buildRootNodes(rootCandidates, patternProposals, world);
@@ -1940,7 +2010,7 @@ export class Searcher {
       const parent = beam.find((node) => node.action === rootAction);
       if (!parent) continue;
       const childNodes = expansion.candidates
-        .filter((candidate) => candidate.transitionValue !== null)
+        .filter((candidate) => isValidFinalUtility(candidate.transitionValue))
         .map(
         (candidate) => this.buildChildNode(parent, candidate, 2)
       );
@@ -2001,7 +2071,7 @@ export class Searcher {
         }
         childCandidates = expansion.candidates;
         childNodes = childCandidates
-          .filter((candidate) => candidate.transitionValue !== null)
+          .filter((candidate) => isValidFinalUtility(candidate.transitionValue))
           .map(
           (candidate) => this.buildChildNode(progressiveSpine, candidate, depth)
         );
@@ -2069,7 +2139,7 @@ export class Searcher {
           ...(cachedExpansion?.childNodes ?? []),
           ...expansion.candidates
             .slice(previousCandidateCount)
-            .filter((candidate) => candidate.transitionValue !== null)
+            .filter((candidate) => isValidFinalUtility(candidate.transitionValue))
             .map((candidate) => this.buildChildNode(node, candidate, depth))
         ];
         depthCache.set(node, { ...expansion, childNodes });
@@ -2123,12 +2193,19 @@ export class Searcher {
       workDiagnostics
     });
     } catch (error) {
+      // 工厂失败发生在 SearchBudget 建立前，Searcher 无法登记自身 FAULT；交由 Worker/Controller 分类。
+      if (!budget) throw error;
       if (!budget.isCurrentWorkInterruption?.(error)) {
         this.recordSearchFault(budget, error);
       }
       return this.recordResult({
         budget,
-        structure,
+        structure:structure ?? {
+          depth:this.config.depth,
+          beamWidth:this.config.beamWidth,
+          hiddenSamples:this.config.hiddenSamples,
+          yieldEvery:this.config.yieldEvery
+        },
         choice:bestSeenCandidate,
         context:context ?? { unknownHandEstimate:null },
         rootLedgers,

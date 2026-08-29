@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有 card/resource Policy Value primitives，包括静态值、角色差量、保留折损、弃置、获得与匿名期望。
+唯一拥有 card/resource Evaluator Value primitives，包括静态值、角色差量、保留折损、弃置、获得与匿名期望。
 
 上游
 Evaluator public facade 与直接 primitive 契约测试。

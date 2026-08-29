@@ -146,7 +146,7 @@ function createWorldPlayer(factPlayer, knownCards, viewerId, derivedPlayer) {
 
 /*
 功能
-创建 Searcher、Simulator、Policy 与 Value 共同消费的 canonical World 根快照。
+创建 Controller、Generator、Searcher、Simulator 与 Evaluator 共同消费的 canonical World 根快照。
 
 调用方
 createInitialWorld 与状态契约测试。

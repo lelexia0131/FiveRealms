@@ -6,7 +6,7 @@
 Dedicated Worker entry、headless local executor 与测试。
 
 下游
-public Searcher facade。
+Controller 组合的 Searcher public search facade。
 
 状态边界
 只写 Worker 本地 World/RNG/Searcher 诊断；不写 GameState 或 Main Thread 状态。
@@ -46,7 +46,8 @@ Worker 本地 rng/searcher/simulator 状态。
 Rng.restore、consume canonical root Action、createSearchEngine、Searcher.search、createWorkerSearchOutcome。
 
 边界与不变量
-rngAfter 必须存在；Searcher 已收束的 fault 不得清空 action；只有 Searcher 无法产生 provisional action 的异常才产生 workerError。
+rngAfter 必须存在；Searcher 已收束的 fault 不得清空完整 action；未产出 Searcher stats 的执行异常只返回
+searchFault，workerError 只由 Worker transport/protocol 层产生。
 */
 export async function runSearchRequest(request, runtimeControl = {}) {
   const workerStartedAt = globalThis.performance?.now?.() ?? Date.now();
@@ -68,8 +69,7 @@ export async function runSearchRequest(request, runtimeControl = {}) {
         name:error instanceof Error ? error.name : "Error",
         message:error instanceof Error ? error.message : String(error)
       },
-      rngAfter:request.rng,
-      workerError:error instanceof Error ? error.message : String(error)
+      rngAfter:request.rng
     });
   }
 }

@@ -15,7 +15,7 @@ World、Damage、Resource、Response、Probability facade 与 Domain rules。
 只消费过滤后的可见状态、合法记忆与 Probability 概率，不读取隐藏实体牌或未来牌堆。
 
 架构约束
-不得拥有 Policy、Value 或 Domain 公式；所有模拟算法只存在于本目录组件。
+不得拥有搜索策略、Final Utility 或 Repository Domain 规则公式；所有模拟算法只存在于本目录组件。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
@@ -81,7 +81,7 @@ class SimulatorCore {
   创建只保存运行能力、不拥有初始 World 的轻量模拟器。
 
   调用方
-  Searcher 与有界 Value/Root simulation query：为一次搜索或配对查询创建模拟生命周期。
+  Searcher 与有界 Evaluator/根节点模拟查询：为一次搜索或配对查询创建模拟生命周期。
 
   输入
   可选 SearchBudget、Evaluator response willingness 与 resolved discard capability。
@@ -401,7 +401,7 @@ class SimulatorCore {
   构造一枚闪电完整生命周期的互斥命中 World。
 
   调用方
-  Searcher 与 Controller 的 State Value/状态反制编排。
+  Searcher 与 Controller 的 Evaluator/状态反制编排。
 
   输入
   canonical World、初始持有者与可选存在概率覆盖。
@@ -1032,7 +1032,7 @@ class SimulatorCore {
   Searcher、Searcher counterfactual terms 与有界 simulation query：推进一个已经合法枚举的抽象动作。
 
   输入
-  动作前 World、抽象动作与可选 root replay 控制；动作已经由 Generator/Policy 选择。
+  动作前 World、抽象动作与可选 root replay 控制；动作已经由 Generator 合法枚举并由 Searcher 调度。
 
   输出
   独立的动作后 World；输入状态保持不变。

@@ -770,7 +770,7 @@ export function currentProbabilitySignature(state) {
 惰性投影当前状态混合中的 definition 实例期望计数。
 
 调用方
-仍接受定义计数的窄 Domain/Policy 查询。
+仍接受定义计数的窄 Domain/Evaluator 查询。
 
 输入
 ProbabilityState。
@@ -1110,7 +1110,7 @@ function constrainedCountDistribution(factor, definitionId, selectsGroup) {
 惰性查询当前有限牌池中的单桶、桶组或数量谓词概率。
 
 调用方
-State projection、business facade、business facade 与 Value/Policy 局部查询。
+State projection、business facade 与 Evaluator/StateValue 局部查询。
 
 输入
 ProbabilityState 以及 definitionId、bucketId/groupBucketIds、minimum 或 predicate。

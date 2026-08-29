@@ -382,7 +382,7 @@ sampleDelay、getAiPacingBounds、clampAiThinkingTime、getRemainingAiThinkingDe
 无。
 
 边界与不变量
-只读取 game.presentationRandom；MIN/MAX 分别采样；raw 位于边界内时保持；simulation/headless 不采样；真实 Planner decision 不得在搜索前调用本函数叠加 initial pacing。
+只读取 game.presentationRandom；MIN/MAX 分别采样；raw 位于边界内时保持；simulation/headless 不采样；真实 AI decision 不得在搜索前调用本函数叠加 initial pacing。
 */
 export function getAiDelay(game, phase, options = {}) {
   const range = RUNTIME_POLICY.aiRawThinkingRanges[phase];

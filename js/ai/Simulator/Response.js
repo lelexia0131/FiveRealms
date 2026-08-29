@@ -136,7 +136,7 @@ export const withResponse = (Base) => class Response extends Base {
   按座次惰性查询同一有限牌池中的首名反制响应者。
 
   调用方
-  TacticResolutionQuery、consumeCountersForCardScope 与 Simulator.apply：冻结一次卡牌级反制链。
+  Simulator.apply、consumeCountersForCardScope 与 tacticResolutionScale。
 
   输入
   World、行动者、战术牌、目标列表与可选 canonical selection。
@@ -216,7 +216,7 @@ export const withResponse = (Base) => class Response extends Base {
   计算单个目标经过目标级反制后的最终生效概率。
 
   调用方
-  TacticResolutionQuery 与目标级卡牌效果：估算单个目标是否通过反制。
+  tacticResolutionScale。
 
   输入
   World、行动者、卡牌与目标。
@@ -440,7 +440,7 @@ export const withResponse = (Base) => class Response extends Base {
   queryPlayerHandProbability 与 Probability 连接/投影 primitive。
 
   边界与不变量
-  Policy heuristic 不得在这里转成随机事件；W 个效果/count 世界与 H 个当前反制身份
+  Evaluator willingness heuristic 不得在这里转成随机事件；W 个效果/count 世界与 H 个当前反制身份
   直接生成至多 W×(H+1) 个选择结果，时间和空间上界 O(W·H)，不得枚举 2^H presence 组合；
   所有长 join/project/merge 在同一 SearchBudget 下 cooperative abort，partial outcome 不得返回；
   identity 只写入 payment request，不在 Response 中修改 availability 或 handCount。

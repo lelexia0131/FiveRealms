@@ -33,7 +33,11 @@ import {
   chooseLowestKnownCardId,
   chooseLowestRoleCardId
 } from "./Evaluator/Evaluator.js";
-import { SearchBudget, Searcher } from "./Searcher/Searcher.js";
+import {
+  SearchBudget,
+  Searcher,
+  validateRootActionContract
+} from "./Searcher/Searcher.js";
 import { Pattern } from "./Searcher/Pattern.js";
 import { Rng, hashSearchSeed } from "./Searcher/Rng.js";
 import { Simulator, tacticResolutionScale } from "./Simulator/Simulator.js";
@@ -112,10 +116,11 @@ requestId、gameId、stateVersion、actorId、phase、currentRound、canonical W
 无。
 
 调用函数
-freezeValue、Object.freeze。
+freezeValue、validateRootActionContract、Object.freeze。
 
 边界与不变量
-不接受函数；world 与 rootActions 必须直接使用 canonical frozen World/Action，不做 DTO materialization。
+不接受函数；world 与 rootActions 必须直接使用 canonical frozen World/Action，不做 DTO materialization；
+World 必须包含 actor，全部 roots 必须属于该 actor 且恰有一个 canonical END。
 */
 export function createSearchRequest({
   requestId,
@@ -144,6 +149,11 @@ export function createSearchRequest({
   if (rootActions.some((action) => !action || !Object.isFrozen(action))) {
     throw new TypeError("SearchRequest 需要 canonical frozen Actions");
   }
+  if (!Array.isArray(world.players)
+    || !world.players.some((player) => player?.id === actorId)) {
+    throw new TypeError(`SearchRequest World 缺少 actor：${actorId}`);
+  }
+  validateRootActionContract({ id:actorId }, rootActions);
   return Object.freeze({
     requestId,
     gameId,
@@ -239,7 +249,11 @@ export function workerOutcomeViolations(outcome, request = null) {
 
 export const SEARCH_RESULT_STATUS = Object.freeze({
   ACCEPTED:"ACCEPTED",
-  SEARCH_FAILURE:"SEARCH_FAILURE",
+  PREPARATION_FAILURE:"PREPARATION_FAILURE",
+  SEARCH_INTERNAL_FAILURE:"SEARCH_INTERNAL_FAILURE",
+  WORKER_FAILURE:"WORKER_FAILURE",
+  SEARCH_CANCELLED:"SEARCH_CANCELLED",
+  SEARCH_BUDGET_EXHAUSTED:"SEARCH_BUDGET_EXHAUSTED",
   STALE_VERSION:"STALE_VERSION",
   INVALID_SESSION:"INVALID_SESSION",
   INVALID_ACTOR:"INVALID_ACTOR",
@@ -936,7 +950,7 @@ export class Controller {
 
   边界与不变量
   Worker 不宣布 ACCEPTED；Main Thread 验证全部身份/version/actor/phase/root membership；
-  CANCELLED/FAULT 带完整 action 时仍必须通过全部 acceptance；没有 action 时必须返回 SEARCH_FAILURE；
+  CANCELLED/FAULT 带完整 action 时仍必须通过全部 acceptance；没有 action 时按真实停止层分类；
   validation 通过时允许复用同一 decision 已生成的合法实体根，
   但不得跨 stateVersion 或跨 decision 缓存；Controller 绝不创建战略 END。
   */
@@ -955,7 +969,7 @@ export class Controller {
         request,
         action:null,
         stats:outcome?.stats ?? null,
-        status:SEARCH_RESULT_STATUS.SEARCH_FAILURE,
+        status:SEARCH_RESULT_STATUS.WORKER_FAILURE,
         rejectionReason:failureReason,
         searchFault:outcome?.searchFault ?? null,
         rngAfter:null
@@ -966,12 +980,25 @@ export class Controller {
     const cancelled = outcome.cancelled || outcome.searchStopReason === "CANCELLED";
     if (cancelled) this.searchDiagnostics.CANCEL += 1;
     if (!outcome.action) {
+      const stopReason = outcome.searchStopReason ?? outcome.stats?.stopReason ?? null;
+      const status = cancelled
+        ? SEARCH_RESULT_STATUS.SEARCH_CANCELLED
+        : ["TIME", "NODE"].includes(stopReason)
+          ? SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED
+          : SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE;
+      const rejectionReason = cancelled
+        ? "cancelled without complete Searcher action"
+        : ["TIME", "NODE"].includes(stopReason)
+          ? `${stopReason} budget exhausted without complete Searcher action`
+          : stopReason === "FAULT" || outcome.searchFault
+            ? "Searcher internal fault without complete action"
+            : `Searcher ${stopReason ?? "UNKNOWN"} returned no complete action`;
       const result = createSearchResult({
         request,
         action:null,
         stats:outcome.stats,
-        status:SEARCH_RESULT_STATUS.SEARCH_FAILURE,
-        rejectionReason:cancelled ? "cancelled without Searcher action" : "Worker returned no Searcher action",
+        status,
+        rejectionReason,
         searchFault:outcome.searchFault,
         rngAfter:null
       });
@@ -1139,7 +1166,7 @@ export class Controller {
         },
         action:null,
         stats:null,
-        status:SEARCH_RESULT_STATUS.SEARCH_FAILURE,
+        status:SEARCH_RESULT_STATUS.PREPARATION_FAILURE,
         rejectionReason:errorMessage,
         searchFault,
         rngAfter:null

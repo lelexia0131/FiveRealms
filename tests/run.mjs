@@ -93,6 +93,7 @@ import { Generator as ActionGenerator } from "../js/ai/Generator/Generator.js";
 import { Rng as SearchRng } from "../js/ai/Searcher/Rng.js";
 import {
   SEARCH_RESULT_STATUS,
+  createSearchRequest,
   createWorkerSearchOutcome
 } from "../js/ai/Controller.js";
 import {
@@ -112,6 +113,7 @@ import {
   planningCounterDecision,
   privatePeekInformationValue,
   rankDiscardCandidates,
+  isValidFinalUtility,
   sealUseValue,
   turnOrderGap,
   turnTimingFactor
@@ -14756,6 +14758,132 @@ test(
 
 /*
 功能
+构造 X 技能 E+1 StateDelta contract 的真实 Searcher 回归场景。
+
+调用方
+X 技能 nextEnergyStateDelta 数值 contract 测试。
+
+输入
+反事实 transitionDelta 应返回的测试值。
+
+输出
+Searcher 选择结果、搜索统计与 END sibling 捕获值。
+
+读取状态
+真实 canonical World、Generator root Actions、Searcher candidate diagnostics。
+
+写入状态
+仅独立测试 Game、Searcher Evaluator 的 transitionDelta/endOpportunityPoints 注入。
+
+调用函数
+makeBenchmarkGame、createInitialWorld、createSearchEngine、Searcher.search。
+
+边界与不变量
+只替换反事实 delta 的返回值；X candidate 必须经唯一 Evaluator value contract，
+非法值只能成为 candidate-local fault，不能被 END 解释成缺少 X pair。
+*/
+async function runXSkillNextEnergyStateDeltaContract(nextEnergyStateDelta) {
+  const game = makeBenchmarkGame({
+    players:[
+      {
+        id:"x-delta-contract-actor",
+        team:"dawn",
+        character:"fate-gambler",
+        energy:2,
+        hand:[makeBenchmarkCard("assault", "x-delta-contract-assault")]
+      },
+      { id:"x-delta-contract-enemy", team:"dusk", character:"oath-warden", hand:[] }
+    ],
+    options:{ actorId:"x-delta-contract-actor", seed:20260814, nodeBudget:100 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const worldActor = world.players.find((player) => player.id === actor.id);
+    const rootActions = game.aiController.getActionCandidates(actor, world);
+    const xSkillAction = rootActions.find(
+      (action) => action.type === "skill" && action.skillId === "allIn"
+    );
+    const assaultAction = rootActions.find((action) => action.cardId === "assault");
+    const endAction = rootActions.find((action) => action.type === "end");
+    assert.ok(xSkillAction);
+    assert.ok(assaultAction);
+    assert.ok(endAction);
+    const engine = createSearchEngine({
+      world,
+      searchConfig:{
+        ...game.aiController.buildSearchConfig(),
+        depth:1,
+        hiddenSamples:0,
+        nodeBudget:100,
+        timeBudgetMs:null,
+        enableRandomness:false,
+        randomnessRange:0
+      }
+    }, { next:() => 0 });
+    const evaluator = engine.searcher.evaluator;
+    evaluator.transitionDelta = () => nextEnergyStateDelta;
+    let capturedSiblingTerms = null;
+    const endOpportunityPoints = evaluator.endOpportunityPoints.bind(evaluator);
+    evaluator.endOpportunityPoints = (endTerms, siblingTerms) => {
+      capturedSiblingTerms = siblingTerms;
+      return endOpportunityPoints(endTerms, siblingTerms);
+    };
+    const selected = await engine.searcher.search(
+      worldActor,
+      world,
+      [xSkillAction, assaultAction, endAction],
+      { gameId:world.gameId, rootCandidateCount:3 }
+    );
+    return {
+      selected,
+      stats:engine.searcher.lastSearchStats,
+      capturedSiblingTerms,
+      xSkillAction,
+      assaultAction,
+      endAction
+    };
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test("AI·价值归属：X 技能非法 nextEnergyStateDelta 只能成为 candidate-local fault", async () => {
+  for (const invalidValue of [Number.NaN, Number.POSITIVE_INFINITY, undefined, "not-a-number"]) {
+    const result = await runXSkillNextEnergyStateDeltaContract(invalidValue);
+    assert.equal(result.stats.stopReason, "COMPLETE", String(invalidValue));
+    assert.equal(result.stats.searchFault, null, String(invalidValue));
+    assert.equal(result.stats.candidateFaults.length, 1, String(invalidValue));
+    assert.equal(result.stats.candidateFaults[0].action, result.xSkillAction, String(invalidValue));
+    assert.match(result.stats.candidateFaults[0].message, /nextEnergyStateDelta/u, String(invalidValue));
+    assert.equal(result.stats.completedRootCandidateCount, 1, String(invalidValue));
+    assert.equal(result.selected, result.assaultAction, String(invalidValue));
+    assert.equal(result.capturedSiblingTerms, null, String(invalidValue));
+  }
+});
+
+test("AI·价值归属：X 技能 finite delta 与非 X null 保持 END sibling contract", async () => {
+  const result = await runXSkillNextEnergyStateDeltaContract(2.5);
+  assert.equal(result.stats.stopReason, "COMPLETE");
+  assert.equal(result.stats.searchFault, null);
+  assert.equal(result.stats.candidateFaults.length, 0);
+  assert.equal(result.stats.completedRootCandidateCount, 3);
+  const xSkillSibling = result.capturedSiblingTerms.find(
+    (sibling) => sibling.actionType === "skill"
+  );
+  const assaultSibling = result.capturedSiblingTerms.find(
+    (sibling) => sibling.actionType === "card"
+  );
+  assert.equal(xSkillSibling.nextEnergyStateDelta, 2.5);
+  assert.equal(assaultSibling.nextEnergyStateDelta, null);
+});
+
+/*
+功能
 锁定自适应信息结果只作为 generic TransitionOption 进入 BaseTransition。
 
 调用方
@@ -18120,7 +18248,7 @@ test("AI·搜索：规划 ordinary exception 仍显式传播并清理观察状�
     /planner test failure/u
   );
   assert.equal(ui.thinking.at(-1)[0], false);
-  assert.equal(game.state.phase, "play", "SEARCH_FAILURE 不得伪装为 END 后进入弃牌阶段");
+  assert.equal(game.state.phase, "play", "搜索异常不得伪装为 END 后进入弃牌阶段");
   assert.match(ui.logs.join("\n"), /^(?!.*planner test failure)/s);
 });
 
@@ -18129,7 +18257,7 @@ test("AI·搜索：规划 ordinary exception 仍显式传播并清理观察状�
 运行一次由测试指定 AI search outcome 的完整 canonical 回合。
 
 调用方
-SEARCH_FAILURE、strategic END 与普通 non-END 的 TurnWorkflow 回归测试。
+分类后的 search failure、strategic END 与普通 non-END 的 TurnWorkflow 回归测试。
 
 输入
 行动者 HP、初始手牌定义，以及按调用次数生成 Action/status 的 outcome factory。
@@ -18158,7 +18286,7 @@ async function runAiSearchOutcomeTurnFixture({
   const enemy = makePlayer("search-failure-turn-enemy", 1, "dusk", "ai", 1);
   actor.hp = hp;
   actor.hand.push(...handDefinitions.map((definitionId) => instance(definitionId)));
-  const { game } = makeGame([actor, enemy]);
+  const { game, ui } = makeGame([actor, enemy]);
   game.drawCards = async () => [];
   game.cleanupManager.delay = async () => true;
   let searchCalls = 0;
@@ -18188,6 +18316,7 @@ async function runAiSearchOutcomeTurnFixture({
   await game.takeTurn(actor, game.state.gameId);
   return {
     game,
+    ui,
     actor,
     searchCalls,
     discardCalls,
@@ -18196,15 +18325,15 @@ async function runAiSearchOutcomeTurnFixture({
   };
 }
 
-test("AI·回合收尾：SEARCH_FAILURE 后仍执行强制弃牌与 turnEnd", async () => {
+test("AI·回合收尾：SEARCH_INTERNAL_FAILURE 后仍执行强制弃牌与 turnEnd", async () => {
   const fixture = await runAiSearchOutcomeTurnFixture({
     hp:3,
     handDefinitions:["counter", "counter", "block", "charge", "shield"],
-    outcomeAt:() => ({ status:SEARCH_RESULT_STATUS.SEARCH_FAILURE, action:null })
+    outcomeAt:() => ({ status:SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE, action:null })
   });
   try {
     assert.equal(fixture.searchCalls, 1);
-    assert.equal(fixture.actor.statistics.cardsPlayed, 0, "SEARCH_FAILURE 不得伪装 strategic END 或其它 Action");
+    assert.equal(fixture.actor.statistics.cardsPlayed, 0, "搜索异常不得伪装 strategic END 或其它 Action");
     assert.equal(fixture.playPhaseEndCount, 1);
     assert.equal(fixture.discardCalls, 2);
     assert.equal(fixture.actor.hand.length, fixture.actor.hp);
@@ -18240,7 +18369,7 @@ test("AI·回合收尾：pre-worker Fact failure 进入既有 canonical cleanup"
   try {
     await game.takeTurn(actor, game.state.gameId);
     assert.equal(searchCalls, 0);
-    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.PREPARATION_FAILURE);
     assert.equal(game.aiController.lastSearchResult.action, null);
     assert.equal(game.aiController.lastSearchResult.searchFault.stage, "PREPARATION");
     assert.equal(actor.statistics.cardsPlayed, 0);
@@ -18252,11 +18381,11 @@ test("AI·回合收尾：pre-worker Fact failure 进入既有 canonical cleanup"
   }
 });
 
-test("AI·回合收尾：无需弃牌的 SEARCH_FAILURE 正常完成且不产生游戏动作", async () => {
+test("AI·回合收尾：无需弃牌的 SEARCH_INTERNAL_FAILURE 正常完成且不产生游戏动作", async () => {
   const fixture = await runAiSearchOutcomeTurnFixture({
     hp:4,
     handDefinitions:["counter", "block"],
-    outcomeAt:() => ({ status:SEARCH_RESULT_STATUS.SEARCH_FAILURE, action:null })
+    outcomeAt:() => ({ status:SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE, action:null })
   });
   try {
     assert.equal(fixture.searchCalls, 1);
@@ -18324,10 +18453,10 @@ test("AI·回合收尾：正常 non-END Action 结算后继续重搜并正常结
   }
 });
 
-test("AI·回合收尾：SEARCH_FAILURE 分支不创建 END 或复制弃牌实现", async () => {
+test("AI·回合收尾：分类 failure 分支不创建 END 或复制弃牌实现", async () => {
   const source = await readFile(projectFile("js/application/turn/TurnWorkflow.js"), "utf8");
   const failureBranchStart = source.indexOf(
-    'if (runtime.getAiSearchResultStatus() === "SEARCH_FAILURE")'
+    "const failurePresentation = AI_NULL_SEARCH_OUTCOMES[searchResultStatus]"
   );
   const failureBranch = source.slice(
     failureBranchStart,
@@ -18335,6 +18464,30 @@ test("AI·回合收尾：SEARCH_FAILURE 分支不创建 END 或复制弃牌实�
   );
   assert.doesNotMatch(failureBranch, /createAction|type\s*:\s*["']end["']|player\.hand|discardCardFromHand|handleDiscardPhase/u);
   assert.match(source, /setMatchPhase\(state, "discard"\);\s*await handleDiscardPhase\(player, gameId\);/u);
+});
+
+test("AI·回合收尾：主要 failure outcome 输出各自诊断文案并走同一 canonical cleanup", async () => {
+  const expectedFragments = new Map([
+    [SEARCH_RESULT_STATUS.PREPARATION_FAILURE, "搜索准备数据异常"],
+    [SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE, "搜索内部故障"],
+    [SEARCH_RESULT_STATUS.WORKER_FAILURE, "搜索 Worker 通信故障"],
+    [SEARCH_RESULT_STATUS.SEARCH_CANCELLED, "搜索已取消"],
+    [SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED, "搜索预算用尽且无完整结果"]
+  ]);
+  for (const [status, fragment] of expectedFragments) {
+    const fixture = await runAiSearchOutcomeTurnFixture({
+      hp:4,
+      handDefinitions:[],
+      outcomeAt:() => ({ status, action:null })
+    });
+    try {
+      assert.equal(fixture.searchCalls, 1, status);
+      assert.equal(fixture.turnEndCount, 1, status);
+      assert.match(fixture.ui.logs.join("\n"), new RegExp(fragment, "u"), status);
+    } finally {
+      fixture.game.dispose();
+    }
+  }
 });
 
 test("AI·搜索：深层节点能发现先聚能再发动主动技能", () => {
@@ -18873,10 +19026,19 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
     advanceTransitionProvenance:() => null,
     adaptiveInformationTarget:() => null,
     evaluateTransition:({ action }) => ({
+      resolutionScale:1,
       baseTransition:action.baseValue,
       stateDelta:action.stateDelta ?? 0,
+      stateDeltaValue:action.stateDelta ?? 0,
+      transitionOptionPoints:0,
+      transitionOptionValue:0,
+      depth:1,
       dangerBefore:1,
-      endOpportunityInputs:action.type === "end" ? {} : null
+      xSkillNextEnergy:null,
+      discardOpportunityInputs:{ beforeOverflow:0, afterOverflow:0, stateDelta:0 },
+      endOpportunityInputs:action.type === "end"
+        ? { energy:0, turnEnergyGain:0, maxEnergy:0, activeSkillCost:0 }
+        : null
     }),
     frontierResidual:() => null,
     terminalFrontierValue:() => 0,
@@ -18918,15 +19080,16 @@ data-only root World 与测试 Evaluator scalar。
 Searcher.search、SearchBudget、PatternMatcher。
 
 边界与不变量
-默认让 END 先完成以验证 incomplete END；preserveNonEndIncumbent 模式让突袭先完成，
-验证预算停止后不得补算其余 non-END 或 END。
+默认给 END 更高的测试调度分，验证 Searcher 仍结构性优先建立 non-END baseline；
+interruptFirstCandidate 模式在首个 baseline 内触发 cooperative stop，验证零完整结果不会补算后续 root 或 END。
 */
 async function runEndSiblingBudgetFixture(
   stopReason,
   {
     siblingType = "skill",
     forcesDiscard = false,
-    preserveNonEndIncumbent = false
+    preserveNonEndIncumbent = false,
+    interruptFirstCandidate = false
   } = {}
 ) {
   const actorId = "end-sibling-actor";
@@ -18972,9 +19135,15 @@ async function runEndSiblingBudgetFixture(
       hiddenSamples:0,
       yieldEvery:stopReason === "CANCELLED" ? 1 : 100
     },
-    simulatorFactory:() => ({
+    simulatorFactory:({ searchBudget }) => ({
       apply:(state, action) => {
         applied.push(action.type);
+        if (interruptFirstCandidate && applied.length === 1) {
+          if (stopReason === "NODE") searchBudget.observeNode();
+          else if (stopReason === "TIME") clockCalls = Number.POSITIVE_INFINITY;
+          else searchBudget.cancel();
+          searchBudget.checkpointCurrentWork();
+        }
         return { ...state, playPhaseEnded:action.type === "end" };
       },
       buildLightningOutcomeSets:() => []
@@ -19068,13 +19237,21 @@ async function runSearcherFaultBoundaryFixture(mode) {
     ? []
     : mode === "duplicate-end"
       ? [end, createAction({ type:"end", actorId })]
+      : mode === "foreign-roots"
+        ? [
+            createAction({ type:"card", actorId:"foreign-actor", cardId:"charge" }),
+            createAction({ type:"end", actorId:"foreign-actor" })
+          ]
       : mode === "only-end-fault" || mode === "only-end-complete"
         ? [end]
         : [
             "after-incumbent-fault",
             "before-incumbent-fault",
             "before-incumbent-evaluator-fault",
-            "before-incumbent-finalize-fault"
+            "before-incumbent-finalize-fault",
+            "nan-transition",
+            "missing-transition-term",
+            "negative-infinity-transition"
           ].includes(mode)
           ? [assault, charge, end]
           : [assault, end];
@@ -19093,11 +19270,21 @@ async function runSearcherFaultBoundaryFixture(mode) {
   ]);
   const transitionValue = (action) => {
     if (action.type === "end") return preferEnd ? 2 : 0;
-    if (action.cardId === "assault") return preferEnd ? -1 : 5;
+    if (action.cardId === "assault") {
+      if (mode === "nan-transition") return Number.NaN;
+      if (mode === "missing-transition-term") return undefined;
+      if (mode === "negative-infinity-transition") return Number.NEGATIVE_INFINITY;
+      return preferEnd ? -1 : 5;
+    }
     return 1;
   };
   const evaluator = {
-    rootSchedulingScore:(action) => scheduling.get(action) ?? 0,
+    rootSchedulingScore:(action) => {
+      if (mode === "root-scheduling-shared-fault") {
+        throw new Error("synthetic root scheduling shared fault");
+      }
+      return scheduling.get(action) ?? 0;
+    },
     initialTransitionProvenance:() => null,
     exposeMarginalStackDelta:() => 0,
     assaultMarginalStackCount:() => 0,
@@ -19107,12 +19294,27 @@ async function runSearcherFaultBoundaryFixture(mode) {
       if (mode === "before-incumbent-evaluator-fault" && action === assault) {
         throw new Error("synthetic Evaluator fault before incumbent");
       }
-      return {
-        baseTransition:transitionValue(action),
-        stateDelta:transitionValue(action),
+      const value = transitionValue(action);
+      const finiteStateDelta = Number.isFinite(value) ? value : 0;
+      const terms = {
+        resolutionScale:1,
+        baseTransition:value,
+        stateDelta:finiteStateDelta,
+        stateDeltaValue:finiteStateDelta,
+        transitionOptionPoints:0,
+        transitionOptionValue:0,
+        depth:1,
         dangerBefore:0,
-        endOpportunityInputs:action.type === "end" ? {} : null
+        xSkillNextEnergy:null,
+        discardOpportunityInputs:{ beforeOverflow:0, afterOverflow:0, stateDelta:0 },
+        endOpportunityInputs:action.type === "end"
+          ? { energy:0, turnEnergyGain:0, maxEnergy:0, activeSkillCost:0 }
+          : null
       };
+      if (mode === "missing-transition-term" && action === assault) {
+        delete terms.baseTransition;
+      }
+      return terms;
     },
     frontierResidual:() => null,
     terminalFrontierValue:() => 0,
@@ -19132,9 +19334,15 @@ async function runSearcherFaultBoundaryFixture(mode) {
       return left.valueScore - right.valueScore;
     }
   };
+  const patternMatcher = new PatternMatcher({ definitions:[] });
+  if (mode === "pattern-match-shared-fault") {
+    patternMatcher.match = () => {
+      throw new Error("synthetic Pattern.match shared fault");
+    };
+  }
   const searcher = new Searcher({
     evaluator,
-    patternMatcher:new PatternMatcher({ definitions:[] }),
+    patternMatcher,
     getResolutionScale:() => 1,
     config:{
       depth:1,
@@ -19163,7 +19371,12 @@ async function runSearcherFaultBoundaryFixture(mode) {
       buildLightningOutcomeSets:() => []
     }),
     searchBudgetFactory:() => new SearchBudget({ nodeBudget:100 }),
-    deduplicateActions:(actions) => actions,
+    deduplicateActions:(actions) => {
+      if (mode === "dedup-shared-fault") {
+        throw new Error("synthetic root dedup shared fault");
+      }
+      return actions;
+    },
     generateActions:() => [],
     sampleUnknownHands:() => ({
       classification:PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE,
@@ -19172,6 +19385,11 @@ async function runSearcherFaultBoundaryFixture(mode) {
     }),
     yieldControl:async () => mode !== "post-incumbent-cancel"
   });
+  if (mode === "structure-shared-fault") {
+    searcher.structure = () => {
+      throw new Error("synthetic structure shared fault");
+    };
+  }
   const finalizeCandidates = searcher.finalizeCandidates.bind(searcher);
   searcher.finalizeCandidates = (...args) => {
     workCalls.finalizeCandidates += 1;
@@ -19329,6 +19547,70 @@ test("AI·搜索：空 root set 与重复 END 明确触发 root invariant fault"
   const duplicate = await runSearcherFaultBoundaryFixture("duplicate-end");
   assert.match(duplicate.searchError?.message ?? "", /必须且只能包含一个 canonical END/u);
   assert.equal(duplicate.stats, null);
+});
+
+test("AI·搜索：所有异 actor roots 在共享编排前触发 root actor invariant", async () => {
+  const result = await runSearcherFaultBoundaryFixture("foreign-roots");
+  assert.match(result.searchError?.message ?? "", /所有 root Actions 必须属于当前行动者/u);
+  assert.equal(result.stats, null);
+  assert.deepEqual(result.applied, []);
+});
+
+test("AI·搜索：dedup、Pattern.match 与 root scheduling 异常统一收束 global FAULT", async () => {
+  for (const mode of [
+    "dedup-shared-fault",
+    "pattern-match-shared-fault",
+    "root-scheduling-shared-fault"
+  ]) {
+    const result = await runSearcherFaultBoundaryFixture(mode);
+    assert.equal(result.searchError, null, mode);
+    assert.equal(result.stats.stopReason, "FAULT", mode);
+    assert.match(result.stats.searchFault?.message ?? "", /shared fault/u, mode);
+    assert.equal(result.selected, null, mode);
+    assert.deepEqual(result.applied, [], mode);
+  }
+});
+
+test("AI·搜索：structure shared setup exception 收束 global FAULT", async () => {
+  const result = await runSearcherFaultBoundaryFixture("structure-shared-fault");
+  assert.equal(result.searchError, null);
+  assert.equal(result.stats.stopReason, "FAULT");
+  assert.match(result.stats.searchFault?.message ?? "", /structure shared fault/u);
+  assert.equal(result.selected, null);
+  assert.deepEqual(result.applied, []);
+});
+
+test("AI·搜索：非法 Final Utility 与缺失 base transition 不进入完整 incumbent", async () => {
+  for (const mode of ["nan-transition", "missing-transition-term"]) {
+    const result = await runSearcherFaultBoundaryFixture(mode);
+    assert.equal(result.searchError, null, mode);
+    assert.equal(result.stats.stopReason, "COMPLETE", mode);
+    assert.equal(result.selected, result.charge, mode);
+    assert.equal(result.stats.candidateFaults.length, 1, mode);
+    assert.equal(result.stats.candidateFaults[0].action, result.assault, mode);
+    assert.match(result.stats.candidateFaults[0].message, /baseTransition|Final Utility/u, mode);
+  }
+  assert.equal(isValidFinalUtility(Number.NaN), false);
+  assert.equal(isValidFinalUtility(undefined), false);
+  assert.equal(isValidFinalUtility(Number.POSITIVE_INFINITY), false);
+});
+
+test("AI·搜索：合法负无穷 Final Utility 保持完整但不可竞争", async () => {
+  const result = await runSearcherFaultBoundaryFixture("negative-infinity-transition");
+  assert.equal(isValidFinalUtility(Number.NEGATIVE_INFINITY), true);
+  assert.equal(result.searchError, null);
+  assert.equal(result.stats.stopReason, "COMPLETE");
+  assert.equal(result.stats.completedRootCandidateCount, 3);
+  assert.equal(result.stats.candidateFaults.length, 0);
+  assert.equal(result.selected, result.charge);
+});
+
+test("AI·搜索：多 root 时结构性优先建立 non-END baseline incumbent", async () => {
+  const result = await runEndSiblingBudgetFixture("NODE", { siblingType:"card" });
+  assert.equal(result.stats.scheduledRootOrder[0], result.sibling);
+  assert.equal(result.selected, result.sibling);
+  assert.deepEqual(result.applied, ["card"]);
+  assert.equal(result.stats.completedRootCandidateCount, 1);
 });
 
 test("AI·搜索：only-END 正常形成完整合法结果", async () => {
@@ -20136,10 +20418,14 @@ test("AI·搜索：TIME/NODE/CANCELLED 零完整 incumbent 时不返回 provisio
       const forcesDiscard = siblingType === "card";
       const result = await runEndSiblingBudgetFixture(
         stopReason,
-        { siblingType, forcesDiscard }
+        { siblingType, forcesDiscard, interruptFirstCandidate:true }
       );
       assert.equal(result.selected, null, `${stopReason}/${siblingType} 不得返回 provisional`);
-      assert.deepEqual(result.applied, ["end"], `${stopReason}/${siblingType} 不得补算 sibling`);
+      assert.deepEqual(
+        result.applied,
+        [siblingType],
+        `${stopReason}/${siblingType} 不得补算后续 root 或 END`
+      );
       assert.equal(result.stats.stopReason, stopReason);
       assert.equal(result.stats.completedRootCandidateCount, 0);
       assert.equal(result.stats.bestValueScore, null);
@@ -20251,7 +20537,22 @@ async function runTacticalPatternFixture({
         cardId:action.cardId ?? null,
         beforePath:[...(beforeState.path ?? [])]
       });
-      return { baseTransition:tacticalPatternValues.get(action) };
+      const baseTransition = tacticalPatternValues.get(action);
+      return {
+        resolutionScale:1,
+        stateDelta:baseTransition,
+        stateDeltaValue:baseTransition,
+        transitionOptionPoints:0,
+        transitionOptionValue:0,
+        depth:1,
+        dangerBefore:0,
+        baseTransition,
+        xSkillNextEnergy:null,
+        discardOpportunityInputs:{ beforeOverflow:0, afterOverflow:0, stateDelta:0 },
+        endOpportunityInputs:action.type === "end"
+          ? { energy:0, turnEnergyGain:0, maxEnergy:0, activeSkillCost:0 }
+          : null
+      };
     },
     frontierResidual:() => null,
     terminalFrontierValue:() => 0,
@@ -20944,7 +21245,7 @@ test("AI·Controller：合法 Assault 与 FAULT diagnostics 仍按 root acceptan
   assert.equal(accepted.result.searchFault.message, "synthetic Simulator fault");
 });
 
-test("AI·Controller：Fact over-consumption RangeError 转为 pre-worker SEARCH_FAILURE", async () => {
+test("AI·Controller：Fact over-consumption RangeError 转为 PREPARATION_FAILURE", async () => {
   const actor = makePlayer("pre-worker-fact-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("pre-worker-fact-enemy", 1, "dusk", "ai", 1);
   actor.hand = Array.from(
@@ -20963,7 +21264,7 @@ test("AI·Controller：Fact over-consumption RangeError 转为 pre-worker SEARCH
     const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
     const result = game.aiController.lastSearchResult;
     assert.equal(action, null);
-    assert.equal(result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(result.status, SEARCH_RESULT_STATUS.PREPARATION_FAILURE);
     assert.equal(result.action, null);
     assert.equal(result.searchFault.stage, "PREPARATION");
     assert.equal(result.searchFault.operation, "remaining-counts");
@@ -20977,7 +21278,7 @@ test("AI·Controller：Fact over-consumption RangeError 转为 pre-worker SEARCH
   }
 });
 
-test("AI·Controller：createInitialWorld ordinary fault 转为 pre-worker SEARCH_FAILURE", async () => {
+test("AI·Controller：createInitialWorld ordinary fault 转为 PREPARATION_FAILURE", async () => {
   const actor = makePlayer("pre-worker-world-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("pre-worker-world-enemy", 1, "dusk", "ai", 1);
   actor.hand = Object.entries(CARD_COUNTS).flatMap(([definitionId, count]) => (
@@ -20996,7 +21297,7 @@ test("AI·Controller：createInitialWorld ordinary fault 转为 pre-worker SEARC
     const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
     const result = game.aiController.lastSearchResult;
     assert.equal(action, null);
-    assert.equal(result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(result.status, SEARCH_RESULT_STATUS.PREPARATION_FAILURE);
     assert.equal(result.action, null);
     assert.equal(result.searchFault.stage, "PREPARATION");
     assert.equal(result.searchFault.operation, "create-world");
@@ -21007,7 +21308,7 @@ test("AI·Controller：createInitialWorld ordinary fault 转为 pre-worker SEARC
   }
 });
 
-test("AI·Controller：Generator ordinary fault 转为 pre-worker SEARCH_FAILURE", async () => {
+test("AI·Controller：Generator ordinary fault 转为 PREPARATION_FAILURE", async () => {
   const actor = makePlayer("pre-worker-generator-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("pre-worker-generator-enemy", 1, "dusk", "ai", 1);
   const { game } = makeGame([actor, enemy]);
@@ -21025,7 +21326,7 @@ test("AI·Controller：Generator ordinary fault 转为 pre-worker SEARCH_FAILURE
     const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
     const result = game.aiController.lastSearchResult;
     assert.equal(action, null);
-    assert.equal(result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(result.status, SEARCH_RESULT_STATUS.PREPARATION_FAILURE);
     assert.equal(result.action, null);
     assert.equal(result.searchFault.stage, "PREPARATION");
     assert.equal(result.searchFault.operation, "root-candidates");
@@ -21036,7 +21337,7 @@ test("AI·Controller：Generator ordinary fault 转为 pre-worker SEARCH_FAILURE
   }
 });
 
-test("AI·Controller：createSearchRequest ordinary fault 转为 pre-worker SEARCH_FAILURE", async () => {
+test("AI·Controller：createSearchRequest ordinary fault 转为 PREPARATION_FAILURE", async () => {
   const actor = makePlayer("pre-worker-request-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("pre-worker-request-enemy", 1, "dusk", "ai", 1);
   const { game } = makeGame([actor, enemy]);
@@ -21052,7 +21353,7 @@ test("AI·Controller：createSearchRequest ordinary fault 转为 pre-worker SEAR
     const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
     const result = game.aiController.lastSearchResult;
     assert.equal(action, null);
-    assert.equal(result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(result.status, SEARCH_RESULT_STATUS.PREPARATION_FAILURE);
     assert.equal(result.action, null);
     assert.equal(result.requestId, null);
     assert.equal(result.searchFault.stage, "PREPARATION");
@@ -21089,7 +21390,7 @@ test("AI·Controller：正常 preparation 与 Worker action 保持原 acceptance
   }
 });
 
-test("AI·Controller：正常 preparation 与 Worker SEARCH_FAILURE 保持原语义", async () => {
+test("AI·Controller：Worker transport fault 返回 WORKER_FAILURE", async () => {
   const actor = makePlayer("pre-worker-worker-failure-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("pre-worker-worker-failure-enemy", 1, "dusk", "ai", 1);
   const { game } = makeGame([actor, enemy]);
@@ -21101,7 +21402,7 @@ test("AI·Controller：正常 preparation 与 Worker SEARCH_FAILURE 保持原语
   try {
     const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
     assert.equal(action, null);
-    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.WORKER_FAILURE);
     assert.equal(game.aiController.lastSearchResult.action, null);
     assert.equal(
       game.aiController.lastSearchResult.rejectionReason,
@@ -21114,7 +21415,45 @@ test("AI·Controller：正常 preparation 与 Worker SEARCH_FAILURE 保持原语
   }
 });
 
-test("AI·Controller：非法 Player 调用合同不降级为 SEARCH_FAILURE", async () => {
+test("AI·Worker/Controller：SearchBudget setup exception 分类为 SEARCH_INTERNAL_FAILURE", async () => {
+  const { createSearchRequest } = await import("../js/ai/Controller.js");
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const actor = makePlayer("setup-fault-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("setup-fault-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"));
+  const { game } = makeGame([actor, enemy]);
+  try {
+    const roots = game.aiController.getActionCandidates(actor);
+    const request = createSearchRequest({
+      requestId:"setup-fault-request",
+      gameId:game.state.gameId,
+      stateVersion:game.state.stateVersion,
+      actorId:actor.id,
+      phase:game.state.phase,
+      currentRound:game.state.currentRound,
+      world:createInitialWorld(actor.id, game.state),
+      searchConfig:game.aiController.buildSearchConfig(),
+      rng:game.aiController.searchRng.snapshot(),
+      rootActions:roots
+    });
+    const outcome = await runSearchRequest(request, {
+      now:() => {
+        throw new Error("synthetic searchBudgetFactory setup fault");
+      }
+    });
+    assert.equal(outcome.searchStopReason, null);
+    assert.equal(outcome.workerError, null);
+    assert.match(outcome.searchFault?.message ?? "", /searchBudgetFactory setup fault/u);
+    const accepted = game.aiController.acceptWorkerSearchOutcome(request, outcome, roots);
+    assert.equal(accepted.action, null);
+    assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE);
+    assert.match(accepted.result.rejectionReason, /Searcher internal fault/u);
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·Controller：非法 Player 调用合同不降级为 preparation status", async () => {
   const actor = makePlayer("pre-worker-contract-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("pre-worker-contract-enemy", 1, "dusk", "ai", 1);
   const { game } = makeGame([actor, enemy]);
@@ -21139,12 +21478,11 @@ test("AI·Controller：pre-worker failure boundary 不创建 END fallback 或新
     selectActionSource,
     /createAction\s*\(\s*\{\s*type\s*:\s*["']end["']/u
   );
-  assert.doesNotMatch(source, /PREPARATION_FAILURE/u);
+  assert.match(selectActionSource, /SEARCH_RESULT_STATUS\.PREPARATION_FAILURE/u);
 });
 
-test("AI·Controller：Worker 无 Searcher action 返回显式 SEARCH_FAILURE 而非 END", async () => {
+test("AI·Controller：SearchRequest 在 Worker 前拒绝缺失 actor 的 World", async () => {
   const { createSearchRequest } = await import("../js/ai/Controller.js");
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
   const actor = makePlayer("controller-empty-actor", 0, "dawn", "ai", 3);
   const enemy = makePlayer("controller-empty-enemy", 1, "dusk", "ai", 2);
   actor.hand.push(instance("assault"));
@@ -21155,7 +21493,7 @@ test("AI·Controller：Worker 无 Searcher action 返回显式 SEARCH_FAILURE �
     ...initialWorld,
     players:Object.freeze(initialWorld.players.filter((entry) => entry.id !== actor.id))
   });
-  const request = createSearchRequest({
+  assert.throws(() => createSearchRequest({
     requestId:"controller-empty-action",
     gameId:game.state.gameId,
     stateVersion:game.state.stateVersion,
@@ -21166,16 +21504,77 @@ test("AI·Controller：Worker 无 Searcher action 返回显式 SEARCH_FAILURE �
     searchConfig:game.aiController.buildSearchConfig(),
     rng:game.aiController.searchRng.snapshot(),
     rootActions:roots
-  });
-  const outcome = await runSearchRequest(request);
-  assert.equal(outcome.action, null);
-  assert.match(outcome.workerError, /缺少 actor/u);
-  const failed = game.aiController.acceptWorkerSearchOutcome(request, outcome, roots);
-  assert.equal(failed.result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
-  assert.equal(failed.action, null);
-  assert.equal(failed.result.action, null);
+  }), /SearchRequest World 缺少 actor/u);
   const source = await readFile(projectFile("js/ai/Controller.js"), "utf8");
   assert.doesNotMatch(source, /selectWorkerFailureFallback|generator-safe-end/u);
+});
+
+test("AI·Controller：null Worker outcome 按 internal、transport、cancel 与 budget 分类", () => {
+  const actor = makePlayer("controller-outcome-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("controller-outcome-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  const roots = game.aiController.getActionCandidates(actor);
+  const request = createSearchRequest({
+    requestId:"controller-classified-outcomes",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    world:createInitialWorld(actor.id, game.state),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActions:roots
+  });
+  const cases = [
+    {
+      label:"search fault",
+      expected:SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE,
+      result:{ searchStopReason:"FAULT", searchFault:{ name:"Error", message:"fault" } }
+    },
+    {
+      label:"complete contract violation",
+      expected:SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE,
+      result:{ searchStopReason:"COMPLETE" }
+    },
+    {
+      label:"transport",
+      expected:SEARCH_RESULT_STATUS.WORKER_FAILURE,
+      result:{ workerError:"transport failed" }
+    },
+    {
+      label:"cancelled",
+      expected:SEARCH_RESULT_STATUS.SEARCH_CANCELLED,
+      result:{ searchStopReason:"CANCELLED", cancelled:true }
+    },
+    {
+      label:"time budget",
+      expected:SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED,
+      result:{ searchStopReason:"TIME" }
+    },
+    {
+      label:"node budget",
+      expected:SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED,
+      result:{ searchStopReason:"NODE" }
+    }
+  ];
+  try {
+    for (const entry of cases) {
+      const outcome = createWorkerSearchOutcome({ request,
+        action:null,
+        stats:entry.result.searchStopReason
+          ? { stopReason:entry.result.searchStopReason }
+          : null,
+        rngAfter:request.rng,
+        ...entry.result
+      });
+      const accepted = game.aiController.acceptWorkerSearchOutcome(request, outcome, roots);
+      assert.equal(accepted.action, null, entry.label);
+      assert.equal(accepted.result.status, entry.expected, entry.label);
+    }
+  } finally {
+    game.dispose();
+  }
 });
 test("AI·资源身份：转移 Action 只保存可执行选择 ID", () => {
   const actor = makePlayer("transfer-rebind-actor", 0, "dawn"),
@@ -21641,7 +22040,7 @@ Controller Worker outcome acceptance contract。
 createSearchRequest、createWorkerSearchOutcome、acceptWorkerSearchOutcome。
 
 边界与不变量
-cancelled/invalid 必须返回显式 SEARCH_FAILURE 与 null Action，不执行真实 Card/Player。
+cancelled result 必须返回显式 SEARCH_CANCELLED 与 null Action，不执行真实 Card/Player。
 */
 async function frArch13CancellationContract() {
   const { createSearchRequest, createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
@@ -21670,7 +22069,7 @@ async function frArch13CancellationContract() {
     rngAfter:request.rng,
     cancelled:true
   }), request.rootActions);
-  assert.equal(cancelled.result.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+  assert.equal(cancelled.result.status, SEARCH_RESULT_STATUS.SEARCH_CANCELLED);
   assert.equal(cancelled.action, null);
 }
 
@@ -22668,7 +23067,7 @@ test("AI·Worker 搜索一致性：只运输 root Action 且多步序列仅保�
 
 /*
 功能
-验证连续 accepted Worker search 的 RNG continuation，以及 Worker SEARCH_FAILURE 不提交 RNG。
+验证连续 accepted Worker search 的 RNG continuation，以及 WORKER_FAILURE 不提交 RNG。
 
 调用方
 FR-ARCH-14 RNG continuity runtime audit。
@@ -22689,7 +23088,7 @@ AIController selectAction/acceptWorkerSearchOutcome、SearchPrior fallback 与 S
 makeGame、instance、selectAction、acceptWorkerSearchOutcome、createWorkerSearchOutcome。
 
 边界与不变量
-正常结果只提交一次 RNG；Worker fault 返回 null Action 与 SEARCH_FAILURE，不提交失败 outcome 的 RNG。
+正常结果只提交一次 RNG；Worker fault 返回 null Action 与 WORKER_FAILURE，不提交失败 outcome 的 RNG。
 */
 async function frArch14RngContinuityAcceptedSearches() {
   const { createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
@@ -22730,7 +23129,7 @@ async function frArch14RngContinuityAcceptedSearches() {
   };
   const rejectedAction = await game.aiController.selectAction(player, { gameId: game.state.gameId });
   assert.equal(rejectedAction, null);
-  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_FAILURE);
+  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.WORKER_FAILURE);
   assert.deepEqual(game.aiController.searchRng.snapshot(), beforeRejected, "rejected outcome 不得 commit RNG");
   assert.equal(game.aiController.searchDiagnostics.WORKER_ERROR, 1);
   assert.equal(game.aiController.searchDiagnostics.WATCHDOG, 1);

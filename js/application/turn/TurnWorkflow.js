@@ -40,6 +40,14 @@ const REQUIRED_DEPENDENCIES = [
   "cancelPendingInteractions", "getAiSearchResultStatus"
 ];
 
+const AI_NULL_SEARCH_OUTCOMES = Object.freeze({
+  PREPARATION_FAILURE:"搜索准备数据异常",
+  SEARCH_INTERNAL_FAILURE:"搜索内部故障",
+  WORKER_FAILURE:"搜索 Worker 通信故障",
+  SEARCH_CANCELLED:"搜索已取消",
+  SEARCH_BUDGET_EXHAUSTED:"搜索预算用尽且无完整结果"
+});
+
 /*
 功能
 创建 Application Turn Workflow。
@@ -298,8 +306,8 @@ export function createTurnWorkflow(dependencies) {
   边界与不变量
   每个真实 Action 后必须从最新 World 重新调用 selectAction；每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
   canonical non-END 的定义、目标、实体或真实结算绑定失败必须显式记录，不能静默伪装成正常 END。
-  明确 SEARCH_FAILURE 的 null 只终止 AI action loop，随后必须由 takeTurn 继续 canonical play-phase/discard/turnEnd 收尾；
-  其它异常或无明确 failure status 的 null 仍显式失败。
+  明确分类的 search failure null 只终止 AI action loop，随后必须由 takeTurn 继续 canonical play-phase/discard/turnEnd 收尾；
+  其它异常或无明确 failure status 的 null 仍显式失败，不能被伪装成 strategic END。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
@@ -322,15 +330,19 @@ export function createTurnWorkflow(dependencies) {
         }
         if (!runtime.isSessionValid(gameId)) return;
         if (!action) {
-          const searchFailure = new Error("AI Searcher 未返回可验收 Action（SEARCH_FAILURE）");
-          if (runtime.getAiSearchResultStatus() === "SEARCH_FAILURE") {
+          const searchResultStatus = runtime.getAiSearchResultStatus();
+          const failurePresentation = AI_NULL_SEARCH_OUTCOMES[searchResultStatus];
+          const searchFailure = new Error(
+            `AI Searcher 未返回可验收 Action（${searchResultStatus ?? "UNKNOWN"}）`
+          );
+          if (failurePresentation) {
             runtime.diagnostics.reportWorkflowError(
               "AI",
-              `${player.name}搜索失败，停止继续请求行动并进入回合收尾`,
+              `${player.name}${failurePresentation}，停止继续请求行动并进入回合收尾`,
               searchFailure
             );
             runtime.presentation.log(
-              `${player.name}本次搜索失败，停止继续出牌并进入回合收尾。`,
+              `${player.name}${failurePresentation}，停止继续出牌并进入回合收尾。`,
               "important"
             );
             break;

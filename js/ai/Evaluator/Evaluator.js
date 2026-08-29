@@ -70,6 +70,148 @@ import {
 
 /*
 功能
+判断一个数值是否满足正式 Final Utility contract。
+
+调用方
+assertValueContract、Searcher candidate completeness 与直接 contract 测试。
+
+输入
+待判断的任意值。
+
+输出
+有限 number 或合法不可竞争值 -Infinity 返回 true，其余返回 false。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Number.isFinite。
+
+边界与不变量
+null 表示未完成，不属于 Final Utility；NaN、+Infinity、undefined 与数值字符串均非法。
+*/
+export function isValidFinalUtility(value) {
+  return Number.isFinite(value) || value === Number.NEGATIVE_INFINITY;
+}
+
+/*
+功能
+验证一个命名价值项满足有限值或 Final Utility 数值 contract。
+
+调用方
+assertCompleteTransitionTerms、composeTransitionValue。
+
+输入
+待验证值、term 名称，以及是否允许合法不可竞争值 -Infinity。
+
+输出
+合法时原样返回该 number；非法时抛出 TypeError。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+isValidFinalUtility、Number.isFinite。
+
+边界与不变量
+只有 Final Utility/baseTransition 可以允许 -Infinity；普通 value term 必须是有限 number。
+*/
+function assertValueContract(value, name, allowNegativeInfinity = false) {
+  const valid = allowNegativeInfinity
+    ? isValidFinalUtility(value)
+    : Number.isFinite(value);
+  if (!valid) {
+    throw new TypeError(`Evaluator value invariant 失败：${name} 必须是合法数值`);
+  }
+  return value;
+}
+
+/*
+功能
+验证一次 candidate evaluation 已产出完整且可组合的 transition terms。
+
+调用方
+evaluateTransition 与 Searcher 的唯一 candidate evaluation 入口。
+
+输入
+Evaluator transition terms 普通对象。
+
+输出
+合同完整时原样返回 terms；缺失或非法时抛出 TypeError。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+assertValueContract。
+
+边界与不变量
+state/option/danger/sibling 输入必须有限；baseTransition 单独允许 -Infinity 表示合法不可竞争，
+X 技能若已附带 nextEnergyStateDelta 也必须是有限数值；普通技能的该字段只能为 null，
+不得用 null、NaN 或缺字段冒充完整 candidate。
+*/
+export function assertCompleteTransitionTerms(terms) {
+  if (!terms || typeof terms !== "object") {
+    throw new TypeError("Evaluator value invariant 失败：transition terms 必须是对象");
+  }
+  for (const name of [
+    "resolutionScale",
+    "stateDelta",
+    "stateDeltaValue",
+    "transitionOptionPoints",
+    "transitionOptionValue",
+    "depth",
+    "dangerBefore"
+  ]) {
+    assertValueContract(terms[name], name);
+  }
+  if (terms.depth < 1) {
+    throw new TypeError("Evaluator value invariant 失败：depth 必须大于等于一");
+  }
+  assertValueContract(terms.baseTransition, "baseTransition", true);
+  if (terms.xSkillNextEnergy !== null) {
+    assertValueContract(terms.xSkillNextEnergy, "xSkillNextEnergy");
+  }
+  if (Object.hasOwn(terms, "nextEnergyStateDelta")) {
+    if (terms.xSkillNextEnergy === null) {
+      if (terms.nextEnergyStateDelta !== null) {
+        throw new TypeError(
+          "Evaluator value invariant 失败：普通技能 nextEnergyStateDelta 必须为 null"
+        );
+      }
+    } else {
+      assertValueContract(terms.nextEnergyStateDelta, "nextEnergyStateDelta");
+    }
+  }
+  const discard = terms.discardOpportunityInputs;
+  if (!discard || typeof discard !== "object") {
+    throw new TypeError("Evaluator value invariant 失败：缺少 discardOpportunityInputs");
+  }
+  for (const name of ["beforeOverflow", "afterOverflow", "stateDelta"]) {
+    assertValueContract(discard[name], `discardOpportunityInputs.${name}`);
+  }
+  if (terms.endOpportunityInputs !== null) {
+    if (!terms.endOpportunityInputs || typeof terms.endOpportunityInputs !== "object") {
+      throw new TypeError("Evaluator value invariant 失败：endOpportunityInputs 必须是对象或 null");
+    }
+    for (const name of ["energy", "turnEnergyGain", "maxEnergy", "activeSkillCost"]) {
+      assertValueContract(terms.endOpportunityInputs[name], `endOpportunityInputs.${name}`);
+    }
+  }
+  return terms;
+}
+
+/*
+功能
 按当前可见决策机会计算四类私密信息的敌我目标相关性。
 
 调用方
@@ -3360,7 +3502,7 @@ export class Evaluator {
   threatScore。
 
   边界与不变量
-  这是唯一 target preference 语义；Searcher/Controller/Policy 不得复制公式，且本值不直接进入 Final Utility。
+  这是唯一 target preference 语义；Searcher/Controller 不得复制公式，且本值不直接进入 Final Utility。
   */
   threatPriority(viewer, target, memory, expectedDamage = 1) {
     const multiplier = Math.max(
@@ -3747,7 +3889,7 @@ export class Evaluator {
         hasActiveSkill:Boolean(beforeActor.activeSkillId)
       };
     }
-    return {
+    return assertCompleteTransitionTerms({
       resolutionScale:effectResolutionScale,
       stateDelta,
       stateDeltaValue,
@@ -3761,7 +3903,7 @@ export class Evaluator {
       baseTransition:transferCompetitive
         ? stateDeltaValue + transitionOptionValue
         : Number.NEGATIVE_INFINITY
-    };
+    });
   }
 
   /*
@@ -3842,10 +3984,12 @@ export class Evaluator {
         && Number.isFinite(sibling.transitionTerms?.xSkillNextEnergy)
     ));
     const xSkillStateDeltaPair = xSkillSibling
-      && Number.isFinite(xSkillSibling.nextEnergyStateDelta)
       ? {
           current:Number(xSkillSibling.transitionTerms.stateDelta) || 0,
-          next:xSkillSibling.nextEnergyStateDelta
+          next:assertValueContract(
+            xSkillSibling.nextEnergyStateDelta,
+            "nextEnergyStateDelta"
+          )
         }
       : null;
     const maximumDiscardOpportunityRelief = siblingTransitionTerms
@@ -4047,7 +4191,14 @@ export class Evaluator {
     frontierValue = 0,
     endOpportunityPoints = 0
   }) {
-    return baseTransition + frontierValue - statePointsToUtility(endOpportunityPoints);
+    assertValueContract(baseTransition, "baseTransition", true);
+    assertValueContract(frontierValue, "frontierValue");
+    assertValueContract(endOpportunityPoints, "endOpportunityPoints");
+    const transitionValue = baseTransition
+      + frontierValue
+      - statePointsToUtility(endOpportunityPoints);
+    assertValueContract(transitionValue, "Final Utility", true);
+    return transitionValue;
   }
 
   /*
@@ -4398,7 +4549,7 @@ export class Evaluator {
   基线 World、守誓者/目标 ID、STAY/AID Worlds 与各自闪电 outcomes。
 
   输出
-  `{stayValue, aidValue, futureInventory}` 原始 Policy state points 对象。
+  `{stayValue, aidValue, futureInventory}` 原始 StateValue points 对象。
 
   读取状态
   只读传入 World 与公开伤害上下文。
@@ -4411,7 +4562,7 @@ export class Evaluator {
 
   边界与不变量
   STAY/AID 必须由 Simulator 以同一基线和固定 canBlock:false 构造；State Value 与
-  futureInventory 均保持 Policy state points，不在查询出口往返换算。
+  futureInventory 均保持 StateValue points，不在查询出口往返换算。
   */
   guardianAidValues(
     state,
