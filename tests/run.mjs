@@ -13794,18 +13794,26 @@ test("UI·区域选牌：多张装备与手牌候选各自保持稳定顺序", (
   assert.deepEqual(handSlots.map((slot) => slot.token), ["hand-a", "hand-b"]);
 });
 
-test("UI·区域选牌：已知手牌稳定排在未知手牌前", () => {
-  const equipmentSlots = [{ token: "equipment" }],
-    handSlots = [
-      { token: "unknown-1", known: false },
-      { token: "known-1", known: true },
-      { token: "unknown-2", known: false },
-      { token: "known-2", known: true }
-    ];
-  const ordered = orderZoneSelectionSlots(equipmentSlots, handSlots);
+test("UI·区域选牌：手牌按已知基础、已知战术、未知稳定分组", () => {
+  const handSlots = [
+    { token: "unknown-1", known: false },
+    { token: "known-tactic-1", known: true, category: "tactic" },
+    { token: "unknown-2", known: false },
+    { token: "known-basic-1", known: true, category: "basic" },
+    { token: "known-tactic-2", known: true, category: "tactic" },
+    { token: "known-basic-2", known: true, category: "basic" }
+  ];
+  const ordered = orderZoneSelectionSlots([], handSlots);
   assert.deepEqual(
     ordered.map((slot) => slot.token),
-    ["equipment", "known-1", "known-2", "unknown-1", "unknown-2"]
+    [
+      "known-basic-1",
+      "known-basic-2",
+      "known-tactic-1",
+      "known-tactic-2",
+      "unknown-1",
+      "unknown-2"
+    ]
   );
 });
 
