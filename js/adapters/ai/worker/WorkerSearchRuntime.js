@@ -33,7 +33,7 @@ searchWorker onmessage、LocalSearchExecutor 与纯 runtime 测试。
 SearchRequest 与 { yieldControl, now } runtime control。
 
   输出
-  WorkerSearchOutcome；CANCELLED/FAULT 可同时携带中断前完整 incumbent 与 diagnostics，Worker error 无 canonical Action，
+  WorkerSearchOutcome；CANCELLED 可携带中断前完整 incumbent，global invariant failure 只携带 diagnostics，
   成功时 stats 含 Worker 墙钟耗时与 workerReturned=true。
 
 读取状态
@@ -46,8 +46,8 @@ Worker 本地 rng/searcher/simulator 状态。
 Rng.restore、consume canonical root Action、createSearchEngine、Searcher.search、createWorkerSearchOutcome。
 
 边界与不变量
-rngAfter 必须存在；Searcher 已收束的 fault 不得清空完整 action；未产出 Searcher stats 的执行异常只返回
-searchFault，workerError 只由 Worker transport/protocol 层产生。
+rngAfter 必须存在；未产出完整 Searcher action 的 global invariant failure 只返回 searchFault，
+workerError 只由 Worker transport/protocol 层产生。
 */
 export async function runSearchRequest(request, runtimeControl = {}) {
   const workerStartedAt = globalThis.performance?.now?.() ?? Date.now();

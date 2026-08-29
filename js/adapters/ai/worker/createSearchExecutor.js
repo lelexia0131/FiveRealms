@@ -15,7 +15,7 @@ SearchWorkerClient、LocalSearchExecutor。
 不读取 search payload。
 
 架构约束
-不得 import composition/application/UI/Audio；browser production 不提供同线程 search fallback。
+不得 import composition/application/UI/Audio；browser production 不在主线程执行 search。
 */
 import { createLocalSearchExecutor } from "./LocalSearchExecutor.js";
 import { createSearchWorkerClient } from "./SearchWorkerClient.js";

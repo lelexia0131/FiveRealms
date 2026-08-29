@@ -35,8 +35,7 @@ import {
 } from "./Evaluator/Evaluator.js";
 import {
   SearchBudget,
-  Searcher,
-  validateRootActionContract
+  Searcher
 } from "./Searcher/Searcher.js";
 import { Pattern } from "./Searcher/Pattern.js";
 import { Rng, hashSearchSeed } from "./Searcher/Rng.js";
@@ -116,11 +115,11 @@ requestId、gameId、stateVersion、actorId、phase、currentRound、canonical W
 无。
 
 调用函数
-freezeValue、validateRootActionContract、Object.freeze。
+freezeValue、Object.freeze。
 
 边界与不变量
 不接受函数；world 与 rootActions 必须直接使用 canonical frozen World/Action，不做 DTO materialization；
-World 必须包含 actor，全部 roots 必须属于该 actor 且恰有一个 canonical END。
+World 必须包含 actor；root actor/END contract 由 Searcher 在实际搜索入口验证一次。
 */
 export function createSearchRequest({
   requestId,
@@ -153,7 +152,6 @@ export function createSearchRequest({
     || !world.players.some((player) => player?.id === actorId)) {
     throw new TypeError(`SearchRequest World 缺少 actor：${actorId}`);
   }
-  validateRootActionContract({ id:actorId }, rootActions);
   return Object.freeze({
     requestId,
     gameId,
@@ -173,7 +171,7 @@ export function createSearchRequest({
 把 Worker search result 补齐 request identity 并冻结为 plain payload。
 
 调用方
-WorkerSearchRuntime 与 Controller transport-failure fallback。
+WorkerSearchRuntime 与 Controller transport-failure outcome。
 
 输入
 Request 与当前 root canonical Action、stats、RNG continuation、取消或错误字段。
@@ -548,7 +546,6 @@ export async function executeSearchRequest(request, runtimeControl = {}) {
     action,
     stats:engine.searcher.lastSearchStats,
     searchStopReason:engine.searcher.lastSearchStats?.stopReason ?? null,
-    searchFault:engine.searcher.lastSearchStats?.searchFault ?? null,
     rngAfter:rng.snapshot(),
     cancelled
   };
@@ -950,7 +947,7 @@ export class Controller {
 
   边界与不变量
   Worker 不宣布 ACCEPTED；Main Thread 验证全部身份/version/actor/phase/root membership；
-  CANCELLED/FAULT 带完整 action 时仍必须通过全部 acceptance；没有 action 时按真实停止层分类；
+  CANCELLED 带完整 action 时仍必须通过全部 acceptance；global invariant failure 不携带 action；
   validation 通过时允许复用同一 decision 已生成的合法实体根，
   但不得跨 stateVersion 或跨 decision 缓存；Controller 绝不创建战略 END。
   */
@@ -990,7 +987,7 @@ export class Controller {
         ? "cancelled without complete Searcher action"
         : ["TIME", "NODE"].includes(stopReason)
           ? `${stopReason} budget exhausted without complete Searcher action`
-          : stopReason === "FAULT" || outcome.searchFault
+          : outcome.searchFault
             ? "Searcher internal fault without complete action"
             : `Searcher ${stopReason ?? "UNKNOWN"} returned no complete action`;
       const result = createSearchResult({
@@ -1077,7 +1074,7 @@ export class Controller {
 
   边界与不变量
   调用者必须提供合法 Player；该调用合同在可恢复 AI preparation boundary 外显式失败。
-  生产 Searcher execution 由 executor 负责；TIME/CANCELLED/FAULT 可由 Worker 同时返回完整 incumbent 与 diagnostics；
+  生产 Searcher execution 由 executor 负责；TIME/CANCELLED 可返回完整 incumbent；
   Main Thread 只验收 Searcher Action，任何 preparation/search failure 都不得制造 canonical END。
   */
   async selectAction(player, options = {}) {
@@ -1201,7 +1198,8 @@ export class Controller {
       outcome = await this.searchExecutor.search(request, options);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const cancelled = /\bcancell?ed\b/iu.test(errorMessage);
+      const cancelled = (error instanceof Error && error.name === "AbortError")
+        || /\bcancell?ed\b/iu.test(errorMessage);
       outcome = createWorkerSearchOutcome({ request,
         action:null,
         stats:null,

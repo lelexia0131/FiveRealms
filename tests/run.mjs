@@ -14856,7 +14856,7 @@ test("AI·价值归属：X 技能非法 nextEnergyStateDelta 只能成为 candid
   for (const invalidValue of [Number.NaN, Number.POSITIVE_INFINITY, undefined, "not-a-number"]) {
     const result = await runXSkillNextEnergyStateDeltaContract(invalidValue);
     assert.equal(result.stats.stopReason, "COMPLETE", String(invalidValue));
-    assert.equal(result.stats.searchFault, null, String(invalidValue));
+    assert.equal(Object.hasOwn(result.stats, "searchFault"), false, String(invalidValue));
     assert.equal(result.stats.candidateFaults.length, 1, String(invalidValue));
     assert.equal(result.stats.candidateFaults[0].action, result.xSkillAction, String(invalidValue));
     assert.match(result.stats.candidateFaults[0].message, /nextEnergyStateDelta/u, String(invalidValue));
@@ -14869,7 +14869,7 @@ test("AI·价值归属：X 技能非法 nextEnergyStateDelta 只能成为 candid
 test("AI·价值归属：X 技能 finite delta 与非 X null 保持 END sibling contract", async () => {
   const result = await runXSkillNextEnergyStateDeltaContract(2.5);
   assert.equal(result.stats.stopReason, "COMPLETE");
-  assert.equal(result.stats.searchFault, null);
+  assert.equal(Object.hasOwn(result.stats, "searchFault"), false);
   assert.equal(result.stats.candidateFaults.length, 0);
   assert.equal(result.stats.completedRootCandidateCount, 3);
   const xSkillSibling = result.capturedSiblingTerms.find(
@@ -17689,19 +17689,18 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
     ]), [
       ["skill", "stealSkill", "b"],
       ["card", "assault", "b"],
-      ["card", "seal", "c"],
-      ["end", null, null]
+      ["card", "seal", "c"]
     ], JSON.stringify(stats));
     assert.deepEqual(stats.bestSequence[0], action);
     assert.notDeepEqual(stats.scheduledRootOrder[0], action,
       "最终 root 必须由完整未来价值决定，而不是照搬首个调度动作");
-    assert.equal(stats.expanded, 101);
-    assert.equal(stats.depth, 4);
+    assert.equal(stats.expanded, 100);
+    assert.equal(stats.depth, 3);
     assert.equal(stats.hiddenSamples, 10);
     assert.equal(stats.bestValueScore, 3.084662540277063);
     assert.equal(stats.stopReason, "COMPLETE");
-    assert.equal(stats.simulationCalls, 185);
-    assert.equal(stats.cloneCalls, 195);
+    assert.equal(stats.simulationCalls, 184);
+    assert.equal(stats.cloneCalls, 194);
     assert.equal(stats.probabilityOperations, 1792);
     assert.equal(stats.rootCandidateCount, 9);
     assert.equal(stats.completedRootCandidateCount, 9);
@@ -17824,12 +17823,9 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.equal(outcome.searchStopReason, "TIME");
     assert.equal(outcome.stats.uniqueRootCandidateCount, 4);
     assert.equal(outcome.stats.completedRootCandidateCount, 4);
-    assert.equal(outcome.stats.expanded, 4);
+    assert.equal(outcome.stats.expanded, 5);
     assert.equal(outcome.stats.bestValueScore, 1.0909621093750004);
     assert.ok(outcome.stats.elapsedMs >= 30);
-    assert.ok(outcome.stats.rootWork.every((entry) => entry.completed));
-    assert.equal(Object.hasOwn(outcome.stats, "provisionalFallbackUsed"), false);
-    assert.equal(Object.hasOwn(outcome.stats, "provisionalFallbackAction"), false);
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
       type:"card",
       cardId:"plunder",
@@ -17851,7 +17847,7 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
   }
 });
 
-test("AI·搜索：TIME 深层生成中断保留赌命者已完成突袭/孤注 root incumbent", async () => {
+test("AI·搜索：TIME 在候选边界返回赌命者最佳完整 root incumbent", async () => {
   const fixture = await runTimedSearchAcceptanceFixture({
     label:"time-fate-gambler-incumbent",
     timeBudgetMs:40,
@@ -17889,24 +17885,129 @@ test("AI·搜索：TIME 深层生成中断保留赌命者已完成突袭/孤注 
     assert.equal(outcome.searchStopReason, "TIME");
     assert.equal(outcome.stats.uniqueRootCandidateCount, 3);
     assert.equal(outcome.stats.completedRootCandidateCount, 3);
-    assert.equal(outcome.stats.expanded, 5);
-    assert.equal(outcome.stats.bestValueScore, 0.07999999999999971);
+    assert.equal(outcome.stats.expanded, 9);
+    assert.equal(outcome.stats.bestValueScore, 0.8012499999999996);
     assert.ok(outcome.stats.elapsedMs >= 40);
-    assert.ok(outcome.stats.rootWork.every((entry) => entry.completed));
-    assert.equal(Object.hasOwn(outcome.stats, "provisionalFallbackUsed"), false);
-    assert.equal(Object.hasOwn(outcome.stats, "provisionalFallbackAction"), false);
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
-      type:"card",
-      cardId:"assault",
-      cardInstanceId:"time-assault-a",
-      targetId:"fate-enemy",
-      targetIds:["fate-enemy"],
+      type:"skill",
+      cardId:"allIn",
+      cardInstanceId:null,
+      targetId:null,
+      targetIds:[],
       selection:null
     });
     assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
     assert.equal(accepted.action, outcome.action);
   } finally {
     disposeBenchmarkGame(fixture.game);
+  }
+});
+
+test("AI·搜索压力：守誓者大手牌在真实 900ms 预算返回完整 non-END", async () => {
+  const game = makeBenchmarkGame({
+    players:[
+      {
+        id:"stress-oath",
+        team:"dawn",
+        character:"oath-warden",
+        hp:2,
+        energy:3,
+        hand:[
+          "assault", "recover", "shield", "shockwave", "provoke",
+          "destroy", "plunder", "counter", "block"
+        ].map((definitionId, index) => makeBenchmarkCard(
+          definitionId,
+          `stress-oath-${index}`
+        ))
+      },
+      {
+        id:"stress-oath-enemy-a",
+        team:"dusk",
+        character:"fate-gambler",
+        hp:1,
+        hand:[makeBenchmarkCard("block"), makeBenchmarkCard("counter")],
+        equipment:makeBenchmarkCard("defenseDevice")
+      },
+      {
+        id:"stress-oath-ally",
+        team:"dawn",
+        character:"spirit-medic",
+        hp:2,
+        hand:[makeBenchmarkCard("recover"), makeBenchmarkCard("counter")]
+      },
+      {
+        id:"stress-oath-enemy-b",
+        team:"dusk",
+        character:"blade-walker",
+        hand:[makeBenchmarkCard("block"), makeBenchmarkCard("counter")]
+      },
+      {
+        id:"stress-oath-enemy-c",
+        team:"dusk",
+        character:"ember-magus",
+        hand:[makeBenchmarkCard("block"), makeBenchmarkCard("counter")]
+      }
+    ],
+    options:{ actorId:"stress-oath", seed:2901 }
+  });
+  game.aiSearchTimeBudgetOverride = 900;
+  try {
+    const decision = await runBenchmarkAiDecision(game, "stress-oath");
+    assert.ok(decision.legalActions.length >= 10, "大手牌必须形成高 root coverage");
+    assert.ok(decision.action);
+    assert.notEqual(decision.action.type, "end");
+    assert.equal(decision.stats.stopReason, "TIME");
+    assert.ok(decision.stats.elapsedMs >= 900);
+    assert.ok(decision.stats.completedRootCandidateCount > 0);
+    assert.ok(decision.stats.probabilityOperations > 0);
+    assert.ok(decision.stats.responseBranches > 0);
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.equal(game.aiController.lastWorkerOutcome.workerError, null);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+});
+
+test("AI·搜索压力：赌命者大手牌固定节点预算返回最佳完整 non-END", async () => {
+  const game = makeBenchmarkGame({
+    players:[
+      {
+        id:"stress-gambler",
+        team:"dawn",
+        character:"fate-gambler",
+        energy:3,
+        hand:[
+          "assault", "assault", "assault", "shockwave", "provoke",
+          "harvest", "counter", "block", "recover"
+        ].map((definitionId, index) => makeBenchmarkCard(
+          definitionId,
+          `stress-gambler-${index}`
+        ))
+      },
+      {
+        id:"stress-gambler-enemy",
+        team:"dusk",
+        character:"oath-warden",
+        hp:1,
+        hand:[makeBenchmarkCard("block"), makeBenchmarkCard("counter")]
+      },
+      { id:"stress-gambler-ally", team:"dawn", character:"spirit-medic" },
+      { id:"stress-gambler-enemy-b", team:"dusk", character:"blade-walker" },
+      { id:"stress-gambler-enemy-c", team:"dusk", character:"ember-magus" }
+    ],
+    options:{ actorId:"stress-gambler", seed:2902, nodeBudget:4 }
+  });
+  try {
+    const decision = await runBenchmarkAiDecision(game, "stress-gambler");
+    assert.ok(decision.legalActions.length >= 6, "大手牌必须形成多个 canonical roots");
+    assert.ok(decision.action);
+    assert.notEqual(decision.action.type, "end");
+    assert.equal(decision.stats.stopReason, "NODE");
+    assert.ok(decision.stats.completedRootCandidateCount > 0);
+    assert.deepEqual(decision.action, decision.stats.bestSequence[0]);
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  } finally {
+    disposeBenchmarkGame(game);
   }
 });
 
@@ -17933,7 +18034,7 @@ test("AI·搜索：SearchBudget 用确定性时钟统一 TIME/NODE/COMPLETE 停�
   assert.equal(completeBudget.shouldStop(), true);
 });
 
-test("AI·模拟器：TIME 已发生时 apply 在完整 SearchState clone 前 cooperative abort", () => {
+test("AI·模拟器：普通 candidate 开始后 TIME 不会中断完整 apply", () => {
   const actor = makePlayer("apply-budget-actor", 0, "dawn", "ai", 3);
   const enemy = makePlayer("apply-budget-enemy", 1, "dusk", "ai", 5);
   const { game } = makeGame([actor, enemy]);
@@ -17952,13 +18053,11 @@ test("AI·模拟器：TIME 已发生时 apply 在完整 SearchState clone 前 co
     return structuredClone(visible);
   };
 
-  assert.throws(
-    () => simulator.apply(visible, { type:"end" }, actor.id),
-    (error) => budget.isCurrentWorkInterruption(error)
-  );
-  assert.equal(cloneStarted, 0);
-  assert.equal(budget.stopReason, "TIME");
-  assert.equal(budget.diagnostics().workAfterDeadline.cloneCalls, 0);
+  const after = simulator.apply(visible, createAction({ type:"end", actorId:actor.id }));
+  assert.equal(after.playPhaseEnded, true);
+  assert.equal(cloneStarted, 1);
+  assert.equal(budget.stopReason, null);
+  assert.equal(Object.hasOwn(budget.diagnostics(), "workAfterDeadline"), false);
   game.dispose();
 });
 
@@ -18012,7 +18111,7 @@ test("AI·概率：join 与 merge 保持完整字段、规范化和输出顺序"
 
 
 
-test("AI·模拟器：严格有界 raw probability 操作记录 timing 且 TIME 后不启动", () => {
+test("AI·模拟器：严格有界 raw probability 操作属于已开始 candidate 的原子工作", () => {
   let now = 0;
   const budget = new SearchBudget({ timeBudget:10, now:() => now });
   const simulator = new Simulator({ players:[] }, { searchBudget:budget });
@@ -18034,10 +18133,12 @@ test("AI·模拟器：严格有界 raw probability 操作记录 timing 且 TIME 
   assert.equal(diagnostics.largestRawProbabilityOperation.outputWorldCount, 2);
   assert.equal(typeof diagnostics.largestRawProbabilityOperation.durationMs, "number");
   now = 10;
-  assert.throws(
-    () => simulator.rawProbabilityWork("test.bounded-raw:after-time", 3, () => []),
-    (error) => budget.isCurrentWorkInterruption(error)
+  assert.deepEqual(
+    simulator.rawProbabilityWork("test.bounded-raw:after-time", 3, () => []),
+    []
   );
+  assert.equal(budget.stopReason, null);
+  assert.equal(budget.diagnostics().rawProbabilityOperations, 2);
   assert.equal(budget.diagnostics().rawProbabilityOperationsAfterTime, 0);
 });
 
@@ -19194,13 +19295,13 @@ async function runEndSiblingBudgetFixture(
 
 /*
 功能
-运行 root candidate 普通故障、首 root 取消或正常 COMPLETE 的确定性 Searcher 夹具。
+运行 candidate-local fault、best complete incumbent、global invariant 或正常 COMPLETE 的确定性 Searcher 夹具。
 
 调用方
-Searcher candidate fault 隔离、CANCELLED incumbent 与 strategic END 回归测试。
+Searcher candidate fault 隔离、global invariant 与 strategic END 回归测试。
 
 输入
-mode 为 incumbent 前后 fault、cooperative cancel、only-END fault 或正常 COMPLETE 场景标识。
+mode 为 candidate fault、深层 incumbent、共享 invariant、only-END fault 或正常 COMPLETE 场景标识。
 
 输出
 选择的 canonical Action、搜索诊断与 Simulator apply 轨迹。
@@ -19209,13 +19310,13 @@ mode 为 incumbent 前后 fault、cooperative cancel、only-END fault 或正常 
 最小 canonical World、Action 与测试 Evaluator 固定 transition value。
 
 写入状态
-独立 SearchBudget、Searcher fault diagnostics 与 apply 轨迹。
+独立 SearchBudget、candidate fault diagnostics 与 apply 轨迹。
 
 调用函数
 Searcher.search、SearchBudget、PatternMatcher。
 
 边界与不变量
-局部故障由 Simulator 抛出，后半段故障由 prune 抛出；取消只使用当前 SearchBudget interruption；END 不得因故障被补算。
+candidate-local 故障由 Simulator/Evaluator 抛出；共享构造故障必须直接上抛；END 不得因缺失 sibling 被补算。
 */
 async function runSearcherFaultBoundaryFixture(mode) {
   const actorId = `fault-boundary-${mode}`;
@@ -19233,6 +19334,19 @@ async function runSearcherFaultBoundaryFixture(mode) {
     cardInstanceId:`${actorId}-charge`
   });
   const end = createAction({ type:"end", actorId });
+  const continuation = createAction({
+    type:"card",
+    actorId,
+    cardId:"shield",
+    cardInstanceId:`${actorId}-shield`
+  });
+  const faultyContinuation = createAction({
+    type:"card",
+    actorId,
+    cardId:"recover",
+    cardInstanceId:`${actorId}-recover`
+  });
+  const deepBestMode = mode.startsWith("deep-best-");
   const rootActions = mode === "empty-roots"
     ? []
     : mode === "duplicate-end"
@@ -19249,6 +19363,10 @@ async function runSearcherFaultBoundaryFixture(mode) {
             "before-incumbent-fault",
             "before-incumbent-evaluator-fault",
             "before-incumbent-finalize-fault",
+            "deep-best-time",
+            "deep-best-node",
+            "deep-best-fault",
+            "deep-best-complete",
             "nan-transition",
             "missing-transition-term",
             "negative-infinity-transition"
@@ -19256,12 +19374,6 @@ async function runSearcherFaultBoundaryFixture(mode) {
           ? [assault, charge, end]
           : [assault, end];
   const applied = [];
-  const workCalls = {
-    finalizeCandidates:0,
-    buildRootNodes:0,
-    prune:0,
-    compareCandidates:0
-  };
   const preferEnd = mode === "complete-end";
   const scheduling = new Map([
     [assault, 100],
@@ -19270,12 +19382,14 @@ async function runSearcherFaultBoundaryFixture(mode) {
   ]);
   const transitionValue = (action) => {
     if (action.type === "end") return preferEnd ? 2 : 0;
+    if (action === continuation) return 6;
     if (action.cardId === "assault") {
       if (mode === "nan-transition") return Number.NaN;
       if (mode === "missing-transition-term") return undefined;
       if (mode === "negative-infinity-transition") return Number.NEGATIVE_INFINITY;
       return preferEnd ? -1 : 5;
     }
+    if (deepBestMode && action === charge) return 4;
     return 1;
   };
   const evaluator = {
@@ -19320,7 +19434,10 @@ async function runSearcherFaultBoundaryFixture(mode) {
     terminalFrontierValue:() => 0,
     requiresActionLightningOutcomes:() => false,
     requiresHiddenWorldPrior:() => false,
-    composeSearchPrior:() => ({ domainPrior:0, searchCredit:0, prior:0 }),
+    composeSearchPrior:({ action }) => {
+      const prior = deepBestMode && action === charge ? 10 : 0;
+      return { domainPrior:prior, searchCredit:0, prior };
+    },
     resourceSelectionPreference:() => null,
     endOpportunityPoints:() => 0,
     composeTransitionValue:({ baseTransition, frontierValue, endOpportunityPoints }) => {
@@ -19329,10 +19446,7 @@ async function runSearcherFaultBoundaryFixture(mode) {
       }
       return baseTransition + frontierValue - endOpportunityPoints;
     },
-    compareCandidates:(left, right) => {
-      workCalls.compareCandidates += 1;
-      return left.valueScore - right.valueScore;
-    }
+    compareCandidates:(left, right) => left.valueScore - right.valueScore
   };
   const patternMatcher = new PatternMatcher({ definitions:[] });
   if (mode === "pattern-match-shared-fault") {
@@ -19345,8 +19459,8 @@ async function runSearcherFaultBoundaryFixture(mode) {
     patternMatcher,
     getResolutionScale:() => 1,
     config:{
-      depth:1,
-      beamWidth:3,
+      depth:deepBestMode ? 2 : 1,
+      beamWidth:deepBestMode ? 2 : 3,
       hiddenSamples:0,
       yieldEvery:mode === "post-incumbent-cancel" ? 1 : 100
     },
@@ -19362,22 +19476,37 @@ async function runSearcherFaultBoundaryFixture(mode) {
         if (mode === "only-end-fault" && action === end) {
           throw new Error("synthetic Simulator fault with only END candidate");
         }
-        if (mode === "before-incumbent-cancel" && action === assault) {
-          searchBudget.cancel();
-          throw searchBudget.currentWorkInterruption;
+        if (mode === "deep-best-fault" && action === faultyContinuation) {
+          throw new Error("synthetic candidate fault after deep incumbent");
         }
-        return { ...state, playPhaseEnded:action.type === "end" };
+        return {
+          ...state,
+          route:state.route ?? (action === assault ? "assault" : action === charge ? "charge" : null),
+          playPhaseEnded:action.type === "end"
+        };
       },
       buildLightningOutcomeSets:() => []
     }),
-    searchBudgetFactory:() => new SearchBudget({ nodeBudget:100 }),
+    searchBudgetFactory:() => {
+      if (mode === "deep-best-time") {
+        const ticks = [0, 1, 2, 3, 4, 100];
+        return new SearchBudget({ timeBudget:50, now:() => ticks.shift() ?? 100 });
+      }
+      return new SearchBudget({ nodeBudget:mode === "deep-best-node" ? 4 : 100 });
+    },
     deduplicateActions:(actions) => {
       if (mode === "dedup-shared-fault") {
         throw new Error("synthetic root dedup shared fault");
       }
       return actions;
     },
-    generateActions:() => [],
+    generateActions:(state) => {
+      if (!deepBestMode) return [];
+      if (state.route !== "charge") return [end];
+      return mode === "deep-best-fault"
+        ? [continuation, faultyContinuation, end]
+        : [continuation, end];
+    },
     sampleUnknownHands:() => ({
       classification:PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE,
       worlds:[],
@@ -19388,32 +19517,6 @@ async function runSearcherFaultBoundaryFixture(mode) {
   if (mode === "structure-shared-fault") {
     searcher.structure = () => {
       throw new Error("synthetic structure shared fault");
-    };
-  }
-  const finalizeCandidates = searcher.finalizeCandidates.bind(searcher);
-  searcher.finalizeCandidates = (...args) => {
-    workCalls.finalizeCandidates += 1;
-    return finalizeCandidates(...args);
-  };
-  const buildRootNodes = searcher.buildRootNodes.bind(searcher);
-  searcher.buildRootNodes = (...args) => {
-    workCalls.buildRootNodes += 1;
-    return buildRootNodes(...args);
-  };
-  const prune = searcher.prune.bind(searcher);
-  searcher.prune = (...args) => {
-    workCalls.prune += 1;
-    return prune(...args);
-  };
-  if (mode === "post-incumbent-pattern-fault") {
-    searcher.advancePatternState = () => {
-      throw new Error("synthetic Pattern construction fault after incumbent");
-    };
-  }
-  if (mode === "post-incumbent-prune-fault") {
-    searcher.prune = () => {
-      workCalls.prune += 1;
-      throw new Error("synthetic prune fault after incumbent");
     };
   }
   let selected = null;
@@ -19440,17 +19543,51 @@ async function runSearcherFaultBoundaryFixture(mode) {
     searchError,
     stats:searcher.lastSearchStats,
     applied,
-    workCalls,
     assault,
     charge,
-    end
+    end,
+    continuation,
+    faultyContinuation
   };
 }
+
+test("AI·搜索：TIME 返回已登记的深层 best complete incumbent", async () => {
+  const result = await runSearcherFaultBoundaryFixture("deep-best-time");
+  assert.equal(result.stats.stopReason, "TIME");
+  assert.equal(result.selected, result.charge);
+  assert.deepEqual(result.stats.bestSequence, [result.charge, result.continuation]);
+  assert.equal(result.stats.bestValueScore, 10);
+});
+
+test("AI·搜索：NODE 返回已登记的深层 best complete incumbent", async () => {
+  const result = await runSearcherFaultBoundaryFixture("deep-best-node");
+  assert.equal(result.stats.stopReason, "NODE");
+  assert.equal(result.selected, result.charge);
+  assert.deepEqual(result.stats.bestSequence, [result.charge, result.continuation]);
+  assert.equal(result.stats.bestValueScore, 10);
+});
+
+test("AI·搜索：后续 candidate fault 不遗忘已登记的 best complete incumbent", async () => {
+  const result = await runSearcherFaultBoundaryFixture("deep-best-fault");
+  assert.equal(result.stats.stopReason, "COMPLETE");
+  assert.equal(result.selected, result.charge);
+  assert.deepEqual(result.stats.bestSequence, [result.charge, result.continuation]);
+  assert.equal(result.stats.candidateFaults.length, 1);
+  assert.equal(result.stats.candidateFaults[0].action, result.faultyContinuation);
+});
+
+test("AI·搜索：COMPLETE 只返回 Evaluator 登记的 best complete incumbent", async () => {
+  const result = await runSearcherFaultBoundaryFixture("deep-best-complete");
+  assert.equal(result.stats.stopReason, "COMPLETE");
+  assert.equal(result.selected, result.charge);
+  assert.deepEqual(result.stats.bestSequence, [result.charge, result.continuation]);
+  assert.equal(result.stats.bestValueScore, 10);
+  assert.equal(result.stats.candidateFaults.length, 0);
+});
 
 test("AI·搜索：后续 Charge candidate fault 被隔离且保留完整 Assault incumbent", async () => {
   const result = await runSearcherFaultBoundaryFixture("after-incumbent-fault");
   assert.equal(result.stats.stopReason, "COMPLETE");
-  assert.equal(result.stats.searchFault, null);
   assert.equal(result.selected, result.assault);
   assert.equal(result.stats.completedRootCandidateCount, 1);
   assert.equal(result.stats.candidateFaults.length, 1);
@@ -19459,32 +19596,9 @@ test("AI·搜索：后续 Charge candidate fault 被隔离且保留完整 Assaul
   assert.deepEqual(result.applied, ["assault", "charge", "end"]);
 });
 
-test("AI·搜索：完整 Assault 在 Pattern 构造故障前已登记且收束不重跑 comparator", async () => {
-  const result = await runSearcherFaultBoundaryFixture("post-incumbent-pattern-fault");
-  assert.equal(result.stats.stopReason, "FAULT");
-  assert.match(result.stats.searchFault.message, /Pattern construction fault/u);
-  assert.equal(result.selected, result.assault);
-  assert.equal(result.workCalls.buildRootNodes, 1);
-  assert.equal(result.workCalls.prune, 0);
-  assert.equal(result.workCalls.compareCandidates, 1);
-});
-
-test("AI·搜索：后半段 prune 异常由最外层 FAULT boundary 保留 Assault incumbent", async () => {
-  const result = await runSearcherFaultBoundaryFixture("post-incumbent-prune-fault");
-  assert.equal(result.stats.stopReason, "FAULT");
-  assert.match(result.stats.searchFault.message, /prune fault after incumbent/u);
-  assert.equal(result.selected, result.assault);
-  assert.equal(result.stats.completedRootCandidateCount, 2);
-  assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
-  assert.equal(result.workCalls.buildRootNodes, 1);
-  assert.equal(result.workCalls.prune, 1);
-  assert.equal(result.workCalls.compareCandidates, 2);
-});
-
 test("AI·搜索：首个 Assault candidate fault 后继续并返回完整 Charge candidate", async () => {
   const result = await runSearcherFaultBoundaryFixture("before-incumbent-fault");
   assert.equal(result.stats.stopReason, "COMPLETE");
-  assert.equal(result.stats.searchFault, null);
   assert.equal(result.stats.completedRootCandidateCount, 1);
   assert.equal(result.selected, result.charge);
   assert.equal(result.stats.candidateFaults.length, 1);
@@ -19499,42 +19613,23 @@ test("AI·搜索：首个 Evaluator/finalize candidate fault 后继续返回完�
   ]) {
     const result = await runSearcherFaultBoundaryFixture(mode);
     assert.equal(result.stats.stopReason, "COMPLETE", mode);
-    assert.equal(result.stats.searchFault, null, mode);
     assert.equal(result.selected, result.charge, mode);
     assert.equal(result.stats.candidateFaults.length, 1, mode);
     assert.equal(result.stats.candidateFaults[0].action, result.assault, mode);
   }
 });
 
-test("AI·搜索：首个完整 root 前 CANCELLED 不返回 provisional Action", async () => {
-  const result = await runSearcherFaultBoundaryFixture("before-incumbent-cancel");
-  assert.equal(result.stats.stopReason, "CANCELLED");
-  assert.equal(result.stats.completedRootCandidateCount, 0);
-  assert.equal(result.selected, null);
-  assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
-});
-
-test("AI·搜索：已有完整 root 的 CANCELLED 直接收束 incumbent 且不重建 root nodes", async () => {
+test("AI·搜索：已有完整 root 的 CANCELLED 直接收束 incumbent", async () => {
   const result = await runSearcherFaultBoundaryFixture("post-incumbent-cancel");
   assert.equal(result.stats.stopReason, "CANCELLED");
   assert.equal(result.selected, result.assault);
-  assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
   assert.deepEqual(result.applied, ["assault"]);
-  assert.deepEqual(result.workCalls, {
-    finalizeCandidates:1,
-    buildRootNodes:0,
-    prune:0,
-    compareCandidates:0
-  });
 });
 
-test("AI·搜索：only-END candidate fault 后零完整 root 明确收束 global FAULT", async () => {
+test("AI·搜索：only-END candidate fault 后触发 global invariant failure", async () => {
   const result = await runSearcherFaultBoundaryFixture("only-end-fault");
-  assert.equal(result.stats.stopReason, "FAULT");
-  assert.match(result.stats.searchFault.message, /所有 root candidates 均未形成完整 incumbent/u);
-  assert.equal(result.stats.completedRootCandidateCount, 0);
-  assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
-  assert.equal(result.stats.candidateFaults.length, 1);
+  assert.match(result.searchError?.message ?? "", /所有 root candidates 均发生 candidate fault/u);
+  assert.equal(result.stats, null);
   assert.equal(result.selected, null);
   assert.deepEqual(result.applied, ["end"]);
 });
@@ -19556,26 +19651,24 @@ test("AI·搜索：所有异 actor roots 在共享编排前触发 root actor inv
   assert.deepEqual(result.applied, []);
 });
 
-test("AI·搜索：dedup、Pattern.match 与 root scheduling 异常统一收束 global FAULT", async () => {
+test("AI·搜索：dedup、Pattern.match 与 root scheduling 共享异常直接上抛", async () => {
   for (const mode of [
     "dedup-shared-fault",
     "pattern-match-shared-fault",
     "root-scheduling-shared-fault"
   ]) {
     const result = await runSearcherFaultBoundaryFixture(mode);
-    assert.equal(result.searchError, null, mode);
-    assert.equal(result.stats.stopReason, "FAULT", mode);
-    assert.match(result.stats.searchFault?.message ?? "", /shared fault/u, mode);
+    assert.match(result.searchError?.message ?? "", /shared fault/u, mode);
+    assert.equal(result.stats, null, mode);
     assert.equal(result.selected, null, mode);
     assert.deepEqual(result.applied, [], mode);
   }
 });
 
-test("AI·搜索：structure shared setup exception 收束 global FAULT", async () => {
+test("AI·搜索：structure shared setup exception 直接上抛", async () => {
   const result = await runSearcherFaultBoundaryFixture("structure-shared-fault");
-  assert.equal(result.searchError, null);
-  assert.equal(result.stats.stopReason, "FAULT");
-  assert.match(result.stats.searchFault?.message ?? "", /structure shared fault/u);
+  assert.match(result.searchError?.message ?? "", /structure shared fault/u);
+  assert.equal(result.stats, null);
   assert.equal(result.selected, null);
   assert.deepEqual(result.applied, []);
 });
@@ -19624,7 +19717,6 @@ test("AI·搜索：only-END 正常形成完整合法结果", async () => {
 test("AI·搜索：COMPLETE 正常选择 canonical END", async () => {
   const result = await runSearcherFaultBoundaryFixture("complete-end");
   assert.equal(result.stats.stopReason, "COMPLETE");
-  assert.equal(result.stats.searchFault, null);
   assert.equal(result.selected, result.end);
   assert.equal(result.selected.type, "end");
 });
@@ -19639,12 +19731,8 @@ test("AI·架构边界：failure fallback residue 与废弃 Controller CANCELLED
   assert.doesNotMatch(production, /SEARCH_RESULT_STATUS\.CANCELLED/u);
   assert.doesNotMatch(searcherSource, /provisionalRootFallback|provisionalFallback/u);
   assert.doesNotMatch(searcherSource, /rootSafety|root-safety|safe end|安全补评估/u);
-  assert.doesNotMatch(searcherSource, /bestCandidate\(this\.buildRootNodes/u);
-  assert.equal(
-    [...searcherSource.matchAll(/recordSearchFault\(/gu)].length,
-    3,
-    "recordSearchFault 只允许方法定义、零完整 root 收束与 search outer boundary 调用"
-  );
+  assert.doesNotMatch(searcherSource, /recordSearchFault|prepareCandidate|preparations/u);
+  assert.doesNotMatch(searcherSource, /selectProgressiveSpine|materializeChildCandidates/u);
 });
 
 test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序无关", () => {
@@ -19658,27 +19746,8 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
     action,
     baseTransition,
     frontierValue:0,
-    baseTerms:{ stateDelta },
-    transitionValue:null
+    baseTerms:{ stateDelta }
   });
-  const partialEnd = candidate(endAction, 10);
-  const partialSkill = candidate(skillA, 1, 2);
-  searcher.finalizeCandidates(
-    [partialEnd, partialSkill],
-    [endAction, skillA, skillB]
-  );
-  assert.equal(partialEnd.transitionValue, null);
-  assert.equal(partialSkill.transitionValue, 1);
-  assert.deepEqual(opportunityCalls, []);
-
-  const assault = { type:"card", cardId:"assault" };
-  const cardIncompleteEnd = candidate(endAction, 10);
-  searcher.finalizeCandidates(
-    [cardIncompleteEnd],
-    [endAction, assault]
-  );
-  assert.equal(cardIncompleteEnd.transitionValue, null);
-  assert.deepEqual(opportunityCalls, []);
 
   const evaluateOrder = (orderedSkills) => {
     const end = candidate(endAction, 10);
@@ -19687,11 +19756,7 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
       1,
       action === skillA ? 2 : 5
     ));
-    searcher.finalizeCandidates(
-      [end, ...skills],
-      [endAction, ...orderedSkills]
-    );
-    return end.transitionValue;
+    return searcher.finalizeCandidate(end, [end, ...skills]).transitionValue;
   };
   assert.equal(evaluateOrder([skillA, skillB]), evaluateOrder([skillB, skillA]));
   assert.equal(opportunityCalls.length, 2);
@@ -19705,7 +19770,7 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
       [2, 5]
     );
   }
-  const finalizeSource = Searcher.prototype.finalizeCandidates.toString();
+  const finalizeSource = Searcher.prototype.finalizeCandidate.toString();
   assert.doesNotMatch(
     finalizeSource,
     /endDiscardOpportunityRelief|maximumDiscardOpportunityRelief|maximumLegalSkillStateValueOpportunity/u
@@ -19778,9 +19843,12 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
     return entry;
   });
   const completeOverflowCandidates = [overflowThreeEnd, ...overflowReducingSiblings];
-  searcher.finalizeCandidates(
-    completeOverflowCandidates,
-    [endAction, ...consumableActions]
+  const finalizedOverflowSiblings = overflowReducingSiblings.map(
+    (entry) => searcher.finalizeCandidate(entry)
+  );
+  const finalizedOverflowEnd = searcher.finalizeCandidate(
+    overflowThreeEnd,
+    completeOverflowCandidates
   );
   assert.equal(
     evaluator.endOpportunityPoints(
@@ -19793,13 +19861,13 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
     5
   );
   assert.ok(
-    overflowThreeEnd.transitionValue
-      < Math.max(...overflowReducingSiblings.map((entry) => entry.transitionValue)),
+    finalizedOverflowEnd.transitionValue
+      < Math.max(...finalizedOverflowSiblings.map((entry) => entry.transitionValue)),
     "三个完整的 3→2 sibling 仍应让继续行动优于直接 END"
   );
   assert.ok(
-    overflowReducingSiblings.reduce((sum, entry) => sum + entry.transitionValue, 0)
-      > overflowThreeEnd.transitionValue,
+    finalizedOverflowSiblings.reduce((sum, entry) => sum + entry.transitionValue, 0)
+      > finalizedOverflowEnd.transitionValue,
     "现有 continuation 累计值不得被缺失的 Pd 掩盖"
   );
 });
@@ -19824,7 +19892,7 @@ AI 搜索与规划回归测试。
 仅测试 Game 生命周期与独立 World clone。
 
 调用函数
-makeBenchmarkGame、createInitialWorld、Evaluator.evaluateTransition、Searcher.finalizeCandidates、runBenchmarkAiDecision。
+makeBenchmarkGame、createInitialWorld、Evaluator.evaluateTransition、Searcher.finalizeCandidate、runBenchmarkAiDecision。
 
 边界与不变量
 Recover 与 END 都必须正式物化；选择变化只能来自 HP、手牌与强制弃牌后的真实状态差，
@@ -19883,15 +19951,23 @@ async function recoverBeforeMandatoryDiscardRegression() {
         frontierValue:evaluator.terminalFrontierValue(
           frontierResidual,
           Boolean(after.playPhaseEnded)
-        ),
-        transitionValue:null
+        )
       };
     });
     const searcher = Object.create(Searcher.prototype);
     searcher.evaluator = evaluator;
-    searcher.finalizeCandidates(candidates, actions);
-    const recoverCandidate = candidates.find((candidate) => candidate.action === recoverAction);
-    const endCandidate = candidates.find((candidate) => candidate.action === endAction);
+    const completeCandidates = candidates.map((candidate) => (
+      searcher.finalizeCandidate(
+        candidate,
+        candidate.action.type === "end" ? candidates : []
+      )
+    ));
+    const recoverCandidate = completeCandidates.find(
+      (candidate) => candidate.action === recoverAction
+    );
+    const endCandidate = completeCandidates.find(
+      (candidate) => candidate.action === endAction
+    );
     const recoverLedger = evaluator.computeCandidateLedger(
       world,
       recoverAction,
@@ -19947,7 +20023,7 @@ AI 搜索 END opportunity 与 continuation 回归测试。
 
 调用函数
 createInitialWorld、getActionCandidates、Simulator.apply、Evaluator.evaluateTransition、
-Searcher.finalizeCandidates、runBenchmarkAiDecision。
+Searcher.finalizeCandidate、runBenchmarkAiDecision。
 
 边界与不变量
 三个 canonical non-END siblings 必须全部完整；每个动作只减少一张 overflow，
@@ -20021,8 +20097,7 @@ async function multiOverflowDiscardOpportunityRegression() {
         frontierValue:evaluator.terminalFrontierValue(
           frontierResidual,
           Boolean(state.playPhaseEnded)
-        ),
-        transitionValue:null
+        )
       });
     }
     for (const candidate of candidates.filter((entry) => entry.action.type !== "end")) {
@@ -20036,11 +20111,15 @@ async function multiOverflowDiscardOpportunityRegression() {
     }
     const searcher = Object.create(Searcher.prototype);
     searcher.evaluator = evaluator;
-    searcher.finalizeCandidates(candidates, [
-      ...consumableActions,
-      endAction
-    ]);
-    const endCandidate = candidates.find((candidate) => candidate.action === endAction);
+    const completeCandidates = candidates.map((candidate) => (
+      searcher.finalizeCandidate(
+        candidate,
+        candidate.action.type === "end" ? candidates : []
+      )
+    ));
+    const endCandidate = completeCandidates.find(
+      (candidate) => candidate.action === endAction
+    );
     const expectedPd = Math.max(...candidates
       .filter((candidate) => candidate.action.type !== "end")
       .map((candidate) => Math.max(
@@ -20213,13 +20292,10 @@ async function overflowCompletedNonEndIncumbentRegression() {
     assert.equal(decision.stats.stopReason, "NODE");
     assert.equal(decision.stats.expanded, 1);
     assert.equal(decision.stats.completedRootCandidateCount, 1);
-    assert.equal(Object.hasOwn(decision.stats, "provisionalFallbackUsed"), false);
     assert.equal(decision.stats.bestSequence.length, 1);
     assert.ok(decision.stats.incumbentUpdateCount >= 1);
     assert.notEqual(decision.action.type, "end");
     assert.deepEqual(decision.action, decision.stats.bestSequence[0]);
-    assert.deepEqual(decision.action, decision.stats.rootWork[0].action);
-    assert.equal(decision.stats.rootWork[0].completed, true);
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -20412,31 +20488,6 @@ test(
   overflowAssaultDecisionChainContract
 );
 
-test("AI·搜索：TIME/NODE/CANCELLED 零完整 incumbent 时不返回 provisional Action", async () => {
-  for (const stopReason of ["NODE", "TIME", "CANCELLED"]) {
-    for (const siblingType of ["skill", "card"]) {
-      const forcesDiscard = siblingType === "card";
-      const result = await runEndSiblingBudgetFixture(
-        stopReason,
-        { siblingType, forcesDiscard, interruptFirstCandidate:true }
-      );
-      assert.equal(result.selected, null, `${stopReason}/${siblingType} 不得返回 provisional`);
-      assert.deepEqual(
-        result.applied,
-        [siblingType],
-        `${stopReason}/${siblingType} 不得补算后续 root 或 END`
-      );
-      assert.equal(result.stats.stopReason, stopReason);
-      assert.equal(result.stats.completedRootCandidateCount, 0);
-      assert.equal(result.stats.bestValueScore, null);
-      assert.equal(result.stats.incumbentUpdateCount, 0);
-      assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
-      assert.equal(Object.hasOwn(result.stats, "provisionalFallbackAction"), false);
-      assert.equal(result.stats.rootWork[0].completed, false);
-    }
-  }
-});
-
 test("AI·搜索：NODE 中断保留已完成 non-END incumbent 且不补算 END", async () => {
   const result = await runEndSiblingBudgetFixture("NODE", {
     siblingType:"card",
@@ -20455,7 +20506,7 @@ test("AI·搜索：NODE 中断保留已完成 non-END incumbent 且不补算 END
   assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
 });
 
-test("AI·搜索：TIME/CANCELLED 保留已完成 non-END incumbent 且 incomplete END 不参与", async () => {
+test("AI·搜索：TIME/CANCELLED 只在候选边界停止并保留 non-END incumbent", async () => {
   for (const stopReason of ["TIME", "CANCELLED"]) {
     const result = await runEndSiblingBudgetFixture(stopReason, {
       siblingType:"card",
@@ -20463,12 +20514,18 @@ test("AI·搜索：TIME/CANCELLED 保留已完成 non-END incumbent 且 incomple
       preserveNonEndIncumbent:true
     });
     assert.equal(result.selected, result.sibling, stopReason);
-    assert.deepEqual(result.applied, ["card"], `${stopReason} 后不得模拟破势或 END`);
+    assert.deepEqual(
+      result.applied,
+      stopReason === "TIME" ? ["card", "card"] : ["card"],
+      `${stopReason} 只能在下一候选边界停止`
+    );
     assert.equal(result.stats.stopReason, stopReason);
-    assert.equal(result.stats.expanded, 1);
-    assert.equal(result.stats.completedRootCandidateCount, 1);
+    assert.equal(result.stats.expanded, stopReason === "TIME" ? 2 : 1);
+    assert.equal(
+      result.stats.completedRootCandidateCount,
+      stopReason === "TIME" ? 2 : 1
+    );
     assert.deepEqual(result.stats.bestSequence, [result.sibling]);
-    assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
   }
 });
 
@@ -21171,80 +21228,6 @@ test("AI·搜索：Pattern proposals 服从既有 depth 与 beamWidth 上限", (
 
 
 
-test("AI·Worker：Assault 与 searchFault diagnostics 同时完整运输", async () => {
-  const { createSearchRequest } = await import("../js/ai/Controller.js");
-  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
-  const actor = makePlayer("worker-fault-actor", 0, "dawn", "ai", 3);
-  const enemy = makePlayer("worker-fault-enemy", 1, "dusk", "ai", 1);
-  actor.hp = 1;
-  enemy.hp = 1;
-  actor.hand.push(instance("assault"), instance("counter"), instance("counter"));
-  const { game } = makeGame([actor, enemy]);
-  const roots = game.aiController.getActionCandidates(actor);
-  const request = createSearchRequest({
-    requestId:"worker-fault-transport",
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    world:createInitialWorld(actor.id, game.state),
-    searchConfig:{
-      ...game.aiController.buildSearchConfig(),
-      nodeBudget:100,
-      yieldEvery:1
-    },
-    rng:game.aiController.searchRng.snapshot(),
-    rootActions:roots
-  });
-  const outcome = await runSearchRequest(request, {
-    yieldControl:async () => {
-      throw new Error("synthetic Worker yield fault");
-    }
-  });
-  assert.equal(outcome.action.cardId, "assault");
-  assert.equal(outcome.searchStopReason, "FAULT");
-  assert.deepEqual(outcome.searchFault, {
-    name:"Error",
-    message:"synthetic Worker yield fault"
-  });
-  assert.equal(outcome.workerError, null);
-  game.dispose();
-});
-
-test("AI·Controller：合法 Assault 与 FAULT diagnostics 仍按 root acceptance 接受", async () => {
-  const { createSearchRequest, createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
-  const actor = makePlayer("controller-fault-actor", 0, "dawn", "ai", 3);
-  const enemy = makePlayer("controller-fault-enemy", 1, "dusk", "ai", 2);
-  actor.hand.push(instance("assault"));
-  const { game } = makeGame([actor, enemy]);
-  const roots = game.aiController.getActionCandidates(actor);
-  const action = roots.find((entry) => entry.cardId === "assault");
-  const request = createSearchRequest({
-    requestId:"controller-fault-accepted",
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    world:createInitialWorld(actor.id, game.state),
-    searchConfig:game.aiController.buildSearchConfig(),
-    rng:game.aiController.searchRng.snapshot(),
-    rootActions:roots
-  });
-  const accepted = game.aiController.acceptWorkerSearchOutcome(request, createWorkerSearchOutcome({
-    request,
-    action,
-    stats:{ stopReason:"FAULT" },
-    searchStopReason:"FAULT",
-    searchFault:{ name:"Error", message:"synthetic Simulator fault" },
-    rngAfter:request.rng
-  }), roots);
-  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
-  assert.equal(accepted.action, action);
-  assert.equal(accepted.result.searchFault.message, "synthetic Simulator fault");
-});
-
 test("AI·Controller：Fact over-consumption RangeError 转为 PREPARATION_FAILURE", async () => {
   const actor = makePlayer("pre-worker-fact-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("pre-worker-fact-enemy", 1, "dusk", "ai", 1);
@@ -21415,6 +21398,56 @@ test("AI·Controller：Worker transport fault 返回 WORKER_FAILURE", async () =
   }
 });
 
+/*
+功能
+验证 session replacement/dispose 的显式 AbortError 不会被归类为 Worker crash。
+
+调用方
+AI Controller failure classification regression。
+
+输入
+无。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+Controller.selectAction、lastWorkerOutcome 与 lastSearchResult。
+
+写入状态
+测试 Game 的 searchExecutor 注入。
+
+调用函数
+makeGame、Controller.selectAction。
+
+边界与不变量
+取消必须返回 SEARCH_CANCELLED、null Action 与 null workerError；不得增加或伪装成 WORKER_FAILURE。
+*/
+async function workerAbortSessionClassification() {
+  const actor = makePlayer("cancelled-session-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("cancelled-session-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  game.aiController.searchExecutor = {
+    search:async () => {
+      const error = new Error("AI Worker disposed during session replacement");
+      error.name = "AbortError";
+      throw error;
+    }
+  };
+  try {
+    const action = await game.aiController.selectAction(actor, { gameId:game.state.gameId });
+    assert.equal(action, null);
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_CANCELLED);
+    assert.equal(game.aiController.lastSearchResult.action, null);
+    assert.equal(game.aiController.lastWorkerOutcome.workerError, null);
+    assert.equal(game.aiController.lastWorkerOutcome.cancelled, true);
+  } finally {
+    game.dispose();
+  }
+}
+
+test("AI·Controller：session replacement 的 AbortError 分类为 SEARCH_CANCELLED", workerAbortSessionClassification);
+
 test("AI·Worker/Controller：SearchBudget setup exception 分类为 SEARCH_INTERNAL_FAILURE", async () => {
   const { createSearchRequest } = await import("../js/ai/Controller.js");
   const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
@@ -21530,7 +21563,7 @@ test("AI·Controller：null Worker outcome 按 internal、transport、cancel 与
     {
       label:"search fault",
       expected:SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE,
-      result:{ searchStopReason:"FAULT", searchFault:{ name:"Error", message:"fault" } }
+      result:{ searchFault:{ name:"Error", message:"fault" } }
     },
     {
       label:"complete contract violation",
@@ -22378,7 +22411,7 @@ fake postMessage 队列。
 createSearchWorkerMessageHandler。
 
 边界与不变量
-一个 requestId 只产生一个 terminal result；unknown message 返回 ERROR。
+一个 requestId 只产生一个 terminal result；搜索期间可产生 HEARTBEAT；unknown message 返回 ERROR。
 */
 async function frArch14WorkerProtocol() {
   const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js");
@@ -22402,15 +22435,24 @@ async function frArch14WorkerProtocol() {
     phase: game.state.phase,
     currentRound: game.state.currentRound,
     world: createInitialWorld(actor.id, game.state, { assault: 1 }),
-    searchConfig: game.aiController.buildSearchConfig(),
+    searchConfig: {
+      ...game.aiController.buildSearchConfig(),
+      hardWatchdogMs:0
+    },
     rng: game.aiController.searchRng.snapshot(),
     rootActions:roots
   });
   await handler.handleMessage({ type: "SEARCH", requestId: request.requestId, request: structuredClone(request) });
-  assert.equal(messages.length, 2);
-  assert.equal(messages[1].type, "RESULT");
-  assert.equal(messages[1].requestId, request.requestId);
-  assert.deepEqual(workerOutcomeViolations(messages[1].outcome, request), []);
+  const searchMessages = messages.slice(1);
+  const terminalMessages = searchMessages.filter((entry) => ["RESULT", "ERROR"].includes(entry.type));
+  const heartbeatMessages = searchMessages.filter((entry) => entry.type === "HEARTBEAT"
+    && entry.requestId === request.requestId);
+  assert.ok(heartbeatMessages.length >= 2,
+    "初始接收与同步 SearchBudget 时钟检查都必须能直接发送 heartbeat");
+  assert.equal(terminalMessages.length, 1);
+  assert.equal(terminalMessages[0].type, "RESULT");
+  assert.equal(terminalMessages[0].requestId, request.requestId);
+  assert.deepEqual(workerOutcomeViolations(terminalMessages[0].outcome, request), []);
 }
 
 test("AI·Worker 协议：SEARCH -> RESULT，unknown -> ERROR", frArch14WorkerProtocol);
@@ -22536,7 +22578,8 @@ async function frArch14ControllerWorkerClientHeartbeat() {
     }
     terminate() { this.terminated = true; }
     emit(type, data) {
-      for (const listener of this.listeners.get(type) ?? []) listener({ data });
+      const event = type === "message" ? { data } : data ?? {};
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
     }
   }
   Object.defineProperty(globalThis, "Worker", {
@@ -22784,7 +22827,7 @@ fake Worker 消息队列、fake watchdog timer 与测试 executor。
 createSearchWorkerClient、createSearchExecutor。
 
 边界与不变量
-不执行真实 search；TIME/NODE 不创建 transport normal timer，10000ms hard watchdog 才 CANCEL、reject、terminate 与 rebuild。
+不执行真实 search；heartbeat 续期只替换静默 watchdog，terminal exactly-once；真正静默/crash/cancel 才终止并重建。
 */
 async function frArch14WorkerClientTransport() {
   const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js");
@@ -22810,7 +22853,8 @@ async function frArch14WorkerClientTransport() {
     }
     terminate() { this.terminated = true; }
     emit(type, data) {
-      for (const listener of this.listeners.get(type) ?? []) listener({ data });
+      const event = type === "message" ? { data } : data ?? {};
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
     }
   }
   const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
@@ -22855,6 +22899,7 @@ async function frArch14WorkerClientTransport() {
       searchCancelled:0,
       searchWatchdog:0,
       searchFaulted:0,
+      searchHeartbeats:0,
       orphanSearchCount:0,
       activeWorkerCount:1,
       activeSearchCount:0,
@@ -22897,7 +22942,9 @@ async function frArch14WorkerClientTransport() {
     recoveryClient.cancel("not-current");
     assert.equal(recoveryWorker.terminated, false, "非当前 requestId 不得终止 Worker");
     recoveryClient.cancel("cancel-me");
-    await assert.rejects(cancelPromise, /cancelled/);
+    await assert.rejects(cancelPromise, (error) => (
+      error?.name === "AbortError" && /cancelled/.test(error.message)
+    ));
     assert.ok(recoveryWorker.posted.some((message) => message.type === "CANCEL" && message.requestId === "cancel-me"));
     assert.equal(recoveryWorker.terminated, true);
     const rebuiltAfterCancel = instances.at(-1);
@@ -22922,6 +22969,22 @@ async function frArch14WorkerClientTransport() {
       outcome:makeOutcome("after-cancel")
     });
     assert.deepEqual(await afterCancelPromise, makeOutcome("after-cancel"));
+    const crashPromise = recoveryClient.search(makeRequest("worker-crash"));
+    rebuiltAfterCancel.emit("error", { message:"synthetic Worker crash" });
+    await assert.rejects(crashPromise, /synthetic Worker crash/);
+    const rebuiltAfterCrash = instances.at(-1);
+    assert.notEqual(rebuiltAfterCrash, rebuiltAfterCancel,
+      "真正 Worker crash 后必须终止旧实例并重建");
+    assert.equal(recoveryClient.getLifecycleDiagnostics().searchFaulted, 2,
+      "postMessage fault 与 Worker crash 都必须保留 transport fault 分类");
+    assert.equal(recoveryClient.getLifecycleDiagnostics().activeSearchCount, 0);
+    const afterCrashPromise = recoveryClient.search(makeRequest("after-crash"));
+    rebuiltAfterCrash.emit("message", {
+      type:"RESULT",
+      requestId:"after-crash",
+      outcome:makeOutcome("after-crash")
+    });
+    assert.deepEqual(await afterCrashPromise, makeOutcome("after-crash"));
     recoveryClient.dispose();
 
     const scheduledTimers = [];
@@ -22936,14 +22999,67 @@ async function frArch14WorkerClientTransport() {
       }
     });
     const hardWatchdogWorker = instances.at(-1);
+    const longSearchPromise = hardWatchdogClient.search(makeRequest(
+      "long-search",
+      { hardWatchdogMs:10000 }
+    ));
+    const initialWatchdog = scheduledTimers.at(-1);
+    assert.equal(hardWatchdogClient.getLifecycleDiagnostics().activeSearchCount, 1,
+      "pending request 在正常长搜索 terminal 前必须保留");
+    hardWatchdogWorker.emit("message", { type:"HEARTBEAT", requestId:"long-search" });
+    const renewedWatchdog = scheduledTimers.at(-1);
+    assert.notEqual(renewedWatchdog, initialWatchdog);
+    assert.equal(initialWatchdog.cancelled, true);
+    initialWatchdog.callback();
+    assert.equal(hardWatchdogClient.getLifecycleDiagnostics().activeSearchCount, 1,
+      "已被 heartbeat 取代的 watchdog 不得提前清理 pending");
+    hardWatchdogWorker.emit("message", {
+      type:"RESULT",
+      requestId:"long-search",
+      outcome:makeOutcome("long-search")
+    });
+    renewedWatchdog.callback();
+    hardWatchdogWorker.emit("message", { type:"HEARTBEAT", requestId:"long-search" });
+    hardWatchdogWorker.emit("message", {
+      type:"RESULT",
+      requestId:"long-search",
+      outcome:makeOutcome("long-search")
+    });
+    assert.deepEqual(await longSearchPromise, makeOutcome("long-search"));
+    assert.equal(hardWatchdogClient.getLifecycleDiagnostics().searchCompleted, 1);
+    assert.equal(hardWatchdogClient.getLifecycleDiagnostics().searchHeartbeats, 1);
+    assert.equal(hardWatchdogClient.getLifecycleDiagnostics().searchWatchdog, 0);
+    assert.equal(hardWatchdogClient.getLifecycleDiagnostics().activeSearchCount, 0,
+      "terminal cleanup 后旧 heartbeat/watchdog 不得再次 failure");
+
+    const racePromise = hardWatchdogClient.search(makeRequest(
+      "heartbeat-terminal-race",
+      { hardWatchdogMs:10000 }
+    ));
+    hardWatchdogWorker.emit("message", {
+      type:"HEARTBEAT",
+      requestId:"heartbeat-terminal-race"
+    });
+    const raceWatchdog = scheduledTimers.at(-1);
+    hardWatchdogWorker.emit("message", {
+      type:"RESULT",
+      requestId:"heartbeat-terminal-race",
+      outcome:makeOutcome("heartbeat-terminal-race")
+    });
+    raceWatchdog.callback();
+    assert.deepEqual(await racePromise, makeOutcome("heartbeat-terminal-race"));
+    assert.equal(hardWatchdogClient.getLifecycleDiagnostics().searchCompleted, 2,
+      "heartbeat 与 terminal 接近时只能完成一次");
+    assert.equal(hardWatchdogClient.getLifecycleDiagnostics().searchWatchdog, 0);
+
     const hardWatchdogPromise = hardWatchdogClient.search(makeRequest(
       "hard-watchdog",
       { hardWatchdogMs:10000 }
     ));
     const hardWatchdogRejection = assert.rejects(hardWatchdogPromise, /hard watchdog/);
-    assert.equal(scheduledTimers.length, 1);
-    assert.equal(scheduledTimers[0].milliseconds, 10000);
-    scheduledTimers[0].callback();
+    const crashWatchdog = scheduledTimers.at(-1);
+    assert.equal(crashWatchdog.milliseconds, 10000);
+    crashWatchdog.callback();
     await hardWatchdogRejection;
     assert.ok(hardWatchdogWorker.posted.some(
       (message) => message.type === "CANCEL" && message.requestId === "hard-watchdog"
@@ -39734,6 +39850,7 @@ test("BGM：真人晨星时暮影角色回合不改变音乐主题", async () =>
   fixture.ui.setMusicTeam("dawn"); // 角色选择阶段按真人阵营启动主题
   assert.equal(fixture.theme, "dawn");
   fixture.musicCalls.length = 0;
+  fixture.game.state.currentPlayerIndex = fixture.game.state.players.indexOf(dusk);
   await fixture.game.takeTurn(dusk, fixture.game.state.gameId);
   assert.equal(fixture.theme, "dawn", "暮影角色回合后主题必须保持晨星");
   assert.deepEqual(fixture.musicCalls, [], "暮影角色回合不得调用 setMusicTeam");
@@ -39746,6 +39863,7 @@ test("BGM：真人暮影时晨星角色回合不改变音乐主题", async () =>
   fixture.ui.setMusicTeam("dusk");
   assert.equal(fixture.theme, "dusk");
   fixture.musicCalls.length = 0;
+  fixture.game.state.currentPlayerIndex = fixture.game.state.players.indexOf(dawn);
   await fixture.game.takeTurn(dawn, fixture.game.state.gameId);
   assert.equal(fixture.theme, "dusk", "晨星角色回合后主题必须保持暮影");
   assert.deepEqual(fixture.musicCalls, [], "晨星角色回合不得调用 setMusicTeam");
@@ -39761,6 +39879,7 @@ test("BGM：多阵营角色轮流行动全程保持真人主题", async () => {
   fixture.ui.setMusicTeam("dawn");
   fixture.musicCalls.length = 0;
   for (const player of [dusk1, dawn1, dusk2, dawn1, dusk1]) {
+    fixture.game.state.currentPlayerIndex = fixture.game.state.players.indexOf(player);
     await fixture.game.takeTurn(player, fixture.game.state.gameId);
     assert.equal(fixture.theme, "dawn", `${player.name}回合后主题必须保持晨星`);
   }

@@ -1,6 +1,6 @@
 /*
 模块职责
-Main-thread Dedicated AI Worker client：负责 Worker 创建、SEARCH/CANCEL transport、hard watchdog 与 terminal promise；不执行任何 search/domain 逻辑。
+Main-thread Dedicated AI Worker client：负责 Worker 创建、SEARCH/CANCEL/HEARTBEAT transport、liveness watchdog 与 terminal promise；不执行任何 search/domain 逻辑。
 
 上游
 MatchApplication composition / createSearchExecutor。
@@ -15,7 +15,7 @@ searchWorker.js。
 只 transport data-only SearchRequest/WorkerSearchOutcome。
 
 架构约束
-不得 import composition、application、UI/Audio；不提供同线程 search fallback。
+不得 import composition、application、UI/Audio；不得在主线程执行 search。
 */
 
 /*
@@ -70,7 +70,7 @@ Worker 引用与 pending map。
 Worker、addEventListener、postMessage、terminate、scheduleTimeout、cancelTimeout。
 
 边界与不变量
-一个 requestId 只 settle 一次；duplicate RESULT ignored；正常 TIME/NODE 复用已空闲 Worker，cancel/watchdog 终止仍占用请求的实例并只重建一次。
+一个 requestId 只 settle 一次；duplicate RESULT ignored；watchdog 只测量最后一次 Worker liveness 后的静默时间，正常长搜索的 HEARTBEAT 会续期而不会被当成通信故障。
 */
 export function createSearchWorkerClient(workerUrl, timers = {}) {
   const scheduleTimeout = typeof timers.setTimeout === "function"
@@ -83,6 +83,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
   let pending = null;
   let disposed = false;
   let watchdogTimer = null;
+  let watchdogGeneration = 0;
   let lastTransportDiagnostics = null;
   const liveWorkers = new Set();
   const lifecycle = {
@@ -94,6 +95,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     searchCancelled:0,
     searchWatchdog:0,
     searchFaulted:0,
+    searchHeartbeats:0,
     orphanSearchCount:0
   };
 
@@ -159,6 +161,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
   const settlePending = (kind, payload) => {
     if (!pending) return false;
     const current = pending;
+    watchdogGeneration += 1;
     cancelTimeout(watchdogTimer);
     watchdogTimer = null;
     pending = null;
@@ -170,6 +173,48 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     if (kind === "RESULT" || kind === "TIME") current.resolve(payload);
     else current.reject(payload);
     return true;
+  };
+
+  /*
+  功能
+  从当前 Worker liveness 时刻重新武装静默 watchdog。
+
+  调用方
+  search 首次发送与 Worker HEARTBEAT handler。
+
+  输入
+  当前 pending record。
+
+  输出
+  无。
+
+  读取状态
+  pending、disposed 与 record.watchdogMs/worker/requestId。
+
+  写入状态
+  watchdogTimer、watchdogGeneration；静默到期时收束 pending 并重建 Worker。
+
+  调用函数
+  cancelTimeout、scheduleTimeout、Worker.postMessage、settlePending、terminateWorker、spawnWorker。
+
+  边界与不变量
+  watchdog 测量的是 Worker 连续失联时间，不是搜索总耗时；旧 timer 即使已进入任务队列，也必须由 generation 检查失效。
+  */
+  const armWatchdog = (record) => {
+    const watchdogMs = Number(record?.watchdogMs);
+    if (!record || !Number.isFinite(watchdogMs) || watchdogMs <= 0) return;
+    cancelTimeout(watchdogTimer);
+    const generation = ++watchdogGeneration;
+    watchdogTimer = scheduleTimeout(() => {
+      if (generation !== watchdogGeneration || disposed || pending !== record
+        || pending.requestId !== record.requestId || pending.worker !== record.worker) return;
+      try {
+        record.worker.postMessage({ type:"CANCEL", requestId:record.requestId });
+      } catch { /* worker 已不可用，settlePending 仍必须收束 pending。 */ }
+      settlePending("WATCHDOG", new Error("AI search hard watchdog"));
+      terminateWorker(record.worker);
+      if (!disposed) spawnWorker();
+    }, watchdogMs);
   };
 
   /*
@@ -207,7 +252,10 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
       const message = event.data ?? {};
       if (spawned !== worker || disposed || !pending
         || pending.worker !== spawned || message.requestId !== pending.requestId) return;
-      if (message.type === "RESULT") {
+      if (message.type === "HEARTBEAT") {
+        lifecycle.searchHeartbeats += 1;
+        armWatchdog(pending);
+      } else if (message.type === "RESULT") {
         const kind = message.outcome?.searchStopReason === "TIME"
           ? "TIME"
           : message.outcome?.searchStopReason === "CANCELLED"
@@ -260,17 +308,23 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     pending、watchdogTimer 与最近一次同步 postMessage 诊断。
 
     调用函数
-    worker.postMessage、scheduleTimeout。
+    worker.postMessage、armWatchdog。
 
     边界与不变量
-    同一 client 同时只允许一个 in-flight search；TIME/NODE outcome 不得被 transport 降级为 CANCEL，hard watchdog 才终止失控 Worker并重建。
+    同一 client 同时只允许一个 in-flight search；HEARTBEAT 只续期当前 request 的 liveness watchdog；TIME/NODE outcome 不得被 transport 降级为 CANCEL。
     */
     search(request) {
       if (disposed) return Promise.reject(new Error("AI Worker disposed"));
       if (pending) return Promise.reject(new Error("another AI search is in-flight"));
       return new Promise((resolve, reject) => {
         const occupiedWorker = worker;
-        pending = { requestId:request.requestId, resolve, reject, worker:occupiedWorker };
+        pending = {
+          requestId:request.requestId,
+          resolve,
+          reject,
+          worker:occupiedWorker,
+          watchdogMs:Number(request.searchConfig?.hardWatchdogMs)
+        };
         lifecycle.searchStarted += 1;
         const postMessageStartedAt = transportNow();
         try {
@@ -281,7 +335,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
             postMessageMs:Math.max(0, transportNow() - postMessageStartedAt)
           });
           // structuredClone/Worker 发送失败必须清空 pending，否则下一次合法搜索会被
-          // “another AI search is in-flight”永久误伤；本路径不执行任何同线程 fallback。
+          // “another AI search is in-flight”永久误伤；本路径不执行任何同线程搜索。
           settlePending("FAULT", error instanceof Error ? error : new Error(String(error)));
           return;
         }
@@ -289,19 +343,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
           requestId:request.requestId,
           postMessageMs:Math.max(0, transportNow() - postMessageStartedAt)
         });
-        const watchdogMs = Number(request.searchConfig?.hardWatchdogMs);
-        if (Number.isFinite(watchdogMs) && watchdogMs > 0) {
-          watchdogTimer = scheduleTimeout(() => {
-            if (!pending || pending.requestId !== request.requestId
-              || pending.worker !== occupiedWorker) return;
-            try {
-              occupiedWorker.postMessage({ type:"CANCEL", requestId:request.requestId });
-            } catch { /* worker 已不可用，settlePending 仍必须收束 pending。 */ }
-            settlePending("WATCHDOG", new Error("AI search hard watchdog"));
-            terminateWorker(occupiedWorker);
-            if (!disposed) spawnWorker();
-          }, watchdogMs);
-        }
+        armWatchdog(pending);
       });
     },
     /*
@@ -396,8 +438,10 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
       try {
         occupiedWorker.postMessage({ type:"CANCEL", requestId });
       } catch { /* postMessage 失败时仍按取消收束，不留下悬挂 pending。 */ }
-      settlePending("CANCELLED", new Error("AI search cancelled"));
-      // CANCEL 可能排在一个长同步 preparation 后才被 Worker 事件循环处理；
+      const cancellationError = new Error("AI search cancelled");
+      cancellationError.name = "AbortError";
+      settlePending("CANCELLED", cancellationError);
+      // CANCEL 可能排在一个长同步候选后才被 Worker 事件循环处理；
       // 先终止仍占用该 request 的实例，才能保证 decision 返回后没有 orphan CPU work。
       terminateWorker(occupiedWorker);
       if (!disposed) spawnWorker();
@@ -430,7 +474,11 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     dispose() {
       disposed = true;
       cancelTimeout(watchdogTimer);
-      if (pending) settlePending("CANCELLED", new Error("AI Worker disposed"));
+      if (pending) {
+        const cancellationError = new Error("AI Worker disposed");
+        cancellationError.name = "AbortError";
+        settlePending("CANCELLED", cancellationError);
+      }
       for (const liveWorker of [...liveWorkers]) terminateWorker(liveWorker);
     }
   });

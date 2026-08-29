@@ -72,7 +72,7 @@ export function createLocalSearchExecutor() {
 
     边界与不变量
     与 browser Worker 共享同一 runSearchRequest；正常时间模式由 SearchBudget.TIME 收束，节点模式由 NODE 自然收束；
-    local transport 无法终止同步 work，显式 NODE 诊断不得用 Promise race 伪造提前 fallback；不直接运行 Searcher。
+    local transport 无法终止同步 work，显式 NODE 诊断不得用 Promise race 伪造提前结果；不直接运行 Searcher。
     */
     async search(request, options = {}) {
       controller = options.signal instanceof AbortController

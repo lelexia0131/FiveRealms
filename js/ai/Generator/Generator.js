@@ -177,7 +177,7 @@ export class Generator {
   */
   createRootResolutionAction(state, rootCard, rootSourceId, rootTargetIds, options = {}) {
     if (!rootCard?.definitionId || !rootSourceId) return null;
-    // Counter 是响应支付而非可独立重放的 root effect；其 gain 由 Evaluator canonical fallback 评价。
+    // Counter 是响应支付而非可独立重放的 root effect；其 gain 由 Evaluator 的配对 World 评价。
     if (rootCard.definitionId === "counter") return null;
     const targetIds = (rootTargetIds ?? []).filter((targetId) => (
       state.players.some((player) => player.id === targetId && player.alive)
@@ -889,7 +889,7 @@ export class Generator {
   无；只在全部字段确定后调用一次 createAction。
 
   调用函数
-  isActionConditionPossible、isSelectionPossible、createAction 与 SearchBudget checkpoint。
+  isActionConditionPossible、isSelectionPossible 与 createAction。
 
   边界与不变量
   Generator 只判断 possible/impossible，不计算联合概率、次数槽或执行世界；
@@ -905,7 +905,6 @@ export class Generator {
     energyCost = null,
     searchBudget = null
   ) {
-    searchBudget?.checkpointCurrentWork?.();
     const targetIds = targets.map((target) => target.id);
     if (!this.isActionConditionPossible(
       state, actor, type, definition, targets, selection

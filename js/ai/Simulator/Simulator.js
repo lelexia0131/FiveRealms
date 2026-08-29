@@ -153,7 +153,7 @@ class SimulatorCore {
   SearchBudget.checkpointCurrentWork。
 
   边界与不变量
-  只允许 Searcher preparation boundary 捕获 signal；当前 partial World/world 必须整体丢弃。
+  只允许已证实的大型 Probability 循环调用；当前未完成 World 必须整体丢弃。
   */
   checkpointSearchWork() {
     return this.searchBudget?.checkpointCurrentWork?.() ?? true;
@@ -235,7 +235,7 @@ class SimulatorCore {
       if (!Array.isArray(partition)) continue;
       inputWorldCount += partition.length;
     }
-    const checkpoint = inputWorldCount >= 32 || this.searchBudget?.stopReason
+    const checkpoint = inputWorldCount >= 32
       ? () => this.checkpointSearchWork()
       : null;
     return this.runProbabilityOperation(
@@ -275,7 +275,7 @@ class SimulatorCore {
   partial projection 永不返回或计数；projector 不得修改输入世界。
   */
   projectProbabilityWork(worlds, projector, operation = "Simulation.project") {
-    const checkpoint = (worlds?.length ?? 0) >= 32 || this.searchBudget?.stopReason
+    const checkpoint = (worlds?.length ?? 0) >= 32
       ? () => this.checkpointSearchWork()
       : null;
     return this.runProbabilityOperation(
@@ -316,7 +316,7 @@ class SimulatorCore {
   partial merge 永不返回或计数；正常路径不改变签名、概率或输出顺序。
   */
   mergeProbabilityWork(branches, operation = "Simulation.merge") {
-    const checkpoint = (branches?.length ?? 0) >= 32 || this.searchBudget?.stopReason
+    const checkpoint = (branches?.length ?? 0) >= 32
       ? () => this.checkpointSearchWork()
       : null;
     return this.runProbabilityOperation(
@@ -332,7 +332,7 @@ class SimulatorCore {
 
   /*
   功能
-  在开始前观察 SearchBudget，并显式记录一项输入严格有界的 raw 概率操作。
+  显式记录一项输入严格有界的 raw 概率操作。
 
   调用方
   已审计为小常数输入、无需在内部 cooperative checkpoint 的 Simulation 调用点。
@@ -350,13 +350,13 @@ class SimulatorCore {
   只写 SearchBudget raw probability diagnostics。
 
   调用函数
-  checkpointSearchWork、runProbabilityOperation。
+  runProbabilityOperation。
 
   边界与不变量
-  只允许输入规模不随玩家、手牌、world、response 或搜索深度增长的调用点；TIME 后不得启动。
+  只允许输入规模不随玩家、手牌、world、response 或搜索深度增长的调用点；
+  普通原子概率工作开始后不受 TIME 拦腰中断。
   */
   rawProbabilityWork(operation, inputWorldCount, work) {
-    this.checkpointSearchWork();
     return this.runProbabilityOperation(operation, inputWorldCount, "raw", work);
   }
 
@@ -368,7 +368,7 @@ class SimulatorCore {
   Searcher、Simulator root outcome builder、Simulator/Evaluator composition 与组件内反事实分支：创建兄弟世界。
 
   输入
-  必填 World。内部 apply 可声明 checkpoint 已在同一原子边界完成。
+  必填 World。
 
   输出
   完成必要摘要同步的独立可变 World。
@@ -380,15 +380,14 @@ class SimulatorCore {
   只写新克隆的响应、势能与技能费用摘要。
 
   调用函数
-  checkpointSearchWork、SearchBudget.observeClone、cloneWorld、组件初始化器与 syncActiveSkillCosts。
+  SearchBudget.observeClone、cloneWorld、组件初始化器与 syncActiveSkillCosts。
 
   边界与不变量
-  默认必须在 cloneWorld 深拷贝前观察同一个 SearchBudget；不得修改输入；
+  clone 属于已开始候选的普通原子工作，不读取 TIME/NODE；不得修改输入；
   每个概率分支和兄弟节点必须拥有独立可变状态。
   */
-  clone(state, options = {}) {
+  clone(state) {
     if (!state || typeof state !== "object") throw new TypeError("Simulator.clone 需要 World");
-    if (options.checkpoint !== false) this.checkpointSearchWork();
     this.searchBudget?.observeClone?.();
     const cloned = cloneWorld(state);
     this.initializeMomentumState(cloned);
@@ -436,7 +435,6 @@ class SimulatorCore {
     }
     const cacheKey = `${initialHolder.id}:${presence}`;
     if (stateCache.has(cacheKey)) return stateCache.get(cacheKey);
-    this.checkpointSearchWork();
     const distribution = buildLightningHitDistribution(
       state,
       this.buildLightningPropagationChainIds(state.players, initialHolder)
@@ -447,7 +445,6 @@ class SimulatorCore {
       outcomes:presence <= 0
         ? []
         : distribution.map((outcome) => {
-            this.checkpointSearchWork();
             return {
               holderId:outcome.holderId,
               probability:outcome.probability,
@@ -710,7 +707,6 @@ class SimulatorCore {
         );
       }
     }
-    this.checkpointSearchWork();
     return {
       actualWorld,
       counterfactualWorld:this.apply(counterfactualBefore, action)
@@ -1047,12 +1043,11 @@ class SimulatorCore {
   clone、buildSkillExecutionWorlds、buildCardExecutionWorlds、applySkill、applyCardEffect 与响应查询。
 
   边界与不变量
-  必须先通过当前 SearchBudget checkpoint 再 clone、支付和结算；卡牌级反制容量只消费一次，
-  响应顺序和随机调用顺序不得改变；中断 signal 由 Searcher preparation boundary 统一收束。
+  普通 candidate 开始后必须完整 clone、支付和结算；卡牌级反制容量只消费一次；
+  只有已证实的大型 Probability 循环允许 cooperative checkpoint。
   */
   apply(state, action, controls = {}) {
-    this.checkpointSearchWork();
-    const next = this.clone(state, { checkpoint:false });
+    const next = this.clone(state);
     if (next.playPhaseEnded) return next;
     const actor = next.players.find((player) => player.id === action.actorId);
     if (action.type === "end") {
@@ -1664,7 +1659,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       const judgmentBlockCards = [];
       for (let slot = 0; slot < maximumRequirement; slot += 1) {
         for (const definitionId of RADAR_BASIC_DEFINITION_IDS) {
-          this.checkpointSearchWork();
+          if (baseWorlds.length >= 32) this.checkpointSearchWork();
           const acquisitionWorlds = this.projectProbabilityWork(
             baseWorlds,
             (branch) => ({
