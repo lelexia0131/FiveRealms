@@ -26804,6 +26804,26 @@ test("AI·守誓者：壁垒只增加统一护盾且快照不包含专属护盾�
   assert.equal("temporaryShieldAmount" in nextAlly, false);
 });
 
+test("AI·守誓者：壁垒搜索模拟不污染真实MVP技能能量统计", () => {
+  const warden = makePlayer("mvp-sim-warden", 0, "dawn", "ai", 1),
+    ally = makePlayer("mvp-sim-ally", 1, "dawn"),
+    enemy = makePlayer("mvp-sim-enemy", 2, "dusk");
+  warden.energy = 2;
+  const { game } = makeGame([warden, ally, enemy]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  const visible = createInitialWorld(warden.id, game.state);
+  const action = game.aiController.actionGenerator.generate(visible, warden.id)
+    .find((candidate) => candidate.skillId === "barrier" && candidate.targetIds[0] === ally.id);
+  assert.ok(action);
+  const next = new Simulator(visible).apply(visible, action, warden.id);
+  assert.equal(next.players.find((player) => player.id === warden.id).energy, 0);
+  assert.equal(
+    game.matchPerformanceSidecar.tracker.finalizeMatch().players
+      .find((entry) => entry.playerId === warden.id).totals.skillEnergySpent,
+    0
+  );
+});
+
 test("AI·守誓者：护援统一覆盖突袭、震荡、挑衅、决斗、猎杀与焚场", () => {
   const runCard = (definitionId, targetSetup = () => { }) => {
     const actor = {
@@ -41434,6 +41454,7 @@ test("生命周期：主动技能在扣能量、记次数与加盾后抛异常�
     enemy = makePlayer("skill-rollback-enemy", 2, "dusk"),
     { game, ui }
       = makeGame([source, ally, enemy]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   source.energy = 4;
   ally.shield = 1;
   ally.statuses.exposeWeakness = { stacks:1 };
@@ -41457,6 +41478,10 @@ test("生命周期：主动技能在扣能量、记次数与加盾后抛异常�
   assert.equal(ally.shield, 1);
   assert.deepEqual(ally.statuses, { exposeWeakness:{ stacks:1 } });
   assert.equal(game.state.stateVersion, stateVersionBefore);
+  assert.equal(
+    game.matchPerformanceSidecar.tracker.recordFor(source).totals.skillEnergySpent,
+    0
+  );
 });
 
 test("生命周期：成功 card 与 skill 保留原有提交结果", async () => {
@@ -41477,12 +41502,17 @@ test("生命周期：成功 card 与 skill 保留原有提交结果", async () =
     skillEnemy = makePlayer("success-skill-enemy", 2, "dusk"),
     { game:skillGame }
       = makeGame([skillSource, skillAlly, skillEnemy]);
+  skillGame.matchPerformanceSidecar.tracker.initializeRoster();
   skillSource.energy = 4;
   assert.equal(await skillGame.useActiveSkill(skillSource, "barrier", [skillAlly]), true);
   assert.equal(skillSource.energy, 2);
   assert.equal(skillSource.turnFlags.activeSkillUseCounts.barrier, 1);
   assert.equal(skillSource.turnFlags.activeSkillsUsed.has("barrier"), true);
   assert.equal(skillAlly.shield, 1);
+  assert.equal(
+    skillGame.matchPerformanceSidecar.tracker.recordFor(skillSource).totals.skillEnergySpent,
+    2
+  );
 });
 
 test("生命周期：commit 后 card 与 skill 展示失败不回滚真实 Action", async () => {

@@ -204,7 +204,7 @@ export function calculatePerformance(rawStats, policy = MATCH_PERFORMANCE_POLICY
       + totals.allyShieldAbsorbed
     ) / effectiveRounds,
     activity: totals.cardsPlayed / effectiveRounds,
-    skill: totals.activeSkillsUsed / effectiveRounds,
+    skill: totals.skillEnergySpent / effectiveRounds,
     control: totals.enemyControls / effectiveRounds,
     contribution: Math.max(0, contributionTotal / effectiveRounds)
   });

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js";
+import { createSkillEffectRuntime } from "../js/application/action/SkillEffectRuntime.js";
+import { ACTIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js";
 import {
   calculatePerformance,
   getPerformanceThresholds,
@@ -23,7 +25,7 @@ const TOTAL_DEFAULTS = Object.freeze({
   allyMitigation: 0,
   allyShieldAbsorbed: 0,
   cardsPlayed: 0,
-  activeSkillsUsed: 0,
+  skillEnergySpent: 0,
   enemyControls: 0
 });
 
@@ -144,7 +146,13 @@ EventDispatcher、MatchPerformanceTracker.start/initializeRoster。
 每个夹具使用独立 dispatcher；不创建 MatchApplication 或 AI simulation。
 */
 function trackerFixture(players) {
-  const state = { gameId: "mvp-match", players, phase: "play", currentPlayerIndex: 0 };
+  const state = {
+    gameId: "mvp-match",
+    stateVersion: 0,
+    players,
+    phase: "play",
+    currentPlayerIndex: 0
+  };
   const dispatcher = new EventDispatcher(() => true);
   const tracker = new MatchPerformanceTracker({
     eventDispatcher: dispatcher,
@@ -152,6 +160,66 @@ function trackerFixture(players) {
   }).start();
   tracker.initializeRoster();
   return { state, dispatcher, tracker };
+}
+
+/*
+功能
+创建可执行真实 SkillEffectRuntime 支付点的 MVP tracker 测试夹具。
+
+调用方
+MVP 技能能量支付回归测试。
+
+输入
+主动技能发动前的 source 能量。
+
+输出
+{ actor, ally, enemy, state, dispatcher, tracker, skillRuntime }。
+
+读取状态
+无。
+
+写入状态
+创建隔离 MatchState、EventDispatcher、Tracker 与 SkillEffectRuntime。
+
+调用函数
+trackerPlayer、trackerFixture、createSkillEffectRuntime。
+
+边界与不变量
+只执行真实 Application payment runtime；所有非支付 collaborator 都是无副作用测试替身。
+*/
+function skillPaymentFixture(energy) {
+  const actor = trackerPlayer("skill-actor", 0, "dawn");
+  const ally = trackerPlayer("skill-ally", 1, "dawn");
+  const enemy = trackerPlayer("skill-enemy", 2, "dusk");
+  actor.energy = energy;
+  actor.maxEnergy = 4;
+  actor.statuses = {};
+  ally.energy = 0;
+  ally.maxEnergy = 4;
+  ally.statuses = {};
+  const fixture = trackerFixture([actor, ally, enemy]);
+  const skillRuntime = createSkillEffectRuntime({
+    getState: () => fixture.state,
+    isSessionValid: () => true,
+    presentation: { log() {}, showShieldFeedback() {} },
+    heal: async () => 0,
+    damage: async () => 0,
+    drawCards: async () => 0,
+    moveEquipmentToHand: async () => null,
+    moveCardBetweenHands: async () => null,
+    cardLabelForHuman: () => "测试牌",
+    getEnemies: () => [enemy],
+    random: () => 1,
+    emitEvent: (type, payload) => fixture.dispatcher.emit(type, payload)
+  });
+  const executeSkill = async (skill, targets, energyCost) => {
+    const actualAmount = await skillRuntime.execute(skill, actor, targets, { energyCost });
+    if (actualAmount > 0) {
+      await fixture.dispatcher.publishFact("skillEnergyPaid", { source: actor, skill, actualAmount });
+    }
+    return actualAmount;
+  };
+  return { actor, ally, enemy, ...fixture, skillRuntime, executeSkill };
 }
 
 /*
@@ -184,7 +252,7 @@ export function registerMatchPerformanceTests(test) {
     const thresholds = getPerformanceThresholds(2);
     const result = calculatePerformance(rawPlayer({
       effectiveRounds: 10,
-      totals: { activeSkillsUsed: 8 },
+      totals: { skillEnergySpent: 8 },
       contributionFacts: { allyCardsGranted: 7 }
     }));
     assert.deepEqual(
@@ -199,7 +267,7 @@ export function registerMatchPerformanceTests(test) {
     const result = calculatePerformance(rawPlayer({
       initialTeamSize: 3,
       effectiveRounds: 10,
-      totals: { activeSkillsUsed: 7 },
+      totals: { skillEnergySpent: 7 },
       contributionFacts: { allyCardsGranted: 5 }
     }));
     assert.deepEqual(
@@ -437,15 +505,49 @@ export function registerMatchPerformanceTests(test) {
     assert.equal(tracker.finalizeMatch().players[0].totals.cardsPlayed, 1);
   });
 
-  test("UI·MVP：技能只读取成功主动发动槽并排除非法尝试与纯被动", async () => {
-    const actor = trackerPlayer("actor", 0, "dawn");
-    const enemy = trackerPlayer("enemy", 1, "dusk");
-    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
-    await dispatcher.emit("turnStart", { player: actor });
-    actor.turnFlags.activeSkillUseCounts = { barrier: 2, symbiosis: 1 };
-    actor.turnFlags.passiveTriggerCount = 4;
-    await dispatcher.emit("turnEnd", { player: actor });
-    assert.equal(tracker.finalizeMatch().players[0].totals.activeSkillsUsed, 3);
+  test("UI·MVP：1能量主动技能按实际支付累计1", async () => {
+    const { actor, tracker, executeSkill } = skillPaymentFixture(1);
+    await executeSkill(ACTIVE_SKILL_DEFINITIONS.allIn, [], 1);
+    assert.equal(actor.energy, 0);
+    assert.equal(tracker.finalizeMatch().players[0].totals.skillEnergySpent, 1);
+  });
+
+  test("UI·MVP：2能量主动技能按实际支付累计2", async () => {
+    const { actor, ally, tracker, executeSkill } = skillPaymentFixture(2);
+    await executeSkill(ACTIVE_SKILL_DEFINITIONS.barrier, [ally], 2);
+    assert.equal(actor.energy, 0);
+    assert.equal(tracker.finalizeMatch().players[0].totals.skillEnergySpent, 2);
+  });
+
+  test("UI·MVP：主动技能减费后只累计实际支付的1能量", async () => {
+    const { actor, ally, tracker, executeSkill } = skillPaymentFixture(2);
+    await executeSkill(ACTIVE_SKILL_DEFINITIONS.barrier, [ally], 1);
+    assert.equal(actor.energy, 1);
+    assert.equal(tracker.finalizeMatch().players[0].totals.skillEnergySpent, 1);
+  });
+
+  test("UI·MVP：免费主动技能不增加技能能量统计", async () => {
+    const { actor, ally, tracker, executeSkill } = skillPaymentFixture(2);
+    await executeSkill(ACTIVE_SKILL_DEFINITIONS.barrier, [ally], 0);
+    assert.equal(actor.energy, 2);
+    assert.equal(tracker.finalizeMatch().players[0].totals.skillEnergySpent, 0);
+  });
+
+  test("UI·MVP：被动技能结算不增加技能能量统计", async () => {
+    const { actor, ally, enemy, dispatcher, tracker } = skillPaymentFixture(2);
+    await dispatcher.emit("afterDamage", {
+      source: enemy,
+      target: ally,
+      actualAmount: 1,
+      metadata: {
+        mitigationContributions: [{
+          contributorPlayerId: actor.id,
+          effectDefinitionId: "guardianAid",
+          amount: 1
+        }]
+      }
+    });
+    assert.equal(tracker.finalizeMatch().players[0].totals.skillEnergySpent, 0);
   });
 
   test("UI·MVP：控制只计敌方目标且转移友方分流到贡献", async () => {
@@ -745,7 +847,7 @@ export function registerMatchPerformanceTests(test) {
         enemyHpDamage: 30,
         allyHealing: 9,
         cardsPlayed: 48,
-        activeSkillsUsed: 12,
+        skillEnergySpent: 12,
         enemyControls: 12
       },
       contributionFacts: { allyCardsGranted: 10.5 }
@@ -760,7 +862,7 @@ export function registerMatchPerformanceTests(test) {
         enemyHpDamage: 18,
         allyHealing: 7.5,
         cardsPlayed: 39,
-        activeSkillsUsed: 10.5,
+        skillEnergySpent: 10.5,
         enemyControls: 9
       },
       contributionFacts: { allyCardsGranted: 7.5 }

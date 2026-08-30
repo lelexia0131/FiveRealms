@@ -60,6 +60,41 @@ export function createSkillEffectRuntime(dependencies) {
   }
   const runtime = dependencies;
 
+  /*
+  功能
+  在主动技能的 canonical 扣款点支付能量并记录真实支付量。
+
+  调用方
+  所有主动技能 effect resolver。
+
+  输入
+  真实 source、已解析的请求支付量与本次 execution payment ledger。
+
+  输出
+  本次实际支付的非负能量。
+
+  读取状态
+  MatchState、source.energy 与 source.maxEnergy。
+
+  写入状态
+  通过 changeEnergy 写入真实能量，并把实际支付量写入本次 execution payment ledger。
+
+  调用函数
+  changeEnergy。
+
+  边界与不变量
+  金额只取 changeEnergy 的实际负向变化，不读取技能标称 cost；事实由 Action commit 后发布。
+  */
+  function paySkillEnergy(source, requestedAmount, payment) {
+    const actualPaid = Math.max(0, -changeEnergy(
+      runtime.getState(),
+      source,
+      -Math.max(0, Number(requestedAmount) || 0)
+    ));
+    payment.actualAmount += actualPaid;
+    return actualPaid;
+  }
+
   const EFFECTS = {
 /*
 功能
@@ -78,10 +113,10 @@ breakArmy 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+source.energy 与本回合 attack limit。
 
 调用函数
-下游 collaborator。
+paySkillEnergy、incrementAttackLimit 与 presentation collaborator。
 
 边界与不变量
 不重复 Domain rule 决定。
@@ -89,7 +124,7 @@ runtime/card/skill facts。
     async breakArmy(skill, source, _targets, context) {
       const state = runtime.getState();
       const decision = decideSkillEffect(skill, source, context);
-      changeEnergy(state, source, -decision.energyCost);
+      paySkillEnergy(source, decision.energyCost, context.payment);
       incrementAttackLimit(state, source, decision.attackLimitBonus);
       runtime.presentation.log(`${source.name}发动「破军」，本回合可额外使用${decision.attackLimitBonus}张「突袭」。`, "important");
     },
@@ -110,10 +145,10 @@ barrier 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+source.energy 与 target.shield。
 
 调用函数
-changeEnergy、changeShield、emitEvent 与 presentation collaborator。
+paySkillEnergy、changeShield、emitEvent 与 presentation collaborator。
 
 边界与不变量
 不重复 Domain rule 决定；只发布最终实际新增的护盾事实。
@@ -121,7 +156,7 @@ changeEnergy、changeShield、emitEvent 与 presentation collaborator。
     async barrier(skill, source, targets, context) {
       const state = runtime.getState();
       const decision = decideSkillEffect(skill, source, context);
-      changeEnergy(state, source, -decision.energyCost);
+      paySkillEnergy(source, decision.energyCost, context.payment);
       const target = targets[0];
       const shieldBefore = target.shield;
       changeShield(state, target, decision.shieldAmount);
@@ -155,10 +190,10 @@ symbiosis 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+source.energy；治疗结果经 heal collaborator。
 
 调用函数
-下游 collaborator。
+paySkillEnergy、heal 与 presentation collaborator。
 
 边界与不变量
 不重复 Domain rule 决定。
@@ -166,7 +201,7 @@ runtime/card/skill facts。
     async symbiosis(skill, source, targets, context) {
       const state = runtime.getState();
       const decision = decideSkillEffect(skill, source, context);
-      changeEnergy(state, source, -decision.energyCost);
+      paySkillEnergy(source, decision.energyCost, context.payment);
       const target = targets[0];
       runtime.presentation.log(
         target.id === source.id
@@ -193,10 +228,10 @@ stealSkill 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+source.energy；牌移动经 zone collaborator。
 
 调用函数
-下游 collaborator。
+paySkillEnergy、randomChoice 与 zone/presentation collaborator。
 
 边界与不变量
 不重复 Domain rule 决定。
@@ -205,7 +240,7 @@ runtime/card/skill facts。
       const state = runtime.getState();
       const gameId = state.gameId;
       const decision = decideSkillEffect(skill, source, context);
-      changeEnergy(state, source, -decision.energyCost);
+      paySkillEnergy(source, decision.energyCost, context.payment);
       const target = targets[0];
       const options = [...target.hand.map((card) => ({ card, zone: "hand" })), ...(target.equipment ? [{ card: target.equipment, zone: "equipment" }] : [])];
       const chosen = randomChoice(options, runtime.random);
@@ -233,10 +268,10 @@ burningField 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+source.energy；伤害结果经 damage collaborator。
 
 调用函数
-下游 collaborator。
+paySkillEnergy、getEnemies、damage 与 presentation collaborator。
 
 边界与不变量
 不重复 Domain rule 决定。
@@ -245,7 +280,7 @@ runtime/card/skill facts。
       const state = runtime.getState();
       const gameId = state.gameId;
       const decision = decideSkillEffect(skill, source, context);
-      changeEnergy(state, source, -decision.energyCost);
+      paySkillEnergy(source, decision.energyCost, context.payment);
       runtime.presentation.log(`${source.name}发动「焚场」。`, "important");
       for (const target of runtime.getEnemies(source)) {
         if (!runtime.isSessionValid(gameId) || state.isGameOver) break;
@@ -272,10 +307,10 @@ hunt 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+source.energy、target.huntMark；伤害与摸牌经 collaborator。
 
 调用函数
-下游 collaborator。
+paySkillEnergy、removeStatus、damage、drawCards 与 presentation collaborator。
 
 边界与不变量
 不重复 Domain rule 决定。
@@ -286,7 +321,7 @@ runtime/card/skill facts。
       const decision = decideSkillEffect(skill, source, context);
       const target = targets[0];
       runtime.presentation.log(`${source.name}对${target.name}发动「猎杀」。`, "important");
-      changeEnergy(state, source, -decision.energyCost);
+      paySkillEnergy(source, decision.energyCost, context.payment);
       removeStatus(state, target, "huntMark");
       const damageContext = { skill: "hunt", actionName: "猎杀", canBlock: true, damageType: "skill" };
       await runtime.damage(source, target, decision.damageAmount, damageContext);
@@ -310,10 +345,10 @@ allIn 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+source.energy/statuses；摸牌经 drawCards collaborator。
 
 调用函数
-下游 collaborator。
+paySkillEnergy、drawCards、setStatus 与 presentation collaborator。
 
 边界与不变量
 不重复 Domain rule 决定。
@@ -323,7 +358,7 @@ runtime/card/skill facts。
       const gameId = state.gameId;
       const hadAllInBefore = Boolean(source.statuses.allIn);
       const decision = decideSkillEffect(skill, source, context);
-      changeEnergy(state, source, -decision.energyCost);
+      paySkillEnergy(source, decision.energyCost, context.payment);
       const drawn = await runtime.drawCards(source, decision.drawCount, "孤注", { silent: true });
       if (!runtime.isSessionValid(gameId)) return;
       const entered = runtime.random() < decision.enterChance;
@@ -351,10 +386,10 @@ resonance 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+source.energy；目标摸牌经 drawCards collaborator。
 
 调用函数
-下游 collaborator。
+paySkillEnergy、drawCards 与 presentation collaborator。
 
 边界与不变量
 不重复 Domain rule 决定。
@@ -363,7 +398,7 @@ runtime/card/skill facts。
       const state = runtime.getState();
       const gameId = state.gameId;
       const decision = decideSkillEffect(skill, source, context);
-      changeEnergy(state, source, -decision.energyCost);
+      paySkillEnergy(source, decision.energyCost, context.payment);
       const drawn = await runtime.drawCards(targets[0], decision.drawCount, "共鸣", { silent: true });
       if (runtime.isSessionValid(gameId)) runtime.presentation.log(`${source.name}发动「共鸣」，令${targets[0].name}${drawn ? `摸${drawn}张牌` : "未摸到牌"}。`);
     }
@@ -380,24 +415,26 @@ runtime/card/skill facts。
   skill、source、targets 与 context。
 
   输出
-  Promise。
+  Promise<number>，返回本次 execution 在 canonical 扣款点记录的实际支付能量。
 
   读取状态
-  skill.id 与 runtime state。
+  skill.id、runtime state 与 execution-local payment ledger。
 
   写入状态
-  经 EFFECTS。
+  经 EFFECTS 写入真实技能效果；payment ledger 只在本次调用内可写。
 
   调用函数
   EFFECTS。
 
   边界与不变量
-  未知 skill 抛错。
+  未知 skill 抛错；发布支付事实由 Action commit boundary 负责。
   */
   async function execute(skill, source, targets, context = {}) {
     const resolver = EFFECTS[skill.id];
     if (!resolver) throw new Error(`未注册主动技能效果：${skill.id}`);
-    await resolver(skill, source, targets, context);
+    const executionContext = { ...context, payment: { actualAmount: 0 } };
+    await resolver(skill, source, targets, executionContext);
+    return executionContext.payment.actualAmount;
   }
 
   return Object.freeze({ execute });

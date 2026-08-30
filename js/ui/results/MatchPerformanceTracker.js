@@ -78,45 +78,13 @@ function createPlayerRecord(player, initialTeamSize) {
       allyMitigation: 0,
       allyShieldAbsorbed: 0,
       cardsPlayed: 0,
-      activeSkillsUsed: 0,
+      skillEnergySpent: 0,
       enemyControls: 0
     },
     contributionFacts: createContributionFacts(),
     clutchEnemyCount: null,
     aliveAtEnd: false
   };
-}
-
-/*
-功能
-读取玩家当前回合 authoritative 主动技能使用总次数。
-
-调用方
-MatchPerformanceTracker.settleActiveSkillTurn。
-
-输入
-当前 Player entity。
-
-输出
-activeSkillUseCounts 中全部有限非负次数之和。
-
-读取状态
-player.turnFlags.activeSkillUseCounts。
-
-写入状态
-无。
-
-调用函数
-Object.values。
-
-边界与不变量
-非法尝试和纯被动不会写入该权威结构，因此不会进入结果。
-*/
-function countCurrentTurnActiveSkills(player) {
-  return Object.values(player?.turnFlags?.activeSkillUseCounts ?? {}).reduce(
-    (sum, value) => sum + Math.max(0, Number(value) || 0),
-    0
-  );
 }
 
 /*
@@ -173,7 +141,7 @@ export class MatchPerformanceTracker {
   无。
 
   写入状态
-  records、subscription 与当前回合技能结算状态。
+  records、subscription 与局内关联状态。
 
   调用函数
   reset。
@@ -225,9 +193,8 @@ export class MatchPerformanceTracker {
       shieldGranted: (event) => this.handleShieldGranted(event),
       beforeCardUse: (event) => this.handleBeforeCardUse(event),
       cardUsed: (event) => this.handleCardUsed(event),
-      playerDead: (event) => this.handlePlayerDead(event),
-      turnStart: (event) => this.handleTurnStart(event),
-      turnEnd: (event) => this.handleTurnEnd(event)
+      skillEnergyPaid: (event) => this.handleSkillEnergyPaid(event),
+      playerDead: (event) => this.handlePlayerDead(event)
     };
     for (const [eventName, handler] of Object.entries(handlers)) {
       this.unsubscribers.push(this.eventDispatcher.on(
@@ -273,7 +240,7 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  清空本局 raw facts 与当前回合标记。
+  清空本局 raw facts 与局内关联状态。
 
   调用方
   constructor、initializeRoster、dispose 与 match reset 测试。
@@ -288,7 +255,7 @@ export class MatchPerformanceTracker {
   无。
 
   写入状态
-  records、gameId、activeSkillTurnPlayerId、护盾来源账、资源关联状态与 finalizedSnapshot。
+  records、gameId、护盾来源账、资源关联状态与 finalizedSnapshot。
 
   调用函数
   Map。
@@ -300,7 +267,6 @@ export class MatchPerformanceTracker {
     this.records = new Map();
     this.shieldSourceLedgers = new Map();
     this.gameId = null;
-    this.activeSkillTurnPlayerId = null;
     this.pendingResolvedCounter = null;
     this.pendingMutualBenefitHands = new Map();
     this.finalizedSnapshot = null;
@@ -937,95 +903,33 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  开始追踪当前真实行动者这一回合的主动技能累计槽。
+  累计一次真实主动技能支付的实际能量。
 
   调用方
-  turnStart listener。
+  skillEnergyPaid listener。
 
   输入
-  含 player 的 turnStart event。
+  含 source 与 actualAmount 的 immutable payment fact。
 
   输出
   无返回值。
 
   读取状态
-  activeSkillTurnPlayerId。
+  skillEnergyPaid fact。
 
   写入状态
-  activeSkillTurnPlayerId。
+  record.skillEnergySpent。
 
   调用函数
-  settleActiveSkillTurn。
+  recordFor。
 
   边界与不变量
-  若异常流程未发 turnEnd 而直接进入下一回合，先收束上一回合，避免事实丢失。
+  只接受真实支付点发布的正数；免费、非法、取消、被动与 AI World simulation 均不发布该事实。
   */
-  handleTurnStart(event) {
-    if (this.activeSkillTurnPlayerId) this.settleActiveSkillTurn(this.activeSkillTurnPlayerId);
-    this.activeSkillTurnPlayerId = event.player?.id ?? null;
-  }
-
-  /*
-  功能
-  在真实回合结束时收束该玩家主动技能使用次数。
-
-  调用方
-  turnEnd listener。
-
-  输入
-  含 player 的 turnEnd event。
-
-  输出
-  无返回值。
-
-  读取状态
-  activeSkillTurnPlayerId。
-
-  写入状态
-  activeSkillsUsed 与当前回合标记。
-
-  调用函数
-  settleActiveSkillTurn。
-
-  边界与不变量
-  重复或过期 turnEnd 不得重复累计。
-  */
-  handleTurnEnd(event) {
-    if (event.player?.id !== this.activeSkillTurnPlayerId) return;
-    this.settleActiveSkillTurn(event.player.id);
-  }
-
-  /*
-  功能
-  把指定当前回合的 authoritative 主动技能次数加入 tracker 一次。
-
-  调用方
-  turnStart、turnEnd 与 finalizeMatch。
-
-  输入
-  当前回合玩家 ID。
-
-  输出
-  无返回值。
-
-  读取状态
-  MatchState player.turnFlags.activeSkillUseCounts。
-
-  写入状态
-  record.activeSkillsUsed 与 activeSkillTurnPlayerId。
-
-  调用函数
-  countCurrentTurnActiveSkills、recordFor。
-
-  边界与不变量
-  只结算仍标记为当前回合的 ID；同一回合最多累计一次。
-  */
-  settleActiveSkillTurn(playerId) {
-    if (!playerId || playerId !== this.activeSkillTurnPlayerId) return;
-    const player = this.getState().players.find((candidate) => candidate.id === playerId);
-    const record = this.recordFor(playerId);
-    if (player && record) record.totals.activeSkillsUsed += countCurrentTurnActiveSkills(player);
-    this.activeSkillTurnPlayerId = null;
+  handleSkillEnergyPaid(event) {
+    const actualAmount = Math.max(0, Number(event.actualAmount) || 0);
+    const record = this.recordFor(event.source);
+    if (record && actualAmount > 0) record.totals.skillEnergySpent += actualAmount;
   }
 
   /*
@@ -1048,14 +952,13 @@ export class MatchPerformanceTracker {
   finalizedSnapshot。
 
   调用函数
-  settleActiveSkillTurn、freezePlayerRecord。
+  freezePlayerRecord。
 
   边界与不变量
   同局重复 finalize 返回同一 immutable snapshot；玩家按原座位输出，评分排序留给 ViewModel。
   */
   finalizeMatch() {
     if (this.finalizedSnapshot) return this.finalizedSnapshot;
-    this.settleActiveSkillTurn(this.activeSkillTurnPlayerId);
     const state = this.getState();
     const players = Object.freeze([...this.records.values()]
       .sort((left, right) => left.seatIndex - right.seatIndex)

@@ -23,7 +23,7 @@ import { recordActiveSkillUse } from "../../domain/state/transitions/RuleUsageTr
 import { ActionRollbackError } from "./ActionTransaction.js";
 
 const REQUIRED_DEPENDENCIES = [
-  "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics",
+  "getState", "isSessionValid", "emitEvent", "publishFact", "presentation", "diagnostics",
   "responseWorkflow", "cardRuntime", "canPlayCard", "getCardTargets", "moveHandToResolving",
   "finishResolvingToDiscard", "isCardCommittedToDiscard", "isCardCommittedToEquipment",
   "clearSelection", "getActionDisplayTargets",
@@ -627,10 +627,10 @@ export function createActionWorkflow(dependencies) {
   active skill usage 经 RuleUsageTransition；资源经 skill execute；失败经 Action transaction 整体恢复。
 
   调用函数
-  createActionTransaction、recordActiveSkillUse、skillRuntime、getSkillTargets。
+  createActionTransaction、recordActiveSkillUse、skillRuntime、getSkillTargets、publishFact。
 
   边界与不变量
-  技能规则由 skill runtime 决定，transition 只提交；execute 与 runtime lock 收束成功后立即 commit，其后的 refresh、prompt 与 human-play-end 失败只记录。
+  技能规则由 skill runtime 决定，transition 只提交；支付事实只在 transaction commit 后发布，回滚不得污染 MVP tracker。
   */
   async function useActiveSkill(source, skillId, targets = []) {
     const state = runtime.getState();
@@ -646,6 +646,7 @@ export function createActionWorkflow(dependencies) {
     const transaction = runtime.createActionTransaction(actionRuntime);
     actionRuntime.actionLocked = true;
     let completed = false;
+    let actualEnergyPaid = 0;
     try {
       recordActiveSkillUse(state, source, skill.id);
       const targetLabel = runtime.getActionTargetLabel(source, skill, targets);
@@ -656,12 +657,11 @@ export function createActionWorkflow(dependencies) {
         displayTargets: runtime.getActionDisplayTargets(source, skill, targets)
       });
       runtime.presentation.playActionCue("skill");
-      await runtime.skillRuntime.execute(skill, source, targets, {
+      actualEnergyPaid = await runtime.skillRuntime.execute(skill, source, targets, {
         resolutionId: runtime.createId("skill-resolution"), energyCost
       });
       if (!runtime.isSessionValid(gameId)) return false;
       completed = true;
-      return true;
     } finally {
       const disposedDuringAction = state.isDisposed === true;
       try {
@@ -692,6 +692,22 @@ export function createActionWorkflow(dependencies) {
         );
       }
     }
+    if (actualEnergyPaid > 0) {
+      try {
+        await runtime.publishFact("skillEnergyPaid", {
+          source,
+          skill,
+          actualAmount: actualEnergyPaid
+        });
+      } catch (error) {
+        runtime.diagnostics.reportWorkflowError(
+          "Action",
+          `${source.name}的技能支付统计事实发布失败`,
+          error
+        );
+      }
+    }
+    return true;
   }
 
   /*
