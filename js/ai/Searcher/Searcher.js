@@ -929,13 +929,13 @@ considerIncumbent 与 prune。
   canonical Action、父 World、行动者、深度、provenance、Simulator、搜索上下文与诊断选项。
 
   输出
-  完整候选；candidate-local fault 返回 null。
+  完整候选；预算中断返回 null，ordinary candidate fault 向 search 边界抛出。
 
   读取状态
   Simulator、Evaluator 与 SearchBudget 工作计数。
 
   写入状态
-  只更新工作计数、candidate fault 与纯数字阶段耗时 diagnostics。
+  只更新工作计数、candidate fault 与纯数字阶段耗时 diagnostics；普通故障不恢复搜索。
 
   调用函数
   Simulator.apply、evaluateCandidate、finalizeCandidate、recordCandidateFault、recordCandidateTiming。
@@ -943,6 +943,7 @@ considerIncumbent 与 prune。
   边界与不变量
   candidate atomicity 只保证 partial candidate 不得登记，不代表 candidate 不可中断；
   safe checkpoint 的 TIME/NODE signal 会 unwind 当前未完成 candidate，且不记录 candidate fault；
+  ordinary candidate fault 必须终止本次搜索，不能把缺失候选的空间当成正式比较集合；
   END 必须由 sibling group 在完整上下文中单独 finalize。
   */
   materializeCandidate({
@@ -1004,8 +1005,12 @@ considerIncumbent 与 prune。
       return result;
     } catch (error) {
       if (budget.isCurrentWorkInterruption(error)) return null;
-      this.recordCandidateFault(action, "materialize", error);
-      return null;
+      const fault = this.recordCandidateFault(action, "materialize", error);
+      const candidateError = new Error(
+        `Searcher candidate materialize fault [${actionSearchKey(action)}]: ${fault.message}`
+      );
+      candidateError.name = "CandidateMaterializationError";
+      throw candidateError;
     } finally {
       this.recordCandidateTiming({
         action,
@@ -1338,7 +1343,7 @@ search 的 root 与逐层 beam 完整节点登记点。
   Simulator、Evaluator、SearchBudget 与 yieldControl。
 
   写入状态
-  只更新完整节点工作计数和 candidate fault diagnostics。
+  只更新完整节点工作计数和 candidate fault diagnostics；普通故障直接上抛。
 
   调用函数
   materializeCandidate、finalizeCandidate、SearchBudget.shouldStop/observeNode、continueAfterYield。
@@ -1346,7 +1351,7 @@ search 的 root 与逐层 beam 完整节点登记点。
   边界与不变量
   TIME/NODE 可在候选边界阻止新工作，也可经 safe checkpoint unwind 未完成 candidate；
   candidate atomicity 只保证 partial candidate 不得进入完整候选或 incumbent；
-  END 只有在全部 canonical siblings 都成功物化时才可 finalize；candidate fault 只丢当前候选。
+  END 只有在全部 canonical siblings 都成功物化时才可 finalize；candidate fault 不得静默丢失当前候选后继续比较。
   */
   async materializeSiblingCandidates({
     actions,
@@ -1406,7 +1411,12 @@ search 的 root 与逐层 beam 完整节点登记点。
         completeCandidates.push(completeEnd);
         budget.observeNode();
       } catch (error) {
-        this.recordCandidateFault(endCandidate.action, "finalize", error);
+        const fault = this.recordCandidateFault(endCandidate.action, "finalize", error);
+        const candidateError = new Error(
+          `Searcher candidate finalize fault [${actionSearchKey(endCandidate.action)}]: ${fault.message}`
+        );
+        candidateError.name = "CandidateMaterializationError";
+        throw candidateError;
       }
     }
     return {
@@ -1540,7 +1550,7 @@ search 的 root 与逐层 beam 完整节点登记点。
   行动者、canonical World、canonical root Actions 与可选会话/诊断上下文。
 
   输出
-  Evaluator 选出的最佳完整 root Action；TIME/NODE 在没有完整候选时返回 null，
+  Evaluator 选出的最佳完整 root Action；root coverage 未完成时返回 null，
   其它 root invariant failure 继续抛出。
 
   读取状态
@@ -1556,7 +1566,8 @@ search 的 root 与逐层 beam 完整节点登记点。
   边界与不变量
   root contract 只在入口验证一次；TIME/NODE 可在候选边界或 candidate 内 safe checkpoint 停止；
   candidate atomicity 只保证 partial candidate 不得登记，不禁止 cooperative interruption；
-  candidate-local fault 只丢当前候选，共享结构异常直接上抛；
+  candidate fault 与共享结构异常都直接上抛，不能形成缺失候选的正式空间；
+  所有 canonical roots 完整物化并完成 END sibling terms 前，不登记任何正式 root incumbent；
   END 只有全部同 parent canonical siblings 完整时才可比较；
   Pattern 只调度，Evaluator comparator 是唯一 winner authority。
   */
@@ -1637,6 +1648,16 @@ search 的 root 与逐层 beam 完整节点登记点。
     });
     const rootCandidates = rootResult.candidates;
     workDiagnostics.completedRootCandidateCount = rootCandidates.length;
+    if (rootResult.stopped) {
+      return this.recordResult({
+        budget,
+        structure,
+        choice:null,
+        context,
+        rootLedgers,
+        workDiagnostics
+      });
+    }
     if (!rootCandidates.length) {
       if (budget.stopReason === SEARCH_STOP_REASON.TIME
         || budget.stopReason === SEARCH_STOP_REASON.NODE) {

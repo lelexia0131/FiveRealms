@@ -14951,7 +14951,7 @@ X 技能 nextEnergyStateDelta 数值 contract 测试。
 反事实 transitionDelta 应返回的测试值。
 
 输出
-Searcher 选择结果、搜索统计与 END sibling 捕获值。
+Searcher 选择结果、搜索统计、普通故障与 END sibling 捕获值。
 
 读取状态
 真实 canonical World、Generator root Actions、Searcher candidate diagnostics。
@@ -14964,7 +14964,7 @@ makeBenchmarkGame、createInitialWorld、createSearchEngine、Searcher.search。
 
 边界与不变量
 只替换反事实 delta 的返回值；X candidate 必须经唯一 Evaluator value contract，
-非法值只能成为 candidate-local fault，不能被 END 解释成缺少 X pair。
+非法值必须终止残缺搜索，不能被 END 解释成缺少 X pair 或跳过 X candidate 后继续比较。
 */
 async function runXSkillNextEnergyStateDeltaContract(nextEnergyStateDelta) {
   const game = makeBenchmarkGame({
@@ -15017,14 +15017,21 @@ async function runXSkillNextEnergyStateDeltaContract(nextEnergyStateDelta) {
       capturedSiblingTerms = siblingTerms;
       return endOpportunityPoints(endTerms, siblingTerms);
     };
-    const selected = await engine.searcher.search(
-      worldActor,
-      world,
-      [xSkillAction, assaultAction, endAction],
-      { gameId:world.gameId, rootCandidateCount:3 }
-    );
+    let selected = null;
+    let searchError = null;
+    try {
+      selected = await engine.searcher.search(
+        worldActor,
+        world,
+        [xSkillAction, assaultAction, endAction],
+        { gameId:world.gameId, rootCandidateCount:3 }
+      );
+    } catch (error) {
+      searchError = error;
+    }
     return {
       selected,
+      searchError,
       stats:engine.searcher.lastSearchStats,
       capturedSiblingTerms,
       xSkillAction,
@@ -15036,22 +15043,23 @@ async function runXSkillNextEnergyStateDeltaContract(nextEnergyStateDelta) {
   }
 }
 
-test("AI·价值归属：X 技能非法 nextEnergyStateDelta 只能成为 candidate-local fault", async () => {
+test("AI·价值归属：X 技能非法 nextEnergyStateDelta 终止残缺搜索", async () => {
   for (const invalidValue of [Number.NaN, Number.POSITIVE_INFINITY, undefined, "not-a-number"]) {
     const result = await runXSkillNextEnergyStateDeltaContract(invalidValue);
-    assert.equal(result.stats.stopReason, "COMPLETE", String(invalidValue));
-    assert.equal(Object.hasOwn(result.stats, "searchFault"), false, String(invalidValue));
-    assert.equal(result.stats.candidateFaults.length, 1, String(invalidValue));
-    assert.equal(result.stats.candidateFaults[0].action, result.xSkillAction, String(invalidValue));
-    assert.match(result.stats.candidateFaults[0].message, /nextEnergyStateDelta/u, String(invalidValue));
-    assert.equal(result.stats.completedRootCandidateCount, 1, String(invalidValue));
-    assert.equal(result.selected, result.assaultAction, String(invalidValue));
+    assert.match(
+      result.searchError?.message ?? "",
+      /nextEnergyStateDelta/u,
+      String(invalidValue)
+    );
+    assert.equal(result.stats, null, String(invalidValue));
+    assert.equal(result.selected, null, String(invalidValue));
     assert.equal(result.capturedSiblingTerms, null, String(invalidValue));
   }
 });
 
 test("AI·价值归属：X 技能 finite delta 与非 X null 保持 END sibling contract", async () => {
   const result = await runXSkillNextEnergyStateDeltaContract(2.5);
+  assert.equal(result.searchError, null);
   assert.equal(result.stats.stopReason, "COMPLETE");
   assert.equal(Object.hasOwn(result.stats, "searchFault"), false);
   assert.equal(result.stats.candidateFaults.length, 0);
@@ -18072,6 +18080,300 @@ test("AI·Domain model 边界：折叠 Model 不回流且 Domain Rule 仍为 aut
 // ---- AI 搜索与规划·固定轨迹与预算 ----
 
 
+/*
+功能
+验证负收益共生不能借 root 调度和不完整覆盖成为正式搜索结果。
+
+调用方
+AI 搜索 root coverage 回归测试。
+
+输入
+无。
+
+输出
+无；断言失败时抛错。
+
+读取状态
+生产 Generator、Pattern、Searcher、Simulator、Evaluator 与 Controller acceptance diagnostics。
+
+写入状态
+只写两个独立测试 Game fixture 的搜索诊断。
+
+调用函数
+makeBenchmarkGame、runBenchmarkAiDecision、disposeBenchmarkGame。
+
+边界与不变量
+NODE 中断可以没有正式 Action，但不能把只完成 1/3 roots 的负值共生当 winner；完整覆盖仍由 Evaluator 选择 END。
+*/
+async function symbiosisIncompleteRootCoverageRegression() {
+  const buildGame = (nodeBudget) => makeBenchmarkGame({
+    players:[
+      {
+        id:"coverage-symbiosis-actor",
+        team:"dawn",
+        character:"blade-walker",
+        hp:4,
+        hand:[
+          makeBenchmarkCard("symbiosis", `coverage-symbiosis-${nodeBudget}`),
+          makeBenchmarkCard("assault", `coverage-assault-${nodeBudget}`)
+        ]
+      },
+      { id:"coverage-symbiosis-ally", team:"dawn", character:"oath-warden", hp:5 },
+      { id:"coverage-symbiosis-enemy", team:"dusk", character:"spirit-medic", hp:3 },
+      { id:"coverage-symbiosis-enemy-b", team:"dusk", character:"shade-agent", hp:4 },
+      { id:"coverage-symbiosis-enemy-c", team:"dusk", character:"ember-magus", hp:4 }
+    ],
+    options:{ actorId:"coverage-symbiosis-actor", seed:20260830, nodeBudget }
+  });
+  const interrupted = buildGame(1);
+  const complete = buildGame(1000);
+  try {
+    const interruptedDecision = await runBenchmarkAiDecision(
+      interrupted,
+      "coverage-symbiosis-actor"
+    );
+    assert.equal(interruptedDecision.stats.scheduledRootOrder[0].cardId, "symbiosis");
+    assert.equal(interruptedDecision.stats.completedRootCandidateCount, 1);
+    assert.equal(interruptedDecision.stats.uniqueRootCandidateCount, 3);
+    assert.equal(interruptedDecision.stats.bestValueScore, null);
+    assert.equal(interruptedDecision.stats.stopReason, "NODE");
+    assert.equal(interruptedDecision.action, null);
+    assert.equal(
+      interrupted.aiController.lastSearchResult.status,
+      SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED
+    );
+
+    const completeDecision = await runBenchmarkAiDecision(
+      complete,
+      "coverage-symbiosis-actor"
+    );
+    assert.equal(completeDecision.stats.stopReason, "COMPLETE");
+    assert.equal(
+      completeDecision.stats.completedRootCandidateCount,
+      completeDecision.stats.uniqueRootCandidateCount
+    );
+    assert.equal(completeDecision.stats.candidateFaults.length, 0);
+    assert.equal(completeDecision.action.type, "end");
+  } finally {
+    disposeBenchmarkGame(interrupted);
+    disposeBenchmarkGame(complete);
+  }
+}
+
+test(
+  "AI·搜索：负收益共生在 ROOT 未完整覆盖时不成为正式 winner",
+  symbiosisIncompleteRootCoverageRegression
+);
+
+/*
+功能
+验证破坏队友已知牌时静态 selection 比较按己方损失方向工作。
+
+调用方
+AI 搜索资源 selection 回归测试。
+
+输入
+无。
+
+输出
+无；断言失败时抛错。
+
+读取状态
+canonical World、Generator destroy selections、Simulator after Worlds 与 Evaluator comparator。
+
+写入状态
+只写独立测试 Game 与模拟 World。
+
+调用函数
+makeBenchmarkGame、createInitialWorld、deriveCurrentCardCounts、Simulator.apply、runBenchmarkAiDecision。
+
+边界与不变量
+队友高价值格挡的静态值必须比低价值聚能更不适合被破坏；完整搜索仍可由 END 击败全部负值 destroy roots。
+*/
+async function allyDestroySelectionDirectionRegression() {
+  const game = makeBenchmarkGame({
+    players:[
+      {
+        id:"ally-destroy-actor",
+        team:"dawn",
+        character:"resonance-tuner",
+        hp:4,
+        hand:[makeBenchmarkCard("destroy", "ally-destroy-use")],
+        aiMemory:{ knownCardsByPlayer:{
+          "ally-destroy-target":[
+            { id:"ally-destroy-block", definitionId:"block" },
+            { id:"ally-destroy-charge", definitionId:"charge" }
+          ]
+        } }
+      },
+      {
+        id:"ally-destroy-target",
+        team:"dawn",
+        character:"oath-warden",
+        hp:5,
+        hand:[
+          makeBenchmarkCard("block", "ally-destroy-block"),
+          makeBenchmarkCard("charge", "ally-destroy-charge")
+        ]
+      },
+      { id:"ally-destroy-enemy", team:"dusk", character:"spirit-medic" },
+      { id:"ally-destroy-enemy-b", team:"dusk", character:"shade-agent" },
+      { id:"ally-destroy-enemy-c", team:"dusk", character:"ember-magus" }
+    ],
+    options:{ actorId:"ally-destroy-actor", seed:20260830, nodeBudget:1000 }
+  });
+  try {
+    const actor = game.state.players.find((player) => player.id === "ally-destroy-actor");
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const destroyActions = game.aiController.getActionCandidates(actor, world).filter(
+      (action) => action.cardId === "destroy"
+    );
+    const blockAction = destroyActions.find(
+      (action) => action.selection?.definitionId === "block"
+    );
+    const chargeAction = destroyActions.find(
+      (action) => action.selection?.definitionId === "charge"
+    );
+    assert.ok(blockAction && chargeAction);
+    const simulator = new Simulator(world);
+    const worldActor = world.players.find((player) => player.id === actor.id);
+    const blockTerms = game.aiController.evaluator.resourceSelectionPreference(
+      blockAction,
+      worldActor,
+      world,
+      simulator.apply(world, blockAction)
+    );
+    const chargeTerms = game.aiController.evaluator.resourceSelectionPreference(
+      chargeAction,
+      worldActor,
+      world,
+      simulator.apply(world, chargeAction)
+    );
+    assert.ok(blockTerms.staticUtility < chargeTerms.staticUtility);
+    assert.ok(game.aiController.evaluator.compareCandidates(
+      { action:chargeAction, comparisonTerms:chargeTerms, valueScore:0 },
+      { action:blockAction, comparisonTerms:blockTerms, valueScore:0 },
+      worldActor,
+      world
+    ) > 0);
+    const decision = await runBenchmarkAiDecision(game, actor.id);
+    assert.equal(decision.stats.candidateFaults.length, 0);
+    assert.equal(decision.action.type, "end");
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test(
+  "AI·搜索：破坏队友已知牌的 selection 不再优先重要防御牌",
+  allyDestroySelectionDirectionRegression
+);
+
+/*
+功能
+验证破势和突袭在连续 canonical World 中按真实顺序传播并选择破势 root。
+
+调用方
+AI 搜索顺序回归测试。
+
+输入
+无。
+
+输出
+无；断言失败时抛错。
+
+读取状态
+生产 Generator、Simulator World transition、Evaluator 与完整 Searcher trace。
+
+写入状态
+只写独立模拟 Worlds 与搜索诊断。
+
+调用函数
+createInitialWorld、Generator.generate、Simulator.apply、runBenchmarkAiDecision。
+
+边界与不变量
+同一局面必须证明破势后的突袭造成更优真实状态；Pattern 只负责先探索，最终 root 仍由完整 Final Utility 选择。
+*/
+async function exposeBeforeAssaultSearchRegression() {
+  const game = makeBenchmarkGame({
+    players:[
+      {
+        id:"expose-order-actor",
+        team:"dawn",
+        character:"blade-walker",
+        hp:4,
+        hand:[
+          makeBenchmarkCard("exposeWeakness", "expose-order-use"),
+          makeBenchmarkCard("assault", "expose-order-assault")
+        ]
+      },
+      { id:"expose-order-ally", team:"dawn", character:"spirit-medic" },
+      { id:"expose-order-enemy-a", team:"dusk", character:"oath-warden", hp:5 },
+      { id:"expose-order-enemy-b", team:"dusk", character:"shade-agent", hp:4 },
+      { id:"expose-order-enemy-c", team:"dusk", character:"ember-magus", hp:2 }
+    ],
+    options:{ actorId:"expose-order-actor", seed:20260830, nodeBudget:1000 }
+  });
+  try {
+    const actor = game.state.players.find((player) => player.id === "expose-order-actor");
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const roots = game.aiController.getActionCandidates(actor, world);
+    const expose = roots.find((action) => action.cardId === "exposeWeakness");
+    const assault = roots.find((action) => action.cardId === "assault");
+    assert.ok(expose && assault);
+    const simulator = new Simulator(world);
+    const generator = new ActionGenerator();
+    const afterExpose = simulator.apply(world, expose);
+    const assaultAfterExpose = generator.generate(afterExpose, actor.id).find(
+      (action) => action.cardId === "assault"
+        && action.targetIds?.[0] === assault.targetIds?.[0]
+    );
+    const exposeThenAssault = simulator.apply(afterExpose, assaultAfterExpose);
+    const afterAssault = simulator.apply(world, assault);
+    const exposeAfterAssault = generator.generate(afterAssault, actor.id).find(
+      (action) => action.cardId === "exposeWeakness"
+    );
+    const assaultThenExpose = simulator.apply(afterAssault, exposeAfterAssault);
+    const targetId = assault.targetIds[0];
+    const targetAfterCorrectOrder = exposeThenAssault.players.find(
+      (player) => player.id === targetId
+    );
+    const targetAfterWrongOrder = assaultThenExpose.players.find(
+      (player) => player.id === targetId
+    );
+    assert.ok(targetAfterCorrectOrder.hp < targetAfterWrongOrder.hp);
+
+    const decision = await runBenchmarkAiDecision(game, actor.id);
+    assert.equal(decision.stats.stopReason, "COMPLETE");
+    assert.equal(
+      decision.stats.completedRootCandidateCount,
+      decision.stats.uniqueRootCandidateCount
+    );
+    assert.equal(decision.stats.candidateFaults.length, 0);
+    assert.equal(decision.action.cardId, "exposeWeakness");
+    assert.deepEqual(
+      decision.stats.bestSequence.slice(0, 2).map((action) => action.cardId),
+      ["exposeWeakness", "assault"]
+    );
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test(
+  "AI·搜索：破势与突袭由连续 World 和 Final Utility 选择正确顺序",
+  exposeBeforeAssaultSearchRegression
+);
+
+
 
 test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", async () => {
   const game = makeBenchmarkGame({
@@ -18411,7 +18713,7 @@ test("AI·搜索压力：守誓者大手牌在真实 900ms 预算返回完整 no
   }
 });
 
-test("AI·搜索压力：赌命者大手牌固定节点预算返回最佳完整 non-END", async () => {
+test("AI·搜索压力：赌命者大手牌节点不足完整 ROOT 时不返回 partial winner", async () => {
   const game = makeBenchmarkGame({
     players:[
       {
@@ -18443,12 +18745,17 @@ test("AI·搜索压力：赌命者大手牌固定节点预算返回最佳完整 
   try {
     const decision = await runBenchmarkAiDecision(game, "stress-gambler");
     assert.ok(decision.legalActions.length >= 6, "大手牌必须形成多个 canonical roots");
-    assert.ok(decision.action);
-    assert.notEqual(decision.action.type, "end");
+    assert.equal(decision.action, null);
     assert.equal(decision.stats.stopReason, "NODE");
     assert.ok(decision.stats.completedRootCandidateCount > 0);
-    assert.deepEqual(decision.action, decision.stats.bestSequence[0]);
-    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.ok(
+      decision.stats.completedRootCandidateCount < decision.stats.uniqueRootCandidateCount
+    );
+    assert.deepEqual(decision.stats.bestSequence, []);
+    assert.equal(
+      game.aiController.lastSearchResult.status,
+      SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED
+    );
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -19635,7 +19942,7 @@ test("AI·搜索：多张同定义突袭逐动作重规划时连续兑现仍会�
   game.cleanupManager.delay = async () => true;
 
   const firstRoots = game.aiController.getActionCandidates(actor);
-  game.aiSearchNodeBudgetOverride = firstRoots.filter((action) => action.type !== "end").length;
+  game.aiSearchNodeBudgetOverride = firstRoots.length;
   const first = await game.aiController.selectAction(actor, {
     gameId:game.state.gameId,
     searchTimeBudgetMs:30000
@@ -19650,7 +19957,7 @@ test("AI·搜索：多张同定义突袭逐动作重规划时连续兑现仍会�
   const secondRoots = game.aiController.getActionCandidates(actor);
   assert.ok(secondRoots.some((action) => action.cardId === "assault"));
   assert.ok(actor.hand.length > actor.hp);
-  game.aiSearchNodeBudgetOverride = secondRoots.filter((action) => action.type !== "end").length;
+  game.aiSearchNodeBudgetOverride = secondRoots.length;
   const second = await game.aiController.selectAction(actor, {
     gameId:game.state.gameId,
     searchTimeBudgetMs:30000
@@ -20339,13 +20646,11 @@ test("AI·搜索：NODE 返回已登记的深层 best complete incumbent", async
   assert.equal(result.stats.bestValueScore, 10);
 });
 
-test("AI·搜索：后续 candidate fault 不遗忘已登记的 best complete incumbent", async () => {
+test("AI·搜索：后续 candidate fault 不把已登记 incumbent 当完整搜索结果", async () => {
   const result = await runSearcherFaultBoundaryFixture("deep-best-fault");
-  assert.equal(result.stats.stopReason, "COMPLETE");
-  assert.equal(result.selected, result.charge);
-  assert.deepEqual(result.stats.bestSequence, [result.charge, result.continuation]);
-  assert.equal(result.stats.candidateFaults.length, 1);
-  assert.equal(result.stats.candidateFaults[0].action, result.faultyContinuation);
+  assert.match(result.searchError?.message ?? "", /synthetic candidate fault/u);
+  assert.equal(result.selected, null);
+  assert.equal(result.stats, null);
 });
 
 test("AI·搜索：COMPLETE 只返回 Evaluator 登记的 best complete incumbent", async () => {
@@ -20357,51 +20662,45 @@ test("AI·搜索：COMPLETE 只返回 Evaluator 登记的 best complete incumben
   assert.equal(result.stats.candidateFaults.length, 0);
 });
 
-test("AI·搜索：后续 Charge candidate fault 被隔离且保留完整 Assault incumbent", async () => {
+test("AI·搜索：后续 Charge candidate fault 终止残缺 root comparison", async () => {
   const result = await runSearcherFaultBoundaryFixture("after-incumbent-fault");
-  assert.equal(result.stats.stopReason, "COMPLETE");
-  assert.equal(result.selected, result.assault);
-  assert.equal(result.stats.completedRootCandidateCount, 1);
-  assert.equal(result.stats.candidateFaults.length, 1);
-  assert.equal(result.stats.candidateFaults[0].action, result.charge);
-  assert.match(result.stats.candidateFaults[0].message, /after incumbent/u);
-  assert.deepEqual(result.applied, ["assault", "charge", "end"]);
+  assert.match(result.searchError?.message ?? "", /after incumbent/u);
+  assert.equal(result.selected, null);
+  assert.equal(result.stats, null);
+  assert.deepEqual(result.applied, ["assault", "charge"]);
 });
 
-test("AI·搜索：首个 Assault candidate fault 后继续并返回完整 Charge candidate", async () => {
+test("AI·搜索：首个 Assault candidate fault 不跳过候选继续选 Charge", async () => {
   const result = await runSearcherFaultBoundaryFixture("before-incumbent-fault");
-  assert.equal(result.stats.stopReason, "COMPLETE");
-  assert.equal(result.stats.completedRootCandidateCount, 1);
-  assert.equal(result.selected, result.charge);
-  assert.equal(result.stats.candidateFaults.length, 1);
-  assert.equal(result.stats.candidateFaults[0].action, result.assault);
-  assert.equal(result.stats.candidateFaults[0].stage, "materialize");
-  assert.deepEqual(result.applied, ["assault", "charge", "end"]);
+  assert.match(result.searchError?.message ?? "", /before incumbent/u);
+  assert.equal(result.selected, null);
+  assert.equal(result.stats, null);
+  assert.deepEqual(result.applied, ["assault"]);
 });
 
-test("AI·搜索：首个 Evaluator/finalize candidate fault 后继续返回完整 Charge", async () => {
+test("AI·搜索：首个 Evaluator/finalize candidate fault 不形成残缺 winner", async () => {
   for (const mode of [
     "before-incumbent-evaluator-fault",
     "before-incumbent-finalize-fault"
   ]) {
     const result = await runSearcherFaultBoundaryFixture(mode);
-    assert.equal(result.stats.stopReason, "COMPLETE", mode);
-    assert.equal(result.selected, result.charge, mode);
-    assert.equal(result.stats.candidateFaults.length, 1, mode);
-    assert.equal(result.stats.candidateFaults[0].action, result.assault, mode);
+    assert.match(result.searchError?.message ?? "", /synthetic/u, mode);
+    assert.equal(result.selected, null, mode);
+    assert.equal(result.stats, null, mode);
   }
 });
 
-test("AI·搜索：已有完整 root 的 CANCELLED 直接收束 incumbent", async () => {
+test("AI·搜索：ROOT 未覆盖时 CANCELLED 不返回 partial incumbent", async () => {
   const result = await runSearcherFaultBoundaryFixture("post-incumbent-cancel");
   assert.equal(result.stats.stopReason, "CANCELLED");
-  assert.equal(result.selected, result.assault);
+  assert.equal(result.selected, null);
+  assert.deepEqual(result.stats.bestSequence, []);
   assert.deepEqual(result.applied, ["assault"]);
 });
 
 test("AI·搜索：only-END candidate fault 后触发 global invariant failure", async () => {
   const result = await runSearcherFaultBoundaryFixture("only-end-fault");
-  assert.match(result.searchError?.message ?? "", /所有 root candidates 均发生 candidate fault/u);
+  assert.match(result.searchError?.message ?? "", /only END candidate/u);
   assert.equal(result.stats, null);
   assert.equal(result.selected, null);
   assert.deepEqual(result.applied, ["end"]);
@@ -20446,15 +20745,12 @@ test("AI·搜索：structure shared setup exception 直接上抛", async () => {
   assert.deepEqual(result.applied, []);
 });
 
-test("AI·搜索：非法 Final Utility 与缺失 base transition 不进入完整 incumbent", async () => {
+test("AI·搜索：非法 Final Utility 与缺失 base transition 终止残缺搜索", async () => {
   for (const mode of ["nan-transition", "missing-transition-term"]) {
     const result = await runSearcherFaultBoundaryFixture(mode);
-    assert.equal(result.searchError, null, mode);
-    assert.equal(result.stats.stopReason, "COMPLETE", mode);
-    assert.equal(result.selected, result.charge, mode);
-    assert.equal(result.stats.candidateFaults.length, 1, mode);
-    assert.equal(result.stats.candidateFaults[0].action, result.assault, mode);
-    assert.match(result.stats.candidateFaults[0].message, /baseTransition|Final Utility/u, mode);
+    assert.match(result.searchError?.message ?? "", /baseTransition|Final Utility/u, mode);
+    assert.equal(result.selected, null, mode);
+    assert.equal(result.stats, null, mode);
   }
   assert.equal(isValidFinalUtility(Number.NaN), false);
   assert.equal(isValidFinalUtility(undefined), false);
@@ -20471,12 +20767,13 @@ test("AI·搜索：合法负无穷 Final Utility 保持完整但不可竞争", a
   assert.equal(result.selected, result.charge);
 });
 
-test("AI·搜索：多 root 时结构性优先建立 non-END baseline incumbent", async () => {
+test("AI·搜索：多 root 未完整覆盖时不建立正式 baseline incumbent", async () => {
   const result = await runEndSiblingBudgetFixture("NODE", { siblingType:"card" });
   assert.equal(result.stats.scheduledRootOrder[0], result.sibling);
-  assert.equal(result.selected, result.sibling);
+  assert.equal(result.selected, null);
   assert.deepEqual(result.applied, ["card"]);
   assert.equal(result.stats.completedRootCandidateCount, 1);
+  assert.equal(result.stats.bestValueScore, null);
 });
 
 test("AI·搜索：only-END 正常形成完整合法结果", async () => {
@@ -21065,17 +21362,20 @@ async function overflowCompletedNonEndIncumbentRegression() {
     assert.equal(decision.stats.stopReason, "NODE");
     assert.equal(decision.stats.expanded, 1);
     assert.equal(decision.stats.completedRootCandidateCount, 1);
-    assert.equal(decision.stats.bestSequence.length, 1);
-    assert.ok(decision.stats.incumbentUpdateCount >= 1);
-    assert.notEqual(decision.action.type, "end");
-    assert.deepEqual(decision.action, decision.stats.bestSequence[0]);
+    assert.deepEqual(decision.stats.bestSequence, []);
+    assert.equal(decision.stats.incumbentUpdateCount, 0);
+    assert.equal(decision.action, null);
+    assert.equal(
+      game.aiController.lastSearchResult.status,
+      SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED
+    );
   } finally {
     disposeBenchmarkGame(game);
   }
 }
 
 test(
-  "AI·搜索：大手牌 NODE 中断保留预算内已完成 non-END incumbent",
+  "AI·搜索：大手牌 NODE 中断不返回未覆盖 ROOT 的 partial incumbent",
   overflowCompletedNonEndIncumbentRegression
 );
 
@@ -21198,9 +21498,12 @@ async function overflowAssaultDecisionChainContract() {
     assert.equal(node.stats.stopReason, "NODE");
     assert.equal(node.stats.expanded, 1);
     assert.equal(node.stats.completedRootCandidateCount, 1);
-    assert.equal(node.action.cardId, "assault");
-    assert.deepEqual(node.action, node.stats.bestSequence[0]);
-    assert.equal(nodeGame.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.equal(node.action, null);
+    assert.deepEqual(node.stats.bestSequence, []);
+    assert.equal(
+      nodeGame.aiController.lastSearchResult.status,
+      SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED
+    );
   } finally {
     disposeBenchmarkGame(nodeGame);
   }
@@ -21241,27 +21544,27 @@ async function overflowAssaultDecisionChainContract() {
     assert.equal(outcome.workerError, null);
     assert.equal(outcome.searchStopReason, "CANCELLED");
     assert.equal(outcome.cancelled, true);
-    assert.equal(outcome.action.cardId, "assault");
+    assert.equal(outcome.action, null);
     assert.equal(outcome.stats.completedRootCandidateCount, 1);
-    assert.deepEqual(outcome.stats.bestSequence, [outcome.action]);
+    assert.deepEqual(outcome.stats.bestSequence, []);
     const accepted = cancelledGame.aiController.acceptWorkerSearchOutcome(
       request,
       outcome,
       roots
     );
-    assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
-    assert.equal(accepted.action, outcome.action);
+    assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.SEARCH_CANCELLED);
+    assert.equal(accepted.action, null);
   } finally {
     disposeBenchmarkGame(cancelledGame);
   }
 }
 
 test(
-  "AI·搜索：超限 Assault 在 COMPLETE/NODE/CANCELLED 全链保持 non-END",
+  "AI·搜索：超限 Assault 仅在完整 ROOT 时成为正式 non-END",
   overflowAssaultDecisionChainContract
 );
 
-test("AI·搜索：NODE 中断保留已完成 non-END incumbent 且不补算 END", async () => {
+test("AI·搜索：NODE 中断且 ROOT 未覆盖时不补算 END 也不返回 partial incumbent", async () => {
   const result = await runEndSiblingBudgetFixture("NODE", {
     siblingType:"card",
     forcesDiscard:true,
@@ -21269,24 +21572,24 @@ test("AI·搜索：NODE 中断保留已完成 non-END incumbent 且不补算 END
   });
   assert.equal(result.sibling.cardId, "assault");
   assert.equal(result.remainingSibling.cardId, "exposeWeakness");
-  assert.equal(result.selected, result.sibling);
+  assert.equal(result.selected, null);
   assert.deepEqual(result.applied, ["card"], "NODE 后不得再模拟破势或 END");
   assert.equal(result.stats.stopReason, "NODE");
   assert.equal(result.stats.expanded, 1);
   assert.equal(result.stats.completedRootCandidateCount, 1);
-  assert.deepEqual(result.stats.bestSequence, [result.sibling]);
-  assert.equal(result.stats.bestValueScore, -1);
+  assert.deepEqual(result.stats.bestSequence, []);
+  assert.equal(result.stats.bestValueScore, null);
   assert.equal(Object.hasOwn(result.stats, "provisionalFallbackUsed"), false);
 });
 
-test("AI·搜索：TIME/CANCELLED 只在候选边界停止并保留 non-END incumbent", async () => {
+test("AI·搜索：TIME/CANCELLED 在 ROOT 未覆盖时不返回 partial incumbent", async () => {
   for (const stopReason of ["TIME", "CANCELLED"]) {
     const result = await runEndSiblingBudgetFixture(stopReason, {
       siblingType:"card",
       forcesDiscard:true,
       preserveNonEndIncumbent:true
     });
-    assert.equal(result.selected, result.sibling, stopReason);
+    assert.equal(result.selected, null, stopReason);
     assert.deepEqual(
       result.applied,
       stopReason === "TIME" ? ["card", "card"] : ["card"],
@@ -21298,7 +21601,7 @@ test("AI·搜索：TIME/CANCELLED 只在候选边界停止并保留 non-END incu
       result.stats.completedRootCandidateCount,
       stopReason === "TIME" ? 2 : 1
     );
-    assert.deepEqual(result.stats.bestSequence, [result.sibling]);
+    assert.deepEqual(result.stats.bestSequence, []);
   }
 });
 
@@ -21315,18 +21618,18 @@ test("AI·搜索：TIME/NODE cooperative materialize interruption 不记录 cand
   }
 });
 
-test("AI·搜索：已有 complete incumbent 后的 TIME/NODE interruption 保留 incumbent", async () => {
+test("AI·搜索：ROOT sibling 中断不因已有 candidate 返回残缺 incumbent", async () => {
   for (const stopReason of ["TIME", "NODE"]) {
     const result = await runEndSiblingBudgetFixture(stopReason, {
       siblingType:"card",
       preserveNonEndIncumbent:true,
       interruptAfterFirstCandidate:true
     });
-    assert.equal(result.selected, result.sibling, stopReason);
+    assert.equal(result.selected, null, stopReason);
     assert.equal(result.stats.stopReason, stopReason);
     assert.equal(result.stats.candidateFaults.length, 0, stopReason);
     assert.equal(result.stats.completedRootCandidateCount, 1, stopReason);
-    assert.deepEqual(result.stats.bestSequence, [result.sibling], stopReason);
+    assert.deepEqual(result.stats.bestSequence, [], stopReason);
   }
 });
 

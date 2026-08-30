@@ -1652,6 +1652,7 @@ StateValue  -> pure current-state primitives
 ### Search / Controller / Worker closure
 
 - Searcher 唯一拥有 traversal、root scheduling、budget、coverage、beam/frontier、incumbent、TIME/NODE/COMPLETE 与 fallback mechanics。
+- canonical roots 只有在同一 parent 全部完整物化、END 完成全部 sibling terms 后才可登记正式 root incumbent；TIME/NODE/CANCELLED 若在 root coverage 完成前停止则返回无 Action，由 Controller 保持显式失败并交给既有 runtime emergency fallback。root coverage 完成后的深层 TIME/NODE 仍可返回已经完整物化的 best-seen。普通 Simulator/Evaluator/finalize candidate exception 必须携带 canonical Action key 终止本次搜索，不得静默丢弃候选后把残缺空间当正式结果。
 - Evaluator 唯一拥有 root scheduling score、action utility/search credit、seal timing/use、threat/card/resource prior 与 final candidate comparison semantics；Searcher 只编排这些结果。
 - Pattern 只提出 canonical Action 的探索顺序和 continuation，不调 Simulator/Evaluator/Probability，也不修改 final winner。
 - Controller 只做 GameState/World、Generator、SearchRequest/outcome、当前实体重绑与真实运行边界；不模拟候选或重复选择。

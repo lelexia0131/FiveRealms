@@ -2688,7 +2688,8 @@ export class Evaluator {
 
   边界与不变量
   不构造或克隆 World；复用 Searcher 已完成的唯一 transition。contextual 公式保持既有
-  state delta、装备材料、掠夺获得材料与充能桩门槛项的单位和顺序。
+  state delta、装备材料、掠夺获得材料与充能桩门槛项的单位和顺序；
+  destroy 的静态 owner 卡值必须按敌方收益、己方损失投影，不能把队友高价值牌当成更优破坏目标。
   */
   resourceSelectionPreference(action, player, beforeState, afterState) {
     const purpose = action?.cardId;
@@ -2722,9 +2723,13 @@ export class Evaluator {
       });
     }
     const remainingCardCounts = queryCurrentCardCounts(beforeState.probabilityState);
-    const staticUtility = selection.selectionKind === "unknown"
+    const unsignedStaticUtility = selection.selectionKind === "unknown"
       ? getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts)
       : getResourceDefinitionUtility(purpose, actor, owner, selection.definitionId);
+    const staticUtility = purpose === "destroy"
+      && owner.battleTeam === actor.battleTeam
+      ? -unsignedStaticUtility
+      : unsignedStaticUtility;
     const acquisitionUtility = purpose !== "plunder"
       ? 0
       : (selection.selectionKind === "unknown"
