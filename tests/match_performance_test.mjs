@@ -1,0 +1,690 @@
+import assert from "node:assert/strict";
+import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js";
+import {
+  calculatePerformance,
+  getPerformanceThresholds,
+  getRoundDecayMultiplier,
+  normalizeForRadar
+} from "../js/ui/results/MatchPerformanceCalculator.js";
+import { MatchPerformanceTracker } from "../js/ui/results/MatchPerformanceTracker.js";
+import { createMatchResultViewModel } from "../js/ui/results/MatchResultViewModel.js";
+import { MatchMvpResultView } from "../js/ui/results/MatchMvpResultView.js";
+import {
+  calculateRadarPoints,
+  createRadarChartMarkup,
+  MATCH_PERFORMANCE_RADAR_AXIS_ORDER
+} from "../js/ui/results/MatchMvpRadarChart.js";
+
+const TOTAL_DEFAULTS = Object.freeze({
+  enemyHpDamage: 0,
+  enemyKills: 0,
+  allyHealing: 0,
+  allyRescueHealing: 0,
+  allyMitigation: 0,
+  allyShieldAbsorbed: 0,
+  cardsPlayed: 0,
+  activeSkillsUsed: 0,
+  enemyControls: 0
+});
+
+const CONTRIBUTION_DEFAULTS = Object.freeze({
+  allyCardsGranted: 0,
+  enemyCardsPlundered: 0,
+  enemyCardsDestroyed: 0,
+  enemyCardsTransferred: 0,
+  allyResourceActionsProtected: 0,
+  enemyCardsGranted: 0
+});
+
+/*
+功能
+创建纯评分测试需要的完整 raw player row。
+
+调用方
+MVP calculator、ranking 与 survival tests。
+
+输入
+可覆盖身份、回合、队伍人数、totals、contributionFacts 与存活状态的 options。
+
+输出
+完整 raw player row。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+未指定累计项全部为零，避免测试依赖 production 默认补值。
+*/
+function rawPlayer(options = {}) {
+  const playerId = options.playerId ?? "player";
+  return {
+    playerId,
+    playerName: options.playerName ?? playerId,
+    characterName: options.characterName ?? playerId,
+    teamId: options.teamId ?? "dawn",
+    seatIndex: options.seatIndex ?? 0,
+    initialTeamSize: options.initialTeamSize ?? 2,
+    effectiveRounds: options.effectiveRounds ?? 1,
+    totals: { ...TOTAL_DEFAULTS, ...(options.totals ?? {}) },
+    contributionFacts: { ...CONTRIBUTION_DEFAULTS, ...(options.contributionFacts ?? {}) },
+    aliveAtEnd: options.aliveAtEnd ?? false
+  };
+}
+
+/*
+功能
+创建 tracker 事件测试使用的最小权威玩家实体。
+
+调用方
+trackerFixture 与各事件归属测试。
+
+输入
+player id、seatIndex 与 battleTeam。
+
+输出
+含角色身份、存活状态和主动技能使用槽的玩家对象。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只提供 tracker 读取的公开字段，不模拟游戏规则。
+*/
+function trackerPlayer(id, seatIndex, battleTeam) {
+  return {
+    id,
+    name: id,
+    character: { name: id },
+    seatIndex,
+    battleTeam,
+    alive: true,
+    hand: [],
+    turnFlags: { activeSkillUseCounts: {} }
+  };
+}
+
+/*
+功能
+创建带真实 EventDispatcher 的 MatchPerformanceTracker 测试夹具。
+
+调用方
+Activity、Skill、Control、Contribution、reset 与 duplication tests。
+
+输入
+权威玩家数组。
+
+输出
+{ state, dispatcher, tracker }。
+
+读取状态
+无。
+
+写入状态
+创建隔离测试状态和 listener registry。
+
+调用函数
+EventDispatcher、MatchPerformanceTracker.start/initializeRoster。
+
+边界与不变量
+每个夹具使用独立 dispatcher；不创建 MatchApplication 或 AI simulation。
+*/
+function trackerFixture(players) {
+  const state = { gameId: "mvp-match", players, phase: "play", currentPlayerIndex: 0 };
+  const dispatcher = new EventDispatcher(() => true);
+  const tracker = new MatchPerformanceTracker({
+    eventDispatcher: dispatcher,
+    getState: () => state
+  }).start();
+  tracker.initializeRoster();
+  return { state, dispatcher, tracker };
+}
+
+/*
+功能
+向现有测试 runner 注册 MVP 结算系统的定点回归测试。
+
+调用方
+tests/run.mjs 的 UI 与模板区域。
+
+输入
+runner 的 test(name, fn) 注册函数。
+
+输出
+无返回值。
+
+读取状态
+无。
+
+写入状态
+向 runner tests registry 添加 MVP tests。
+
+调用函数
+纯 calculator/view-model/radar 与 tracker fixtures。
+
+边界与不变量
+只做正确性回归，不运行 Balance、自博弈或数值调优。
+*/
+export function registerMatchPerformanceTests(test) {
+  test("UI·MVP：二人队六维标准按行动至火力顺序使用新上限", () => {
+    const thresholds = getPerformanceThresholds(2);
+    assert.deepEqual(
+      MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
+      [3.2, 0.6, 0.8, 0.8, 1.2, 2.0]
+    );
+  });
+
+  test("UI·MVP：三人队六维标准按行动至火力顺序使用新上限", () => {
+    const thresholds = getPerformanceThresholds(3);
+    assert.deepEqual(
+      MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
+      [2.6, 0.5, 0.6, 0.6, 1.1, 1.2]
+    );
+  });
+
+  test("UI·MVP：二人队火力按实际敌伤与真实击杀得到112.5分", async () => {
+    const result = calculatePerformance(rawPlayer({
+      effectiveRounds: 4,
+      totals: { enemyHpDamage: 4, enemyKills: 1 }
+    }));
+    assert.equal(result.raw.firepower, 2.25);
+    assert.equal(result.scores.firepower, 112.5);
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, ally, enemy]);
+    await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 4 });
+    await dispatcher.emit("playerDead", { source: actor, target: enemy });
+    await dispatcher.emit("playerDead", { source: actor, target: ally });
+    await dispatcher.emit("playerDead", { source: null, target: enemy });
+    const totals = tracker.finalizeMatch().players[0].totals;
+    assert.deepEqual([totals.enemyHpDamage, totals.enemyKills], [4, 1]);
+  });
+
+  test("UI·MVP：三人队对同一火力使用独立标准得到187.5分", () => {
+    const result = calculatePerformance(rawPlayer({
+      initialTeamSize: 3,
+      effectiveRounds: 4,
+      totals: { enemyHpDamage: 4, enemyKills: 1 }
+    }));
+    assert.equal(result.raw.firepower, 2.25);
+    assert.equal(result.scores.firepower, 187.5);
+  });
+
+  test("UI·MVP：濒死救援按二倍计入一次且支援原始值为1.4", () => {
+    const result = calculatePerformance(rawPlayer({
+      effectiveRounds: 5,
+      totals: {
+        allyHealing: 1,
+        allyRescueHealing: 2,
+        allyMitigation: 1,
+        allyShieldAbsorbed: 1
+      }
+    }));
+    assert.equal(result.raw.support, 1.4);
+  });
+
+  test("UI·MVP：自疗与自己的护盾吸收不进入支援", () => {
+    const self = trackerPlayer("self", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { tracker } = trackerFixture([self, enemy]);
+    tracker.handleAfterHeal({ source: self, target: self, actualAmount: 2, isDyingRescue: false });
+    tracker.handleAfterDamage({ source: self, target: self, actualAmount: 0, shieldAbsorbed: 2 });
+    const totals = tracker.finalizeMatch().players[0].totals;
+    assert.deepEqual(
+      [totals.allyHealing, totals.allyRescueHealing, totals.allyShieldAbsorbed],
+      [0, 0, 0]
+    );
+  });
+
+  test("UI·MVP：当前行动者主动打出三张手牌累计三次行动", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
+    for (const definitionId of ["assault", "charge", "destroy"]) {
+      await dispatcher.emit("cardUsed", {
+        source: actor,
+        card: { definitionId },
+        resolved: true,
+        effectiveTargets: [enemy]
+      });
+    }
+    assert.equal(tracker.finalizeMatch().players[0].totals.cardsPlayed, 3);
+  });
+
+  test("UI·MVP：两次主动出牌外的格挡反制救援与借势响应不计行动", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
+    for (const definitionId of ["assault", "shield"]) {
+      await dispatcher.emit("cardUsed", {
+        source: actor,
+        card: { definitionId },
+        resolved: true,
+        effectiveTargets: [enemy]
+      });
+    }
+    await dispatcher.emit("afterCardMove", {
+      from: "hand",
+      to: "discard",
+      player: actor,
+      card: { definitionId: "block" },
+      atomicGroupSize: 1
+    });
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "counter" },
+      usageContext: "response",
+      resolved: true,
+      effectiveTargets: [enemy]
+    });
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "recover" },
+      usageContext: "dyingRescue",
+      resolved: true,
+      effectiveTargets: [actor]
+    });
+    await dispatcher.emit("cardUsed", {
+      source: enemy,
+      card: { definitionId: "assault" },
+      resolved: true,
+      effectiveTargets: [actor]
+    });
+    const snapshot = tracker.finalizeMatch();
+    assert.equal(snapshot.players[0].totals.cardsPlayed, 2);
+    assert.equal(snapshot.players[1].totals.cardsPlayed, 0);
+  });
+
+  test("UI·MVP：当前行动者主动牌最终被反制仍累计一次行动", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "destroy" },
+      targets: [enemy],
+      effectiveTargets: [],
+      resolved: false
+    });
+    assert.equal(tracker.finalizeMatch().players[0].totals.cardsPlayed, 1);
+  });
+
+  test("UI·MVP：技能只读取成功主动发动槽并排除非法尝试与纯被动", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
+    await dispatcher.emit("turnStart", { player: actor });
+    actor.turnFlags.activeSkillUseCounts = { barrier: 2, symbiosis: 1 };
+    actor.turnFlags.passiveTriggerCount = 4;
+    await dispatcher.emit("turnEnd", { player: actor });
+    assert.equal(tracker.finalizeMatch().players[0].totals.activeSkillsUsed, 3);
+  });
+
+  test("UI·MVP：控制只计敌方目标且转移友方分流到贡献", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, ally, enemy]);
+    const use = (definitionId, effectiveTargets) => dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId },
+      resolved: true,
+      effectiveTargets
+    });
+    await use("scout", [enemy]);
+    await use("scout", [ally]);
+    await use("transfer", [enemy, ally]);
+    await use("transfer", [actor, ally]);
+    await use("seal", [enemy]);
+    const actorResult = tracker.finalizeMatch().players[0];
+    assert.equal(actorResult.totals.enemyControls, 3);
+    assert.equal(actorResult.contributionFacts.allyCardsGranted, 2);
+    assert.equal(actorResult.contributionFacts.enemyCardsTransferred, 1);
+  });
+
+  test("UI·MVP：多层反制按当前被反制 action owner 分别归属控制", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "counter" },
+      usageContext: "response",
+      resolved: true,
+      effectiveTargets: [enemy]
+    });
+    await dispatcher.emit("cardUsed", {
+      source: enemy,
+      card: { definitionId: "counter" },
+      usageContext: "response",
+      resolved: true,
+      effectiveTargets: [actor]
+    });
+    const snapshot = tracker.finalizeMatch();
+    assert.equal(snapshot.players.find((entry) => entry.playerId === actor.id).totals.enemyControls, 1);
+    assert.equal(snapshot.players.find((entry) => entry.playerId === enemy.id).totals.enemyControls, 1);
+  });
+
+  test("UI·MVP：成功掠夺敌方一张牌只增加一次资源贡献", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
+    await dispatcher.emit("afterCardMove", {
+      from: "hand", to: "hand", fromPlayer: enemy, player: actor, reason: "掠夺"
+    });
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "plunder" },
+      targets: [enemy],
+      effectiveTargets: [enemy],
+      resolved: true
+    });
+    const facts = tracker.finalizeMatch().players[0].contributionFacts;
+    assert.equal(facts.enemyCardsPlundered, 1);
+  });
+
+  test("UI·MVP：成功破坏敌方一张牌增加一次资源贡献", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "destroy" },
+      targets: [enemy],
+      effectiveTargets: [enemy],
+      resolved: true
+    });
+    assert.equal(
+      tracker.finalizeMatch().players[0].contributionFacts.enemyCardsDestroyed,
+      1
+    );
+  });
+
+  test("UI·MVP：成功转移敌方一张牌同时保留控制与资源贡献", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "transfer" },
+      targets: [enemy, actor],
+      effectiveTargets: [enemy, actor],
+      resolved: true
+    });
+    const result = tracker.finalizeMatch().players[0];
+    assert.equal(result.totals.enemyControls, 1);
+    assert.equal(result.contributionFacts.enemyCardsTransferred, 1);
+  });
+
+  test("UI·MVP：互利按实际 recipients 汇总友方正项与敌方负项", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const allyA = trackerPlayer("ally-a", 1, "dawn");
+    const allyB = trackerPlayer("ally-b", 2, "dawn");
+    const enemy = trackerPlayer("enemy", 3, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, allyA, allyB, enemy]);
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "transfer" },
+      resolved: true,
+      effectiveTargets: [actor, allyA]
+    });
+    await dispatcher.emit("beforeCardUse", {
+      source: actor,
+      card: { definitionId: "mutualBenefit" },
+      resolutionId: "mutual-1"
+    });
+    actor.hand.push({ id: "actor-card" });
+    allyA.hand.push({ id: "ally-a-card" });
+    allyB.hand.push({ id: "ally-b-card" });
+    enemy.hand.push({ id: "enemy-card" });
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "mutualBenefit" },
+      resolved: true,
+      effectiveTargets: [actor, allyA, allyB, enemy],
+      resolutionId: "mutual-1"
+    });
+    const actorResult = tracker.finalizeMatch().players[0];
+    assert.equal(actorResult.contributionFacts.allyCardsGranted, 3);
+    assert.equal(actorResult.contributionFacts.enemyCardsGranted, 1);
+    assert.equal(calculatePerformance(actorResult).contributionTotal, 2);
+  });
+
+  test("UI·MVP：只给敌人一张牌产生负贡献分而雷达贡献保持零", () => {
+    const result = calculatePerformance(rawPlayer({
+      contributionFacts: { enemyCardsGranted: 1 }
+    }));
+    assert.equal(result.contributionTotal, -1);
+    assert.ok(result.scores.contribution < 0);
+    assert.equal(result.ratios.contribution, 0);
+  });
+
+  test("UI·MVP：成功反制敌人对队友的破坏增加一次保护贡献", async () => {
+    const protector = trackerPlayer("protector", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const { dispatcher, tracker } = trackerFixture([protector, ally, enemy]);
+    await dispatcher.emit("cardUsed", {
+      source: protector,
+      card: { definitionId: "counter" },
+      usageContext: "response",
+      targets: [enemy, ally],
+      effectiveTargets: [enemy, ally],
+      resolved: true
+    });
+    await dispatcher.emit("cardUsed", {
+      source: enemy,
+      card: { definitionId: "destroy" },
+      targets: [ally],
+      effectiveTargets: [],
+      resolved: false
+    });
+    assert.equal(
+      tracker.finalizeMatch().players[0].contributionFacts.allyResourceActionsProtected,
+      1
+    );
+  });
+
+  test("UI·MVP：保护反制被再反制且敌方破坏成功时不增加贡献", async () => {
+    const protector = trackerPlayer("protector", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const enemyCounter = trackerPlayer("enemy-counter", 3, "dusk");
+    const { dispatcher, tracker } = trackerFixture([protector, ally, enemy, enemyCounter]);
+    await dispatcher.emit("cardUsed", {
+      source: enemyCounter,
+      card: { definitionId: "counter" },
+      usageContext: "response",
+      targets: [protector, enemy],
+      effectiveTargets: [protector, enemy],
+      resolved: true
+    });
+    await dispatcher.emit("cardUsed", {
+      source: enemy,
+      card: { definitionId: "destroy" },
+      targets: [ally],
+      effectiveTargets: [ally],
+      resolved: true
+    });
+    assert.equal(
+      tracker.finalizeMatch().players[0].contributionFacts.allyResourceActionsProtected,
+      0
+    );
+  });
+
+  test("UI·MVP：回合衰退使用固定表并在十一回合封顶为一", () => {
+    const rounds = [1, 2, 3, 10, 11, 20];
+    assert.deepEqual(
+      rounds.map((value) => getRoundDecayMultiplier(value)),
+      [0.50, 0.55, 0.60, 0.95, 1.00, 1.00]
+    );
+  });
+
+  test("UI·MVP：六项600基础分在三回合分别得到阵亡360与存活432", () => {
+    const input = {
+      effectiveRounds: 3,
+      totals: {
+        enemyHpDamage: 6.0,
+        allyHealing: 1.8,
+        cardsPlayed: 9.6,
+        activeSkillsUsed: 3.6,
+        enemyControls: 2.4
+      },
+      contributionFacts: { allyCardsGranted: 2.4 }
+    };
+    const dead = calculatePerformance(rawPlayer(input));
+    const alive = calculatePerformance(rawPlayer({ ...input, aliveAtEnd: true }));
+    assert.ok(Math.abs(dead.baseScore - 600) < 1e-9);
+    assert.ok(Math.abs(dead.finalScore - 360) < 1e-9);
+    assert.ok(Math.abs(alive.finalScore - 432) < 1e-9);
+  });
+
+  test("UI·MVP：存活倍率只把十一回合500基础分转换为600最终分", () => {
+    const totals = {
+      enemyHpDamage: 22,
+      allyHealing: 6.6,
+      cardsPlayed: 35.2,
+      activeSkillsUsed: 13.2,
+      enemyControls: 8.8
+    };
+    const alive = calculatePerformance(rawPlayer({ effectiveRounds: 11, totals, aliveAtEnd: true }));
+    const dead = calculatePerformance(rawPlayer({ effectiveRounds: 11, totals, aliveAtEnd: false }));
+    assert.equal(alive.baseScore, 500);
+    assert.equal(alive.finalScore, 600);
+    assert.equal(dead.finalScore, 500);
+  });
+
+  test("UI·MVP：存活与阵亡玩家同组六维保持相同雷达数据", () => {
+    const totals = { enemyHpDamage: 2.25, cardsPlayed: 2 };
+    const alive = calculatePerformance(rawPlayer({ totals, aliveAtEnd: true }));
+    const dead = calculatePerformance(rawPlayer({ totals, aliveAtEnd: false }));
+    assert.deepEqual(alive.ratios, dead.ratios);
+    assert.notEqual(alive.finalScore, dead.finalScore);
+  });
+
+  test("UI·MVP：相同每回合六维在不同回合系数下保持同一雷达比例", () => {
+    const short = calculatePerformance(rawPlayer({
+      effectiveRounds: 3,
+      totals: { enemyHpDamage: 4.5, cardsPlayed: 6 }
+    }));
+    const long = calculatePerformance(rawPlayer({
+      effectiveRounds: 11,
+      totals: { enemyHpDamage: 16.5, cardsPlayed: 22 }
+    }));
+    assert.deepEqual(short.raw, long.raw);
+    assert.deepEqual(short.ratios, long.ratios);
+    assert.notEqual(short.roundDecayMultiplier, long.roundDecayMultiplier);
+  });
+
+  test("UI·MVP：五人乱序输入按最终分降序且第一名为MVP", () => {
+    const viewModel = createMatchResultViewModel({
+      gameId: "ranking",
+      players: [3, 1, 5, 2, 4].map((value, index) => rawPlayer({
+        playerId: `p${value}`,
+        seatIndex: index,
+        totals: { enemyHpDamage: value }
+      }))
+    });
+    assert.deepEqual(viewModel.players.map((entry) => entry.playerId), ["p5", "p4", "p3", "p2", "p1"]);
+    assert.equal(viewModel.players[0].isMvp, true);
+    assert.equal(viewModel.mvpPlayerId, "p5");
+  });
+
+  test("UI·MVP：相同玩家与角色名只渲染一份且第一名使用背景装饰", () => {
+    const viewModel = createMatchResultViewModel({
+      gameId: "duplicate-label",
+      players: [rawPlayer({
+        playerId: "tuner",
+        playerName: "调律师",
+        characterName: "调律师"
+      })]
+    });
+    const root = {
+      innerHTML: "",
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      querySelector() { return null; }
+    };
+    new MatchMvpResultView(root).render(viewModel);
+    const rankingMarkup = root.innerHTML.match(/<button[\s\S]*?<\/button>/)?.[0] ?? "";
+    const heroMarkup = root.innerHTML.match(/<header class="match-mvp-hero">[\s\S]*?<\/header>/)?.[0] ?? "";
+    assert.equal(viewModel.players[0].secondaryLabel, null);
+    assert.equal(rankingMarkup.match(/调律师/g)?.length, 1);
+    assert.match(rankingMarkup, /match-mvp-ranking-watermark[^>]*aria-hidden="true">MVP/);
+    assert.doesNotMatch(rankingMarkup, /match-mvp-badge/);
+    assert.doesNotMatch(heroMarkup, /本场 MVP/);
+    assert.match(heroMarkup, /match-mvp-hero-watermark[^>]*aria-hidden="true">MVP/);
+  });
+
+  test("UI·MVP：同分每次均以原始座位顺序确定排名", () => {
+    const left = rawPlayer({ playerId: "seat-0", seatIndex: 0, totals: { enemyHpDamage: 1 } });
+    const right = rawPlayer({ playerId: "seat-1", seatIndex: 1, totals: { enemyHpDamage: 1 } });
+    const first = createMatchResultViewModel({ gameId: "tie-a", players: [right, left] });
+    const second = createMatchResultViewModel({ gameId: "tie-b", players: [left, right] });
+    assert.deepEqual(first.players.map((entry) => entry.playerId), ["seat-0", "seat-1"]);
+    assert.deepEqual(second.players.map((entry) => entry.playerId), ["seat-0", "seat-1"]);
+  });
+
+  test("UI·MVP：雷达轴固定从顶部行动开始按指定顺序顺时针排列", () => {
+    const expected = ["activity", "support", "contribution", "control", "skill", "firepower"];
+    const points = calculateRadarPoints(Object.fromEntries(expected.map((key) => [key, 1])));
+    assert.deepEqual([...MATCH_PERFORMANCE_RADAR_AXIS_ORDER], expected);
+    assert.deepEqual(points.map((point) => point.key), expected);
+    assert.deepEqual([points[0].x, points[0].y], [160, 68]);
+    assert.deepEqual([points[3].x, points[3].y], [160, 252]);
+  });
+
+  test("UI·MVP：雷达只生成六维标签而不生成中心零与百分比文字", () => {
+    const markup = createRadarChartMarkup({});
+    assert.doesNotMatch(markup, />0<|100%/);
+    for (const label of ["行动", "支援", "贡献", "控制", "技能", "火力"]) {
+      assert.match(markup, new RegExp(`>${label}<`));
+    }
+  });
+
+  test("UI·MVP：雷达150%保持真实比例并越过固定标准圈", () => {
+    const ratios = normalizeForRadar({ firepower: 3.0 }, 2);
+    const point = calculateRadarPoints(ratios).find((entry) => entry.key === "firepower");
+    const markup = createRadarChartMarkup(ratios);
+    assert.equal(ratios.firepower, 1.5);
+    assert.ok(Math.abs(Math.hypot(point.x - 160, point.y - 160) - 138) < 1e-9);
+    assert.match(markup, /match-mvp-radar-performance/);
+    assert.match(markup, /viewBox="0 0 320 320"/);
+  });
+
+  test("UI·MVP：连续两局初始化会把第二局累计清零", () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { state, tracker } = trackerFixture([actor, enemy]);
+    tracker.handleAfterDamage({ source: actor, target: enemy, actualAmount: 2 });
+    state.gameId = "mvp-match-2";
+    tracker.initializeRoster();
+    assert.equal(tracker.finalizeMatch().players[0].totals.enemyHpDamage, 0);
+  });
+
+  test("UI·MVP：重复 start 不会让同一 card event 累计两次", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy]);
+    tracker.start();
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "assault" },
+      resolved: true,
+      effectiveTargets: [enemy]
+    });
+    assert.equal(tracker.finalizeMatch().players[0].totals.cardsPlayed, 1);
+  });
+}

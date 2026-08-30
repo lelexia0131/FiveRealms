@@ -38,16 +38,8 @@ const REQUIRED_DEPENDENCIES = [
   "choiceContexts", "createId",
   "selectAction", "selectRuntimeEmergencyAction", "playCard", "useActiveSkill", "getAiMaxActions",
   "getActionTargetLabel", "resetActionLocks", "discardCardFromHand",
-  "cancelPendingInteractions", "getAiSearchResultStatus", "getAiSearchFailureReason"
+  "cancelPendingInteractions"
 ];
-
-const AI_NULL_SEARCH_OUTCOMES = Object.freeze({
-  PREPARATION_FAILURE:"搜索准备数据异常",
-  SEARCH_INTERNAL_FAILURE:"搜索内部故障",
-  WORKER_FAILURE:"搜索运行通道故障",
-  SEARCH_CANCELLED:"搜索已取消",
-  SEARCH_BUDGET_EXHAUSTED:"搜索预算用尽且无完整结果"
-});
 
 const AI_EMERGENCY_ACTION_ATTEMPT_LIMIT = 3;
 
@@ -323,13 +315,14 @@ export function createTurnWorkflow(dependencies) {
   thinking/prompt 经 PresentationPort；真实卡牌/技能经注入 action collaborators。
 
   调用函数
-  selectAction、selectRuntimeEmergencyAction、getAiSearchResultStatus、playCard、useActiveSkill。
+  selectAction、selectRuntimeEmergencyAction、playCard、useActiveSkill。
 
   边界与不变量
   每个真实 Action 后必须从最新 World 重新调用 selectAction；每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
   Search/Worker failure 不能变成 END 或停死；runtime fallback 每次只从当前真实状态的 Generator 顺序取首个未失败 non-END。
   绑定/执行失败必须排除该 Action，并在固定上限内重新生成；只有 Generator 只剩唯一 END 时 fallback 才能 END。
   fallback 不写 Searcher 结果且不保存未来队列；任一真实 Action 成功后下一轮必须重新调用正常 selectAction；finally presentation failure 不得覆盖 rollback failure。
+  搜索、绑定和 fallback 诊断只进入 diagnostics/Controller 状态，不得写入玩家 Battle Log。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
@@ -357,10 +350,6 @@ export function createTurnWorkflow(dependencies) {
           );
         }
         if (!runtime.isSessionValid(gameId)) return;
-        const searchResultStatus = runtime.getAiSearchResultStatus();
-        const failurePresentation = AI_NULL_SEARCH_OUTCOMES[searchResultStatus]
-          ?? "搜索未返回可执行结果";
-        const rejectionReason = runtime.getAiSearchFailureReason();
         const decisionElapsedMs = Math.max(0, runtime.now() - decisionStartedAt);
         const remainingSearchDelay = runtime.getRemainingAiDecisionDelay(
           decisionWindow,
@@ -371,11 +360,6 @@ export function createTurnWorkflow(dependencies) {
         let delayPending = true;
         let endPlayPhase = false;
         let lastActionError = searchError;
-        let fallbackReasonLabel = searchError
-          ? "搜索异常"
-          : !action
-            ? `${failurePresentation}${rejectionReason ? `（${rejectionReason}）` : ""}`
-            : null;
         while (true) {
           if (!action) {
             if (fallbackAttempts >= AI_EMERGENCY_ACTION_ATTEMPT_LIMIT) {
@@ -413,10 +397,6 @@ export function createTurnWorkflow(dependencies) {
             }
             action = fallback.action;
             fallbackAttempts += 1;
-            runtime.presentation.log(
-              `${player.name}${fallbackReasonLabel ?? "Action 故障"}，改为执行当前 Generator 的第${fallbackAttempts}个合法应急 Action。`,
-              "important"
-            );
           }
           if (action.type === "end") {
             runtime.presentation.setPrompt(`${player.name}准备结束出牌阶段。`);
@@ -434,7 +414,6 @@ export function createTurnWorkflow(dependencies) {
             .filter(Boolean);
           if (!definition || targets.length !== (action.targetIds?.length ?? 0)) {
             lastActionError = new Error("AI canonical Action 的定义或目标绑定失败");
-            fallbackReasonLabel = "Action 绑定失败";
             failedActions.push(action);
             runtime.diagnostics.reportWorkflowError(
               "AI",
@@ -472,7 +451,6 @@ export function createTurnWorkflow(dependencies) {
           } catch (error) {
             if (error instanceof ActionRollbackError) throw error;
             lastActionError = error;
-            fallbackReasonLabel = "Action 实体绑定或执行失败";
             failedActions.push(action);
             runtime.diagnostics.reportWorkflowError(
               "AI",

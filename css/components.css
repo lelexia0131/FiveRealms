@@ -124,9 +124,57 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .log-heal-value { color: var(--success); font-size: 14px; }
 
 .game-over-overlay { position: relative; z-index: 20; min-width: 0; min-height: 0; overflow: auto; display: grid; place-items: center; padding: 24px; background: rgba(54,45,34,.5); backdrop-filter: blur(8px); }
-.game-over-card { width: min(520px, 90vw); padding: 42px; border: 1px solid var(--gold); border-radius: 8px 30px 8px 30px; background: var(--surface-raised); box-shadow: var(--shadow-card); text-align: center; }
+.game-over-card { width: min(980px, 94vw); padding: 32px; border: 1px solid var(--gold); border-radius: 8px 30px 8px 30px; background: var(--surface-raised); box-shadow: var(--shadow-card); text-align: center; }
 .game-over-card h2 { margin: 10px 0; font: 700 38px/1.2 var(--serif); }
 .game-over-card p:not(.eyebrow) { margin-bottom: 24px; color: var(--text-secondary); font-size: 15px; }
+
+.match-mvp-result { margin: 0 0 24px; text-align: left; }
+.match-mvp-result:empty { display: none; }
+.match-mvp-hero { position: relative; isolation: isolate; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 20px; border: 1px solid var(--gold); border-radius: 12px; background: linear-gradient(105deg, var(--gold-soft), rgba(255,255,255,.72)); }
+.match-mvp-hero > * { position: relative; z-index: 1; }
+.match-mvp-hero-player { display: grid; gap: 2px; }
+.match-mvp-hero-player > strong { color: var(--text-primary); font: 700 25px/1.2 var(--serif); }
+.match-mvp-hero-player > span { color: var(--text-secondary); font-size: 13px; }
+.match-mvp-hero > .match-mvp-hero-watermark { position: absolute; z-index: 0; top: 50%; left: 22%; color: var(--gold); opacity: .13; transform: translateY(-50%) rotate(-6deg); font: italic 900 76px/.8 var(--serif); letter-spacing: .1em; pointer-events: none; user-select: none; }
+.match-mvp-hero-score { color: var(--gold); font: 800 34px/1 var(--serif); }
+.match-mvp-layout { display: grid; grid-template-columns: minmax(270px, .82fr) minmax(430px, 1.35fr); gap: 16px; margin-top: 16px; }
+.match-mvp-ranking, .match-mvp-detail { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,.62); }
+.match-mvp-detail { position: relative; isolation: isolate; overflow: visible; }
+.match-mvp-ranking h3 { margin: 0 0 10px; font: 700 19px/1.2 var(--serif); }
+.match-mvp-ranking-row { position: relative; isolation: isolate; overflow: hidden; width: 100%; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 10px; color: var(--text-primary); border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: left; }
+.match-mvp-ranking-row:hover, .match-mvp-ranking-row.is-selected { border-color: var(--gold); background: var(--gold-soft); }
+.match-mvp-ranking-row > * { position: relative; z-index: 1; }
+.match-mvp-ranking-watermark { position: absolute; z-index: 0; top: 50%; right: 12px; color: var(--gold); opacity: .14; transform: translateY(-50%) rotate(-7deg); font: italic 900 54px/.8 var(--serif); letter-spacing: .08em; pointer-events: none; user-select: none; }
+.match-mvp-rank { color: var(--text-secondary); font: 800 17px/1 var(--serif); text-align: center; }
+.match-mvp-player-copy { min-width: 0; display: grid; }
+.match-mvp-player-copy strong, .match-mvp-player-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match-mvp-player-copy small { color: var(--text-secondary); font-size: 11px; }
+.match-mvp-score { font-weight: 900; font-variant-numeric: tabular-nums; }
+.match-mvp-detail > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.match-mvp-detail > header div { display: grid; }
+.match-mvp-detail > header small, .match-mvp-detail > header span { color: var(--text-secondary); font-size: 12px; }
+.match-mvp-detail > header strong { font: 700 20px/1.2 var(--serif); }
+.match-mvp-radar-wrap { position: relative; z-index: 1; isolation: isolate; min-height: 300px; display: grid; place-items: center; padding: 22px 52px; overflow: visible; pointer-events: none; }
+.match-mvp-radar { position: relative; z-index: 1; width: min(100%, 330px); overflow: visible; pointer-events: none; }
+.match-mvp-radar-ring { fill: none; stroke: rgba(117,95,64,.24); stroke-width: 1; }
+.match-mvp-radar-ring.is-standard { stroke: var(--gold); stroke-width: 2; }
+.match-mvp-radar-axis { stroke: rgba(117,95,64,.28); stroke-width: 1; }
+.match-mvp-radar-performance { fill: rgba(110,78,145,.25); stroke: #6e4e91; stroke-width: 2.5; stroke-linejoin: round; pointer-events: none; }
+.match-mvp-radar-origin { fill: var(--gold); }
+.match-mvp-radar-label { fill: var(--text-primary); stroke: rgba(255,253,247,.94); stroke-width: 4px; paint-order: stroke fill; font-size: 13px; font-weight: 800; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+.match-mvp-stat-table { border-top: 1px solid var(--border); }
+.match-mvp-stat-heading, .match-mvp-stat-row { display: grid; grid-template-columns: minmax(0, 1fr) 70px 70px; gap: 8px; padding: 6px 4px; font-size: 12px; }
+.match-mvp-stat-heading { color: var(--text-secondary); font-weight: 800; }
+.match-mvp-stat-heading b, .match-mvp-stat-heading strong, .match-mvp-stat-row b, .match-mvp-stat-row strong { text-align: right; font-variant-numeric: tabular-nums; }
+.match-mvp-stat-row { border-top: 1px solid rgba(117,95,64,.12); }
+.match-mvp-stat-row strong { color: #6e4e91; }
+.match-mvp-totals { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; }
+.match-mvp-totals > strong { margin-left: auto; color: var(--gold); font-size: 15px; }
+
+@media (max-width: 820px) {
+  .match-mvp-layout { grid-template-columns: 1fr; }
+  .match-mvp-radar-wrap { padding-inline: 36px; }
+}
 
 .skill-details-overlay { position: fixed; z-index: 95; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(54,45,34,.48); backdrop-filter: blur(7px); }
 .skill-dialog-card { position: relative; width: min(620px, calc(100vw - 32px)); max-height: min(720px, calc(100vh - 32px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--gold); border-radius: 18px; background: var(--surface-raised); box-shadow: 0 24px 70px rgba(45,34,22,.34); }

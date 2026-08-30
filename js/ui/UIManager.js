@@ -19,6 +19,7 @@ import { toggleCardSelection } from "./selectionUtils.js";
 import { SoundManager } from "../audio/SoundManager.js";
 import { normalizeAiSpeed, readAiSpeedPreference, writeAiSpeedPreference } from "../utils/aiTiming.js";
 import { TEAM_ASSIGNMENT_MODE } from "../application/match/TeamAssignmentMode.js";
+import { MatchMvpResultView } from "./results/MatchMvpResultView.js";
 
 const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
@@ -206,7 +207,8 @@ export class UIManager {
       "public-pool-view", "judgment-view", "dying-view", "duel-view",
       "skill-button", "end-play-button", "discard-confirm-button", "cancel-interaction-button",
       "log-panel", "battle-layout", "log-toggle-button", "ai-speed-control",
-      "log-list", "log-count", "skill-details-overlay", "game-over-overlay", "game-over-title", "game-over-copy", "play-again-button"
+      "log-list", "log-count", "skill-details-overlay", "game-over-overlay", "game-over-title", "game-over-copy",
+      "match-mvp-result", "play-again-button"
     ].map((id) => [id.replaceAll("-", "_"), document.getElementById(id)]));
     this.callbacks = {};
     this.sound = new SoundManager();
@@ -233,6 +235,7 @@ export class UIManager {
     this.publicPoolView = new PublicPoolView(this.elements.public_pool_view, () => this.playSound("select"));
     this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
     this.judgmentView = new JudgmentView(this.elements.judgment_view);
+    this.matchMvpResultView = new MatchMvpResultView(this.elements.match_mvp_result);
     this.viewportWasNarrow = window.innerWidth < 1280;
     this.bindEvents();
     this.setAiSpeed(this.aiSpeed);
@@ -291,8 +294,10 @@ export class UIManager {
   普通 render 不得改变绑定；更换实例前必须收束旧局 Promise。
   */
   attachGame(game) {
-    if (this.game && this.game !== game) this.cancelPendingInteractions();
+    const changed = this.game !== game;
+    if (this.game && changed) this.cancelPendingInteractions();
     this.game = game ?? null;
+    if (changed) this.matchMvpResultView?.reset();
     return this.game;
   }
 
@@ -2792,6 +2797,35 @@ export class UIManager {
     this.elements.battle_layout.classList.toggle("log-collapsed", this.logCollapsed);
     this.elements.log_toggle_button.setAttribute("aria-expanded", String(!this.logCollapsed));
     this.elements.log_toggle_button.setAttribute("aria-label", this.logCollapsed ? "展开对局记录" : "折叠对局记录");
+  }
+
+  /*
+  功能
+  将 immutable MatchResultViewModel 交给独立 MVP 结果 View 一次性渲染。
+
+  调用方
+  MatchPerformanceSidecar 的 gameOver listener。
+
+  输入
+  已完成评分和排序的 MatchResultViewModel。
+
+  输出
+  无返回值。
+
+  读取状态
+  matchMvpResultView。
+
+  写入状态
+  MVP 结果区域 DOM 与默认选择。
+
+  调用函数
+  MatchMvpResultView.render。
+
+  边界与不变量
+  不读取或修改游戏状态，不在 UIManager 内重新评分或排序。
+  */
+  showMatchPerformance(viewModel) {
+    this.matchMvpResultView.render(viewModel);
   }
 
   /*

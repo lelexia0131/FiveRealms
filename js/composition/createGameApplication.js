@@ -71,6 +71,7 @@ import { createCardKnowledgeAdapter } from "../adapters/ai/CardKnowledgeAdapter.
 import { createMatchState } from "../domain/state/model/MatchState.js";
 import { getCurrentActor, getAllies as getAlliesFromState, getEnemies as getEnemiesFromState, getSeatOrderFrom } from "../domain/state/queries/MatchQueries.js";
 import { addTrackingTarget, markCategoryUsed, setGuardianAidUsed, setKillRewardGranted, setLastEmberResolutionId, setMomentum, setSpyGapPendingTargetIds, setTrackingTurnNumber } from "../domain/state/transitions/RuleUsageTransitions.js";
+import { createMatchPerformanceSidecar } from "../ui/results/MatchPerformanceSidecar.js";
 
 /*
 功能
@@ -366,18 +367,19 @@ function assembleApplicationBoundary(application) {
     MatchWorkflow.dispose 的既有结果。
 
     读取状态
-    matchWorkflow 与可选 searchExecutor。
+    matchPerformanceSidecar、matchWorkflow 与可选 searchExecutor。
 
     写入状态
-    由 MatchWorkflow 终止 session/UI/等待，并释放 Worker/search client。
+    由 sidecar/MatchWorkflow 终止观察、session/UI/等待，并释放 Worker/search client。
 
     调用函数
-    MatchWorkflow.dispose、searchExecutor.dispose。
+    MatchPerformanceSidecar.dispose、MatchWorkflow.dispose、searchExecutor.dispose。
 
     边界与不变量
     search executor 无论 workflow 返回值为何都必须释放；重复销毁保持下游幂等语义。
     */
     dispose() {
+      application.matchPerformanceSidecar?.dispose();
       const result = application.matchWorkflow.dispose();
       application.searchExecutor?.dispose?.();
       return result;
@@ -407,7 +409,7 @@ class MatchApplication {
   写入 MatchApplication services、Domain MatchState 组合与 session 字段。
 
   调用函数
-  createMatchState、CleanupManager、CharacterSelection、Deck、各 core service 与 AIController 构造。
+  createMatchState、createMatchPerformanceSidecar、CleanupManager、CharacterSelection、Deck、各 core service 与 AIController 构造。
 
   边界与不变量
   领域字段值只来自 createMatchState；presentationRandom 不复用真实游戏或 AI search RNG；gameId/isDisposed/logs/pendingResponses 属于 Application session；stateVersion 保持 authoritative。
@@ -454,6 +456,11 @@ class MatchApplication {
     this.uiManager = ui;
     this.ui = ui.createGameSession?.(this) ?? ui;
     this.eventDispatcher = new EventDispatcher(() => this.isSessionValid(this.state.gameId), (channel, message, data) => Debug.log(channel, message, data));
+    this.matchPerformanceSidecar = createMatchPerformanceSidecar({
+      eventDispatcher: this.eventDispatcher,
+      getState: () => this.state,
+      onResult: (viewModel) => this.ui.showMatchPerformance?.(viewModel)
+    });
     this.matchLogAdapter = new MatchLogAdapter(this.state, this.ui);
     this.choiceContexts = new Map();
     this.teamRules = createTeamRuleQueries(() => this.state);
@@ -892,8 +899,6 @@ class MatchApplication {
       selectRuntimeEmergencyAction: (player, excludedActions) => (
         this.aiController.selectRuntimeEmergencyAction(player, excludedActions)
       ),
-      getAiSearchResultStatus: () => this.aiController.lastSearchResult?.status ?? null,
-      getAiSearchFailureReason: () => this.aiController.lastSearchResult?.rejectionReason ?? null,
       playCard: (...args) => this.actionWorkflow.playCard(...args),
       useActiveSkill: (...args) => this.actionWorkflow.useActiveSkill(...args),
       getAiMaxActions: () => this.aiMaxActionsPerTurn,

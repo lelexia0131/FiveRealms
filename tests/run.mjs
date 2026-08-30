@@ -199,6 +199,7 @@ import {
   runAiDecision as runBenchmarkAiDecision
 } from "./ai_test_helpers.mjs";
 import { configureAllAiRoster } from "./headless_match_setup.mjs";
+import { registerMatchPerformanceTests } from "./match_performance_test.mjs";
 import {
   CARD_AI_VALUES, ROLE_CARD_VALUE_DELTAS, cardPlayerValueTerms,
   getBaseCardAiValue, getRoleCardAiValue,
@@ -18669,16 +18670,16 @@ function testTacticResolutionChance(simulator, state, actor, card, targets, sele
 运行一次真实 Controller search failure，并验证 runtime emergency fallback 后重新正常搜索。
 
 调用方
-Worker、TIME 与 NODE 无 incumbent 的恢复回归测试。
+hard-watchdog、TIME 与 NODE 无 incumbent 的恢复回归测试。
 
 输入
-首次搜索的 stopReason；WORKER 表示 transport exception。
+首次搜索的 stopReason；WATCHDOG 表示 hard-watchdog transport exception。
 
 输出
-独立 Game、行动者、search request stateVersion、acceptance status 与 fallback 记录。
+独立 Game、行动者、search request stateVersion、acceptance status、诊断状态、玩家日志与 fallback 记录。
 
 读取状态
-Controller 当前 GameState、Generator root actions 与 SearchResult diagnostics。
+Controller 当前 GameState、Generator root actions、Worker/SearchResult diagnostics 与玩家日志。
 
 写入状态
 真实执行一张聚能，并由第二次正常 Search 返回 strategic END。
@@ -18688,6 +18689,7 @@ makeGame、Controller.selectAction、takeAiPlayPhase。
 
 边界与不变量
 fallback 必须来自当前 Generator，执行后只通过新的 selectAction/request 继续；不调用弃牌阶段。
+hard-watchdog 诊断必须保留在 Controller，且不得进入玩家日志。
 */
 async function runRuntimeSearchFailureFallback(stopReason) {
   const actor = makePlayer(`runtime-fallback-${stopReason}-actor`, 0, "dawn", "ai", 0);
@@ -18711,8 +18713,8 @@ async function runRuntimeSearchFailureFallback(stopReason) {
     async search(request) {
       requestVersions.push(request.stateVersion);
       searchCalls += 1;
-      if (searchCalls === 1 && stopReason === "WORKER") {
-        throw new Error("synthetic Worker transport fault");
+      if (searchCalls === 1 && stopReason === "WATCHDOG") {
+        throw new Error("AI search hard watchdog");
       }
       if (searchCalls === 1) {
         return createWorkerSearchOutcome({
@@ -18733,6 +18735,15 @@ async function runRuntimeSearchFailureFallback(stopReason) {
     }
   };
   const acceptedStatuses = [];
+  const decisionDiagnostics = [];
+  const workerOutcomes = [];
+  const selectAction = game.aiController.selectAction.bind(game.aiController);
+  game.aiController.selectAction = async (...args) => {
+    const selected = await selectAction(...args);
+    decisionDiagnostics.push(game.aiController.lastDecisionDiagnostics);
+    workerOutcomes.push(game.aiController.lastWorkerOutcome);
+    return selected;
+  };
   const acceptWorkerSearchOutcome = game.aiController.acceptWorkerSearchOutcome.bind(
     game.aiController
   );
@@ -18760,13 +18771,15 @@ async function runRuntimeSearchFailureFallback(stopReason) {
     discardCalls,
     requestVersions,
     acceptedStatuses,
+    decisionDiagnostics,
+    workerOutcomes,
     fallbackRecords,
     expectedFirstNonEnd
   };
 }
 
-test("AI·搜索故障恢复：Worker failure 有 non-END 时执行 Generator 首项并重新搜索", async () => {
-  const fixture = await runRuntimeSearchFailureFallback("WORKER");
+test("AI·搜索故障恢复：hard-watchdog 只保留内部诊断并执行 Generator fallback", async () => {
+  const fixture = await runRuntimeSearchFailureFallback("WATCHDOG");
   try {
     assert.equal(fixture.searchCalls, 2);
     assert.deepEqual(fixture.acceptedStatuses, [
@@ -18780,6 +18793,13 @@ test("AI·搜索故障恢复：Worker failure 有 non-END 时执行 Generator �
     assert.equal(fixture.actor.statistics.cardsPlayed, 1);
     assert.ok(fixture.requestVersions[1] > fixture.requestVersions[0]);
     assert.equal(fixture.discardCalls, 0, "fallback 不得直接进入 discard phase");
+    assert.equal(fixture.decisionDiagnostics[0].watchdogFired, true);
+    assert.equal(fixture.decisionDiagnostics[0].workerRejectionReason, "AI search hard watchdog");
+    assert.equal(fixture.workerOutcomes[0].workerError, "AI search hard watchdog");
+    assert.ok(fixture.ui.logs.some((message) => message.includes("使用「聚能」")));
+    assert.ok(!fixture.ui.logs.some((message) => message.includes("搜索运行通道故障")));
+    assert.ok(!fixture.ui.logs.some((message) => message.includes("hard watchdog")));
+    assert.ok(!fixture.ui.logs.some((message) => message.includes("合法应急 Action")));
   } finally {
     fixture.game.dispose();
   }
@@ -19442,10 +19462,7 @@ async function acceptedNonEndBindingFailureUsesFallback() {
   assert.ok(!actor.hand.includes(charge));
   assert.equal(actor.statistics.cardsPlayed, 1);
   assert.equal(game.state.phase, "play");
-  assert.ok(
-    ui.logs.some((message) => message.includes("合法应急 Action")),
-    "non-END 实体绑定失败必须留下 runtime fallback 日志"
-  );
+  assert.ok(!ui.logs.some((message) => message.includes("合法应急 Action")));
 }
 
 test(
@@ -36569,6 +36586,8 @@ test("私人情报异步边界：真人窥探在收起情报前阻塞 resolver �
 test("私人情报异步边界：真人窥隙在收起情报前阻塞 EventDispatcher 后续 listener", privateRevealSpyGapBlocksDispatcher);
 test("私人情报异步边界：pending reveal 时 dispose 清理后旧 scout 不写 stale log/mutation", privateRevealDisposeInvalidatesPendingScout);
 test("私人情报异步边界：PrivateRevealView.hide settle pending show Promise 并清空 overlay", privateRevealViewHideSettlesPendingShow);
+
+registerMatchPerformanceTests(test);
 
 // ---- 编队与征召 ----
 
