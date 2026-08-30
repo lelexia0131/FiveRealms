@@ -48,6 +48,13 @@ const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
 const CARD_DRAG_THRESHOLD_PX = 5;
 const HORIZONTAL_CARD_SCROLL_SELECTOR = ".human-hand, .opponent-hand-strip, .hidden-card-grid, .private-card-grid, .tableau-cards";
 const LOG_BOTTOM_TOLERANCE_PX = 2;
+const FEEDBACK_SOUND_BY_TYPE = Object.freeze({
+  draw: "draw",
+  damage: "hit",
+  heal: "heal",
+  shield: "shield",
+  discard: "discard"
+});
 
 /*
 功能
@@ -221,7 +228,7 @@ export class UIManager {
     this.horizontalCardDragState = null;
     this.horizontalCardDragSuppressClick = false;
     this.horizontalCardScrollGameId = null;
-    this.animationController = new AnimationController();
+    this.animationController = new AnimationController((feedback) => this.playFeedbackSound(feedback));
     this.interactionController = new InteractionController(this);
     this.publicPoolView = new PublicPoolView(this.elements.public_pool_view, () => this.playSound("select"));
     this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
@@ -2664,7 +2671,37 @@ export class UIManager {
 
   /*
   功能
-  排队公开视觉反馈并同步触发对应通用音效。
+  在一项公开 feedback 实际开始展示时播放其对应通用音效。
+
+  调用方
+  AnimationController 的 onFeedbackPresented 回调。
+
+  输入
+  已开始展示的 data-only feedback。
+
+  输出
+  无返回值。
+
+  读取状态
+  FEEDBACK_SOUND_BY_TYPE。
+
+  写入状态
+  由 SoundManager 管理音频节点与节流状态。
+
+  调用函数
+  playSound。
+
+  边界与不变量
+  每项实际展示至多触发一次声音；无对应声音的 feedback 保持静音。
+  */
+  playFeedbackSound(feedback) {
+    const soundName = FEEDBACK_SOUND_BY_TYPE[feedback?.type];
+    if (soundName) this.playSound(soundName);
+  }
+
+  /*
+  功能
+  排队公开视觉反馈，等待 AnimationController 在实际展示时同步触发音效。
 
   调用方
   GamePresentationAdapter.queueFeedback。
@@ -2676,21 +2713,19 @@ export class UIManager {
   无返回值。
 
   读取状态
-  固定 feedback-to-sound 映射。
+  无。
 
   写入状态
-  AnimationController.pending 与 SoundManager 音效节点。
+  AnimationController.pending。
 
   调用函数
-  AnimationController.queue、playSound。
+  AnimationController.queue。
 
   边界与不变量
-  只消费公开 primitive；反馈与声音不能改变真实结算顺序。
+  只消费公开 primitive；入队不得提前播放或重复播放声音，反馈与声音不能改变真实结算顺序。
   */
   queueFeedback(type, playerId = null, amount = null, variant = null) {
     this.animationController.queue(type, playerId, amount, variant);
-    const soundByFeedback = { draw:"draw", damage:"hit", heal:"heal", shield:"shield", discard:"discard" };
-    if (soundByFeedback[type]) this.playSound(soundByFeedback[type]);
   }
 
   /*

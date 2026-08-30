@@ -39237,7 +39237,8 @@ async function frSkillVfxRealResolutionFeedback() {
       blocked = makePlayer("vfx-field-blocked", 1, "dusk", "human"),
       damagedA = makePlayer("vfx-field-damaged-a", 2, "dusk"),
       damagedB = makePlayer("vfx-field-damaged-b", 3, "dusk"),
-      { game, ui } = makeGame([ember, blocked, damagedA, damagedB], {
+      damagedC = makePlayer("vfx-field-damaged-c", 4, "dusk"),
+      { game, ui } = makeGame([ember, blocked, damagedA, damagedB, damagedC], {
         response: (request) => request.type === "block" && request.targetPlayerId === blocked.id
       }),
       feedback = [];
@@ -39247,7 +39248,7 @@ async function frSkillVfxRealResolutionFeedback() {
     assert.equal(await game.useActiveSkill(ember, "burningField", []), true);
     const burningHits = feedback.filter((entry) => entry[0] === "damage"
       && entry[3] === "burning-field");
-    assert.deepEqual(burningHits.map((entry) => entry[1]), [damagedA.id, damagedB.id]);
+    assert.deepEqual(burningHits.map((entry) => entry[1]), [damagedA.id, damagedB.id, damagedC.id]);
   }
 }
 
@@ -39357,17 +39358,17 @@ test("UI·闪电反馈：电弧 overlay 跟随人物框、可重复触发并完�
 无返回值，断言失败时抛错。
 
 读取状态
-fake DOM 与 AnimationController 展示状态。
+fake DOM、AnimationController 展示状态与 UIManager feedback-to-sound 映射。
 
 写入状态
 fake DOM overlay、class 与控制器短生命周期记录。
 
 调用函数
-AnimationController.queue、flush、clear。
+UIManager.queueFeedback、UIManager.playFeedbackSound、AnimationController.flush、clear。
 
 边界与不变量
 多个目标可并存；护援复用同一 overlay/cleanup 且不显示数值；新正向 overlay 与 shield loss 不得叠加旧人物框动画；
-damage 与 draw 保持原反馈语义。
+每项 feedback 只能在自身展示启动时触发一次声音，逐目标队列的最后一项与中间项走同一路径。
 */
 function frVfxOverlayLifecycle() {
   const panels = new Map();
@@ -39414,16 +39415,24 @@ function frVfxOverlayLifecycle() {
   };
   doc.body = doc.createElement();
   doc.commandDeck = doc.createElement();
-  for (const [playerId, left] of [["target-a", 40], ["target-b", 380]]) {
+  for (const [playerId, left] of [["target-a", 40], ["target-b", 380], ["target-c", 720]]) {
     const panel = doc.createElement();
     panel.getBoundingClientRect = () => ({ left, top: 120, width: 280, height: 170 });
     panels.set(playerId, panel);
   }
 
-  const controller = new AnimationController();
-  controller.queue("damage", "target-a", 2, "slash");
-  controller.queue("damage", "target-b", 1, "explosion");
+  const sounds = [];
+  const ui = { playSound: (name) => sounds.push(name) };
+  const controller = new AnimationController(
+    (feedback) => UIManager.prototype.playFeedbackSound.call(ui, feedback)
+  );
+  ui.animationController = controller;
+  const queueFeedback = (...args) => UIManager.prototype.queueFeedback.call(ui, ...args);
+  queueFeedback("damage", "target-a", 2, "slash");
+  queueFeedback("damage", "target-b", 1, "explosion");
+  assert.deepEqual(sounds, [], "feedback 入队不得抢在对应动画前播放声音");
   controller.flush(doc);
+  assert.deepEqual(sounds, ["hit", "hit"], "非串行多目标的每个实际展示各播放一次 hit");
   assert.equal(doc.body.children.length, 2);
   const slashOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-slash"));
   const explosionOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-explosion"));
@@ -39443,10 +39452,10 @@ function frVfxOverlayLifecycle() {
   controller.flush(doc);
   assert.ok(replacement.classList.contains("feedback-damage"), "render 后按剩余时长续接受击震动");
 
-  controller.queue("heal", "target-a", 1);
-  controller.queue("shield", "target-b", 1, "gain");
-  controller.queue("energy", "target-a", 1);
-  controller.queue("shield", "target-b", -1, "absorb");
+  queueFeedback("heal", "target-a", 1);
+  queueFeedback("shield", "target-b", 1, "gain");
+  queueFeedback("energy", "target-a", 1);
+  queueFeedback("shield", "target-b", -1, "absorb");
   controller.flush(doc);
   const healOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-heal"));
   const shieldOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-shield"));
@@ -39480,17 +39489,17 @@ function frVfxOverlayLifecycle() {
   assert.equal(panels.get("target-a").classList.contains("feedback-energy"), false);
   assert.equal(panels.get("target-b").classList.contains("feedback-shield"), false);
 
-  controller.queue("heal", "target-a", 0);
-  controller.queue("energy", "target-a", 0);
+  queueFeedback("heal", "target-a", 0);
+  queueFeedback("energy", "target-a", 0);
   controller.flush(doc);
   assert.equal(doc.body.children.length, 6, "零治疗和零能量不得创建成功 overlay");
-  controller.queue("draw", "target-a");
+  queueFeedback("draw", "target-a");
   controller.flush(doc);
   const drawPanel = panels.get("target-a");
   assert.equal(drawPanel.classList.contains("feedback-draw"), true);
   drawPanel.listeners.get("animationend")();
   assert.equal(drawPanel.classList.contains("feedback-draw"), false);
-  controller.queue("shield", "missing-target", -1, "absorb");
+  queueFeedback("shield", "missing-target", -1, "absorb");
   controller.flush(doc);
   const shieldLossFallback = doc.commandDeck.children[0];
   assert.equal(shieldLossFallback.className, "floating-feedback is-shield");
@@ -39506,14 +39515,17 @@ function frVfxOverlayLifecycle() {
   assert.equal(controller.activeResolutionEffects.size, 0);
   assert.equal(replacement.classList.contains("feedback-damage"), false);
 
-  controller.queue("damage", "target-a", 2, "hunt");
+  sounds.length = 0;
+  queueFeedback("damage", "target-a", 2, "hunt");
+  assert.deepEqual(sounds, [], "单目标 hit 也必须等待自身表现启动");
   controller.flush(doc);
+  assert.deepEqual(sounds, ["hit"], "单目标表现仍播放一次 hit");
   const huntOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-hunt"));
   assert.equal(huntOverlay.style.getPropertyValue("--resolution-vfx-duration"), "720ms");
   assert.ok(replacement.classList.contains("feedback-damage"), "猎杀保留统一受伤震动");
   controller.clear();
 
-  controller.queue("mitigation", "target-a", 1, "guardian-aid");
+  queueFeedback("mitigation", "target-a", 1, "guardian-aid");
   controller.flush(doc);
   let guardianAidOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-guardian-aid"));
   assert.equal(guardianAidOverlay.style.getPropertyValue("--resolution-vfx-duration"), "680ms");
@@ -39524,20 +39536,35 @@ function frVfxOverlayLifecycle() {
   });
   assert.equal(guardianAidOverlay.isConnected, false);
   assert.equal(controller.activeResolutionEffects.size, 0);
-  controller.queue("mitigation", "target-a", 1, "guardian-aid");
+  queueFeedback("mitigation", "target-a", 1, "guardian-aid");
   controller.flush(doc);
   guardianAidOverlay = doc.body.children.find((overlay) => overlay.className.includes("is-guardian-aid"));
   assert.ok(guardianAidOverlay, "连续护援可创建全新 overlay");
   controller.clear();
   assert.equal(guardianAidOverlay.isConnected, false, "清场不得残留护援 overlay");
 
-  controller.queue("damage", "target-a", 1, "burning-field");
-  controller.queue("damage", "target-b", 1, "burning-field");
+  sounds.length = 0;
+  queueFeedback("damage", "target-a", 1, "burning-field");
+  queueFeedback("damage", "target-b", 1, "burning-field");
+  queueFeedback("damage", "target-c", 1, "burning-field");
+  assert.deepEqual(sounds, [], "焚场后续目标不得在表现入队时提前出声");
   controller.flush(doc);
+  assert.deepEqual(sounds, ["hit"], "焚场首个目标只触发自己的 hit");
   let burningOverlays = doc.body.children.filter((overlay) => overlay.className.includes("is-burning-field"));
   assert.equal(burningOverlays.length, 1, "焚场同一时刻只启动一个目标的爆燃");
   assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-duration"), "880ms");
   assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-left"), "30px");
+  assert.equal(controller.sequentialDamageFeedback.length, 2);
+  burningOverlays[0].listeners.get("animationend")({
+    target: burningOverlays[0], animationName: "resolutionVfxLifetime"
+  });
+  clearTimeout(controller.sequentialDamageTimer);
+  controller.sequentialDamageTimer = null;
+  controller.playNextSequentialDamageFeedback();
+  assert.deepEqual(sounds, ["hit", "hit"], "焚场第二个目标在自身动画启动时触发 hit");
+  burningOverlays = doc.body.children.filter((overlay) => overlay.className.includes("is-burning-field"));
+  assert.equal(burningOverlays.length, 1);
+  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-left"), "370px");
   assert.equal(controller.sequentialDamageFeedback.length, 1);
   burningOverlays[0].listeners.get("animationend")({
     target: burningOverlays[0], animationName: "resolutionVfxLifetime"
@@ -39545,16 +39572,17 @@ function frVfxOverlayLifecycle() {
   clearTimeout(controller.sequentialDamageTimer);
   controller.sequentialDamageTimer = null;
   controller.playNextSequentialDamageFeedback();
+  assert.deepEqual(sounds, ["hit", "hit", "hit"], "焚场最后一个目标不得丢失 hit");
   burningOverlays = doc.body.children.filter((overlay) => overlay.className.includes("is-burning-field"));
   assert.equal(burningOverlays.length, 1);
-  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-left"), "370px");
+  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-left"), "710px");
   assert.equal(controller.sequentialDamageFeedback.length, 0);
   controller.clear();
   assert.equal(controller.sequentialDamageTimer, null);
   assert.equal(doc.body.children.length, 0);
 }
 
-test("UI·结算特效：signed 数值、逐目标技能与 overlay 生命周期保持独立", frVfxOverlayLifecycle);
+test("UI·结算特效：signed 数值、逐目标技能、SFX 与 overlay 生命周期保持独立", frVfxOverlayLifecycle);
 
 /*
 功能
