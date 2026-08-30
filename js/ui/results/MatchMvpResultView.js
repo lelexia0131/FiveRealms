@@ -204,7 +204,7 @@ export class MatchMvpResultView {
   createRadarChartMarkup、formatNumber、escapeHtml。
 
   边界与不变量
-  雷达只读取原始 ratios；回合与存活倍率只显示在最终分区域。
+  雷达只读取原始 ratios；回合与胜局系数只显示在最终分区域。
   */
   renderSelection() {
     if (!this.root || !this.viewModel) return;
@@ -228,8 +228,8 @@ export class MatchMvpResultView {
       <div class="match-mvp-stat-table"><div class="match-mvp-stat-heading"><span>维度</span><b>原始</b><strong>得分</strong></div>${rows}</div>
       <footer class="match-mvp-totals">
         <span>基础得分 <b>${formatNumber(selected.baseScore, 1)}</b></span>
-        <span>回合系数 <b>×${formatNumber(selected.roundDecayMultiplier, 2)}</b></span>
-        <span>存活奖励 <b>×${formatNumber(selected.survivalMultiplier, 2)}</b></span>
+        <span>回合系数 <b>×${formatNumber(selected.roundMultiplier, 2)}</b></span>
+        <span>胜局系数 <b>×${formatNumber(selected.victoryMultiplier, 2)}</b></span>
         <strong>最终得分 ${formatNumber(selected.finalScore, 1)}</strong>
       </footer>`;
   }

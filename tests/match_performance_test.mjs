@@ -3,7 +3,7 @@ import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js"
 import {
   calculatePerformance,
   getPerformanceThresholds,
-  getRoundDecayMultiplier,
+  getRoundMultiplier,
   normalizeForRadar
 } from "../js/ui/results/MatchPerformanceCalculator.js";
 import { MatchPerformanceTracker } from "../js/ui/results/MatchPerformanceTracker.js";
@@ -41,10 +41,10 @@ const CONTRIBUTION_DEFAULTS = Object.freeze({
 创建纯评分测试需要的完整 raw player row。
 
 调用方
-MVP calculator、ranking 与 survival tests。
+MVP calculator、ranking 与 victory multiplier tests。
 
 输入
-可覆盖身份、回合、队伍人数、totals、contributionFacts 与存活状态的 options。
+可覆盖身份、回合、队伍人数、totals、contributionFacts、胜负、残局与存活状态的 options。
 
 输出
 完整 raw player row。
@@ -73,6 +73,8 @@ function rawPlayer(options = {}) {
     effectiveRounds: options.effectiveRounds ?? 1,
     totals: { ...TOTAL_DEFAULTS, ...(options.totals ?? {}) },
     contributionFacts: { ...CONTRIBUTION_DEFAULTS, ...(options.contributionFacts ?? {}) },
+    won: options.won ?? false,
+    clutchEnemyCount: options.clutchEnemyCount ?? null,
     aliveAtEnd: options.aliveAtEnd ?? false
   };
 }
@@ -120,7 +122,7 @@ function trackerPlayer(id, seatIndex, battleTeam) {
 创建带真实 EventDispatcher 的 MatchPerformanceTracker 测试夹具。
 
 调用方
-Activity、Skill、Control、Contribution、reset 与 duplication tests。
+Activity、Skill、Control、Contribution、clutch、reset 与 duplication tests。
 
 输入
 权威玩家数组。
@@ -179,18 +181,31 @@ runner 的 test(name, fn) 注册函数。
 export function registerMatchPerformanceTests(test) {
   test("UI·MVP：二人队六维标准按行动至火力顺序使用新上限", () => {
     const thresholds = getPerformanceThresholds(2);
+    const result = calculatePerformance(rawPlayer({
+      effectiveRounds: 10,
+      totals: { activeSkillsUsed: 8 },
+      contributionFacts: { allyCardsGranted: 7 }
+    }));
     assert.deepEqual(
       MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
-      [3.2, 0.6, 0.8, 0.8, 1.2, 2.0]
+      [3.2, 0.6, 0.7, 0.8, 0.8, 2.0]
     );
+    assert.deepEqual([result.scores.contribution, result.scores.skill], [100, 100]);
   });
 
   test("UI·MVP：三人队六维标准按行动至火力顺序使用新上限", () => {
     const thresholds = getPerformanceThresholds(3);
+    const result = calculatePerformance(rawPlayer({
+      initialTeamSize: 3,
+      effectiveRounds: 10,
+      totals: { activeSkillsUsed: 7 },
+      contributionFacts: { allyCardsGranted: 5 }
+    }));
     assert.deepEqual(
       MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
-      [2.6, 0.5, 0.6, 0.6, 1.1, 1.2]
+      [2.6, 0.5, 0.5, 0.6, 0.7, 1.2]
     );
+    assert.deepEqual([result.scores.contribution, result.scores.skill], [100, 100]);
   });
 
   test("UI·MVP：二人队火力按实际敌伤与真实击杀得到112.5分", async () => {
@@ -462,12 +477,13 @@ export function registerMatchPerformanceTests(test) {
     assert.equal(calculatePerformance(actorResult).contributionTotal, 2);
   });
 
-  test("UI·MVP：只给敌人一张牌产生负贡献分而雷达贡献保持零", () => {
+  test("UI·MVP：只给敌人一张牌保留负贡献事实而评分最低为零", () => {
     const result = calculatePerformance(rawPlayer({
       contributionFacts: { enemyCardsGranted: 1 }
     }));
     assert.equal(result.contributionTotal, -1);
-    assert.ok(result.scores.contribution < 0);
+    assert.equal(result.raw.contribution, 0);
+    assert.equal(result.scores.contribution, 0);
     assert.equal(result.ratios.contribution, 0);
   });
 
@@ -524,52 +540,127 @@ export function registerMatchPerformanceTests(test) {
     );
   });
 
-  test("UI·MVP：回合衰退使用固定表并在十一回合封顶为一", () => {
-    const rounds = [1, 2, 3, 10, 11, 20];
+  test("UI·MVP：回合系数使用一至十三回合固定表并从十四回合起每回合增加0.01", () => {
+    const rounds = [1, 2, 3, 10, 11, 12, 13, 14, 15, 20, 30];
     assert.deepEqual(
-      rounds.map((value) => getRoundDecayMultiplier(value)),
-      [0.50, 0.55, 0.60, 0.95, 1.00, 1.00]
+      rounds.map((value) => getRoundMultiplier(value)),
+      [0.30, 0.40, 0.50, 0.85, 0.90, 0.95, 1.00, 1.01, 1.02, 1.07, 1.17]
     );
   });
 
-  test("UI·MVP：六项600基础分在三回合分别得到阵亡360与存活432", () => {
-    const input = {
-      effectiveRounds: 3,
+  test("UI·MVP：二人队胜局系数区分1v3、1v2、普通存活胜局与阵亡队友", () => {
+    const scenarios = [
+      { aliveAtEnd: true, clutchEnemyCount: 3 },
+      { aliveAtEnd: true, clutchEnemyCount: 2 },
+      { playerId: "normal-survivor-a", aliveAtEnd: true },
+      { playerId: "normal-survivor-b", aliveAtEnd: true },
+      { aliveAtEnd: true, clutchEnemyCount: 1 },
+      { aliveAtEnd: false, clutchEnemyCount: 3 }
+    ];
+    assert.deepEqual(scenarios.map((options) => calculatePerformance(rawPlayer({
+      initialTeamSize: 2,
+      won: true,
+      ...options
+    })).victoryMultiplier), [1.50, 1.30, 1.20, 1.20, 1.20, 1.00]);
+  });
+
+  test("UI·MVP：三人队胜局系数区分1v2、1v1、普通多人存活胜局与阵亡玩家", () => {
+    const scenarios = [
+      { aliveAtEnd: true, clutchEnemyCount: 2 },
+      { aliveAtEnd: true, clutchEnemyCount: 1 },
+      { playerId: "normal-survivor-a", aliveAtEnd: true },
+      { playerId: "normal-survivor-b", aliveAtEnd: true },
+      { aliveAtEnd: false, clutchEnemyCount: 2 }
+    ];
+    assert.deepEqual(scenarios.map((options) => calculatePerformance(rawPlayer({
+      initialTeamSize: 3,
+      won: true,
+      ...options
+    })).victoryMultiplier), [2.00, 1.50, 1.20, 1.20, 1.00]);
+  });
+
+  test("UI·MVP：失败玩家即使曾进入1v2残局也没有胜局系数", () => {
+    const result = calculatePerformance(rawPlayer({
+      initialTeamSize: 3,
+      won: false,
+      aliveAtEnd: true,
+      clutchEnemyCount: 2
+    }));
+    assert.equal(result.victoryMultiplier, 1.00);
+  });
+
+  test("UI·MVP：成为最后存活者时冻结敌方三人且后续击杀不覆盖快照", async () => {
+    const survivor = trackerPlayer("survivor", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemies = [
+      trackerPlayer("enemy-a", 2, "dusk"),
+      trackerPlayer("enemy-b", 3, "dusk"),
+      trackerPlayer("enemy-c", 4, "dusk")
+    ];
+    const { state, dispatcher, tracker } = trackerFixture([survivor, ally, ...enemies]);
+    ally.alive = false;
+    await dispatcher.emit("playerDead", { source: enemies[0], target: ally });
+    for (const enemy of enemies) {
+      enemy.alive = false;
+      await dispatcher.emit("playerDead", { source: survivor, target: enemy });
+    }
+    state.winnerTeam = "dawn";
+    const snapshot = tracker.finalizeMatch();
+    const survivorResult = snapshot.players.find((entry) => entry.playerId === survivor.id);
+    const deadAllyResult = snapshot.players.find((entry) => entry.playerId === ally.id);
+    assert.equal(survivorResult.clutchEnemyCount, 3);
+    assert.equal(survivorResult.won, true);
+    assert.equal(deadAllyResult.clutchEnemyCount, null);
+    assert.equal(deadAllyResult.won, true);
+  });
+
+  test("UI·MVP：十五回合600基础分按二人队1v3与三人队1v2得到918和1224", () => {
+    const twoPlayerResult = calculatePerformance(rawPlayer({
+      initialTeamSize: 2,
+      effectiveRounds: 15,
+      won: true,
+      aliveAtEnd: true,
+      clutchEnemyCount: 3,
       totals: {
-        enemyHpDamage: 6.0,
-        allyHealing: 1.8,
-        cardsPlayed: 9.6,
-        activeSkillsUsed: 3.6,
-        enemyControls: 2.4
+        enemyHpDamage: 30,
+        allyHealing: 9,
+        cardsPlayed: 48,
+        activeSkillsUsed: 12,
+        enemyControls: 12
       },
-      contributionFacts: { allyCardsGranted: 2.4 }
-    };
-    const dead = calculatePerformance(rawPlayer(input));
-    const alive = calculatePerformance(rawPlayer({ ...input, aliveAtEnd: true }));
-    assert.ok(Math.abs(dead.baseScore - 600) < 1e-9);
-    assert.ok(Math.abs(dead.finalScore - 360) < 1e-9);
-    assert.ok(Math.abs(alive.finalScore - 432) < 1e-9);
+      contributionFacts: { allyCardsGranted: 10.5 }
+    }));
+    const threePlayerResult = calculatePerformance(rawPlayer({
+      initialTeamSize: 3,
+      effectiveRounds: 15,
+      won: true,
+      aliveAtEnd: true,
+      clutchEnemyCount: 2,
+      totals: {
+        enemyHpDamage: 18,
+        allyHealing: 7.5,
+        cardsPlayed: 39,
+        activeSkillsUsed: 10.5,
+        enemyControls: 9
+      },
+      contributionFacts: { allyCardsGranted: 7.5 }
+    }));
+    assert.deepEqual(
+      [twoPlayerResult.baseScore, twoPlayerResult.roundMultiplier,
+        twoPlayerResult.victoryMultiplier, twoPlayerResult.finalScore],
+      [600, 1.02, 1.50, 918]
+    );
+    assert.deepEqual(
+      [threePlayerResult.baseScore, threePlayerResult.roundMultiplier,
+        threePlayerResult.victoryMultiplier, threePlayerResult.finalScore],
+      [600, 1.02, 2.00, 1224]
+    );
   });
 
-  test("UI·MVP：存活倍率只把十一回合500基础分转换为600最终分", () => {
-    const totals = {
-      enemyHpDamage: 22,
-      allyHealing: 6.6,
-      cardsPlayed: 35.2,
-      activeSkillsUsed: 13.2,
-      enemyControls: 8.8
-    };
-    const alive = calculatePerformance(rawPlayer({ effectiveRounds: 11, totals, aliveAtEnd: true }));
-    const dead = calculatePerformance(rawPlayer({ effectiveRounds: 11, totals, aliveAtEnd: false }));
-    assert.equal(alive.baseScore, 500);
-    assert.equal(alive.finalScore, 600);
-    assert.equal(dead.finalScore, 500);
-  });
-
-  test("UI·MVP：存活与阵亡玩家同组六维保持相同雷达数据", () => {
+  test("UI·MVP：胜方存活与阵亡玩家同组六维保持相同雷达数据", () => {
     const totals = { enemyHpDamage: 2.25, cardsPlayed: 2 };
-    const alive = calculatePerformance(rawPlayer({ totals, aliveAtEnd: true }));
-    const dead = calculatePerformance(rawPlayer({ totals, aliveAtEnd: false }));
+    const alive = calculatePerformance(rawPlayer({ totals, won: true, aliveAtEnd: true }));
+    const dead = calculatePerformance(rawPlayer({ totals, won: true, aliveAtEnd: false }));
     assert.deepEqual(alive.ratios, dead.ratios);
     assert.notEqual(alive.finalScore, dead.finalScore);
   });
@@ -585,7 +676,7 @@ export function registerMatchPerformanceTests(test) {
     }));
     assert.deepEqual(short.raw, long.raw);
     assert.deepEqual(short.ratios, long.ratios);
-    assert.notEqual(short.roundDecayMultiplier, long.roundDecayMultiplier);
+    assert.notEqual(short.roundMultiplier, long.roundMultiplier);
   });
 
   test("UI·MVP：五人乱序输入按最终分降序且第一名为MVP", () => {
@@ -626,6 +717,26 @@ export function registerMatchPerformanceTests(test) {
     assert.doesNotMatch(rankingMarkup, /match-mvp-badge/);
     assert.doesNotMatch(heroMarkup, /本场 MVP/);
     assert.match(heroMarkup, /match-mvp-hero-watermark[^>]*aria-hidden="true">MVP/);
+  });
+
+  test("UI·MVP：详情使用回合系数与胜局系数且不再显示存活奖励", () => {
+    const detail = { innerHTML: "" };
+    const root = {
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      querySelector() { return detail; }
+    };
+    const viewModel = createMatchResultViewModel({
+      gameId: "multiplier-label",
+      players: [rawPlayer({ won: true, aliveAtEnd: true, clutchEnemyCount: 3 })]
+    });
+    const view = new MatchMvpResultView(root);
+    view.viewModel = viewModel;
+    view.selectedPlayerId = viewModel.defaultSelectedPlayerId;
+    view.renderSelection();
+    assert.match(detail.innerHTML, /回合系数 <b>×0\.30<\/b>/);
+    assert.match(detail.innerHTML, /胜局系数 <b>×1\.50<\/b>/);
+    assert.doesNotMatch(detail.innerHTML, /存活奖励/);
   });
 
   test("UI·MVP：同分每次均以原始座位顺序确定排名", () => {

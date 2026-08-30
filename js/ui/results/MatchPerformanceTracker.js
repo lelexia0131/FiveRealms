@@ -82,6 +82,7 @@ function createPlayerRecord(player, initialTeamSize) {
       enemyControls: 0
     },
     contributionFacts: createContributionFacts(),
+    clutchEnemyCount: null,
     aliveAtEnd: false
   };
 }
@@ -126,7 +127,7 @@ function countCurrentTurnActiveSkills(player) {
 MatchPerformanceTracker.finalizeMatch。
 
 输入
-raw record 与结算时存活事实。
+raw record、结算时存活事实与胜方阵营。
 
 输出
 冻结的玩家统计行。
@@ -141,14 +142,15 @@ record。
 Object.freeze。
 
 边界与不变量
-effectiveRounds 至少为一；快照不共享可变 totals 引用。
+effectiveRounds 至少为一；胜负按玩家自己的开局阵营判定；快照不共享可变 totals 引用。
 */
-function freezePlayerRecord(record, aliveAtEnd) {
+function freezePlayerRecord(record, aliveAtEnd, winnerTeam) {
   return Object.freeze({
     ...record,
     effectiveRounds: Math.max(1, record.effectiveRounds),
     totals: Object.freeze({ ...record.totals }),
     contributionFacts: Object.freeze({ ...record.contributionFacts }),
+    won: record.teamId === winnerTeam,
     aliveAtEnd
   });
 }
@@ -464,7 +466,7 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  累计真正由玩家导致的敌方阵亡次数。
+  累计真正由玩家导致的敌方阵亡，并在死者阵营首次只剩一人时冻结残局快照。
 
   调用方
   playerDead listener。
@@ -479,20 +481,33 @@ export class MatchPerformanceTracker {
   结构化 playerDead fact。
 
   写入状态
-  source.enemyKills。
+  合法击杀者的 enemyKills，以及唯一存活队友的 clutchEnemyCount。
 
   调用函数
-  recordFor。
+  getState、recordFor。
 
   边界与不变量
-  友军击杀、自杀和无来源环境死亡不计；不依赖击杀摸牌奖励资格。
+  友军击杀、自杀和无来源环境死亡不计击杀，但仍可形成残局；快照只写首次值，后续敌人阵亡不得覆盖。
   */
   handlePlayerDead(event) {
     const source = event.source;
     const target = event.target;
-    if (!source || !target || source.id === target.id || source.battleTeam === target.battleTeam) return;
-    const record = this.recordFor(source);
-    if (record) record.totals.enemyKills += 1;
+    if (!target) return;
+    if (source && source.id !== target.id && source.battleTeam !== target.battleTeam) {
+      const sourceRecord = this.recordFor(source);
+      if (sourceRecord) sourceRecord.totals.enemyKills += 1;
+    }
+
+    const players = this.getState().players;
+    const survivingAllies = players.filter(
+      (player) => player.alive && player.battleTeam === target.battleTeam
+    );
+    if (survivingAllies.length !== 1) return;
+    const survivorRecord = this.recordFor(survivingAllies[0]);
+    if (!survivorRecord || survivorRecord.clutchEnemyCount !== null) return;
+    survivorRecord.clutchEnemyCount = players.filter(
+      (player) => player.alive && player.battleTeam !== target.battleTeam
+    ).length;
   }
 
   /*
@@ -833,7 +848,7 @@ export class MatchPerformanceTracker {
   冻结的 { gameId, players } snapshot。
 
   读取状态
-  MatchState players.alive 与 tracker records。
+  MatchState players.alive/winnerTeam 与 tracker records。
 
   写入状态
   finalizedSnapshot。
@@ -847,11 +862,12 @@ export class MatchPerformanceTracker {
   finalizeMatch() {
     if (this.finalizedSnapshot) return this.finalizedSnapshot;
     this.settleActiveSkillTurn(this.activeSkillTurnPlayerId);
+    const state = this.getState();
     const players = Object.freeze([...this.records.values()]
       .sort((left, right) => left.seatIndex - right.seatIndex)
       .map((record) => {
-        const player = this.getState().players.find((candidate) => candidate.id === record.playerId);
-        return freezePlayerRecord(record, Boolean(player?.alive));
+        const player = state.players.find((candidate) => candidate.id === record.playerId);
+        return freezePlayerRecord(record, Boolean(player?.alive), state.winnerTeam);
       }));
     this.finalizedSnapshot = Object.freeze({ gameId: this.gameId, players });
     return this.finalizedSnapshot;
