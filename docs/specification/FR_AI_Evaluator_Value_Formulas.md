@@ -226,10 +226,11 @@ $$
 V_i=Death_i+\sum_k Term_{i,k}
 $$
 
-则 World 的原始 State Points：
+对每个 battleTeam 只计算一次团队共享救援储备 `RescueReserve_t`，则 World 的原始 State Points：
 
 $$
-V_{state}(X) = \sum_i\sigma_iV_i - \sum_i SealBurden_i + \sum_l LightningLifecycle_l
+V_{state}(X) = \sum_i\sigma_iV_i + \sum_t\sigma_t RescueReserve_t
+- \sum_i SealBurden_i + \sum_l LightningLifecycle_l
 $$
 
 注意：`sealTeamBurden()` 本身已经带阵营符号，因此在总 StateValue 中统一执行减法：
@@ -237,7 +238,7 @@ $$
 - 我方持有封印：`SealBurden > 0` → 减分；
 - 敌方持有封印：`SealBurden < 0` → 减去负数，相当于加分。
 
-源码：`Evaluator.js:3502 stateValueSnapshot()`。
+源码：`Evaluator.js:3670 stateValueSnapshot()`；`StateValue.js:787 teamRescueReserve()`。
 
 ## 4.2 单玩家 State Value
 
@@ -252,7 +253,7 @@ $$
 玩家存活时：
 
 $$
-\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+RescueOutlook\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+HP2Risk\\ &+ShieldValue\\ &+EnergyDeviceFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentValue\\ &+EquipmentRoleDelta \end{aligned}
+\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+HP2Risk\\ &+ShieldValue\\ &+EnergyDeviceFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentValue\\ &+EquipmentRoleDelta \end{aligned}
 $$
 
 其中前半由 `StateValue.js` 唯一拥有，手牌/装备 intrinsic asset 由 `CardValue.js` 唯一拥有。
@@ -293,39 +294,51 @@ $$
 Danger=0
 $$
 
-## 5.3 濒死 Rescue Outlook
+## 5.3 团队 Rescue Reserve
 
-仅 `HP<=1` 时计算。
-
-先求己方全部存活玩家持有 `Recover` 的期望数量：
-
-$$
-RescueCapacity = \sum_{r\in Team} E[Recover_r]
-$$
-
-需要恢复量：
+本项不属于任何单玩家 `V_i`，而是每个 battleTeam 在 State Value 中只计算一次。
+只统计该阵营存活成员。成员需求为：
 
 $$
-RequiredRecovery=\max(1,1-HP)
+N_i=\begin{cases}
+1,&HP_i\le1\\
+0.5+0.5T_i,&HP_i=2\\
+0,&HP_i\ge3
+\end{cases}
 $$
 
-覆盖率：
+HP=2 的威胁必须复用同一次 State Value 遍历已经得到的 `HP2Risk`：
 
 $$
-Coverage = \min\left(1,\frac{RescueCapacity}{RequiredRecovery}\right)
+T_i=\min(1,ThreatDamage_i)=\frac{-HP2Risk_i}{2.1}
 $$
 
-若 `RescueCapacity>0`：
+团队总需求与合法调息期望容量：
 
 $$
-\boxed{ RescueOutlook=(Coverage-0.5)\times8 }
+D=\sum_iN_i
 $$
 
-因此取值范围为：
+$$
+C=\sum_{r\in Team}E[Recover_r]
+$$
+
+有效容量：
 
 $$
-[-4SP，4SP]\\  [-0.8u,0.8u]
+C_e=\min(C,D)
 $$
+
+最终团队共享状态值：
+
+$$
+\boxed{RescueReserve=\begin{cases}
+0,&D\le0\lor C\le0\\[4pt]
+\dfrac{8DC_e}{D+C_e},&otherwise
+\end{cases}}
+$$
+
+同一张调息只属于一份团队容量；超过需求的调息不继续获得本项价值。
 
 ## 5.4 破势层 `Expose Weakness Stacks`
 
@@ -894,7 +907,6 @@ $$
 ```
 Danger
 HP2Risk
-RescueOutlook
 ShieldValue
 MarkThreat
 ResidualExposureValue
@@ -1243,27 +1255,9 @@ Searcher 只负责物化 hidden worlds / follow-up；公式 owner 仍是 Evaluat
 
 # 17. Terminal Frontier Held Option
 
-源码：`Evaluator.js:3930 frontierResidual()`、`3987 terminalFrontierValue()`。
+源码：`Evaluator.js:4239 frontierResidual()`、`4287 terminalFrontierValue()`。
 
-## 17.1 Recover held option
-
-Viewer 手中 Recover 可用期望数量：
-
-$$
-R=\sum_{recover\;card}Availability(card)
-$$
-
-缺失 HP：
-
-$$
-MissingHP=\max(0,MaxHP-HP)
-$$
-
-$$
-\boxed{ RecoverHeld =\min(R,MissingHP)\times5 }
-$$
-
-## 17.2 Recycle held option
+## 17.1 Recycle held option
 
 仅持有 `recycleDevice`：
 
@@ -1283,12 +1277,12 @@ $$
 \boxed{ RecycleHeld =RemainingUses\times TacticGate\times1.1\times Retention }
 $$
 
-## 17.3 Frontier Utility
+## 17.2 Frontier Utility
 
 只在 terminal 时：
 
 $$
-\boxed{ V_{frontier} =\frac{RecoverHeld+RecycleHeld}{5} }
+\boxed{ V_{frontier} =\frac{RecycleHeld}{5} }
 $$
 
 `futureInventory + energyPressure` 虽被 `frontierResidual()` 输出用于诊断，但已经存在于 State Value，**不得再次进入 Final Utility**。
@@ -2890,8 +2884,9 @@ $$
 - material：hp、shield、hp2Risk、info、stacks、equipmentDelta、energyDeviceFuture、death
 - threat：currentThreat、futureInventory、energyPressure、markThreat、radar
 - specific：handRole、equipmentRole
-- outcome：danger、rescueOutlook
+- outcome：danger
 - teamBurden：lightning、seal
+- teamValues：每个 battleTeam 一条 rescueReserve
 
 Viewer 投影：
 
@@ -2900,11 +2895,11 @@ Self=U(SelfOwnerTotal)
 $$
 
 $$
-Ally=U(\sum AllyOwnerTotal)
+Ally=U(\sum AllyOwnerTotal+\sum AllyTeamValue)
 $$
 
 $$
-Enemy=U(\sum EnemyOwnerTotal)
+Enemy=U(\sum EnemyOwnerTotal+\sum EnemyTeamValue)
 $$
 
 $$

@@ -113,6 +113,7 @@ const DEATH_VALUE = 28;
 const SHIELD_RESERVE_WEIGHT = 2;
 const SHIELD_PROTECTION_WEIGHT = 0.5;
 export const HP_RISK_OPTION_WEIGHT = 0.3;
+const HP2_RISK_MAX = DANGER_VALUE * HP_RISK_OPTION_WEIGHT;
 
 /*
 功能
@@ -754,7 +755,69 @@ function hp2ThreatRiskValue(player, bufferResidualExposure) {
   if (!player?.alive || player.hp !== 2) return 0;
   const threatDamage = Math.max(0, bufferResidualExposure) / HP_VALUE;
   if (threatDamage <= 1e-9) return 0;
-  return -Math.min(1, threatDamage) * DANGER_VALUE * HP_RISK_OPTION_WEIGHT;
+  return -Math.min(1, threatDamage) * HP2_RISK_MAX;
+}
+
+/*
+功能
+计算一个阵营共享且不可重复消费的调息救援储备状态值。
+
+调用方
+Evaluator 的 State Value 聚合与团队 diagnostic ledger。
+
+输入
+canonical World、battleTeam、同一次 State Value 遍历已得到的逐玩家 HP2Risk Map，
+以及不计入需求的 viewer ID。
+
+输出
+该阵营的非负 RescueReserve State points。
+
+读取状态
+存活成员生命、合法 ProbabilityState 调息期望容量与已计算的 HP2Risk。
+
+写入状态
+无。
+
+调用函数
+queryPlayerHandProbability、clampProbability。
+
+边界与不变量
+需求只统计 viewer 的存活队友，容量仍统计包括 viewer 在内的整个存活团队；
+HP=2 威胁必须从既有 HP2Risk 恢复，禁止再次计算 exposure；
+同一份团队容量最多覆盖一次总需求，超过需求的调息不继续增加本项价值。
+*/
+export function teamRescueReserve(
+  state,
+  battleTeam,
+  hp2RiskByPlayer,
+  demandExcludedPlayerId
+) {
+  const team = (state?.players ?? []).filter((player) => (
+    player?.alive && player.battleTeam === battleTeam
+  ));
+  let demand = 0;
+  for (const player of team) {
+    if (player.id === demandExcludedPlayerId) continue;
+    if (player.hp <= 1) {
+      demand += 1;
+    } else if (player.hp === 2) {
+      const threat = clampProbability(
+        -Math.min(0, Number(hp2RiskByPlayer?.get(player.id)) || 0) / HP2_RISK_MAX
+      );
+      demand += 0.5 + 0.5 * threat;
+    }
+  }
+  if (demand <= 0) return 0;
+  const capacity = team.reduce((sum, player) => (
+    sum + queryPlayerHandProbability(
+      state.probabilityState,
+      player,
+      "recover"
+    ).expected
+  ), 0);
+  if (capacity <= 0) return 0;
+  const effectiveCapacity = Math.min(capacity, demand);
+  return 8 * demand * effectiveCapacity / (demand + effectiveCapacity);
 }
 
 /*
@@ -843,7 +906,7 @@ Evaluator.playerValueTerms。
 death 与不含 hand/equipment intrinsic asset 的 terms。
 
 读取状态
-生命、生存、能量、护盾、状态、威胁、队伍救援容量与装备产生的状态后果。
+生命、生存、能量、护盾、状态、威胁与装备产生的状态后果。
 
 写入状态
 无。
@@ -864,23 +927,6 @@ export function statePlayerValueTerms(
 ) {
   if (!player.alive) return { death: -DEATH_VALUE, terms: {} };
   const danger = player.hp <= 1 ? -DANGER_VALUE : 0;
-  let rescueOutlook = 0;
-  if (player.hp <= 1) {
-    const rescueCapacity = state.players
-      .filter((rescuer) => rescuer.alive && rescuer.battleTeam === player.battleTeam)
-      .reduce((sum, rescuer) => (
-        sum + queryPlayerHandProbability(
-          state.probabilityState,
-          rescuer,
-          "recover"
-        ).expected
-      ), 0);
-    if (rescueCapacity > 0) {
-      const requiredRecovery = Math.max(1, 1 - player.hp);
-      const rescueCoverage = Math.min(1, rescueCapacity / requiredRecovery);
-      rescueOutlook = (rescueCoverage - 0.5) * 8;
-    }
-  }
   const markThreat = Object.entries(player.huntMarkProbabilities ?? {}).reduce(
     (sum, [sourceId, probability]) => {
       const source = state.players.find((entry) => entry.id === sourceId);
@@ -912,7 +958,6 @@ export function statePlayerValueTerms(
     terms: {
       danger,
       hp2Risk: hp2ThreatRiskValue(player, bufferResidualExposure),
-      rescueOutlook,
       hp: player.hp * HP_VALUE,
       shield,
       skillReadiness: skillReadinessThreat(player),

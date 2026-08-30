@@ -218,6 +218,7 @@ import {
   futureSkillReadinessProbability,
   roleThreatSynergy,
   skillReadinessThreat,
+  teamRescueReserve,
   turnOpportunityValue
 } from "../js/ai/Evaluator/StateValue.js";
 import { sealTeamBurden } from "../js/ai/Evaluator/StateValue.js";
@@ -18007,28 +18008,28 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
       entry.targetIds?.[0] ?? null
     ]), [
       ["skill", "stealSkill", "b"],
-      ["card", "assault", "b"],
-      ["card", "seal", "c"]
+      ["card", "seal", "c"],
+      ["card", "assault", "b"]
     ], JSON.stringify(stats));
     assert.deepEqual(stats.bestSequence[0], action);
     assert.notDeepEqual(stats.scheduledRootOrder[0], action,
       "最终 root 必须由完整未来价值决定，而不是照搬首个调度动作");
-    assert.equal(stats.expanded, 100);
+    assert.equal(stats.expanded, 102);
     assert.equal(stats.depth, 3);
     assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 3.084662540277063);
+    assert.equal(stats.bestValueScore, 2.4933032320944317);
     assert.equal(stats.stopReason, "COMPLETE");
-    assert.equal(stats.simulationCalls, 184);
-    assert.equal(stats.cloneCalls, 194);
-    assert.equal(stats.probabilityOperations, 1792);
+    assert.equal(stats.simulationCalls, 186);
+    assert.equal(stats.cloneCalls, 196);
+    assert.equal(stats.probabilityOperations, 1812);
     assert.equal(stats.rootCandidateCount, 9);
     assert.equal(stats.completedRootCandidateCount, 9);
     assert.equal(stats.timeoutObserved, false);
     assert.equal(stats.matchedPatternCount, 1);
     assert.equal(stats.patternProposalCount, 1);
     assert.equal(stats.completedPatternCount, 1);
-    assert.equal(stats.patternIncumbentUpdateCount, 1);
-    assert.equal(stats.selectedPatternId, null);
+    assert.equal(stats.patternIncumbentUpdateCount, 2);
+    assert.equal(stats.selectedPatternId, "SEAL_LAST");
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -31259,7 +31260,7 @@ test("AI·评分：普通护盾卡同样获得威胁感知的 state representati
 
 // ---- AI 评分·基础牌执行价值 ----
 
-test("AI·评分：调息实际恢复量由 stateDelta 表达且不再按总缺血量加固定分", () => {
+test("AI·评分：调息实际恢复量由 stateDelta 表达且 viewer 不产生 Rescue Demand", () => {
   const run = (actorHp) => {
     const actor = makePlayer(`rc-del-actor-${actorHp}`, 0, "dawn", "ai", 0);
     const enemy = makePlayer("rc-del-enemy", 1, "dusk", "ai", 5);
@@ -31277,10 +31278,10 @@ test("AI·评分：调息实际恢复量由 stateDelta 表达且不再按总缺�
     return { delta, actionUtility };
   };
   const missing1 = run(3), missing2 = run(2), missing0 = run(4);
-  // 缺1HP 与缺2HP 都只恢复1HP：stateDelta 一致；满血无实际恢复则明显更低
+  // 两种情况都恢复 1HP；viewer 自身的 HP=2 风险不产生团队救援需求。
   assertClose(missing1.delta, missing2.delta, 1e-9);
   assert.ok(missing1.delta > missing0.delta, "有实际恢复的 after-state 必须高于无恢复");
-  // actionUtility 不再按总缺血量加固定分：三个状态一致
+  // actionUtility 不新增 Recover 特例；差异只来自 World 的 StateDelta。
   assert.equal(missing1.actionUtility, missing2.actionUtility);
   assert.equal(missing2.actionUtility, missing0.actionUtility);
 });
@@ -35203,66 +35204,350 @@ test("AI·价值归属：突袭消耗与格挡消耗归属不同 owner 不相互
 
 /*
 功能
-证明救援价值由当前 World 的真实生命状态与 ProbabilityState 调息容量直接派生。
+构造只含确定调息容量的团队 RescueReserve 公式 fixture。
+
+调用方
+团队 RescueReserve 数值与边际回归测试。
+
+输入
+队友生命/威胁列表、自己持有的确定调息数量与可选的自身生命/威胁。
+
+输出
+canonical ProbabilityState、阵营名、viewer ID 及从既有 HP2Risk 等价得到的风险 Map。
+
+读取状态
+测试卡牌定义与 Probability fixture helper。
+
+写入状态
+仅构造新的测试 World。
+
+调用函数
+ledgerPlayer、ledgerHand、ledgerState、upgradeProbabilityFixture。
+
+边界与不变量
+HP=2 威胁只转换为既有 HP2Risk 输入，不在 Reserve 公式内重算 exposure。
+*/
+function rescueReserveFixture(members, recoverCount, selfState = {}) {
+  const team = "dawn";
+  const self = ledgerHand(
+    ledgerPlayer("reserve-self", 0, team, "spirit-medic", { hp:selfState.hp ?? 4 }),
+    Array.from({ length:recoverCount }, () => "recover")
+  );
+  const allies = members.map((member, index) => ledgerPlayer(
+    `reserve-ally-${index}`,
+    index + 1,
+    team,
+    "oath-warden",
+    { hp:member.hp, alive:member.alive ?? true }
+  ));
+  const state = ledgerState([
+    self,
+    ...allies,
+    ledgerPlayer("reserve-enemy", allies.length + 1, "dusk", "blade-walker")
+  ]);
+  upgradeProbabilityFixture(state);
+  return {
+    state,
+    team,
+    viewerId:self.id,
+    hp2RiskByPlayer:new Map([
+      [self.id, -2.1 * (selfState.threat ?? 0)],
+      ...allies.map((player, index) => (
+        [player.id, -2.1 * (members[index].threat ?? 0)]
+      ))
+    ])
+  };
+}
+
+/*
+功能
+锁定团队 RescueReserve 的需求、容量上限、威胁变化与逐张边际公式。
 
 调用方
 AI·价值归属测试注册。
 
 输入
-无；构造有/无调息容量的等价低血量 World。
+无；内部覆盖用户指定的二人、三人和关键真实容量表。
 
 输出
-无；断言 rescueOutlook 保留原价值曲线且 Evaluator 不写 World。
+无；任一 State points 到 utility 的定向数值不一致时抛错。
 
 读取状态
-测试 World 的玩家 HP/alive、确定调息身份与 ProbabilityState。
+测试 World 的存活、生命、合法调息 ProbabilityState 与既有 HP2Risk 等价输入。
 
 写入状态
 仅构造测试 fixture。
 
 调用函数
-upgradeProbabilityFixture、Evaluator.playerValueTerms。
+rescueReserveFixture、teamRescueReserve、statePointsToUtility。
 
 边界与不变量
-调息容量为零时保持中性；一张完整调息覆盖一名 1 HP 存活角色的救援需求。
+viewer 不进入需求但仍进入团队容量；有效容量不超过总需求；死亡成员不产生需求。
 */
-function testEvaluatorDerivesRescueOutlookFromWorld() {
-  const withRescue = ledgerState([
-    ledgerHand(ledgerPlayer("rescue-value-medic", 0, "dawn", "spirit-medic"), ["recover"]),
-    ledgerPlayer("rescue-value-target", 1, "dawn", "oath-warden", { hp:1 }),
-    ledgerPlayer("rescue-value-enemy", 2, "dusk", "blade-walker")
-  ]);
-  const withoutRescue = ledgerState([
-    ledgerPlayer("rescue-value-medic", 0, "dawn", "spirit-medic"),
-    ledgerPlayer("rescue-value-target", 1, "dawn", "oath-warden", { hp:1 }),
-    ledgerPlayer("rescue-value-enemy", 2, "dusk", "blade-walker")
-  ]);
-  upgradeProbabilityFixture(withRescue);
-  upgradeProbabilityFixture(withoutRescue);
-  const beforeEvaluation = structuredClone(withRescue);
-  const evaluator = new Evaluator();
-  const withTerms = evaluator.playerValueTerms(
-    withRescue,
-    withRescue.players[1],
-    withRescue.players[0].id,
-    0
-  ).terms;
-  const withoutTerms = evaluator.playerValueTerms(
-    withoutRescue,
-    withoutRescue.players[1],
-    withoutRescue.players[0].id,
-    0
-  ).terms;
-  assert.equal(withTerms.rescueOutlook, 4);
-  assert.equal(withoutTerms.rescueOutlook, 0);
-  assert.deepEqual(withRescue, beforeEvaluation);
-  const removedField = ["expected", "RescueCoverage"].join("");
-  assert.equal(Object.hasOwn(withRescue.players[1], removedField), false);
+function testTeamRescueReserveFormula() {
+  const reserve = (members, capacity) => {
+    const fixture = rescueReserveFixture(members, capacity);
+    return statePointsToUtility(teamRescueReserve(
+      fixture.state,
+      fixture.team,
+      fixture.hp2RiskByPlayer,
+      fixture.viewerId
+    ));
+  };
+  const cases = [
+    ["二人健康", [{ hp:3 }], [[0, 0], [1, 0], [3, 0]]],
+    ["二人 HP2 T0", [{ hp:2, threat:0 }], [[0, 0], [1, 0.4], [2, 0.4], [3, 0.4]]],
+    ["二人 HP2 T0.25", [{ hp:2, threat:0.25 }], [[1, 0.5]]],
+    ["二人 HP2 T0.5", [{ hp:2, threat:0.5 }], [[0, 0], [1, 0.6], [2, 0.6]]],
+    ["二人 HP2 T0.75", [{ hp:2, threat:0.75 }], [[1, 0.7]]],
+    ["二人 HP2 T1", [{ hp:2, threat:1 }], [[0, 0], [1, 0.8], [2, 0.8]]],
+    ["二人 HP1", [{ hp:1 }], [[0, 0], [1, 0.8], [2, 0.8], [3, 0.8]]],
+    ["三人健康", [{ hp:3 }, { hp:3 }], [[0, 0], [3, 0]]],
+    ["三人 HP2+健康", [{ hp:2 }, { hp:3 }], [[1, 0.4], [2, 0.4]]],
+    ["三人 HP1+健康", [{ hp:1 }, { hp:3 }], [[1, 0.8], [2, 0.8]]],
+    ["三人 HP2+HP2", [{ hp:2 }, { hp:2 }], [[1, 0.8], [2, 0.8]]],
+    ["三人 HP1+HP2", [{ hp:1 }, { hp:2 }], [[1, 0.96], [2, 1.2], [3, 1.2]]],
+    ["三人 HP1+HP1", [{ hp:1 }, { hp:1 }], [[1, 1.0666667], [2, 1.6], [3, 1.6]]],
+    ["HP1+HP2 T0.5", [{ hp:1 }, { hp:2, threat:0.5 }], [[1, 1.0181818], [2, 1.4]]],
+    ["HP1+HP2 T1", [{ hp:1 }, { hp:2, threat:1 }], [[1, 1.0666667], [2, 1.6]]]
+  ];
+  for (const [label, members, expectations] of cases) {
+    for (const [capacity, expected] of expectations) {
+      assertClose(reserve(members, capacity), expected, 1e-7, `${label} C=${capacity}`);
+    }
+  }
+  const twoHp1 = (capacity) => reserve([{ hp:1 }, { hp:1 }], capacity);
+  assertClose(twoHp1(1) - twoHp1(0), 1.0666667, 1e-7);
+  assertClose(twoHp1(2) - twoHp1(1), 0.5333333, 1e-7);
+  assertClose(twoHp1(3) - twoHp1(2), 0, 1e-12);
+  for (const threat of [0, 1]) {
+    const members = [{ hp:1 }, { hp:2, threat }];
+    assertClose(reserve(members, 3) - reserve(members, 2), 0, 1e-12);
+  }
+  assert.equal(reserve([{ hp:1, alive:false }], 1), 0);
+  const viewerCases = [
+    [1, 0, 4, 0],
+    [2, 1, 4, 0],
+    [4, 0, 1, 0.8]
+  ];
+  for (const [hp, threat, allyHp, expected] of viewerCases) {
+    const fixture = rescueReserveFixture([{ hp:allyHp }], 1, { hp, threat });
+    assertClose(statePointsToUtility(teamRescueReserve(
+      fixture.state, fixture.team, fixture.hp2RiskByPlayer, fixture.viewerId
+    )), expected, 1e-12);
+  }
 }
 
 test(
-  "AI·价值归属：救援价值由 World 与 ProbabilityState 直接派生",
-  testEvaluatorDerivesRescueOutlookFromWorld
+  "AI·价值归属：团队 RescueReserve 共享容量、HP2 需求与边际公式一致",
+  testTeamRescueReserveFormula
+);
+
+/*
+功能
+证明 RescueReserve 只在团队 State Value 中进入一次，且第三张富余调息的真实使用不损失该项价值。
+
+调用方
+AI·价值归属测试注册。
+
+输入
+无；构造低血 viewer、团队共享需求及健康团队使用唯一调息的 canonical Worlds。
+
+输出
+无；断言 viewer 排除、团队值、Action 前后边际、ledger owner 与 terminal frontier 契约。
+
+读取状态
+Evaluator 玩家分项、团队 State Value、ProbabilityState 与 Simulator 结果。
+
+写入状态
+只推进独立测试 World clone。
+
+调用函数
+Evaluator.playerValueTerms/stateUtility/ownerStateLedger/frontierResidual、Simulator.apply、teamRescueReserve。
+
+边界与不变量
+HP2 风险必须复用同次玩家分项；viewer 只从需求排除，不得从团队容量排除；
+RescueReserve 不得回到逐玩家 outcome 或 terminal held option。
+*/
+function testTeamRescueReserveStateIntegration() {
+  const state = ledgerState([
+    ledgerHand(
+      ledgerPlayer("reserve-action-self", 0, "dawn", "spirit-medic", { hp:3 }),
+      ["recover", "recover", "recover", "counter"]
+    ),
+    ledgerPlayer("reserve-action-hp1", 1, "dawn", "oath-warden", { hp:1 }),
+    ledgerPlayer("reserve-action-hp2", 2, "dawn", "resonance-tuner", { hp:2 }),
+    ledgerHand(
+      ledgerPlayer("reserve-action-enemy", 3, "dusk", "blade-walker", { hp:1 }),
+      ["recover"]
+    )
+  ]);
+  upgradeProbabilityFixture(state);
+  const evaluator = new Evaluator();
+  const lowViewerFixture = rescueReserveFixture([{ hp:4 }], 1, { hp:1 });
+  const lowViewerPoints = lowViewerFixture.state.players.reduce((sum, player) => {
+    const sign = player.battleTeam === lowViewerFixture.team ? 1 : -1;
+    const { death, terms } = evaluator.playerValueTerms(
+      lowViewerFixture.state,
+      player,
+      lowViewerFixture.viewerId,
+      0
+    );
+    return sum + sign * (
+      death + Object.values(terms).reduce((termSum, value) => termSum + value, 0)
+    );
+  }, 0);
+  assertClose(
+    evaluator.stateUtility(lowViewerFixture.state, lowViewerFixture.viewerId),
+    lowViewerPoints,
+    1e-12,
+    "State Value 不得把低血 viewer 自身计入 Rescue Demand"
+  );
+  const lowViewerAfter = new Simulator(lowViewerFixture.state).apply(
+    lowViewerFixture.state,
+    ledgerAction(lowViewerFixture.state, lowViewerFixture.viewerId, "recover"),
+    lowViewerFixture.viewerId
+  );
+  const lowViewerLedger = evaluator.ownerStateLedger(
+    lowViewerFixture.state,
+    lowViewerAfter,
+    lowViewerFixture.viewerId
+  );
+  assert.equal(
+    lowViewerLedger.teamValues.find(
+      (entry) => entry.battleTeam === lowViewerFixture.team
+    ).rescueReserve,
+    0
+  );
+  const removedOutlookField = ["rescue", "Outlook"].join("");
+  const valueTerms = (world) => new Map(world.players.map((player) => {
+    const terms = evaluator.playerValueTerms(world, player, state.players[0].id, 0).terms;
+    assert.equal(Object.hasOwn(terms, removedOutlookField), false);
+    assert.equal(Object.hasOwn(terms, "rescueReserve"), false);
+    return [player.id, terms.hp2Risk ?? 0];
+  }));
+  const beforeRisk = valueTerms(state);
+  assert.equal(beforeRisk.get("reserve-action-hp2"), 0);
+  const beforeReserve = teamRescueReserve(
+    state,
+    "dawn",
+    beforeRisk,
+    "reserve-action-self"
+  );
+  const enemyReserve = teamRescueReserve(
+    state,
+    "dusk",
+    beforeRisk,
+    "reserve-action-self"
+  );
+  assertClose(statePointsToUtility(beforeReserve), 1.2, 1e-12);
+  assertClose(statePointsToUtility(enemyReserve), 0.8, 1e-12);
+  const playerPoints = state.players.reduce((sum, player) => {
+    const sign = player.battleTeam === "dawn" ? 1 : -1;
+    const { death, terms } = evaluator.playerValueTerms(
+      state,
+      player,
+      "reserve-action-self",
+      0
+    );
+    return sum + sign * (
+      death + Object.values(terms).reduce((termSum, value) => termSum + value, 0)
+    );
+  }, 0);
+  assertClose(
+    evaluator.stateUtility(state, "reserve-action-self") - playerPoints,
+    beforeReserve - enemyReserve,
+    1e-12,
+    "己方与敌方 RescueReserve 必须分别只进入一次 State Value"
+  );
+  const after = new Simulator(state).apply(
+    state,
+    ledgerAction(state, "reserve-action-self", "recover"),
+    "reserve-action-self"
+  );
+  const afterReserve = teamRescueReserve(
+    after,
+    "dawn",
+    valueTerms(after),
+    "reserve-action-self"
+  );
+  assert.equal(afterReserve, beforeReserve);
+  const ledger = evaluator.ownerStateLedger(state, after, "reserve-action-self");
+  assert.equal(ledger.teamValues.length, 2);
+  assert.equal(ledger.teamValues.filter((entry) => entry.battleTeam === "dawn").length, 1);
+  assert.equal(ledger.teamValues.find((entry) => entry.battleTeam === "dawn").rescueReserve, 0);
+  assert.ok(ledger.owners.every(
+    (owner) => !Object.hasOwn(owner.outcome, removedOutlookField)
+  ));
+  const residual = evaluator.frontierResidual(state, "reserve-action-self");
+  assert.equal(Object.hasOwn(residual.held, "recover"), false);
+  assert.equal(evaluator.terminalFrontierValue(residual, true), 0);
+
+  const threatenedState = ledgerState([
+    ledgerHand(
+      ledgerPlayer("reserve-action-self", 0, "dawn", "spirit-medic", { hp:3 }),
+      ["recover", "recover", "recover", "counter"]
+    ),
+    ledgerPlayer("reserve-action-hp1", 1, "dawn", "oath-warden", { hp:1 }),
+    ledgerPlayer("reserve-action-hp2", 2, "dawn", "resonance-tuner", { hp:2 }),
+    ledgerHand(
+      ledgerPlayer(
+        "reserve-action-enemy",
+        3,
+        "dusk",
+        "blade-walker",
+        { hp:1, energy:2 }
+      ),
+      ["recover", "assault"]
+    )
+  ]);
+  upgradeProbabilityFixture(threatenedState);
+  const threatenedRisk = valueTerms(threatenedState);
+  assert.equal(threatenedRisk.get("reserve-action-hp2"), -2.1);
+  const threatenedBefore = teamRescueReserve(
+    threatenedState,
+    "dawn",
+    threatenedRisk,
+    "reserve-action-self"
+  );
+  const threatenedAfterState = new Simulator(threatenedState).apply(
+    threatenedState,
+    ledgerAction(threatenedState, "reserve-action-self", "recover"),
+    "reserve-action-self"
+  );
+  const threatenedAfter = teamRescueReserve(
+    threatenedAfterState,
+    "dawn",
+    valueTerms(threatenedAfterState),
+    "reserve-action-self"
+  );
+  assertClose(statePointsToUtility(threatenedBefore), 1.6, 1e-12);
+  assert.equal(threatenedAfter, threatenedBefore);
+
+  for (const hp of [3, 4]) {
+    const healthyFixture = rescueReserveFixture([{ hp:4 }], 1, { hp });
+    const healthyAfter = new Simulator(healthyFixture.state).apply(
+      healthyFixture.state,
+      ledgerAction(healthyFixture.state, healthyFixture.viewerId, "recover"),
+      healthyFixture.viewerId
+    );
+    const healthyLedger = evaluator.ownerStateLedger(
+      healthyFixture.state,
+      healthyAfter,
+      healthyFixture.viewerId
+    );
+    assert.equal(
+      healthyLedger.teamValues.find(
+        (entry) => entry.battleTeam === healthyFixture.team
+      ).rescueReserve,
+      0
+    );
+  }
+}
+
+test(
+  "AI·价值归属：RescueReserve 团队只计一次且富余调息 Action delta 为零",
+  testTeamRescueReserveStateIntegration
 );
 
 

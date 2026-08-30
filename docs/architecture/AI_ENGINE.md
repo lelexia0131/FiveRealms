@@ -784,7 +784,7 @@ AI-ARCH-3 当时可独立回滚的物理边界是 `state/**`、`AiVisibleState` 
 | candidate ledger | `AiPlanner` | diagnostics | `{ ownerLedger, projected, responses }` | 表示层，不缩放 | diagnostics 开启时 | viewer + owners | root diagnostics | `value/ValueLedger` | `DIAGNOSTIC_ONLY` / 否 | schema/构造迁移；关闭 diagnostics 时不计算 |
 | `cardOpportunityCost` | `AiEvaluator` | 价值归属诊断、测试 | generic `1.1`、role delta、recover/recycle future option、block/counter/recover capacity | 原始诊断分量 | 卡牌消费解释时 | 当前持有者 | diagnostic decomposition | `value/CardValue` | `DIAGNOSTIC_ONLY` / 否 | 原样迁移；手牌减少只由 state delta 进入 final |
 | frontier future inventory | `AiEvaluator` + Planner | frontier diagnostics | `futureInventory + energyPressure` | 原始 threat value | frontier/terminal 表示 | viewer | residual diagnostic | `search/FrontierValue` | `DIAGNOSTIC_ONLY` / 否 | 保留表示但不加 final，因已在 State Value 暴露项中 |
-| frontier held recover/recycle | `AiEvaluator` + Planner | terminal candidate | recover 可兑现治疗 + recycle 剩余次数与战术牌机会 | held 总和 `×0.08` | 仅 `playPhaseEnded` terminal 一次 | viewer | `frontierValue` | `search/FrontierValue` | `TRANSITION_FINAL` / 是 | 独立 owner；非 terminal 为零且路径中不累计 |
+| frontier held recycle | `AiEvaluator` + Planner | terminal candidate | recycle 剩余次数与战术牌机会 | held recycle `×0.08` | 仅 `playPhaseEnded` terminal 一次 | viewer | `frontierValue` | `search/FrontierValue` | `TRANSITION_FINAL` / 是 | 独立 owner；非 terminal 为零且路径中不累计 |
 | seal delay / timing | `sealScoring` + Planner | final transition | 最佳非 seal sibling 的延迟成本，经既有 `sealDelayCost` / `sealEarlyUsePenalty` | 既有 penalty；不再乘 state scale | 同一 parent 全部候选 materialize 后 | actor/viewer | final candidate | producer 暂留 domain/Planner；composition 在 `TransitionValue` | `DOMAIN_TERM` / 是 | producer 不动，避免提前 ARCH-6；final composition 已迁移 |
 | expose marginal | Planner + Simulator | final transition | baseline 与仅新增一层破势的配对反事实 state-value 差 | 根为原值；深层先除 depth；组合再 `×0.08` | expose transition | actor/viewer | final candidate | producer 暂留 Planner；composition 在 `TransitionValue` | `DOMAIN_TERM` / 是 | 只迁移组合；反事实 producer 留待 ARCH-6/9 |
 | assault stack marginal | Planner + Simulator | final transition | baseline 与只改变可兑现旧破势层的配对反事实差，按 remaining provenance 推进 | 根为原值；深层先除 depth；组合再 `×0.08` | assault transition | actor/viewer | final candidate | producer暂留 Planner；composition 在 `TransitionValue` | `DOMAIN_TERM` / 是 | 只迁移组合；保持 telescoping 与一次消费 |
@@ -841,7 +841,7 @@ ValueLedger 的生产语义是“解释同一 State Value 世界”，不是第�
 
 根节点 `pruneScore = valueScore + hiddenAdjustment + actionUtility + actionSearchPrior`，深层 prior 仍按既有 depth 除法进入 `pruneScore`。最终 beam 重排、root choice、end fallback 与 `bestValueScore` 只比较 `valueScore`；TransitionValue 没有 SearchPrior 依赖。
 
-FrontierValue 始终生成可解释 residual，但 `futureInventory` 已在 State Value 的 exposure 中，只作诊断；只有 held recover/recycle 在 terminal 一次乘 `0.08` 进入 final。非 terminal 返回零，路径节点不会累计 residual。
+FrontierValue 始终生成可解释 residual，但 `futureInventory` 已在 State Value 的 exposure 中，只作诊断；只有 held recycle 在 terminal 一次乘 `0.08` 进入 final。非 terminal 返回零，路径节点不会累计 residual。
 
 Expose、assault-stack 与 seal timing 的领域 producer 暂留 Planner/既有 domain helper；它们只把命名数值交给 TransitionValue 组合。闪电 probability/lifecycle helper 和 GlobalBenefit producer 也保留原位。这样完成 Value Ownership，又没有提前实施 ARCH-6 Domain Models、ARCH-7 Simulation Split 或 ARCH-9 Search Core。
 
@@ -856,7 +856,7 @@ Expose、assault-stack 与 seal timing 的领域 producer 暂留 Planner/既有 
 
 ### 行为、数值与性能证据
 
-逐 term legacy/new 测试锁定 `economic`、`resolutionScale`、`executionProbability`、`immediate`、`stateDelta`、`stateDeltaValue`、`depth`、`baseTransition` 和 final composition。现有 value snapshots 继续覆盖普通/确定突袭、格挡、反制、濒死救援、击杀、调息、装备、破势新增/消费、封印 timing、frontier recover/recycle、end fallback、闪电与 GlobalBenefit。Diagnostics off/on 的 root action、搜索诊断序列、节点、深度、hidden samples、final value 和 tie-break 相同。
+逐 term legacy/new 测试锁定 `economic`、`resolutionScale`、`executionProbability`、`immediate`、`stateDelta`、`stateDeltaValue`、`depth`、`baseTransition` 和 final composition。现有 value snapshots 继续覆盖普通/确定突袭、格挡、反制、濒死救援、击杀、调息、装备、破势新增/消费、封印 timing、frontier recycle、end fallback、闪电与 GlobalBenefit。Diagnostics off/on 的 root action、搜索诊断序列、节点、深度、hidden samples、final value 和 tie-break 相同。
 
 固定 D4 场景 `planning.d4-seal-then-kill`、seed `20260814`、node budget `200`，改造前后均选择 `seal -> c`，计划为 `seal c -> stealSkill c -> assault b -> end`，扩展 `102` 节点、深度 `4`、hidden samples `10`、`bestValueScore=0.04919669968375734`。
 
@@ -1328,7 +1328,7 @@ AI-ARCH-10 的阶段验证记录保留在 Git 历史与测试输出；该阶段�
 | `planningCounterDecision`、`counterDecision` | `Evaluator/Evaluator` / Simulator query | `POLICY HEURISTIC` | 输出确定 boolean；评分先比较阈值，再决定 respond / do not respond。 |
 | `expectedRecoverCount`、`expectedAssaultCount`、`expectedInformationGain`、`expectedEquipmentGain` | Event / Simulator | `EXPECTED VALUE, NOT PROBABILITY` | 资源数量或价值期望；不能作为条件事件概率使用。 |
 | `hp`（跨分支摘要）、`hpSummaryClassification` | `Simulator/Damage` | `EXPECTED VALUE, NOT PROBABILITY` | 多个 HP/alive 世界的标量摘要；不得声明为确定生命状态。 |
-| `rescueOutlook` | `Evaluator/StateValue` | `EXPECTED VALUE, NOT PROBABILITY` | 由当前 World 的 HP/alive 与 ProbabilityState 调息容量直接派生；只参与 State Value，不写回 World。 |
+| `teamRescueReserve` | `Evaluator/StateValue` | `EXPECTED VALUE, NOT PROBABILITY` | 每个 battleTeam 复用同次 State Value 的 HP2Risk 与 ProbabilityState 调息容量计算一次；只参与 State Value，不写回 World。 |
 | `hpStateBranches`、`aliveProbability` | `Simulator/Damage` | `BELIEF PROBABILITY` | 保留跨死亡边界的联合 HP/alive 世界；确定单世界仍标记 `EXACT`。 |
 
 `joinProbabilityStateBranches` 只负责条件代数，不改变输入来源的语义分类。相同 condition key 表示同一事实：连接时按条件概率只条件化一次；不同 condition key 才表示可相乘的独立来源。
@@ -1404,7 +1404,7 @@ BaseTransition
   + TransitionOptionUtility
 
 TerminalHeldOptionUtility
-  = terminal ? statePointsToUtility(heldRecover + heldRecycle) : 0
+  = terminal ? statePointsToUtility(heldRecycle) : 0
 
 EndOpportunityPoints
   = Pf + Ps + Pd

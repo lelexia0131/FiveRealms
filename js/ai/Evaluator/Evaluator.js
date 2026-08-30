@@ -64,6 +64,7 @@ import {
   sealTeamBurden,
   statePlayerValueTerms,
   statePointsToUtility,
+  teamRescueReserve,
   threatScore,
   turnOpportunityValue
 } from "./StateValue.js";
@@ -1542,7 +1543,6 @@ const SKILL_THRESHOLD_PRIOR_BONUS = 4;
 const TEAM_DANGER_TERM_KEYS = Object.freeze([
   "danger",
   "hp2Risk",
-  "rescueOutlook",
   "shield",
   "markThreat",
   "residualExposureValue"
@@ -3660,10 +3660,12 @@ export class Evaluator {
   无。
 
   调用函数
-  playerValueTerms、sealTeamBurden、lightningLifecycleValue、statePointsToUtility、clampProbability。
+  playerValueTerms、teamRescueReserve、sealTeamBurden、lightningLifecycleValue、
+  statePointsToUtility、clampProbability。
 
   边界与不变量
-  Danger 取队伍成员最大负向安全压力，并只用既有 HP-equivalent 尺度归一化。
+  Danger 取队伍成员最大负向安全压力，并只用既有 HP-equivalent 尺度归一化；
+  RescueReserve 使用本次遍历已得到的 HP2Risk，并对每个 battleTeam 只汇总一次。
   */
   stateValueSnapshot(state, viewerId, lightningOutcomeSets = [], sealValues = null) {
     const viewer = state.players.find((player) => player.id === viewerId);
@@ -3675,15 +3677,16 @@ export class Evaluator {
     ).tactic;
     let statePoints = 0;
     let teamDanger = 0;
-    for (let playerIndex = 0; playerIndex < state.players.length; playerIndex += 1) {
-      const player = state.players[playerIndex];
+    const playerValues = state.players.map((player) => ({
+      player,
+      ...this.playerValueTerms(state, player, viewerId, radarTacticProbability)
+    }));
+    const hp2RiskByPlayer = new Map(playerValues.map(({ player, terms }) => (
+      [player.id, terms.hp2Risk ?? 0]
+    )));
+    for (let playerIndex = 0; playerIndex < playerValues.length; playerIndex += 1) {
+      const { player, death, terms } = playerValues[playerIndex];
       const sign = player.battleTeam === viewer.battleTeam ? 1 : -1;
-      const { death, terms } = this.playerValueTerms(
-        state,
-        player,
-        viewerId,
-        radarTacticProbability
-      );
       statePoints += sign * (death + Object.values(terms).reduce(
         (sum, value) => sum + value,
         0
@@ -3698,6 +3701,18 @@ export class Evaluator {
       teamDanger = Math.max(
         teamDanger,
         clampProbability(statePointsToUtility(dangerPoints))
+      );
+    }
+    const battleTeams = new Set(state.players
+      .filter((player) => player.alive)
+      .map((player) => player.battleTeam));
+    for (const battleTeam of battleTeams) {
+      const sign = battleTeam === viewer.battleTeam ? 1 : -1;
+      statePoints += sign * teamRescueReserve(
+        state,
+        battleTeam,
+        hp2RiskByPlayer,
+        viewerId
       );
     }
     for (const outcomeSet of lightningOutcomeSets) {
@@ -4212,7 +4227,7 @@ export class Evaluator {
   World 与 viewer ID。
 
   输出
-  futureInventory、held.recover/recycle 与 total；viewer 无效时返回 null。
+  futureInventory、held.recycle 与 total；viewer 无效时返回 null。
 
   读取状态
   viewer 自身生命、手牌、装备与公开威胁摘要。
@@ -4230,15 +4245,6 @@ export class Evaluator {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer || !viewer.alive) return null;
     const { futureInventory, energyPressure } = exposureComponents(state, viewer);
-    const recoverCards = (viewer.hand ?? [])
-      .filter((card) => card.definitionId === "recover")
-      .reduce((sum, card) => sum + cardAvailability(card), 0);
-    const recover = recoverCards > 0
-      ? Math.max(
-          0,
-          Math.min(recoverCards, Math.max(0, viewer.maxHp - viewer.hp))
-        ) * HP_VALUE
-      : 0;
     const recycle = viewer.equipmentDefinitionId === "recycleDevice"
       ? Math.max(0, 2 - (viewer.recycleDeviceUses ?? 0))
         * Math.min(
@@ -4253,8 +4259,8 @@ export class Evaluator {
     const futureInventoryTotal = futureInventory + energyPressure;
     return {
       futureInventory:futureInventoryTotal,
-      held:{ recover, recycle },
-      total:futureInventoryTotal + recover + recycle
+      held:{ recycle },
+      total:futureInventoryTotal + recycle
     };
   }
 
@@ -4269,7 +4275,7 @@ export class Evaluator {
   frontierResidual 返回的表示与是否 terminal。
 
   输出
-  terminal 时 recover+recycle 的 HP-equivalent utility，否则为零。
+  terminal 时 recycle 的 HP-equivalent utility，否则为零。
 
   读取状态
   residual held fields。
@@ -4285,9 +4291,7 @@ export class Evaluator {
   */
   terminalFrontierValue(residual, terminal) {
     if (!terminal || !residual) return 0;
-    return statePointsToUtility(
-      (residual.held?.recover ?? 0) + (residual.held?.recycle ?? 0)
-    );
+    return statePointsToUtility(residual.held?.recycle ?? 0);
   }
 
   /*
@@ -4696,7 +4700,7 @@ export class Evaluator {
   before、after、viewer ID 与可选闪电结果 Worlds。
 
   输出
-  包含 owners 和未签名 owner total 的账本。
+  包含 owners、teamValues 和未签名 total 的账本。
 
   读取状态
   只读共享 state primitive、封印 burden 与闪电 owner delta。
@@ -4705,10 +4709,11 @@ export class Evaluator {
   无；闪电查询只写自身缓存。
 
   调用函数
-  Evaluator.playerValueTerms、sealTeamBurden、lightningOwnerDelta。
+  Evaluator.playerValueTerms、teamRescueReserve、sealTeamBurden、lightningOwnerDelta。
 
   边界与不变量
-  每个字段只归属于一个 owner；团队符号只在 projectOwnerLedger 施加；
+  每个玩家字段只归属于一个 owner；RescueReserve 只在 teamValues 中按阵营出现一次；
+  团队符号只在 projectOwnerLedger 施加；
   Evaluator 只消费上游已准备的闪电结果 Worlds。
   */
   ownerStateLedger(
@@ -4724,6 +4729,8 @@ export class Evaluator {
     const viewer = after.players.find((player) => player.id === viewerId)
       ?? before.players.find((player) => player.id === viewerId);
     const beforePlayers = new Map(before.players.map((player) => [player.id, player]));
+    const beforeHp2RiskByPlayer = new Map();
+    const afterHp2RiskByPlayer = new Map();
     const owners = [];
     for (const afterPlayer of after.players) {
       const beforePlayer = beforePlayers.get(afterPlayer.id);
@@ -4743,6 +4750,8 @@ export class Evaluator {
         viewerId,
         radarTactic
       );
+      beforeHp2RiskByPlayer.set(beforePlayer.id, beforeTerms.terms.hp2Risk ?? 0);
+      afterHp2RiskByPlayer.set(afterPlayer.id, afterTerms.terms.hp2Risk ?? 0);
       const beforeBurden = {
         lightning: this.lightningOwnerDelta(
           before,
@@ -4796,8 +4805,7 @@ export class Evaluator {
           equipmentRole: fields.equipmentRoleDelta ?? 0
         },
         outcome: {
-          danger: fields.danger ?? 0,
-          rescueOutlook: fields.rescueOutlook ?? 0
+          danger: fields.danger ?? 0
         },
         teamBurden: {
           lightning: fields.lightning ?? 0,
@@ -4805,8 +4813,32 @@ export class Evaluator {
         }
       });
     }
-    const total = owners.reduce((sum, owner) => sum + owner.total, 0);
-    return { perspectiveId: viewerId, owners, total };
+    const battleTeams = new Set([
+      ...before.players.map((player) => player.battleTeam),
+      ...after.players.map((player) => player.battleTeam)
+    ]);
+    const teamValues = [...battleTeams].map((battleTeam) => {
+      const rescueReserve = teamRescueReserve(
+        after,
+        battleTeam,
+        afterHp2RiskByPlayer,
+        viewerId
+      ) - teamRescueReserve(
+        before,
+        battleTeam,
+        beforeHp2RiskByPlayer,
+        viewerId
+      );
+      return {
+        battleTeam,
+        relation:battleTeam === viewer.battleTeam ? "ally" : "enemy",
+        total:rescueReserve,
+        rescueReserve
+      };
+    });
+    const total = owners.reduce((sum, owner) => sum + owner.total, 0)
+      + teamValues.reduce((sum, teamValue) => sum + teamValue.total, 0);
+    return { perspectiveId: viewerId, owners, teamValues, total };
   }
 
   /*
@@ -4823,7 +4855,7 @@ export class Evaluator {
   敌方收益取反后的团队视角投影。
 
   读取状态
-  只读账本对象。
+  只读 owner 与 teamValues 账本对象。
 
   写入状态
   无。
@@ -4833,18 +4865,26 @@ export class Evaluator {
 
   边界与不变量
   projected.total 是显式 Final Utility 诊断，必须等于同一 before/after 原始 State points
-  delta 经 statePointsToUtility 的单次边界换算。
+  delta 经 statePointsToUtility 的单次边界换算；团队共享项不归到任何单个玩家。
   */
   projectOwnerLedger(ledger, viewerId) {
     const self = ledger.owners.find((owner) => owner.playerId === viewerId);
     const allies = ledger.owners.filter((owner) => owner.relation === "ally");
     const enemies = ledger.owners.filter((owner) => owner.relation === "enemy");
+    const alliedTeams = (ledger.teamValues ?? []).filter(
+      (teamValue) => teamValue.relation === "ally"
+    );
+    const enemyTeams = (ledger.teamValues ?? []).filter(
+      (teamValue) => teamValue.relation === "enemy"
+    );
     const selfValue = statePointsToUtility(self?.total ?? 0);
     const allyValue = statePointsToUtility(
       allies.reduce((sum, owner) => sum + owner.total, 0)
+        + alliedTeams.reduce((sum, teamValue) => sum + teamValue.total, 0)
     );
     const enemyValue = statePointsToUtility(
       enemies.reduce((sum, owner) => sum + owner.total, 0)
+        + enemyTeams.reduce((sum, teamValue) => sum + teamValue.total, 0)
     );
     return {
       perspectiveId: viewerId,
