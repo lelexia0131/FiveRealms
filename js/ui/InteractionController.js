@@ -285,7 +285,7 @@ export class InteractionController {
   requestZoneCard 与 UiChoiceAdapter。
 
   输入
-  隐藏 selection、最大数量、提示及 exact/slots/viewer/owner 展示选项。
+  隐藏 selection、最大数量、提示及 exact/slots/viewer/owner/区域排序展示选项。
 
   输出
   解析为 token 数组或取消时 null 的 Promise。
@@ -297,16 +297,19 @@ export class InteractionController {
   pending 选择状态及响应面板 DOM。
 
   调用函数
-  cancel、createHiddenSelectionView、hiddenSelectionMarkup、UIManager.render。
+  cancel、createHiddenSelectionView、orderZoneSelectionSlots、hiddenSelectionMarkup、UIManager.render。
 
   边界与不变量
-  新请求先收束旧请求；DOM 不得接收未知牌的实体或定义信息。
+  新请求先收束旧请求；只有明确的区域排序请求复用已知槽位分组；DOM 不得接收未知牌的实体或定义信息。
   */
   requestHiddenCards(selection, count, prompt, options = {}) {
     this.cancel();
     return new Promise((resolve) => {
       const selected = new Set();
-      const slots = options.slots ?? createHiddenSelectionView(options.viewer, options.owner, selection);
+      const displaySlots = options.slots ?? createHiddenSelectionView(options.viewer, options.owner, selection);
+      const slots = options.orderZoneSelection
+        ? orderZoneSelectionSlots([], displaySlots)
+        : displaySlots;
       this.pending = { type:"hidden", selection, count, exact:Boolean(options.exact), selected, resolve };
       this.ui.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(prompt)}</strong><span>${options.totalCount ?? selection.tokens.length}张</span></div>
         <div class="hidden-card-grid">${hiddenSelectionMarkup(selection, slots)}</div>

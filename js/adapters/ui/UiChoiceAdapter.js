@@ -76,7 +76,7 @@ export function createUiChoiceAdapter({
     ChoicePort router。
 
     输入
-    ChoiceRequest。
+    ChoiceRequest 及私有 choice context 中的合法展示用途。
 
     输出
     Promise<canonical ChoiceResult>。
@@ -91,7 +91,8 @@ export function createUiChoiceAdapter({
     requestResponse、requestPublicCard、normalizeChoiceResult、createChoiceResult。
 
     边界与不变量
-    response actor 与 effect target 必须分别来自 actorId/context.targetPlayerId；不改 UI 交互、超时或取消语义。
+    response actor 与 effect target 必须分别来自 actorId/context.targetPlayerId；转移只传递排序意图，
+    不携带隐藏牌定义；不改 UI 交互、超时或取消语义。
     */
     async request(choiceRequest) {
       if (choiceRequest?.kind === "hiddenCard") {
@@ -143,7 +144,8 @@ export function createUiChoiceAdapter({
           {
             exact: choiceContext.exact,
             viewer: choiceContext.actor,
-            owner: choiceContext.owner
+            owner: choiceContext.owner,
+            orderZoneSelection: choiceContext.aiContext?.purpose === "transfer"
           }
         );
         if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");

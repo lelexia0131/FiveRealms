@@ -13830,14 +13830,16 @@ test("UI·区域选牌：多张装备与手牌候选各自保持稳定顺序", (
   assert.deepEqual(handSlots.map((slot) => slot.token), ["hand-a", "hand-b"]);
 });
 
-test("UI·区域选牌：手牌按已知基础、已知战术、未知稳定分组", () => {
+test("UI·区域选牌：手牌按已知基础、已知战术、其他已知、未知稳定分组", () => {
   const handSlots = [
     { token: "unknown-1", known: false },
     { token: "known-tactic-1", known: true, category: "tactic" },
+    { token: "known-other-1", known: true, category: "equipment" },
     { token: "unknown-2", known: false },
     { token: "known-basic-1", known: true, category: "basic" },
     { token: "known-tactic-2", known: true, category: "tactic" },
-    { token: "known-basic-2", known: true, category: "basic" }
+    { token: "known-basic-2", known: true, category: "basic" },
+    { token: "known-other-2", known: true, category: "special" }
   ];
   const ordered = orderZoneSelectionSlots([], handSlots);
   assert.deepEqual(
@@ -13847,10 +13849,58 @@ test("UI·区域选牌：手牌按已知基础、已知战术、未知稳定分�
       "known-basic-2",
       "known-tactic-1",
       "known-tactic-2",
+      "known-other-1",
+      "known-other-2",
       "unknown-1",
       "unknown-2"
     ]
   );
+});
+
+test("UI·转移：合法已知突袭排在四槽手牌池的未知牌之前", async () => {
+  const actor = makePlayer("transfer-pool-actor", 0, "dawn", "human"),
+    from = makePlayer("transfer-pool-from", 1, "dusk"),
+    receiver = makePlayer("transfer-pool-receiver", 2, "dawn"),
+    transfer = instance("transfer"),
+    unknownA = { ...instance("block"), name: "不可泄露甲" },
+    unknownB = { ...instance("counter"), name: "不可泄露乙" },
+    knownAssault = instance("assault"),
+    unknownC = { ...instance("recover"), name: "不可泄露丙" },
+    { game, ui } = makeGame([actor, from, receiver]);
+  actor.hand.push(transfer);
+  from.hand.push(unknownA, unknownB, knownAssault, unknownC);
+  game.rememberPrivateCard(actor, from, knownAssault);
+  const panel = makeInteractiveElement(),
+    controller = new InteractionController({
+      game: null,
+      elements: { response_panel: panel },
+      render() { }
+    });
+  ui.requestHiddenCards = (...args) => controller.requestHiddenCards(...args);
+
+  const play = game.playCard(actor, transfer, [], {
+    sourceId: from.id,
+    receiverId: receiver.id
+  });
+  for (let attempt = 0; attempt < 20 && !controller.pending; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  assert.equal(controller.pending?.type, "hidden");
+  const originalTokens = controller.pending.selection.tokens.map((entry) => entry.token),
+    expectedOrder = [originalTokens[2], originalTokens[0], originalTokens[1], originalTokens[3]],
+    renderedOrder = expectedOrder.map((token) => panel.innerHTML.indexOf(`data-hidden-token="${token}"`));
+  assert.ok(renderedOrder.every((position) => position >= 0));
+  assert.deepEqual([...renderedOrder].sort((left, right) => left - right), renderedOrder);
+  assert.match(panel.innerHTML, new RegExp(knownAssault.name));
+  for (const unknown of [unknownA, unknownB, unknownC]) {
+    assert.doesNotMatch(panel.innerHTML, new RegExp(unknown.id));
+    assert.doesNotMatch(panel.innerHTML, new RegExp(unknown.name));
+  }
+  controller.pending.selected.add(originalTokens[2]);
+  controller.confirm();
+  assert.equal(await play, true);
+  assert.ok(receiver.hand.includes(knownAssault));
+  game.dispose();
 });
 
 test("守誓者：护援真实减伤只提交一次被保护目标反馈且不改变结算", async () => {
