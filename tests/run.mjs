@@ -178,6 +178,7 @@ import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js";
 import { CharacterSelection } from "../js/application/match/CharacterSelection.js";
 import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js";
 import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js";
+import { ActionRollbackError } from "../js/application/action/ActionTransaction.js";
 import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js";
 import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js";
 import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferableHandCount, getTransferSourceIds, hasHandOrEquipmentFacts } from "../js/domain/rules/card/CardRules.js";
@@ -6009,7 +6010,7 @@ test("架构·Hidden Choice：Application 仅经 ChoicePort 路由 Human/AI", hi
 
 /*
 功能
-验证 RandomPort 只包装 next() 且固定 seed 调用顺序不变。
+验证 RandomPort 保持 next() 调用顺序，并在嵌套 Action rollback 后精确重放未提交随机值。
 
 调用方
 当前测试。
@@ -6030,17 +6031,25 @@ test("架构·Hidden Choice：Application 仅经 ChoicePort 路由 Human/AI", hi
 createRandomPort。
 
 边界与不变量
-每次 port.next 对应一次旧 random()。
+提交读取保持旧 random() 次序；回滚读取不得永久推进逻辑随机序列，嵌套 frame 不得重复重放。
 */
 function frArch6RandomPort() {
-  const values = [0.1, 0.2, 0.3];
+  const values = [0.1, 0.2, 0.3, 0.4];
   let index = 0;
   const port = createRandomPort({ next: () => values[index++] });
-  assert.deepEqual([port.next(), port.next(), port.next()], values);
+  assert.equal(port.next(), 0.1);
+  const outer = port.beginTransaction();
+  assert.equal(port.next(), 0.2);
+  const inner = port.beginTransaction();
+  assert.equal(port.next(), 0.3);
+  port.rollbackTransaction(inner);
+  assert.equal(port.next(), 0.3);
+  port.rollbackTransaction(outer);
+  assert.deepEqual([port.next(), port.next(), port.next()], [0.2, 0.3, 0.4]);
   assert.throws(() => createRandomPort({}), /next/);
 }
 
-test("RandomPort：minimal next() boundary", frArch6RandomPort);
+test("RandomPort：Action rollback 重放且 next() 次序不变", frArch6RandomPort);
 
 /*
 功能
@@ -14947,6 +14956,127 @@ test("AI·价值归属：X 技能 finite delta 与非 X null 保持 END sibling 
 
 /*
 功能
+验证 X 技能能量反事实在重型 World 构造后的预算检查点 cooperative unwind。
+
+调用方
+AI 搜索 cooperative interruption 回归测试。
+
+输入
+无；使用确定性时钟让 TIME 在 counterfactual World 构造完成后触发。
+
+输出
+无返回值；断言失败时抛错。
+
+读取状态
+最小 Searcher、SearchBudget 与 X 技能 transition terms fixture。
+
+写入状态
+独立预算诊断、candidate timing 与调用计数。
+
+调用函数
+Searcher.materializeCandidate、SearchBudget.checkpointCurrentWork。
+
+边界与不变量
+过期的 X candidate 不得进入 transitionDelta、完整候选或 candidateFault；已有通用合同负责验证 incumbent 保留。
+*/
+function xSkillCounterfactualCooperativeCheckpointContract() {
+  const actorId = "x-checkpoint-actor";
+  const action = createAction({
+    type:"skill",
+    actorId,
+    skillId:"allIn",
+    targetIds:[actorId]
+  });
+  const beforeState = {
+    playPhaseEnded:false,
+    players:[{ id:actorId, energy:0 }]
+  };
+  const afterState = {
+    playPhaseEnded:false,
+    players:[{ id:actorId, energy:0 }]
+  };
+  let counterfactualBuildCalls = 0;
+  let transitionDeltaCalls = 0;
+  const evaluator = {
+    evaluateTransition:() => ({
+      resolutionScale:1,
+      stateDelta:0,
+      stateDeltaValue:0,
+      transitionOptionPoints:0,
+      transitionOptionValue:0,
+      depth:1,
+      dangerBefore:0,
+      baseTransition:0,
+      xSkillNextEnergy:1,
+      discardOpportunityInputs:{ beforeOverflow:0, afterOverflow:0, stateDelta:0 },
+      endOpportunityInputs:null
+    }),
+    transitionDelta:() => {
+      transitionDeltaCalls += 1;
+      return 0;
+    }
+  };
+  const searcher = new Searcher({
+    evaluator,
+    patternMatcher:new PatternMatcher({ definitions:[] }),
+    getResolutionScale:() => 1,
+    config:{ depth:1, beamWidth:1, hiddenSamples:0, yieldEvery:100 },
+    simulatorFactory:() => null,
+    searchBudgetFactory:() => null,
+    deduplicateActions:(actions) => actions,
+    generateActions:() => [],
+    sampleUnknownHands:() => ({
+      classification:PROBABILITY_CLASSIFICATION.MONTE_CARLO_ESTIMATE,
+      worlds:[],
+      sampleCount:0
+    }),
+    yieldControl:async () => true
+  });
+  searcher.candidateFaults = [];
+  searcher.materializeValueTerms = () => ({
+    adaptiveInformationOptionPoints:0,
+    exposeMarginal:0,
+    assaultStacksCredit:0
+  });
+  const simulator = {
+    apply:() => afterState,
+    buildLightningOutcomeSets:() => [],
+    buildSkillEnergyCounterfactualWorlds:() => {
+      counterfactualBuildCalls += 1;
+      return { beforeWorld:beforeState, afterWorld:afterState };
+    }
+  };
+  const clock = [0, 0, 1];
+  const budget = new SearchBudget({
+    timeBudget:1,
+    now:() => clock.shift() ?? 1
+  });
+  const candidate = searcher.materializeCandidate({
+    action,
+    beforeState,
+    player:beforeState.players[0],
+    depth:1,
+    remainingProvenance:null,
+    simulator,
+    context:{},
+    collectDiagnostics:false,
+    budget
+  });
+  assert.equal(candidate, null);
+  assert.equal(budget.stopReason, "TIME");
+  assert.equal(counterfactualBuildCalls, 1);
+  assert.equal(transitionDeltaCalls, 0);
+  assert.equal(searcher.candidateFaults.length, 0);
+  assert.equal(searcher.slowestCandidateTimings[0].completed, false);
+}
+
+test(
+  "AI·搜索：X 技能能量反事实 TIME checkpoint 丢弃 partial candidate 且不记 fault",
+  xSkillCounterfactualCooperativeCheckpointContract
+);
+
+/*
+功能
 锁定自适应信息结果只作为 generic TransitionOption 进入 BaseTransition。
 
 调用方
@@ -16809,6 +16939,64 @@ test("AI·状态契约：ProbabilityState 从 Fact 惰性推导有限池查询",
 
 /*
 功能
+验证 World clone 复用相同有限池 query memo 时仍保持 mutation 隔离。
+
+调用方
+AI 状态契约回归测试。
+
+输入
+一个含单个敌方匿名槽的 canonical ProbabilityState。
+
+输出
+无返回值；克隆查询漂移、mutation 污染源状态或克隆未失效时抛出断言。
+
+读取状态
+源/克隆 ProbabilityState 的 Block 分布。
+
+写入状态
+只 mutation 克隆 ProbabilityState。
+
+调用函数
+createProbabilityState、cloneWorld、queryProbability、mutateProbability。
+
+边界与不变量
+共享内容只能是纯 query memo；克隆 mutation 必须独立失效且不能改变源查询结果。
+*/
+async function probabilityCloneMemoIsolation() {
+  const { cloneWorld } = await import("../js/ai/Simulator/World.js");
+  const probabilityState = createProbabilityState({
+    viewerId:"memo-viewer",
+    currentCardCounts:{ block:1, assault:2 },
+    players:[
+      { id:"memo-viewer", handCount:0, hand:[] },
+      { id:"memo-enemy", handCount:1 }
+    ],
+    knownCardsByPlayer:{ "memo-viewer":[], "memo-enemy":[] }
+  });
+  const source = { probabilityState, players:[] };
+  const query = {
+    definitionId:"block",
+    bucketId:"memo-enemy"
+  };
+  const sourceBefore = queryProbability(source.probabilityState, query);
+  const cloned = cloneWorld(source);
+  assert.deepEqual(queryProbability(cloned.probabilityState, query), sourceBefore);
+  mutateProbability(cloned.probabilityState, {
+    type:"REMOVE",
+    sourceBucketId:"memo-enemy",
+    definitionId:"block"
+  });
+  assert.equal(queryProbability(cloned.probabilityState, query).probability, 0);
+  assert.deepEqual(queryProbability(source.probabilityState, query), sourceBefore);
+}
+
+test(
+  "AI·状态契约：World clone 继承有限池 query memo 且 mutation 只失效自身",
+  probabilityCloneMemoIsolation
+);
+
+/*
+功能
 验证 World 克隆生成与 GameState 无关的独立可变搜索世界。
 
 调用方
@@ -17334,6 +17522,74 @@ function boundedFractionalIdentitySelection() {
 }
 
 test("AI·模拟器：fractional identity 选择保持 O(W·H) 且不生成 2^H 世界", boundedFractionalIdentitySelection);
+
+/*
+功能
+锁定零匿名槽随机支付跳过完整匿名分布查询，同时保持已知实体移除语义。
+
+调用方
+AI 模拟器资源回归测试。
+
+输入
+viewer 自己两张确定手牌、匿名槽为零的 ProbabilityState。
+
+输出
+Promise；短路结构、手牌结果或有限池守恒变化时抛出断言。
+
+读取状态
+Resource.removeOneRandomCardFromHand 源码与 canonical ProbabilityState。
+
+写入状态
+只写测试 World 的玩家手牌 availability/handCount。
+
+调用函数
+readFile、createProbabilityState、Simulator.removeOneRandomCardFromHand。
+
+边界与不变量
+短路只由 ProbabilityState 的物理匿名槽 authority 决定；不得按 handCount 猜测或改变随机身份权重。
+*/
+async function zeroAnonymousRandomRemovalShortcut() {
+  const source = await readFile(projectFile("js/ai/Simulator/Resource.js"), "utf8");
+  const start = source.indexOf("  removeOneRandomCardFromHand(state, player, spend, options = {})");
+  const end = source.indexOf("\n  /*\n  功能\n  重复应用单张随机移除", start);
+  const method = source.slice(start, end);
+  assert.match(method, /expectedAnonymousSlots\(state\.probabilityState, player\.id\)/u);
+  assert.match(
+    method,
+    /anonymousSlots <= PROBABILITY_EPSILON[\s\S]*anonymousCount:\s*0[\s\S]*queryAnonymousSlotDistribution/u
+  );
+
+  const cards = [
+    { id:"zero-anonymous-a", definitionId:"assault", availability:1 },
+    { id:"zero-anonymous-b", definitionId:"block", availability:1 }
+  ];
+  const probabilityState = createProbabilityState({
+    viewerId:"zero-anonymous-owner",
+    currentCardCounts:{ assault:1 },
+    players:[{
+      id:"zero-anonymous-owner",
+      handCount:2,
+      hand:cards
+    }],
+    knownCardsByPlayer:{ "zero-anonymous-owner":[] }
+  });
+  const player = {
+    id:"zero-anonymous-owner",
+    handCount:2,
+    hand:structuredClone(cards)
+  };
+  const state = { probabilityState, players:[player] };
+  const countsBefore = queryCurrentCardCounts(probabilityState);
+  new Simulator(state).removeOneRandomCardFromHand(state, player, 1);
+  assertClose(player.handCount, 1);
+  assertClose(player.hand.reduce((sum, card) => sum + card.availability, 0), 1);
+  assert.deepEqual(queryCurrentCardCounts(probabilityState), countsBefore);
+}
+
+test(
+  "AI·模拟器：零匿名槽随机支付跳过重复有限池分布查询",
+  zeroAnonymousRandomRemovalShortcut
+);
 
 
 test("AI·模拟器：模拟调息不足时离散阵亡且不向 World 写入救援价值", () => {
@@ -17889,6 +18145,18 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.equal(outcome.stats.expanded, 5);
     assert.equal(outcome.stats.bestValueScore, 1.0909621093750004);
     assert.ok(outcome.stats.elapsedMs >= 30);
+    assert.ok(outcome.stats.timeObservedAtMs >= 30);
+    assert.ok(outcome.stats.searchReturnAtMs >= outcome.stats.timeObservedAtMs);
+    assert.ok(outcome.stats.deadlineOverrunMs >= 0);
+    assert.ok(outcome.stats.candidateTimingCount >= outcome.stats.completedRootCandidateCount);
+    assert.ok(outcome.stats.slowestCandidateTimings.length > 0);
+    const slowest = outcome.stats.slowestCandidateTimings[0];
+    assert.ok(slowest.action);
+    assert.ok(slowest.durationMs >= 0);
+    assert.ok(slowest.mainSimulatorApplyMs >= 0);
+    assert.ok(slowest.valueMaterializationMs >= 0);
+    assert.ok(Number.isFinite(outcome.stats.stateUtilityDurationMs));
+    assert.ok(Number.isFinite(outcome.stats.counterfactualDurationMs));
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
       type:"card",
       cardId:"plunder",
@@ -18395,262 +18663,555 @@ function testTacticResolutionChance(simulator, state, actor, card, targets, sele
 
 
 
-test("AI·搜索：规划 ordinary exception 仍显式传播并清理观察状态", async () => {
-  const ai = makePlayer("planner-fallback-ai", 0, "dawn"),
-    enemy = makePlayer("planner-fallback-enemy", 1, "dusk"),
-    { game, ui }
-      = makeGame([ai, enemy]);
-  game.state.currentPlayerIndex = 0;
-  game.state.phase = "play";
-  game.cleanupManager.delay = async () => true;
-  game.aiController.getActionCandidates = () => [];
-  game.aiController.selectAction = async () => {
-    throw new Error("planner test failure");
-  };
-  await assert.rejects(
-    game.takeAiPlayPhase(ai, game.state.gameId),
-    /planner test failure/u
-  );
-  assert.equal(ui.thinking.at(-1)[0], false);
-  assert.equal(game.state.phase, "play", "搜索异常不得伪装为 END 后进入弃牌阶段");
-  assert.match(ui.logs.join("\n"), /^(?!.*planner test failure)/s);
-});
-
 /*
 功能
-运行一次由测试指定 AI search outcome 的完整 canonical 回合。
+运行一次真实 Controller search failure，并验证 runtime emergency fallback 后重新正常搜索。
 
 调用方
-分类后的 search failure、strategic END 与普通 non-END 的 TurnWorkflow 回归测试。
+Worker、TIME 与 NODE 无 incumbent 的恢复回归测试。
 
 输入
-行动者 HP、初始手牌定义，以及按调用次数生成 Action/status 的 outcome factory。
+首次搜索的 stopReason；WORKER 表示 transport exception。
 
 输出
-Game、行动者、搜索/弃牌调用数与 playPhaseEnd/turnEnd 事件计数。
+独立 Game、行动者、search request stateVersion、acceptance status 与 fallback 记录。
 
 读取状态
-测试 Game 的既有 TurnWorkflow、ChoiceCoordinator 与 discard authority。
+Controller 当前 GameState、Generator root actions 与 SearchResult diagnostics。
 
 写入状态
-只推进独立测试 Game 的完整回合状态。
+真实执行一张聚能，并由第二次正常 Search 返回 strategic END。
 
 调用函数
-makeGame、takeTurn、discardCardFromHand。
+makeGame、Controller.selectAction、takeAiPlayPhase。
 
 边界与不变量
-禁用回合摸牌只为固定手牌数量；弃牌仍必须经过既有 handleDiscardPhase 和 discardCardFromHand。
+fallback 必须来自当前 Generator，执行后只通过新的 selectAction/request 继续；不调用弃牌阶段。
 */
-async function runAiSearchOutcomeTurnFixture({
-  hp,
-  handDefinitions,
-  outcomeAt
-}) {
-  const actor = makePlayer("search-failure-turn-actor", 0, "dawn", "ai", 3);
-  const enemy = makePlayer("search-failure-turn-enemy", 1, "dusk", "ai", 1);
-  actor.hp = hp;
-  actor.hand.push(...handDefinitions.map((definitionId) => instance(definitionId)));
+async function runRuntimeSearchFailureFallback(stopReason) {
+  const actor = makePlayer(`runtime-fallback-${stopReason}-actor`, 0, "dawn", "ai", 0);
+  const enemy = makePlayer(`runtime-fallback-${stopReason}-enemy`, 1, "dusk", "ai", 1);
+  const charge = instance("charge");
+  actor.hand.push(charge);
   const { game, ui } = makeGame([actor, enemy]);
-  game.drawCards = async () => [];
+  game.state.phase = "play";
   game.cleanupManager.delay = async () => true;
-  let searchCalls = 0;
-  game.aiController.selectAction = async () => {
-    const outcome = outcomeAt(searchCalls, actor);
-    searchCalls += 1;
-    game.aiController.lastSearchResult = Object.freeze({
-      status:outcome.status,
-      action:outcome.action ?? null
-    });
-    return outcome.action ?? null;
-  };
+  const expectedFirstNonEnd = game.aiController.getActionCandidates(actor)
+    .find((action) => action.type !== "end");
   let discardCalls = 0;
   const discardCardFromHand = game.discardCardFromHand.bind(game);
   game.discardCardFromHand = async (...args) => {
     discardCalls += 1;
     return discardCardFromHand(...args);
   };
-  let playPhaseEndCount = 0;
-  let turnEndCount = 0;
-  game.eventDispatcher.on("playPhaseEnd", "test:search-failure-play-end", () => {
-    playPhaseEndCount += 1;
-  });
-  game.eventDispatcher.on("turnEnd", "test:search-failure-turn-end", () => {
-    turnEndCount += 1;
-  });
-  await game.takeTurn(actor, game.state.gameId);
+  const requestVersions = [];
+  let searchCalls = 0;
+  game.aiController.searchExecutor = {
+    async search(request) {
+      requestVersions.push(request.stateVersion);
+      searchCalls += 1;
+      if (searchCalls === 1 && stopReason === "WORKER") {
+        throw new Error("synthetic Worker transport fault");
+      }
+      if (searchCalls === 1) {
+        return createWorkerSearchOutcome({
+          request,
+          action:null,
+          stats:{ stopReason },
+          searchStopReason:stopReason,
+          rngAfter:request.rng
+        });
+      }
+      return createWorkerSearchOutcome({
+        request,
+        action:request.rootActions.find((action) => action.type === "end"),
+        stats:{ stopReason:"COMPLETE" },
+        searchStopReason:"COMPLETE",
+        rngAfter:request.rng
+      });
+    }
+  };
+  const acceptedStatuses = [];
+  const acceptWorkerSearchOutcome = game.aiController.acceptWorkerSearchOutcome.bind(
+    game.aiController
+  );
+  game.aiController.acceptWorkerSearchOutcome = (...args) => {
+    const accepted = acceptWorkerSearchOutcome(...args);
+    acceptedStatuses.push(accepted.result.status);
+    return accepted;
+  };
+  const fallbackRecords = [];
+  const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction?.bind(
+    game.aiController
+  );
+  game.aiController.selectRuntimeEmergencyAction = (...args) => {
+    const result = selectRuntimeEmergencyAction(...args);
+    fallbackRecords.push(result);
+    return result;
+  };
+  await game.takeAiPlayPhase(actor, game.state.gameId);
   return {
+    actor,
+    charge,
     game,
     ui,
-    actor,
     searchCalls,
     discardCalls,
-    playPhaseEndCount,
-    turnEndCount
+    requestVersions,
+    acceptedStatuses,
+    fallbackRecords,
+    expectedFirstNonEnd
   };
 }
 
-test("AI·回合收尾：SEARCH_INTERNAL_FAILURE 后仍执行强制弃牌与 turnEnd", async () => {
-  const fixture = await runAiSearchOutcomeTurnFixture({
-    hp:3,
-    handDefinitions:["counter", "counter", "block", "charge", "shield"],
-    outcomeAt:() => ({ status:SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE, action:null })
-  });
+test("AI·搜索故障恢复：Worker failure 有 non-END 时执行 Generator 首项并重新搜索", async () => {
+  const fixture = await runRuntimeSearchFailureFallback("WORKER");
   try {
-    assert.equal(fixture.searchCalls, 1);
-    assert.equal(fixture.actor.statistics.cardsPlayed, 0, "搜索异常不得伪装 strategic END 或其它 Action");
-    assert.equal(fixture.playPhaseEndCount, 1);
-    assert.equal(fixture.discardCalls, 2);
-    assert.equal(fixture.actor.hand.length, fixture.actor.hp);
-    assert.equal(fixture.turnEndCount, 1);
-    assert.equal(fixture.game.state.phase, "turnEnd");
+    assert.equal(fixture.searchCalls, 2);
+    assert.deepEqual(fixture.acceptedStatuses, [
+      SEARCH_RESULT_STATUS.WORKER_FAILURE,
+      SEARCH_RESULT_STATUS.ACCEPTED
+    ]);
+    assert.equal(fixture.fallbackRecords.length, 1);
+    assert.equal(fixture.fallbackRecords[0].kind, "RUNTIME_EMERGENCY_LEGAL_FALLBACK");
+    assert.ok(sameAction(fixture.fallbackRecords[0].action, fixture.expectedFirstNonEnd));
+    assert.equal(fixture.fallbackRecords[0].action.cardInstanceId, fixture.charge.id);
+    assert.equal(fixture.actor.statistics.cardsPlayed, 1);
+    assert.ok(fixture.requestVersions[1] > fixture.requestVersions[0]);
+    assert.equal(fixture.discardCalls, 0, "fallback 不得直接进入 discard phase");
   } finally {
     fixture.game.dispose();
   }
 });
 
-test("AI·回合收尾：pre-worker Fact failure 进入既有 canonical cleanup", async () => {
-  const actor = makePlayer("pre-worker-turn-actor", 0, "dawn", "ai", 0);
-  const enemy = makePlayer("pre-worker-turn-enemy", 1, "dusk", "ai", 1);
-  actor.hp = 3;
-  actor.hand = Array.from(
-    { length:CARD_COUNTS.assault + 1 },
-    () => instance("assault")
-  );
+test("AI·搜索故障恢复：TIME/NODE 无 incumbent 时执行 canonical non-END", async () => {
+  for (const stopReason of ["TIME", "NODE"]) {
+    const fixture = await runRuntimeSearchFailureFallback(stopReason);
+    try {
+      assert.deepEqual(fixture.acceptedStatuses, [
+        SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED,
+        SEARCH_RESULT_STATUS.ACCEPTED
+      ], stopReason);
+      assert.equal(fixture.fallbackRecords[0].action.type, "card", stopReason);
+      assert.equal(fixture.fallbackRecords[0].action.cardId, "charge", stopReason);
+      assert.equal(fixture.actor.statistics.cardsPlayed, 1, stopReason);
+      assert.equal(fixture.discardCalls, 0, stopReason);
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·搜索故障恢复：runtime fallback 不进入 Searcher incumbent 或 stats", async () => {
+  const actor = makePlayer("fallback-diagnostics-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fallback-diagnostics-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"));
   const { game } = makeGame([actor, enemy]);
-  game.drawCards = async () => [];
-  game.cleanupManager.delay = async () => true;
-  let searchCalls = 0;
+  game.state.phase = "play";
   game.aiController.searchExecutor = {
-    search:async () => {
-      searchCalls += 1;
-      throw new Error("Worker 不应收到 pre-worker failure request");
+    async search(request) {
+      return createWorkerSearchOutcome({
+        request,
+        action:null,
+        stats:{ stopReason:"TIME", completedRootCandidateCount:0, incumbent:null },
+        searchStopReason:"TIME",
+        rngAfter:request.rng
+      });
     }
   };
-  let turnEndCount = 0;
-  game.eventDispatcher.on("turnEnd", "test:pre-worker-failure-turn-end", () => {
-    turnEndCount += 1;
-  });
   try {
-    await game.takeTurn(actor, game.state.gameId);
-    assert.equal(searchCalls, 0);
-    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.PREPARATION_FAILURE);
+    assert.equal(await game.aiController.selectAction(actor, { gameId:game.state.gameId }), null);
+    const searchResult = game.aiController.lastSearchResult;
+    const searchStats = game.aiController.lastSearchStats;
+    const fallback = game.aiController.selectRuntimeEmergencyAction(actor, []);
+    assert.equal(fallback.kind, "RUNTIME_EMERGENCY_LEGAL_FALLBACK");
+    assert.equal(fallback.action.type, "card");
+    assert.equal(Object.hasOwn(fallback, "stats"), false);
+    assert.equal(Object.hasOwn(fallback, "incumbent"), false);
+    assert.equal(game.aiController.lastSearchResult, searchResult);
+    assert.equal(game.aiController.lastSearchStats, searchStats);
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED);
     assert.equal(game.aiController.lastSearchResult.action, null);
-    assert.equal(game.aiController.lastSearchResult.searchFault.stage, "PREPARATION");
-    assert.equal(actor.statistics.cardsPlayed, 0);
-    assert.equal(actor.hand.length, actor.hp);
-    assert.equal(turnEndCount, 1);
-    assert.equal(game.state.phase, "turnEnd");
   } finally {
     game.dispose();
   }
 });
 
-test("AI·回合收尾：无需弃牌的 SEARCH_INTERNAL_FAILURE 正常完成且不产生游戏动作", async () => {
-  const fixture = await runAiSearchOutcomeTurnFixture({
-    hp:4,
-    handDefinitions:["counter", "block"],
-    outcomeAt:() => ({ status:SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE, action:null })
-  });
+test("AI·搜索故障恢复：只有 Generator 只剩 canonical END 时才允许 fallback END", async () => {
+  const actor = makePlayer("fallback-end-only-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fallback-end-only-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("counter"));
+  const { game } = makeGame([actor, enemy]);
+  game.state.phase = "play";
+  game.cleanupManager.delay = async () => true;
+  game.aiController.searchExecutor = {
+    search:async () => {
+      throw new Error("synthetic Worker failure");
+    }
+  };
   try {
-    assert.equal(fixture.searchCalls, 1);
-    assert.equal(fixture.discardCalls, 0);
-    assert.equal(fixture.actor.hand.length, 2);
-    assert.equal(fixture.actor.statistics.cardsPlayed, 0);
-    assert.equal(fixture.playPhaseEndCount, 1);
-    assert.equal(fixture.turnEndCount, 1);
-    assert.equal(fixture.game.state.phase, "turnEnd");
+    await game.takeAiPlayPhase(actor, game.state.gameId);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.kind, "RUNTIME_EMERGENCY_LEGAL_FALLBACK");
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.nonEndCandidateCount, 0);
+    assert.equal(actor.statistics.cardsPlayed, 0);
   } finally {
-    fixture.game.dispose();
+    game.dispose();
   }
 });
 
-test("AI·回合收尾：正常 strategic END 仍沿原路径完成回合", async () => {
-  const fixture = await runAiSearchOutcomeTurnFixture({
-    hp:4,
-    handDefinitions:["counter"],
-    outcomeAt:(_index, actor) => ({
-      status:SEARCH_RESULT_STATUS.ACCEPTED,
-      action:createAction({ type:"end", actorId:actor.id })
-    })
-  });
+test("AI·搜索故障恢复：搜索 Action 绑定失败后尝试当前 canonical non-END", async () => {
+  const actor = makePlayer("fallback-binding-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fallback-binding-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"));
+  const { game } = makeGame([actor, enemy]);
+  game.state.phase = "play";
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  game.aiController.selectAction = async () => {
+    searchCalls += 1;
+    game.aiController.lastSearchResult = Object.freeze({ status:SEARCH_RESULT_STATUS.ACCEPTED });
+    return searchCalls === 1
+      ? createAction({ type:"card", actorId:actor.id, cardId:"missing-definition" })
+      : createAction({ type:"end", actorId:actor.id });
+  };
   try {
-    assert.equal(fixture.searchCalls, 1);
-    assert.equal(fixture.actor.statistics.cardsPlayed, 0);
-    assert.equal(fixture.playPhaseEndCount, 1);
-    assert.equal(fixture.turnEndCount, 1);
+    await game.takeAiPlayPhase(actor, game.state.gameId);
+    assert.equal(searchCalls, 2);
+    assert.equal(actor.statistics.cardsPlayed, 1);
+    assert.equal(actor.hand.length, 0);
   } finally {
-    fixture.game.dispose();
+    game.dispose();
   }
 });
 
-test("AI·回合收尾：正常 non-END Action 结算后继续重搜并正常结束", async () => {
-  let chargeAction = null;
-  const fixture = await runAiSearchOutcomeTurnFixture({
-    hp:4,
-    handDefinitions:["charge"],
-    outcomeAt:(index, actor) => {
-      if (index === 0) {
-        const card = actor.hand.find((entry) => entry.definitionId === "charge");
-        chargeAction = createAction({
-          type:"card",
-          actorId:actor.id,
-          cardId:"charge",
-          cardInstanceId:card.id
-        });
-        return { status:SEARCH_RESULT_STATUS.ACCEPTED, action:chargeAction };
-      }
-      return {
-        status:SEARCH_RESULT_STATUS.ACCEPTED,
-        action:createAction({ type:"end", actorId:actor.id })
+test("AI·搜索故障恢复：fallback 单项实体绑定失败后排除并尝试下一合法 Action", async () => {
+  const actor = makePlayer("fallback-execute-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fallback-execute-enemy", 1, "dusk", "ai", 1);
+  const charge = instance("charge");
+  const shield = instance("shield");
+  actor.hand.push(charge, shield);
+  const { game } = makeGame([actor, enemy]);
+  game.state.phase = "play";
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  game.aiController.selectAction = async () => {
+    searchCalls += 1;
+    game.aiController.lastSearchResult = Object.freeze({
+      status:searchCalls === 1
+        ? SEARCH_RESULT_STATUS.WORKER_FAILURE
+        : SEARCH_RESULT_STATUS.ACCEPTED
+    });
+    return searchCalls === 1 ? null : createAction({ type:"end", actorId:actor.id });
+  };
+  const fallbackCardIds = [];
+  const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction.bind(
+    game.aiController
+  );
+  game.aiController.selectRuntimeEmergencyAction = (...args) => {
+    const fallback = selectRuntimeEmergencyAction(...args);
+    fallbackCardIds.push(fallback.action.cardInstanceId);
+    if (fallbackCardIds.length === 1) {
+      const find = actor.hand.find.bind(actor.hand);
+      actor.hand.find = (...findArgs) => {
+        actor.hand.find = find;
+        return null;
       };
     }
-  });
+    return fallback;
+  };
   try {
-    assert.ok(chargeAction);
-    assert.equal(fixture.searchCalls, 2);
-    assert.equal(fixture.actor.statistics.cardsPlayed, 1);
-    assert.equal(fixture.actor.hand.length, 0);
-    assert.equal(fixture.playPhaseEndCount, 1);
-    assert.equal(fixture.turnEndCount, 1);
+    await game.takeAiPlayPhase(actor, game.state.gameId);
+    assert.deepEqual(fallbackCardIds, [charge.id, shield.id]);
+    assert.ok(actor.hand.includes(charge), "绑定失败 Action 不得被真实消费");
+    assert.ok(!actor.hand.includes(shield), "下一张合法 Action 必须真实执行");
   } finally {
-    fixture.game.dispose();
+    game.dispose();
   }
 });
 
-test("AI·回合收尾：分类 failure 分支不创建 END 或复制弃牌实现", async () => {
-  const source = await readFile(projectFile("js/application/turn/TurnWorkflow.js"), "utf8");
-  const failureBranchStart = source.indexOf(
-    "const failurePresentation = AI_NULL_SEARCH_OUTCOMES[searchResultStatus]"
+test("AI·搜索故障恢复：fallback 单项真实执行拒绝后尝试下一合法 Action", async () => {
+  const actor = makePlayer("fallback-rejected-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fallback-rejected-enemy", 1, "dusk", "ai", 1);
+  const assault = instance("assault");
+  const charge = instance("charge");
+  actor.hand.push(assault, charge);
+  const { game } = makeGame([actor, enemy]);
+  game.state.phase = "play";
+  let searchCalls = 0;
+  game.aiController.selectAction = async () => {
+    searchCalls += 1;
+    game.aiController.lastSearchResult = Object.freeze({
+      status:searchCalls === 1
+        ? SEARCH_RESULT_STATUS.WORKER_FAILURE
+        : SEARCH_RESULT_STATUS.ACCEPTED
+    });
+    return searchCalls === 1 ? null : createAction({ type:"end", actorId:actor.id });
+  };
+  let invalidated = false;
+  game.cleanupManager.delay = async () => {
+    if (!invalidated) {
+      invalidated = true;
+      transitionSetAlive(game.state, enemy, false);
+    }
+    return true;
+  };
+  const fallbackActions = [];
+  const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction.bind(
+    game.aiController
   );
-  const failureBranch = source.slice(
-    failureBranchStart,
-    source.indexOf("break;", failureBranchStart) + "break;".length
-  );
-  assert.doesNotMatch(failureBranch, /createAction|type\s*:\s*["']end["']|player\.hand|discardCardFromHand|handleDiscardPhase/u);
-  assert.match(source, /setMatchPhase\(state, "discard"\);\s*await handleDiscardPhase\(player, gameId\);/u);
+  game.aiController.selectRuntimeEmergencyAction = (...args) => {
+    const fallback = selectRuntimeEmergencyAction(...args);
+    fallbackActions.push(fallback.action);
+    return fallback;
+  };
+  try {
+    await game.takeAiPlayPhase(actor, game.state.gameId);
+    assert.equal(fallbackActions[0].cardInstanceId, assault.id);
+    assert.equal(fallbackActions[1].cardInstanceId, charge.id);
+    assert.ok(actor.hand.includes(assault), "真实执行拒绝的 Action 不得消费实体牌");
+    assert.ok(!actor.hand.includes(charge), "重新生成的下一合法 Action 必须真实执行");
+    assert.equal(actor.statistics.cardsPlayed, 1);
+  } finally {
+    game.dispose();
+  }
 });
 
-test("AI·回合收尾：主要 failure outcome 输出各自诊断文案并走同一 canonical cleanup", async () => {
-  const expectedFragments = new Map([
-    [SEARCH_RESULT_STATUS.PREPARATION_FAILURE, "搜索准备数据异常"],
-    [SEARCH_RESULT_STATUS.SEARCH_INTERNAL_FAILURE, "搜索内部故障"],
-    [SEARCH_RESULT_STATUS.WORKER_FAILURE, "搜索 Worker 通信故障"],
-    [SEARCH_RESULT_STATUS.SEARCH_CANCELLED, "搜索已取消"],
-    [SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED, "搜索预算用尽且无完整结果"]
-  ]);
-  for (const [status, fragment] of expectedFragments) {
-    const fixture = await runAiSearchOutcomeTurnFixture({
-      hp:4,
-      handDefinitions:[],
-      outcomeAt:() => ({ status, action:null })
+test("AI·搜索故障恢复：失败 card 整体回滚后可安全执行下一 fallback", async () => {
+  const actor = makePlayer("fallback-card-rollback-actor", 0, "dawn", "ai", 0),
+    enemy = makePlayer("fallback-card-rollback-enemy", 1, "dusk", "ai", 1),
+    assault = instance("assault"),
+    charge = instance("charge"),
+    equipment = instance("energyDevice"),
+    { game }
+      = makeGame([actor, enemy]);
+  actor.hand.push(assault, charge);
+  actor.energy = 0;
+  actor.statuses.exposeWeakness = { stacks:2 };
+  enemy.hp = 4;
+  enemy.shield = 1;
+  enemy.equipment = equipment;
+  game.state.phase = "play";
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  game.aiController.selectAction = async () => {
+    searchCalls += 1;
+    game.aiController.lastSearchResult = Object.freeze({
+      status:searchCalls === 1
+        ? SEARCH_RESULT_STATUS.WORKER_FAILURE
+        : SEARCH_RESULT_STATUS.ACCEPTED
     });
-    try {
-      assert.equal(fixture.searchCalls, 1, status);
-      assert.equal(fixture.turnEndCount, 1, status);
-      assert.match(fixture.ui.logs.join("\n"), new RegExp(fragment, "u"), status);
-    } finally {
-      fixture.game.dispose();
+    return searchCalls === 1 ? null : createAction({ type:"end", actorId:actor.id });
+  };
+  const fallbacks = [
+    createAction({
+      type:"card", actorId:actor.id, cardId:"assault", cardInstanceId:assault.id,
+      targetIds:[enemy.id]
+    }),
+    createAction({ type:"card", actorId:actor.id, cardId:"charge", cardInstanceId:charge.id })
+  ];
+  game.aiController.selectRuntimeEmergencyAction = () => ({
+    kind:"RUNTIME_EMERGENCY_LEGAL_FALLBACK",
+    action:fallbacks.shift()
+  });
+  let injected = false;
+  game.eventDispatcher.on("afterDamage", "test:throw-fallback-card-after-damage", (event) => {
+    if (!injected && event.card === assault) {
+      injected = true;
+      throw new Error("fallback card failed after damage");
     }
+  });
+
+  await game.takeAiPlayPhase(actor, game.state.gameId);
+
+  assert.equal(injected, true);
+  assert.equal(enemy.hp, 4);
+  assert.equal(enemy.shield, 1);
+  assert.equal(enemy.equipment, equipment);
+  assert.deepEqual(actor.statuses.exposeWeakness, { stacks:2 });
+  assert.equal(actor.turnFlags.attackUsed, 0);
+  assert.equal(actor.statistics.assaultsUsed, 0);
+  assert.equal(actor.energy, 1);
+  assertCardOnlyIn(game, assault, `hand:${actor.id}`);
+  assertCardOnlyIn(game, charge, "discard");
+  assert.equal(actor.statistics.cardsPlayed, 1);
+});
+
+test("AI·搜索故障恢复：rollback failure 穿过 finally 与 GameLoop 且不 fallback/advance", async () => {
+  const actor = makePlayer("fatal-rollback-actor", 0, "dawn", "ai", 0),
+    next = makePlayer("fatal-rollback-next", 1, "dusk", "ai", 1),
+    card = instance("charge"),
+    { game, ui }
+      = makeGame([actor, next]);
+  actor.hand.push(card);
+  game.cleanupManager.delay = async () => true;
+  game.aiController.selectAction = async () => createAction({
+    type:"card", actorId:actor.id, cardId:card.definitionId, cardInstanceId:card.id
+  });
+  let fallbackCalls = 0;
+  game.aiController.selectRuntimeEmergencyAction = () => {
+    fallbackCalls += 1;
+    throw new Error("rollback failure 后不应请求 fallback");
+  };
+  const rollbackFailure = new Error("participant restore failed");
+  game.publicCardPoolWorkflow.restoreActionCheckpoint = () => {
+    throw rollbackFailure;
+  };
+  let actionFailed = false, nextStarted = false;
+  game.eventDispatcher.on("beforeCardUse", "test:fail-action-before-rollback", (event) => {
+    if (event.card !== card) return;
+    actionFailed = true;
+    throw new Error("action execution failed");
+  });
+  game.eventDispatcher.on("turnStart", "test:no-turn-after-fatal-rollback", (event) => {
+    if (event.player === next) nextStarted = true;
+  });
+  const render = ui.render.bind(ui);
+  ui.render = (...args) => {
+    if (actionFailed) throw new Error("AI fatal finally presentation failed");
+    return render(...args);
+  };
+
+  let fatalError = null;
+  await assert.rejects(
+    game.runGameLoop(),
+    (error) => {
+      fatalError = error;
+      return error instanceof ActionRollbackError;
+    }
+  );
+
+  assert.equal(fallbackCalls, 0);
+  assert.equal(nextStarted, false);
+  assert.ok(fatalError.errors.includes(rollbackFailure));
+});
+
+test("AI·搜索故障恢复：普通 finally presentation failure 仍保持可观察异常", async () => {
+  const actor = makePlayer("ordinary-finalization-actor", 0, "dawn", "ai", 0),
+    enemy = makePlayer("ordinary-finalization-enemy", 1, "dusk", "ai", 1),
+    { game, ui }
+      = makeGame([actor, enemy]);
+  game.cleanupManager.delay = async () => true;
+  game.aiController.selectAction = async () => createAction({ type:"end", actorId:actor.id });
+  ui.render = () => {
+    throw new Error("ordinary AI finalization failed");
+  };
+
+  await assert.rejects(
+    game.takeAiPlayPhase(actor, game.state.gameId),
+    /ordinary AI finalization failed/
+  );
+});
+
+test("AI·搜索故障恢复：失败 skill 整体回滚后可安全执行下一 fallback", async () => {
+  const actor = makePlayer("fallback-skill-rollback-actor", 0, "dawn", "ai", 1),
+    ally = makePlayer("fallback-skill-rollback-ally", 1, "dawn"),
+    enemy = makePlayer("fallback-skill-rollback-enemy", 2, "dusk"),
+    charge = instance("charge"),
+    { game, ui }
+      = makeGame([actor, ally, enemy]);
+  actor.hand.push(charge);
+  actor.energy = 2;
+  ally.shield = 0;
+  game.state.phase = "play";
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  game.aiController.selectAction = async () => {
+    searchCalls += 1;
+    game.aiController.lastSearchResult = Object.freeze({
+      status:searchCalls === 1
+        ? SEARCH_RESULT_STATUS.WORKER_FAILURE
+        : SEARCH_RESULT_STATUS.ACCEPTED
+    });
+    return searchCalls === 1 ? null : createAction({ type:"end", actorId:actor.id });
+  };
+  const fallbacks = [
+    createAction({ type:"skill", actorId:actor.id, skillId:"barrier", targetIds:[ally.id] }),
+    createAction({ type:"card", actorId:actor.id, cardId:"charge", cardInstanceId:charge.id })
+  ];
+  game.aiController.selectRuntimeEmergencyAction = () => ({
+    kind:"RUNTIME_EMERGENCY_LEGAL_FALLBACK",
+    action:fallbacks.shift()
+  });
+  let injected = false;
+  const queueFeedback = ui.queueFeedback;
+  ui.queueFeedback = (kind, ...args) => {
+    if (!injected && kind === "shield") {
+      injected = true;
+      throw new Error("fallback skill failed after mutation");
+    }
+    return queueFeedback?.call(ui, kind, ...args);
+  };
+
+  await game.takeAiPlayPhase(actor, game.state.gameId);
+
+  assert.equal(injected, true);
+  assert.equal(getActiveSkillUseCount(actor.turnFlags, "barrier"), 0);
+  assert.equal(actor.turnFlags.activeSkillsUsed.has("barrier"), false);
+  assert.equal(ally.shield, 0);
+  assert.equal(actor.energy, 3);
+  assertCardOnlyIn(game, charge, "discard");
+  assert.equal(actor.statistics.cardsPlayed, 1);
+});
+
+test("AI·搜索故障恢复：有界 fallback 全部失败后才 fail-stop", async () => {
+  const actor = makePlayer("fallback-exhausted-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("fallback-exhausted-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"), instance("shield"), instance("harvest"));
+  const { game } = makeGame([actor, enemy]);
+  game.state.phase = "play";
+  game.cleanupManager.delay = async () => true;
+  game.aiController.selectAction = async () => {
+    game.aiController.lastSearchResult = Object.freeze({
+      status:SEARCH_RESULT_STATUS.WORKER_FAILURE,
+      rejectionReason:"synthetic failure"
+    });
+    return null;
+  };
+  const fallbackCardIds = [];
+  const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction.bind(
+    game.aiController
+  );
+  game.aiController.selectRuntimeEmergencyAction = (...args) => {
+    const fallback = selectRuntimeEmergencyAction(...args);
+    fallbackCardIds.push(fallback.action.cardInstanceId);
+    const find = actor.hand.find.bind(actor.hand);
+    actor.hand.find = (...findArgs) => {
+      actor.hand.find = find;
+      return null;
+    };
+    return fallback;
+  };
+  try {
+    await assert.rejects(
+      game.takeAiPlayPhase(actor, game.state.gameId),
+      (error) => error?.code === "AI_ACTION_FAILURE"
+        && error?.stage === "FALLBACK_EXHAUSTED"
+    );
+    assert.equal(fallbackCardIds.length, 3);
+    assert.equal(new Set(fallbackCardIds).size, 3);
+    assert.equal(game.state.phase, "play");
+    assert.equal(actor.statistics.cardsPlayed, 0);
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·搜索故障恢复：正常 strategic END 行为不变", async () => {
+  const actor = makePlayer("strategic-end-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("strategic-end-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("charge"));
+  const { game } = makeGame([actor, enemy]);
+  game.state.phase = "play";
+  game.cleanupManager.delay = async () => true;
+  game.aiController.selectAction = async () => createAction({ type:"end", actorId:actor.id });
+  try {
+    await game.takeAiPlayPhase(actor, game.state.gameId);
+    assert.equal(actor.statistics.cardsPlayed, 0);
+    assert.equal(actor.hand.length, 1);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback, null);
+  } finally {
+    game.dispose();
   }
 });
 
@@ -18799,48 +19360,54 @@ test("AI·搜索：真实 Action 后强制重搜且合法旧后续不得自动�
 
 /*
 功能
-验证 Worker/Controller 已接受 non-END 后，真实实体绑定失败会显式报告而不是伪装成正常 END。
+验证 Worker/Controller 已接受 non-END 后，真实实体绑定失败会转入当前 Generator fallback。
 
 调用方
 AI 搜索与真实执行边界回归测试。
 
 输入
-无；构造一个合法 Assault，并在 acceptance 后、执行前的 pacing 边界移除实体牌。
+无；构造合法 Assault 与 Charge，并在 acceptance 后、执行前的 pacing 边界移除 Assault。
 
 输出
-Promise；若失败被静默吞掉、错误执行或被记录为正常 END 时抛出断言。
+Promise；若未执行当前合法 Charge、污染首次搜索证据或没有重新搜索时抛出断言。
 
 读取状态
 SearchRequest roots、Controller result、TurnWorkflow pacing 与公开日志。
 
 写入状态
-测试在 pacing callback 中移除待绑定实体牌，不提交任何真实 Action。
+测试在 pacing callback 中移除待绑定实体牌，fallback 真实提交 Charge。
 
 调用函数
 makeGame、createWorkerSearchOutcome、AIController.selectAction、takeAiPlayPhase。
 
 边界与不变量
-该夹具只模拟 acceptance 后的实体失效；生产必须保留 non-END 搜索证据，并输出明确执行失败日志。
+该夹具只模拟 acceptance 后的实体失效；生产必须保留首次 non-END 搜索证据，
+排除失败 Action 后执行当前 Generator non-END，并在真实 World 更新后重新 Search。
 */
-async function acceptedNonEndBindingFailureIsExplicit() {
-  const { createWorkerSearchOutcome } = await import("../js/ai/Controller.js");
+async function acceptedNonEndBindingFailureUsesFallback() {
   const actor = makePlayer("binding-failure-actor", 0, "dawn", "ai", 5);
   const enemy = makePlayer("binding-failure-enemy", 1, "dusk", "ai", 1);
   const assault = instance("assault");
-  actor.hand.push(assault);
+  const charge = instance("charge");
+  actor.hand.push(assault, charge);
   const { game, ui } = makeGame([actor, enemy]);
-  let returnedAction = null;
+  const requestVersions = [];
+  let searchCalls = 0;
   game.aiController.searchExecutor = {
     async search(request) {
-      returnedAction = request.rootActions.find((action) => action.cardId === "assault");
-      assert.ok(returnedAction);
+      requestVersions.push(request.stateVersion);
+      searchCalls += 1;
+      const action = searchCalls === 1
+        ? request.rootActions.find((entry) => entry.cardId === "assault")
+        : request.rootActions.find((entry) => entry.type === "end");
+      assert.ok(action);
       return createWorkerSearchOutcome({
         request,
-        action:returnedAction,
+        action,
         stats:{
           stopReason:"COMPLETE",
           completedRootCandidateCount:request.rootActions.length,
-          bestSequence:[returnedAction]
+          bestSequence:[action]
         },
         searchStopReason:"COMPLETE",
         rngAfter:request.rng
@@ -18855,23 +19422,34 @@ async function acceptedNonEndBindingFailureIsExplicit() {
     }
     return true;
   };
+  let firstSearchResult = null;
+  const acceptWorkerSearchOutcome = game.aiController.acceptWorkerSearchOutcome.bind(
+    game.aiController
+  );
+  game.aiController.acceptWorkerSearchOutcome = (...args) => {
+    const accepted = acceptWorkerSearchOutcome(...args);
+    if (!firstSearchResult) firstSearchResult = accepted.result;
+    return accepted;
+  };
 
   await game.takeAiPlayPhase(actor, game.state.gameId);
 
-  assert.equal(returnedAction.type, "card");
-  assert.equal(returnedAction.cardId, "assault");
-  assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
-  assert.deepEqual(game.aiController.lastSearchResult.action, returnedAction);
-  assert.equal(actor.statistics.cardsPlayed, 0);
+  assert.equal(firstSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.equal(firstSearchResult.action.cardInstanceId, assault.id);
+  assert.equal(searchCalls, 2);
+  assert.ok(requestVersions[1] > requestVersions[0]);
+  assert.ok(!actor.hand.includes(charge));
+  assert.equal(actor.statistics.cardsPlayed, 1);
+  assert.equal(game.state.phase, "play");
   assert.ok(
-    ui.logs.some((message) => message.includes("计划行动执行失败")),
-    "non-END 实体绑定失败必须留下明确日志"
+    ui.logs.some((message) => message.includes("合法应急 Action")),
+    "non-END 实体绑定失败必须留下 runtime fallback 日志"
   );
 }
 
 test(
-  "AI·执行边界：accepted non-END 实体绑定失败不静默伪装为 END",
-  acceptedNonEndBindingFailureIsExplicit
+  "AI·执行边界：accepted non-END 实体绑定失败后执行当前合法 fallback",
+  acceptedNonEndBindingFailureUsesFallback
 );
 
 
@@ -21488,6 +22066,15 @@ test("AI·Controller：Worker transport fault 返回 WORKER_FAILURE", async () =
     );
     assert.equal(game.aiController.lastSearchResult.searchFault, null);
     assert.equal(game.aiController.lastWorkerOutcome.workerError, "synthetic Worker transport fault");
+    assert.equal(game.aiController.lastDecisionDiagnostics.watchdogFired, false);
+    assert.equal(
+      game.aiController.lastDecisionDiagnostics.workerRejectionReason,
+      "synthetic Worker transport fault"
+    );
+    assert.equal(
+      game.aiController.lastDecisionDiagnostics.controllerFallbackReason,
+      "synthetic Worker transport fault"
+    );
   } finally {
     game.dispose();
   }
@@ -23344,6 +23931,15 @@ async function frArch14RngContinuityAcceptedSearches() {
   assert.deepEqual(game.aiController.searchRng.snapshot(), beforeRejected, "rejected outcome 不得 commit RNG");
   assert.equal(game.aiController.searchDiagnostics.WORKER_ERROR, 1);
   assert.equal(game.aiController.searchDiagnostics.WATCHDOG, 1);
+  assert.equal(game.aiController.lastDecisionDiagnostics.watchdogFired, true);
+  assert.equal(
+    game.aiController.lastDecisionDiagnostics.workerRejectionReason,
+    "AI search hard watchdog"
+  );
+  assert.equal(
+    game.aiController.lastDecisionDiagnostics.controllerFallbackReason,
+    "AI search hard watchdog"
+  );
   game.dispose();
 }
 
@@ -39639,13 +40235,41 @@ async function withFetchStub(fetchImpl, run) {
   try { return await run(); } finally { globalThis.fetch = previous; }
 }
 
-/** 构造带主题记录的 Game，供 BGM 阵营规则测试使用。 */
+/*
+功能
+构造隔离 AI 搜索且记录音乐主题变化的 BGM 测试 Game。
+
+调用方
+BGM 阵营与回合主题回归测试。
+
+输入
+测试 Player 数组。
+
+输出
+Game、UI、当前主题 getter 与主题调用记录。
+
+读取状态
+测试 Player 阵营与 canonical END Action contract。
+
+写入状态
+测试牌堆、UI 主题记录与 AI selectAction fixture。
+
+调用函数
+makeGame、instance、createAction。
+
+边界与不变量
+纯 BGM 测试不得依赖真实 AI 搜索预算；每个 AI 回合只返回该行动者的 canonical END。
+*/
 function makeMusicRuleGame(players) {
   const { game, ui } = makeGame(players);
   const musicCalls = [];
   let theme = null;
   ui.setMusicTeam = (team) => { theme = team; musicCalls.push(team); };
   game.state.deck.cards = Array.from({ length: 24 }, () => instance("recover"));
+  game.aiController.selectAction = async (player) => createAction({
+    type:"end",
+    actorId:player.id
+  });
   return { game, ui, get theme() { return theme; }, musicCalls };
 }
 
@@ -40048,6 +40672,75 @@ test("BGM：编队与选角阶段共用准备主题且阵营确认后启动真�
 
 // ==================== 生命周期、异常与 Cleanup ====================
 
+/*
+功能
+把 Action authoritative checkpoint 中的 Set/Map 转换为可稳定深比较的数据。
+
+调用方
+snapshotAuthoritativeActionState 的 JSON serialization。
+
+输入
+JSON replacer key 与当前 value。
+
+输出
+Set/Map 的显式数组表示，或原 value。
+
+读取状态
+value 的容器内容。
+
+写入状态
+无。
+
+调用函数
+Array.from。
+
+边界与不变量
+只用于测试快照；不读取函数或修改真实实体。
+*/
+function normalizeActionSnapshotValue(_key, value) {
+  if (value instanceof Set) return { $set:[...value] };
+  if (value instanceof Map) return { $map:[...value.entries()] };
+  return value;
+}
+
+/*
+功能
+捕获一次真实 Action 可观察的 authoritative state 与直接 runtime owner 状态。
+
+调用方
+Action atomicity 回归测试。
+
+输入
+真实测试 MatchApplication。
+
+输出
+可稳定 deepEqual 的独立数据快照。
+
+读取状态
+MatchState/Player/Deck、Action/Response/Dying/Card runtime checkpoints 与 PublicCardPool owner。
+
+写入状态
+无。
+
+调用函数
+JSON.stringify/parse、各 owner checkpoint API。
+
+边界与不变量
+函数型 adapter capability 不属于 authoritative state；全部可序列化真实字段、实体顺序、版本与私有 owner 状态必须精确相等。
+*/
+function snapshotAuthoritativeActionState(game) {
+  return JSON.parse(JSON.stringify({
+    state:game.state,
+    actionState:game.actionWorkflow.getActionStateSnapshot(),
+    resolutionOwners:game.actionWorkflow.getResolutionOwnersSnapshot(),
+    response:game.responseWorkflow.captureActionCheckpoint(),
+    dying:game.dyingWorkflow.captureActionCheckpoint(),
+    cardIntent:game.cardIntentRuntime.captureActionCheckpoint(),
+    cardEffect:game.cardEffectRuntime.captureActionCheckpoint(),
+    publicCardPoolIds:game.publicCardPoolWorkflow.cards.map((card) => card.id)
+  }, normalizeActionSnapshotValue));
+}
+
 // ---- 回合生命周期与全局额度重置 ----
 
 test("生命周期：新全局回合只重置 global-turn reactive 额度而不重置非行动角色 actor-turn 状态", async () => {
@@ -40113,17 +40806,16 @@ test("生命周期：beforeCardMove 取消出牌时保持手牌且不产生出�
   assert.equal(game.actionLocked, false);
 });
 
-test("生命周期：beforeCardMove 取消 AI 动作后游戏循环仍推进至下一角色", async () => {
+test("生命周期：beforeCardMove 取消唯一 AI non-END 后有界 fail-stop", async () => {
   const ai = makePlayer("cancel-loop-ai", 0, "dawn"),
     next = makePlayer("cancel-loop-next", 1, "dusk"),
     card = instance("charge"),
     { game }
       = makeGame([ai, next]);
   ai.hand.push(card);
-  game.aiController.getActionCandidates = () => [];
   game.aiController.selectAction = async () => createAction({
     type:"card",
-    actorId:source.id,
+    actorId:ai.id,
     cardId:card.definitionId,
     cardInstanceId:card.id
   });
@@ -40139,7 +40831,8 @@ test("生命周期：beforeCardMove 取消 AI 动作后游戏循环仍推进至�
   });
   game.loopPromise = game.runGameLoop();
   await assert.doesNotReject(game.loopPromise);
-  assert.equal(nextStarted, true);
+  assert.equal(nextStarted, false);
+  assert.equal(game.state.phase, "play");
   assert.deepEqual(ai.hand, [card]);
   assert.equal(game.state.resolvingCards.length, 0);
   assert.equal(game.actionLocked, false);
@@ -40161,7 +40854,7 @@ test("生命周期：beginResolve 失败时 playCard 不移除手牌或产生悬
   assert.equal(game.actionLocked, false);
 });
 
-test("生命周期：beforeCardUse 抛异常后实体牌离开结算区并只进入一次弃牌堆", async () => {
+test("生命周期：beforeCardUse 抛异常后实体牌与真实状态回到执行前", async () => {
   const source = makePlayer("before-use-source", 0, "dawn"),
     enemy = makePlayer("before-use-enemy", 1, "dusk"),
     card = instance("charge"),
@@ -40172,14 +40865,14 @@ test("生命周期：beforeCardUse 抛异常后实体牌离开结算区并只进
     if (event.card === card) throw new Error("private beforeCardUse failure");
   });
   await assert.rejects(game.playCard(source, card, []), /private beforeCardUse failure/);
-  assertCardOnlyIn(game, card, "discard");
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
   assert.equal(source.statistics.cardsPlayed, 0);
   assert.doesNotMatch(
     game.state.logs.map((entry) => entry.message).join("\n"), /private beforeCardUse failure/
   );
 });
 
-test("生命周期：targetSelected 抛异常后不会留下悬空牌", async () => {
+test("生命周期：targetSelected 抛异常后牌区回到执行前", async () => {
   const source = makePlayer("target-hook-source", 0, "dawn"),
     enemy = makePlayer("target-hook-enemy", 1, "dusk"),
     card = instance("assault"),
@@ -40190,11 +40883,11 @@ test("生命周期：targetSelected 抛异常后不会留下悬空牌", async ()
     if (event.card === card) throw new Error("target hook failed");
   });
   await assert.rejects(game.playCard(source, card, [enemy]), /target hook failed/);
-  assertCardOnlyIn(game, card, "discard");
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
   assert.equal(source.statistics.cardsPlayed, 0);
 });
 
-test("生命周期：beforeCardResolve 抛异常后不会留下悬空牌", async () => {
+test("生命周期：beforeCardResolve 抛异常后牌区回到执行前", async () => {
   const source = makePlayer("resolve-hook-source", 0, "dawn"),
     enemy = makePlayer("resolve-hook-enemy", 1, "dusk"),
     card = instance("charge"),
@@ -40205,11 +40898,11 @@ test("生命周期：beforeCardResolve 抛异常后不会留下悬空牌", async
     if (event.card === card) throw new Error("resolve hook failed");
   });
   await assert.rejects(game.playCard(source, card, []), /resolve hook failed/);
-  assertCardOnlyIn(game, card, "discard");
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
   assert.equal(source.statistics.cardsPlayed, 0);
 });
 
-test("生命周期：反制流程抛异常后主动牌安全进入弃牌堆", async () => {
+test("生命周期：反制流程抛异常后主动牌与响应上下文回到执行前", async () => {
   const source = makePlayer("counter-failure-source", 0, "dawn"),
     enemy = makePlayer("counter-failure-enemy", 1, "dusk", "human"),
     card = instance("harvest"),
@@ -40218,11 +40911,13 @@ test("生命周期：反制流程抛异常后主动牌安全进入弃牌堆", as
   source.hand.push(card);
   enemy.hand.push(instance("counter"));
   await assert.rejects(game.playCard(source, card, []), /counter flow failed/);
-  assertCardOnlyIn(game, card, "discard");
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
+  assert.equal(game.state.pendingResponses.length, 0);
+  assert.deepEqual(game.responseWorkflow.captureActionCheckpoint(), []);
   assert.equal(source.statistics.cardsPlayed, 0);
 });
 
-test("生命周期：卡牌效果部分生效后抛异常不回滚效果但会清理实体牌", async () => {
+test("生命周期：卡牌效果部分生效后抛异常会整体回滚", async () => {
   const source = makePlayer("partial-effect-source", 0, "dawn"),
     enemy = makePlayer("partial-effect-enemy", 1, "dusk"),
     card = instance("charge"),
@@ -40230,16 +40925,192 @@ test("生命周期：卡牌效果部分生效后抛异常不回滚效果但会�
       = makeGame([source, enemy]);
   source.energy = 0;
   source.hand.push(card);
+  const hpBefore = enemy.hp;
+  const stateVersionBefore = game.state.stateVersion;
+  const before = snapshotAuthoritativeActionState(game);
   game.eventDispatcher.on("afterGainEnergy", "test:throw-after-partial-effect", (event) => {
     if (event.card === card) throw new Error("effect failed after mutation");
   });
   await assert.rejects(game.playCard(source, card, []), /effect failed after mutation/);
-  assert.equal(source.energy, 1);
-  assertCardOnlyIn(game, card, "discard");
+  assert.deepEqual(snapshotAuthoritativeActionState(game), before);
+  assert.equal(source.energy, 0);
+  assert.equal(enemy.hp, hpBefore);
+  assert.equal(game.state.stateVersion, stateVersionBefore);
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
   assert.equal(source.statistics.cardsPlayed, 0);
 });
 
-test("生命周期：cardUsed 监听器抛异常后不重复弃牌且不重复触发事件", async () => {
+test("生命周期：故障注入在多领域 mutation 后抛异常会恢复整个 authoritative state", async () => {
+  const source = makePlayer("transaction-injection-source", 0, "dawn", "ai", 0),
+    target = makePlayer("transaction-injection-target", 1, "dusk", "ai", 1),
+    card = instance("charge"),
+    equipment = instance("energyDevice"),
+    { game }
+      = makeGame([source, target]);
+  source.energy = 0;
+  source.hand.push(card);
+  target.hp = 3;
+  target.shield = 2;
+  target.equipment = equipment;
+  target.statuses.exposeWeakness = { stacks:2 };
+  const before = snapshotAuthoritativeActionState(game);
+  game.eventDispatcher.on("afterGainEnergy", "test:inject-authoritative-mutations", (event) => {
+    if (event.card !== card) return;
+    transitionChangeHp(game.state, target, -2);
+    transitionChangeShield(game.state, target, -1);
+    transitionSetStatus(game.state, target, "allIn", { assaultBonus:3 });
+    transitionSetEquipment(game.state, target, null);
+    source.turnFlags.activeSkillUseCounts.breakArmy = 1;
+    source.turnFlags.activeSkillsUsed.add("breakArmy");
+    game.state.pendingResponses.push({ id:"synthetic-response", type:"counter" });
+    game.state.activeEffects.push({ id:"synthetic-effect" });
+    throw new Error("fault after authoritative mutations");
+  });
+
+  await assert.rejects(
+    game.playCard(source, card, []),
+    /fault after authoritative mutations/
+  );
+
+  assert.deepEqual(snapshotAuthoritativeActionState(game), before);
+  assert.equal(source.energy, 0);
+  assert.equal(target.hp, 3);
+  assert.equal(target.shield, 2);
+  assert.deepEqual(target.statuses, { exposeWeakness:{ stacks:2 } });
+  assert.equal(target.equipment, equipment);
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
+  assertCardOnlyIn(game, equipment, `equipment:${target.id}`);
+});
+
+test("生命周期：主动技能在扣能量、记次数与加盾后抛异常会整体回滚", async () => {
+  const source = makePlayer("skill-rollback-source", 0, "dawn", "ai", 1),
+    ally = makePlayer("skill-rollback-ally", 1, "dawn"),
+    enemy = makePlayer("skill-rollback-enemy", 2, "dusk"),
+    { game, ui }
+      = makeGame([source, ally, enemy]);
+  source.energy = 4;
+  ally.shield = 1;
+  ally.statuses.exposeWeakness = { stacks:1 };
+  const stateVersionBefore = game.state.stateVersion;
+  const before = snapshotAuthoritativeActionState(game);
+  const queueFeedback = ui.queueFeedback;
+  ui.queueFeedback = (kind, ...args) => {
+    if (kind === "shield") throw new Error("skill failed after mutation");
+    return queueFeedback?.call(ui, kind, ...args);
+  };
+
+  await assert.rejects(
+    game.useActiveSkill(source, "barrier", [ally]),
+    /skill failed after mutation/
+  );
+
+  assert.deepEqual(snapshotAuthoritativeActionState(game), before);
+  assert.equal(source.energy, 4);
+  assert.equal(getActiveSkillUseCount(source.turnFlags, "barrier"), 0);
+  assert.equal(source.turnFlags.activeSkillsUsed.has("barrier"), false);
+  assert.equal(ally.shield, 1);
+  assert.deepEqual(ally.statuses, { exposeWeakness:{ stacks:1 } });
+  assert.equal(game.state.stateVersion, stateVersionBefore);
+});
+
+test("生命周期：成功 card 与 skill 保留原有提交结果", async () => {
+  const cardSource = makePlayer("success-card-source", 0, "dawn"),
+    cardEnemy = makePlayer("success-card-enemy", 1, "dusk"),
+    charge = instance("charge"),
+    { game:cardGame }
+      = makeGame([cardSource, cardEnemy]);
+  cardSource.energy = 0;
+  cardSource.hand.push(charge);
+  assert.equal(await cardGame.playCard(cardSource, charge, []), true);
+  assert.equal(cardSource.energy, 1);
+  assertCardOnlyIn(cardGame, charge, "discard");
+  assert.equal(cardSource.statistics.cardsPlayed, 1);
+
+  const skillSource = makePlayer("success-skill-source", 0, "dawn", "ai", 1),
+    skillAlly = makePlayer("success-skill-ally", 1, "dawn"),
+    skillEnemy = makePlayer("success-skill-enemy", 2, "dusk"),
+    { game:skillGame }
+      = makeGame([skillSource, skillAlly, skillEnemy]);
+  skillSource.energy = 4;
+  assert.equal(await skillGame.useActiveSkill(skillSource, "barrier", [skillAlly]), true);
+  assert.equal(skillSource.energy, 2);
+  assert.equal(skillSource.turnFlags.activeSkillUseCounts.barrier, 1);
+  assert.equal(skillSource.turnFlags.activeSkillsUsed.has("barrier"), true);
+  assert.equal(skillAlly.shield, 1);
+});
+
+test("生命周期：commit 后 card 与 skill 展示失败不回滚真实 Action", async () => {
+  const cardSource = makePlayer("committed-card-source", 0, "dawn", "ai", 0),
+    cardTarget = makePlayer("committed-card-target", 1, "dusk", "ai", 1),
+    assault = instance("assault"),
+    { game:cardGame, ui:cardUi }
+      = makeGame([cardSource, cardTarget]);
+  cardSource.hand.push(assault);
+  const hpBefore = cardTarget.hp;
+  let cardResolved = false;
+  cardGame.eventDispatcher.on("cardUsed", "test:mark-card-commit-ready", (event) => {
+    if (event.card === assault) cardResolved = true;
+  });
+  const cardRender = cardUi.render.bind(cardUi);
+  cardUi.render = (...args) => {
+    if (cardResolved) throw new Error("card presentation failed after commit");
+    return cardRender(...args);
+  };
+
+  assert.equal(await cardGame.playCard(cardSource, assault, [cardTarget]), true);
+  assert.equal(cardTarget.hp, hpBefore - 1);
+  assert.deepEqual(cardSource.hand, []);
+  assertCardOnlyIn(cardGame, assault, "discard");
+  assert.equal(cardSource.statistics.cardsPlayed, 1);
+
+  const skillSource = makePlayer("committed-skill-source", 0, "dawn", "ai", 1),
+    skillAlly = makePlayer("committed-skill-ally", 1, "dawn"),
+    skillEnemy = makePlayer("committed-skill-enemy", 2, "dusk"),
+    { game:skillGame, ui:skillUi }
+      = makeGame([skillSource, skillAlly, skillEnemy]);
+  skillSource.energy = 4;
+  skillUi.render = () => {
+    throw new Error("skill presentation failed after commit");
+  };
+
+  assert.equal(await skillGame.useActiveSkill(skillSource, "barrier", [skillAlly]), true);
+  assert.equal(skillSource.energy, 2);
+  assert.equal(getActiveSkillUseCount(skillSource.turnFlags, "barrier"), 1);
+  assert.equal(skillAlly.shield, 1);
+});
+
+test("生命周期：human-play-end resolve 后的展示失败不回滚已提交 Action", async () => {
+  const human = makePlayer("committed-human-source", 0, "dawn", "human"),
+    enemy = makePlayer("committed-human-enemy", 1, "dusk"),
+    card = instance("charge"),
+    { game, ui }
+      = makeGame([human, enemy]);
+  human.energy = 0;
+  human.hand.push(card);
+  const waiting = ui.waitForHumanPlayEnd(game.state.gameId);
+  const resolveHumanPlayEnd = ui.resolveHumanPlayEnd.bind(ui);
+  let playEndResolved = false;
+  ui.resolveHumanPlayEnd = (gameId) => {
+    const result = resolveHumanPlayEnd(gameId);
+    playEndResolved = true;
+    return result;
+  };
+  const render = ui.render.bind(ui);
+  ui.render = (...args) => {
+    if (playEndResolved) throw new Error("refresh failed after human play end");
+    return render(...args);
+  };
+  game.actionWorkflow.setPendingHumanPlayEnd(true);
+
+  assert.equal(await game.playCard(human, card, []), true);
+  assert.equal(await waiting, true);
+  assert.equal(playEndResolved, true);
+  assert.equal(human.energy, 1);
+  assertCardOnlyIn(game, card, "discard");
+  assert.equal(human.statistics.cardsPlayed, 1);
+});
+
+test("生命周期：cardUsed 监听器抛异常后整体回滚且不重复触发事件", async () => {
   const source = makePlayer("card-used-source", 0, "dawn"),
     enemy = makePlayer("card-used-enemy", 1, "dusk"),
     card = instance("charge"),
@@ -40255,12 +41126,12 @@ test("生命周期：cardUsed 监听器抛异常后不重复弃牌且不重复�
   });
   await assert.rejects(game.playCard(source, card, []), /cardUsed failed/);
   assert.equal(calls, 1);
-  assertCardOnlyIn(game, card, "discard");
-  assert.equal(game.state.deck.discardPile.filter((entry) => entry === card).length, 1);
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
+  assert.equal(game.state.deck.discardPile.filter((entry) => entry === card).length, 0);
   assert.equal(source.statistics.cardsPlayed, 0);
 });
 
-test("生命周期：finishResolvingToDiscard 虚假成功时 playCard 检测真实区域并执行失败清理", async () => {
+test("生命周期：finishResolvingToDiscard 虚假成功时检测失败并整体回滚", async () => {
   const source = makePlayer("finish-failure-source", 0, "dawn"),
     enemy = makePlayer("finish-failure-enemy", 1, "dusk"),
     card = instance("charge"),
@@ -40269,11 +41140,11 @@ test("生命周期：finishResolvingToDiscard 虚假成功时 playCard 检测真
   source.hand.push(card);
   game.finishResolvingToDiscard = async () => true;
   await assert.rejects(game.playCard(source, card, []), /结算牌未能进入弃牌堆/);
-  assertCardOnlyIn(game, card, "discard");
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
   assert.equal(source.statistics.cardsPlayed, 0);
 });
 
-test("生命周期：equipCard 虚假成功但牌仍在结算区时由调用方拒绝并清理", async () => {
+test("生命周期：equipCard 虚假成功但牌仍在结算区时由调用方拒绝并回滚", async () => {
   const source = makePlayer("equip-result-source", 0, "dawn"),
     enemy = makePlayer("equip-result-enemy", 1, "dusk"),
     card = instance("energyDevice"),
@@ -40283,11 +41154,11 @@ test("生命周期：equipCard 虚假成功但牌仍在结算区时由调用方�
   game.equipCard = async () => true;
   await assert.rejects(game.playCard(source, card, []), /装备牌未能进入装备区/);
   assert.equal(source.equipment, null);
-  assertCardOnlyIn(game, card, "discard");
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
   assert.equal(source.statistics.cardsPlayed, 0);
 });
 
-test("生命周期：装备替换预检取消或抛异常时旧装备保持原位且新装备进入弃牌堆", async () => {
+test("生命周期：装备替换预检取消或抛异常时新旧装备都回到执行前", async () => {
   for (const mode of ["cancel", "throw"]) {
     const source = makePlayer(`replace-${mode}-source`, 0, "dawn"),
       enemy = makePlayer(`replace-${mode}-enemy`, 1, "dusk"),
@@ -40306,7 +41177,7 @@ test("生命周期：装备替换预检取消或抛异常时旧装备保持原�
     );
     assert.equal(source.equipment, old);
     assertCardOnlyIn(game, old, `equipment:${source.id}`);
-    assertCardOnlyIn(game, next, "discard");
+    assertCardOnlyIn(game, next, `hand:${source.id}`);
     assert.equal(source.statistics.cardsPlayed, 0);
   }
 });
@@ -40327,7 +41198,7 @@ test("生命周期：装备替换成功后旧装备只在弃牌堆且新装备�
   assert.equal(game.resolutionOwners.size, 0);
 });
 
-test("生命周期：借势内嵌突袭异常只失败清理突袭牌且外层借势正常收束", async () => {
+test("生命周期：借势内嵌突袭异常只回滚内层且外层借势正常收束", async () => {
   const actor = makePlayer("nested-actor", 0, "dawn", "human"),
     first = makePlayer("nested-first", 1, "dusk", "human"),
     equipment = instance("energyDevice"),
@@ -40358,11 +41229,148 @@ test("生命周期：借势内嵌突袭异常只失败清理突袭牌且外层�
   );
   assert.equal(outerUsed, 1);
   assert.equal(innerUsed, 0);
-  assertCardOnlyIn(game, assault, "discard");
+  assertCardOnlyIn(game, assault, `hand:${first.id}`);
   assertCardOnlyIn(game, leverage, "discard");
   assertCardOnlyIn(game, equipment, `hand:${actor.id}`);
   assert.equal(game.resolutionOwners.size, 0);
   assert.equal(game.actionLocked, false);
+});
+
+test("生命周期：借势内嵌 rollback failure 禁止父 Action 继续或提交", async () => {
+  const actor = makePlayer("nested-fatal-actor", 0, "dawn", "human"),
+    first = makePlayer("nested-fatal-first", 1, "dusk", "human"),
+    equipment = instance("energyDevice"),
+    assault = instance("assault"),
+    leverage = instance("leverage"),
+    { game }
+      = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
+  actor.hand.push(leverage);
+  first.hand.push(assault);
+  first.equipment = equipment;
+  const rollbackFailure = new Error("nested participant restore failed");
+  const restoreActionCheckpoint = game.publicCardPoolWorkflow.restoreActionCheckpoint.bind(
+    game.publicCardPoolWorkflow
+  );
+  let restoreCalls = 0;
+  game.publicCardPoolWorkflow.restoreActionCheckpoint = (checkpoint) => {
+    restoreCalls += 1;
+    if (restoreCalls === 1) throw rollbackFailure;
+    return restoreActionCheckpoint(checkpoint);
+  };
+  const parentCleanupFailure = new Error("parent Action cleanup failed");
+  const clearSelection = game.hiddenCardSelection.clearSelection.bind(game.hiddenCardSelection);
+  game.hiddenCardSelection.clearSelection = (...args) => {
+    if (restoreCalls > 0) throw parentCleanupFailure;
+    return clearSelection(...args);
+  };
+  game.eventDispatcher.on("beforeCardResolve", "test:throw-nested-before-rollback", (event) => {
+    if (event.card === assault) throw new Error("nested execution failed");
+  });
+  let outerUsed = 0;
+  game.eventDispatcher.on("cardUsed", "test:no-parent-commit-after-nested-fatal", (event) => {
+    if (event.card === leverage) outerUsed += 1;
+  });
+
+  let fatalError = null;
+  await assert.rejects(
+    game.playCard(
+      actor,
+      leverage,
+      [],
+      {
+        firstTargetId:first.id,
+        equipmentCardId:equipment.id,
+        equipmentDefinitionId:equipment.definitionId,
+        secondTargetId:actor.id,
+        selectionId:"nested-fatal-selection"
+      }
+    ),
+    (error) => {
+      fatalError = error;
+      return error instanceof ActionRollbackError;
+    }
+  );
+
+  assert.ok(fatalError.errors.includes(rollbackFailure));
+  assert.equal(restoreCalls, 2);
+  assert.equal(outerUsed, 0);
+  assertCardOnlyIn(game, assault, `hand:${first.id}`);
+  assertCardOnlyIn(game, leverage, `hand:${actor.id}`);
+  assertCardOnlyIn(game, equipment, `equipment:${first.id}`);
+});
+
+test("生命周期：Human card fatal 不被 handler finally presentation failure 覆盖", async () => {
+  const human = makePlayer("human-card-fatal", 0, "dawn", "human"),
+    enemy = makePlayer("human-card-fatal-enemy", 1, "dusk"),
+    card = instance("charge"),
+    { game, ui }
+      = makeGame([human, enemy]);
+  human.hand.push(card);
+  game.state.phase = "play";
+  const rollbackFailure = new Error("human card restore failed");
+  game.publicCardPoolWorkflow.restoreActionCheckpoint = () => {
+    throw rollbackFailure;
+  };
+  let actionFailed = false;
+  game.eventDispatcher.on("beforeCardUse", "test:human-card-fatal", (event) => {
+    if (event.card !== card) return;
+    actionFailed = true;
+    throw new Error("human card execution failed");
+  });
+  const render = ui.render.bind(ui);
+  ui.render = (...args) => {
+    if (actionFailed) throw new Error("human card handler finalization failed");
+    return render(...args);
+  };
+
+  let fatalError = null;
+  await assert.rejects(
+    game.handleHumanCard(card.id),
+    (error) => {
+      fatalError = error;
+      return error instanceof ActionRollbackError;
+    }
+  );
+
+  assert.ok(fatalError.errors.includes(rollbackFailure));
+});
+
+test("生命周期：Human skill fatal 不被 handler finally presentation failure 覆盖", async () => {
+  const human = makePlayer("human-skill-fatal", 0, "dawn", "human", 4),
+    enemy = makePlayer("human-skill-fatal-enemy", 1, "dusk"),
+    { game, ui }
+      = makeGame([human, enemy]);
+  human.energy = 3;
+  game.state.phase = "play";
+  const rollbackFailure = new Error("human skill restore failed");
+  game.publicCardPoolWorkflow.restoreActionCheckpoint = () => {
+    throw rollbackFailure;
+  };
+  let actionFailed = false;
+  const queueFeedback = ui.queueFeedback;
+  ui.queueFeedback = (kind, ...args) => {
+    if (kind === "damage") {
+      actionFailed = true;
+      throw new Error("human skill execution failed");
+    }
+    return queueFeedback?.call(ui, kind, ...args);
+  };
+  const render = ui.render.bind(ui);
+  ui.render = (...args) => {
+    if (actionFailed) throw new Error("human skill handler finalization failed");
+    return render(...args);
+  };
+
+  let fatalError = null;
+  await assert.rejects(
+    game.handleHumanSkill(),
+    (error) => {
+      fatalError = error;
+      return error instanceof ActionRollbackError;
+    }
+  );
+
+  assert.ok(fatalError.errors.includes(rollbackFailure));
 });
 
 test("生命周期：结算异常后 actionLocked、interactionLocked 与 AI thinking 全部恢复", async () => {
@@ -40382,10 +41390,10 @@ test("生命周期：结算异常后 actionLocked、interactionLocked 与 AI thi
   assert.equal(game.actionLocked, false);
   assert.equal(game.interactionLocked, false);
   assert.equal(ui.thinking.at(-1)[0], false);
-  assertCardOnlyIn(game, card, "discard");
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
 });
 
-test("生命周期：实体牌结算异常后游戏循环仍推进到下一角色", async () => {
+test("生命周期：实体牌结算异常后游戏循环保持 play 且不推进下一角色", async () => {
   const source = makePlayer("resolution-loop-source", 0, "dawn"),
     next = makePlayer("resolution-loop-next", 1, "dusk"),
     card = instance("charge"),
@@ -40412,21 +41420,21 @@ test("生命周期：实体牌结算异常后游戏循环仍推进到下一角�
   });
   game.loopPromise = game.runGameLoop();
   await assert.doesNotReject(game.loopPromise);
-  assert.equal(nextStarted, true);
-  assertCardOnlyIn(game, card, "discard");
+  assert.equal(nextStarted, false);
+  assert.equal(game.state.phase, "play");
+  assertCardOnlyIn(game, card, `hand:${source.id}`);
   assert.equal(game.actionLocked, false);
   assert.equal(game.interactionLocked, false);
   assert.equal(ui.thinking.at(-1)[0], false);
 });
 
-test("生命周期：AI 陈旧手牌动作返回失败后安全结束阶段并清除锁与思考状态", async () => {
+test("生命周期：AI 陈旧手牌动作失效且当前只剩 END 时安全收束", async () => {
   const ai = makePlayer("stale-action-ai", 0, "dawn"),
     enemy = makePlayer("stale-action-enemy", 1, "dusk"),
     staleCard = instance("charge"),
     { game, ui }
       = makeGame([ai, enemy]);
   let selections = 0;
-  game.aiController.getActionCandidates = () => [];
   game.aiController.selectAction = async () => {
     selections += 1;
     return createAction({
@@ -40438,13 +41446,16 @@ test("生命周期：AI 陈旧手牌动作返回失败后安全结束阶段并�
   };
   await game.takeAiPlayPhase(ai, game.state.gameId);
   assert.equal(selections, 1);
+  assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
+  assert.equal(game.aiController.lastRuntimeEmergencyFallback.nonEndCandidateCount, 0);
+  assert.equal(game.state.phase, "play");
   assert.equal(game.actionLocked, false);
   assert.equal(game.interactionLocked, false);
   assert.equal(ui.thinking.at(-1)[0], false);
   assert.equal(game.state.resolvingCards.length, 0);
 });
 
-test("生命周期：AI 真实出牌异常不会拒绝 loopPromise 且下一名存活角色仍开始回合", async () => {
+test("生命周期：AI 真实出牌异常由 loop boundary fail-stop 且不推进下一角色", async () => {
   const ai = makePlayer("throw-card-ai", 0, "dawn"),
     next = makePlayer("throw-card-next", 1, "dusk"),
     card = instance("charge"),
@@ -40465,7 +41476,8 @@ test("生命周期：AI 真实出牌异常不会拒绝 loopPromise 且下一名�
   });
   game.loopPromise = game.runGameLoop();
   await assert.doesNotReject(game.loopPromise);
-  assert.equal(nextStarted, true);
+  assert.equal(nextStarted, false);
+  assert.equal(game.state.phase, "play");
   assert.equal(game.actionLocked, false);
   assert.equal(game.interactionLocked, false);
   assert.equal(ui.thinking.at(-1)[0], false);
@@ -40475,25 +41487,48 @@ test("生命周期：AI 真实出牌异常不会拒绝 loopPromise 且下一名�
   );
 });
 
-test("生命周期：AI 主动技能执行异常由出牌阶段捕获并恢复全部锁状态", async () => {
-  const ai = makePlayer("throw-skill-ai", 0, "dawn", "ai", 1),
-    ally = makePlayer("throw-skill-ally", 1, "dawn"),
-    enemy = makePlayer("throw-skill-enemy", 2, "dusk"),
+test("生命周期：AI Action commit 后展示失败不触发 fallback", async () => {
+  const ai = makePlayer("committed-skill-ai", 0, "dawn", "ai", 1),
+    ally = makePlayer("committed-skill-ally", 1, "dawn"),
+    enemy = makePlayer("committed-skill-enemy", 2, "dusk"),
     { game, ui }
       = makeGame([ai, ally, enemy]);
   ai.energy = 4;
-  game.aiController.getActionCandidates = () => [];
-  game.aiController.selectAction = async () => (
-    { type: "skill", skill: ACTIVE_SKILLS.barrier, targets: [ally] }
-  );
-  ui.setCurrentCard = () => {
-    throw new Error("ai skill execution exploded");
+  let searchCalls = 0, fallbackCalls = 0;
+  game.aiController.selectAction = async () => {
+    searchCalls += 1;
+    return searchCalls === 1
+      ? createAction({ type:"skill", actorId:ai.id, skillId:"barrier", targetIds:[ally.id] })
+      : createAction({ type:"end", actorId:ai.id });
   };
-  await game.takeAiPlayPhase(ai, game.state.gameId);
+  const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction.bind(
+    game.aiController
+  );
+  game.aiController.selectRuntimeEmergencyAction = (...args) => {
+    fallbackCalls += 1;
+    return selectRuntimeEmergencyAction(...args);
+  };
+  const render = ui.render.bind(ui);
+  let renderFailed = false;
+  ui.render = (...args) => {
+    if (!renderFailed) {
+      renderFailed = true;
+      throw new Error("committed skill presentation failed");
+    }
+    return render(...args);
+  };
+
+  await assert.doesNotReject(game.takeAiPlayPhase(ai, game.state.gameId));
+
+  assert.equal(searchCalls, 2);
+  assert.equal(fallbackCalls, 0);
+  assert.equal(ai.energy, 2);
+  assert.equal(getActiveSkillUseCount(ai.turnFlags, "barrier"), 1);
+  assert.equal(ally.shield, 1);
+  assert.equal(game.state.phase, "play");
   assert.equal(game.actionLocked, false);
   assert.equal(game.interactionLocked, false);
   assert.equal(ui.thinking.at(-1)[0], false);
-  assert.doesNotMatch(ui.logs.join("\n"), /ai skill execution exploded/);
 });
 
 test("生命周期：游戏循环连续回合异常有上限并以 resolved 状态安全停止", async () => {
@@ -40881,11 +41916,36 @@ test("生命周期：旧局反制链取消后不会完成战术结算或污染�
   ui.mutations = [];
   ui.logs = [];
   assert.equal(await pending, false);
-  assertCardOnlyIn(old, use, "discard");
+  assertCardOnlyIn(old, use, `hand:${source.id}`);
   assert.equal(fresh.state.resolvingCards.length, 0);
   assert.equal(ui.game, fresh);
   assert.deepEqual(ui.mutations, []);
   assert.deepEqual(ui.logs, []);
+});
+
+test("生命周期：dispose 期间 rollback failure 不会复活旧局", async () => {
+  const source = makePlayer("dispose-rollback-source", 0, "dawn"),
+    enemy = makePlayer("dispose-rollback-enemy", 1, "dusk"),
+    card = instance("charge"),
+    { game }
+      = makeGame([source, enemy]);
+  source.hand.push(card);
+  const rollbackFailure = new Error("dispose participant restore failed");
+  game.publicCardPoolWorkflow.restoreActionCheckpoint = () => {
+    throw rollbackFailure;
+  };
+  game.eventDispatcher.on("beforeCardUse", "test:dispose-before-rollback", (event) => {
+    if (event.card !== card) return;
+    game.dispose();
+    throw new Error("disposed action failed");
+  });
+
+  await assert.rejects(
+    game.playCard(source, card, []),
+    (error) => error instanceof AggregateError && error.errors.includes(rollbackFailure)
+  );
+
+  assert.equal(game.state.isDisposed, true);
 });
 
 test("生命周期：旧局公共池、目标和弃牌等待取消后不移动实体且不影响新 UI", async () => {

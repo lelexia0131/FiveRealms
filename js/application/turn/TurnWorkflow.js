@@ -28,6 +28,7 @@ import { setCurrentPlayerIndex, setCurrentRound, setMatchPhase } from "../../dom
 import { resetGlobalTurnReactiveFlags, resetRoundFlags, resetTurnFlags } from "../../domain/state/transitions/RuleUsageTransitions.js";
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
+import { ActionRollbackError } from "../action/ActionTransaction.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",
@@ -35,18 +36,20 @@ const REQUIRED_DEPENDENCIES = [
   "sampleAiDecisionWindow", "getRemainingAiDecisionDelay",
   "getTeamRules", "waitForHumanPlayEnd", "runAiPlayPhase", "choiceCoordinator",
   "choiceContexts", "createId",
-  "selectAction", "playCard", "useActiveSkill", "getAiMaxActions",
+  "selectAction", "selectRuntimeEmergencyAction", "playCard", "useActiveSkill", "getAiMaxActions",
   "getActionTargetLabel", "resetActionLocks", "discardCardFromHand",
-  "cancelPendingInteractions", "getAiSearchResultStatus"
+  "cancelPendingInteractions", "getAiSearchResultStatus", "getAiSearchFailureReason"
 ];
 
 const AI_NULL_SEARCH_OUTCOMES = Object.freeze({
   PREPARATION_FAILURE:"搜索准备数据异常",
   SEARCH_INTERNAL_FAILURE:"搜索内部故障",
-  WORKER_FAILURE:"搜索 Worker 通信故障",
+  WORKER_FAILURE:"搜索运行通道故障",
   SEARCH_CANCELLED:"搜索已取消",
   SEARCH_BUDGET_EXHAUSTED:"搜索预算用尽且无完整结果"
 });
+
+const AI_EMERGENCY_ACTION_ATTEMPT_LIMIT = 3;
 
 /*
 功能
@@ -131,7 +134,8 @@ export function createTurnWorkflow(dependencies) {
   takeTurn、advanceTurn、resetRoundFlags、presentation、diagnostics。
 
   边界与不变量
-  初始 roundStart、consecutiveTurnFailures、failureLimit=3、异常 delay(0) yield 与最后安全收束保持旧语义。
+  只有 runtime fallback 已有界耗尽或 Generator/Action invariant fault 才保持 play phase 并停止推进；
+  Search/Worker failure 由 takeAiPlayPhase 在当前真实状态恢复，其它回合异常仍按 failureLimit 恢复；rollback failure 必须穿过最外层安全停止逻辑继续传播。
   */
   async function runGameLoop() {
     const state = runtime.getState();
@@ -155,6 +159,18 @@ export function createTurnWorkflow(dependencies) {
         try {
           if (player.alive) await runtime.runTurn(player, gameId);
         } catch (error) {
+          if (error instanceof ActionRollbackError) throw error;
+          if (error?.code === "AI_ACTION_FAILURE") {
+            runtime.diagnostics.reportWorkflowError(
+              "Game",
+              `${player.name}的 AI Action 恢复失败；保持当前出牌阶段并停止推进对局`,
+              error
+            );
+            runtime.resetActionLocks();
+            runtime.presentation.clearThinking();
+            runtime.cancelPendingInteractions?.();
+            break;
+          }
           turnFailed = true;
           consecutiveTurnFailures += 1;
           runtime.diagnostics.reportWorkflowError("Game", `${player.name}的回合执行失败，尝试推进至下一名存活角色`, error);
@@ -175,12 +191,18 @@ export function createTurnWorkflow(dependencies) {
         await advanceTurn();
       }
     } catch (error) {
-      runtime.diagnostics.reportWorkflowError("Game", "游戏循环遇到无法恢复的异常，已安全停止", error);
-      runtime.resetActionLocks();
-      if (state.gameId === gameId && !state.isDisposed) {
-        runtime.presentation.clearThinking();
-        runtime.cancelPendingInteractions?.();
+      const propagatingRollbackError = error instanceof ActionRollbackError;
+      try {
+        runtime.diagnostics.reportWorkflowError("Game", "游戏循环遇到无法恢复的异常，已安全停止", error);
+        runtime.resetActionLocks();
+        if (state.gameId === gameId && !state.isDisposed) {
+          runtime.presentation.clearThinking();
+          runtime.cancelPendingInteractions?.();
+        }
+      } catch (cleanupError) {
+        if (!propagatingRollbackError) throw cleanupError;
       }
+      if (propagatingRollbackError) throw error;
     }
   }
 
@@ -301,16 +323,17 @@ export function createTurnWorkflow(dependencies) {
   thinking/prompt 经 PresentationPort；真实卡牌/技能经注入 action collaborators。
 
   调用函数
-  selectAction、getAiSearchResultStatus、playCard、useActiveSkill。
+  selectAction、selectRuntimeEmergencyAction、getAiSearchResultStatus、playCard、useActiveSkill。
 
   边界与不变量
   每个真实 Action 后必须从最新 World 重新调用 selectAction；每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
-  canonical non-END 的定义、目标、实体或真实结算绑定失败必须显式记录，不能静默伪装成正常 END。
-  明确分类的 search failure null 只终止 AI action loop，随后必须由 takeTurn 继续 canonical play-phase/discard/turnEnd 收尾；
-  其它异常或无明确 failure status 的 null 仍显式失败，不能被伪装成 strategic END。
+  Search/Worker failure 不能变成 END 或停死；runtime fallback 每次只从当前真实状态的 Generator 顺序取首个未失败 non-END。
+  绑定/执行失败必须排除该 Action，并在固定上限内重新生成；只有 Generator 只剩唯一 END 时 fallback 才能 END。
+  fallback 不写 Searcher 结果且不保存未来队列；任一真实 Action 成功后下一轮必须重新调用正常 selectAction；finally presentation failure 不得覆盖 rollback failure。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
+    let propagatingRollbackError = null;
     try {
       runtime.presentation.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
       runtime.presentation.showThinking({ playerId: player.id, message: "正在观察战场与可用资源" });
@@ -318,6 +341,7 @@ export function createTurnWorkflow(dependencies) {
         if (!runtime.isSessionValid(gameId) || state.isGameOver || !player.alive) break;
         const decisionStartedAt = runtime.now();
         let action = null;
+        let searchError = null;
         const decisionWindow = runtime.sampleAiDecisionWindow();
         try {
           action = await runtime.selectAction(player, {
@@ -325,100 +349,157 @@ export function createTurnWorkflow(dependencies) {
             searchTimeBudgetMs:decisionWindow.maximumMs
           });
         } catch (error) {
-          runtime.diagnostics.reportWorkflowError("AI", `${player.name}规划行动失败，已中止当前回合`, error);
-          throw error;
-        }
-        if (!runtime.isSessionValid(gameId)) return;
-        if (!action) {
-          const searchResultStatus = runtime.getAiSearchResultStatus();
-          const failurePresentation = AI_NULL_SEARCH_OUTCOMES[searchResultStatus];
-          const searchFailure = new Error(
-            `AI Searcher 未返回可验收 Action（${searchResultStatus ?? "UNKNOWN"}）`
-          );
-          if (failurePresentation) {
-            runtime.diagnostics.reportWorkflowError(
-              "AI",
-              `${player.name}${failurePresentation}，停止继续请求行动并进入回合收尾`,
-              searchFailure
-            );
-            runtime.presentation.log(
-              `${player.name}${failurePresentation}，停止继续出牌并进入回合收尾。`,
-              "important"
-            );
-            break;
-          }
+          searchError = error;
           runtime.diagnostics.reportWorkflowError(
             "AI",
-            `${player.name}规划行动失败，已中止当前回合`,
-            searchFailure
+            `${player.name}正常搜索抛出异常，改用当前合法 Action 恢复`,
+            error
           );
-          throw searchFailure;
         }
+        if (!runtime.isSessionValid(gameId)) return;
+        const searchResultStatus = runtime.getAiSearchResultStatus();
+        const failurePresentation = AI_NULL_SEARCH_OUTCOMES[searchResultStatus]
+          ?? "搜索未返回可执行结果";
+        const rejectionReason = runtime.getAiSearchFailureReason();
         const decisionElapsedMs = Math.max(0, runtime.now() - decisionStartedAt);
         const remainingSearchDelay = runtime.getRemainingAiDecisionDelay(
           decisionWindow,
           decisionElapsedMs
         );
-        if (action.type === "end") {
-          runtime.presentation.setPrompt(`${player.name}准备结束出牌阶段。`);
-          runtime.presentation.showThinking({ playerId: player.id, message: "正在收束回合" });
-          if (!(await runtime.delay(remainingSearchDelay))) return;
+        const failedActions = [];
+        let fallbackAttempts = 0;
+        let delayPending = true;
+        let endPlayPhase = false;
+        let lastActionError = searchError;
+        let fallbackReasonLabel = searchError
+          ? "搜索异常"
+          : !action
+            ? `${failurePresentation}${rejectionReason ? `（${rejectionReason}）` : ""}`
+            : null;
+        while (true) {
+          if (!action) {
+            if (fallbackAttempts >= AI_EMERGENCY_ACTION_ATTEMPT_LIMIT) {
+              const exhaustedError = new Error(
+                `AI runtime emergency fallback 已有界尝试${fallbackAttempts}次，仍无可执行 Action`,
+                lastActionError ? { cause:lastActionError } : undefined
+              );
+              exhaustedError.name = "AiActionFailure";
+              exhaustedError.code = "AI_ACTION_FAILURE";
+              exhaustedError.stage = "FALLBACK_EXHAUSTED";
+              throw exhaustedError;
+            }
+            let fallback;
+            try {
+              fallback = runtime.selectRuntimeEmergencyAction(player, failedActions);
+            } catch (error) {
+              const generatorError = new Error(
+                "AI Generator 无法从当前真实状态提供 emergency legal Action",
+                { cause:error }
+              );
+              generatorError.name = "AiActionFailure";
+              generatorError.code = "AI_ACTION_FAILURE";
+              generatorError.stage = "GENERATOR_INVARIANT";
+              throw generatorError;
+            }
+            if (!fallback?.action) {
+              const exhaustedError = new Error(
+                "AI runtime emergency fallback 的当前合法 non-END 候选已经全部失败",
+                lastActionError ? { cause:lastActionError } : undefined
+              );
+              exhaustedError.name = "AiActionFailure";
+              exhaustedError.code = "AI_ACTION_FAILURE";
+              exhaustedError.stage = "FALLBACK_EXHAUSTED";
+              throw exhaustedError;
+            }
+            action = fallback.action;
+            fallbackAttempts += 1;
+            runtime.presentation.log(
+              `${player.name}${fallbackReasonLabel ?? "Action 故障"}，改为执行当前 Generator 的第${fallbackAttempts}个合法应急 Action。`,
+              "important"
+            );
+          }
+          if (action.type === "end") {
+            runtime.presentation.setPrompt(`${player.name}准备结束出牌阶段。`);
+            runtime.presentation.showThinking({ playerId: player.id, message: "正在收束回合" });
+            if (delayPending && !(await runtime.delay(remainingSearchDelay))) return;
+            if (!runtime.isSessionValid(gameId)) return;
+            endPlayPhase = true;
+            break;
+          }
+          const definition = action.type === "card"
+            ? CARD_DEFINITIONS[action.cardId]
+            : ACTIVE_SKILL_DEFINITIONS[action.skillId];
+          const targets = (action.targetIds ?? [])
+            .map((id) => runtime.getState().players.find((entry) => entry.id === id))
+            .filter(Boolean);
+          if (!definition || targets.length !== (action.targetIds?.length ?? 0)) {
+            lastActionError = new Error("AI canonical Action 的定义或目标绑定失败");
+            fallbackReasonLabel = "Action 绑定失败";
+            failedActions.push(action);
+            runtime.diagnostics.reportWorkflowError(
+              "AI",
+              `${player.name}的 Action 绑定失败，改试下一项当前合法 non-END`,
+              lastActionError
+            );
+            action = null;
+            continue;
+          }
+          const actionName = action.type === "card"
+            ? `准备使用「${definition.name}」`
+            : `准备发动「${definition.name}」`;
+          const targetLabel = runtime.getActionTargetLabel(
+            player,
+            definition,
+            targets,
+            action.selection
+          );
+          const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
+          runtime.presentation.showThinking({ playerId: player.id, message: actionDescription });
+          if (delayPending && !(await runtime.delay(remainingSearchDelay))) return;
+          delayPending = false;
+          if (!runtime.isSessionValid(gameId)) return;
+          runtime.presentation.clearThinking();
+          let executed = false;
+          try {
+            if (action.type === "card") {
+              const card = player.hand.find((entry) => entry.id === action.cardInstanceId) ?? null;
+              if (!card) throw new Error("AI canonical Action 的实体牌绑定失败");
+              executed = await runtime.playCard(player, card, targets, action.selection ?? null);
+            } else if (action.type === "skill") {
+              executed = await runtime.useActiveSkill(player, action.skillId, targets);
+            }
+            if (!executed) throw new Error("AI canonical Action 未能完整提交真实结算");
+          } catch (error) {
+            if (error instanceof ActionRollbackError) throw error;
+            lastActionError = error;
+            fallbackReasonLabel = "Action 实体绑定或执行失败";
+            failedActions.push(action);
+            runtime.diagnostics.reportWorkflowError(
+              "AI",
+              `${player.name}的 Action 实体绑定或执行失败，改试下一项当前合法 non-END`,
+              error
+            );
+            action = null;
+            continue;
+          }
           if (!runtime.isSessionValid(gameId)) return;
           break;
         }
-        const definition = action.type === "card"
-          ? CARD_DEFINITIONS[action.cardId]
-          : ACTIVE_SKILL_DEFINITIONS[action.skillId];
-        const targets = (action.targetIds ?? [])
-          .map((id) => runtime.getState().players.find((entry) => entry.id === id))
-          .filter(Boolean);
-        if (!definition || targets.length !== (action.targetIds?.length ?? 0)) {
-          const bindingError = new Error("AI canonical Action 的定义或目标绑定失败");
-          runtime.diagnostics.reportWorkflowError(
-            "AI",
-            `${player.name}的计划行动绑定失败，提前结束出牌阶段`,
-            bindingError
-          );
-          runtime.presentation.log(`${player.name}的计划行动已失效，本次出牌阶段提前结束。`, "important");
-          break;
-        }
-        const actionName = action.type === "card"
-          ? `准备使用「${definition.name}」`
-          : `准备发动「${definition.name}」`;
-        const targetLabel = runtime.getActionTargetLabel(
-          player,
-          definition,
-          targets,
-          action.selection
-        );
-        const actionDescription = `${actionName}${targetLabel ? `，作用对象：${targetLabel}` : ""}`;
-        runtime.presentation.showThinking({ playerId: player.id, message: actionDescription });
-        if (!(await runtime.delay(remainingSearchDelay))) return;
-        if (!runtime.isSessionValid(gameId)) return;
-        runtime.presentation.clearThinking();
-        let executed = false;
-        try {
-          if (action.type === "card") {
-            const card = player.hand.find((entry) => entry.id === action.cardInstanceId) ?? null;
-            if (!card) throw new Error("AI canonical Action 的实体牌绑定失败");
-            executed = await runtime.playCard(player, card, targets, action.selection ?? null);
-          } else if (action.type === "skill") {
-            executed = await runtime.useActiveSkill(player, action.skillId, targets);
-          }
-          if (!executed) throw new Error("AI canonical Action 未能开始真实结算");
-        } catch (error) {
-          runtime.diagnostics.reportWorkflowError("AI", `${player.name}执行行动失败，安全结束出牌阶段`, error);
-          runtime.presentation.log(`${player.name}的计划行动执行失败，本次出牌阶段提前结束。`, "important");
-          break;
-        }
-        if (!runtime.isSessionValid(gameId)) return;
+        if (endPlayPhase) break;
       }
       if (runtime.isSessionValid(gameId) && !state.isGameOver) runtime.presentation.setPrompt(`${player.name}结束了出牌阶段。`);
+    } catch (error) {
+      if (error instanceof ActionRollbackError) propagatingRollbackError = error;
+      throw error;
     } finally {
       if (state.gameId === gameId && !state.isDisposed) {
-        runtime.resetActionLocks();
-        runtime.presentation.clearThinking();
-        runtime.presentation.refresh();
+        try {
+          runtime.resetActionLocks();
+          runtime.presentation.clearThinking();
+          runtime.presentation.refresh();
+        } catch (error) {
+          if (!propagatingRollbackError) throw error;
+        }
       }
     }
   }

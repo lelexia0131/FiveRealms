@@ -934,6 +934,66 @@ export function createResponseWorkflow(dependencies) {
   只清理 Application response session，不写 Domain state。
   */
   function cleanup() { activeRequestIds.clear(); runtime.clearPendingResponses(); }
+
+  /*
+  功能
+  捕获真实 Action 开始前的 response request owner 状态。
+
+  调用方
+  ActionTransaction composition participant。
+
+  输入
+  无。
+
+  输出
+  冻结的 active request ID 数组。
+
+  读取状态
+  activeRequestIds。
+
+  写入状态
+  无。
+
+  调用函数
+  Object.freeze。
+
+  边界与不变量
+  pendingResponses 位于 MatchState，由通用对象图 checkpoint 恢复；本快照只拥有私有 Set。
+  */
+  function captureActionCheckpoint() {
+    return Object.freeze([...activeRequestIds]);
+  }
+
+  /*
+  功能
+  恢复真实 Action 开始前的 response request owner 状态。
+
+  调用方
+  ActionTransaction rollback。
+
+  输入
+  captureActionCheckpoint 返回的 request ID 数组。
+
+  输出
+  无。
+
+  读取状态
+  checkpoint。
+
+  写入状态
+  activeRequestIds。
+
+  调用函数
+  Set.clear/add。
+
+  边界与不变量
+  不支付或撤销卡牌；牌区和 pendingResponses 已由同一 transaction 的对象图恢复。
+  */
+  function restoreActionCheckpoint(checkpoint) {
+    if (!Array.isArray(checkpoint)) throw new TypeError("ResponseWorkflow Action checkpoint 非法");
+    activeRequestIds.clear();
+    for (const requestId of checkpoint) activeRequestIds.add(requestId);
+  }
   return Object.freeze({
     waitForDecision,
     requestCardResponse,
@@ -947,6 +1007,8 @@ export function createResponseWorkflow(dependencies) {
     requestLeverageAssault,
     requestSkillResponse,
     finishRequest,
-    cleanup
+    cleanup,
+    captureActionCheckpoint,
+    restoreActionCheckpoint
   });
 }

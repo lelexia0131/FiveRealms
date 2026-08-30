@@ -44,6 +44,7 @@ import {
   createFinitePoolState,
   cyclicFirstSuccessDistribution,
   finitePoolSequence,
+  inheritFinitePoolMemo,
   mutateFinitePool,
   hypergeometricProbabilityAtLeast,
   probabilityFromCurrentCounts,
@@ -79,6 +80,35 @@ export {
   queryAnonymousSlotDistribution,
   queryProbability
 };
+
+/*
+功能
+把未修改 ProbabilityState 的只读 query memo 继承给其结构克隆。
+
+调用方
+World.cloneWorld。
+
+输入
+克隆前后的 canonical ProbabilityState。
+
+输出
+Pool memo 继承结果。
+
+读取状态
+Pool 内部 query memo。
+
+写入状态
+只写 Pool 的 WeakMap 关联，不写 ProbabilityState。
+
+调用函数
+Pool.inheritFinitePoolMemo。
+
+边界与不变量
+只允许结构克隆入口调用；后续 condition/mutation 仍由 Pool 对该克隆独立失效。
+*/
+export function inheritProbabilityMemo(sourceState, clonedState) {
+  return inheritFinitePoolMemo(sourceState, clonedState);
+}
 
 export const PROBABILITY_CLASSIFICATION = Object.freeze({
   EXACT:"EXACT",

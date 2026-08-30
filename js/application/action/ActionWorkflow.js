@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有 generic Application Action orchestration：卡牌使用 pipeline、主动技能使用 pipeline、human inbound commands、action locks、resolution identity 与 failure cleanup；不拥有 cardId-specific/skillId-specific rule semantics。
+唯一拥有 generic Application Action orchestration：卡牌使用 pipeline、主动技能使用 pipeline、human inbound commands、action locks、resolution identity 与 transaction commit/rollback；不拥有 cardId-specific/skillId-specific rule semantics。
 
 上游
 composition boundary、Application Turn AI orchestration 与 main/UI command boundary。
@@ -20,15 +20,16 @@ actionLocked/interactionLocked/pendingHumanPlayEnd/resolutionOwners/resolutionSe
 import { createTargetChoiceRequest } from "../choice/TargetChoiceRequest.js";
 import { getCurrentActor } from "../../domain/state/queries/MatchQueries.js";
 import { recordActiveSkillUse } from "../../domain/state/transitions/RuleUsageTransitions.js";
+import { ActionRollbackError } from "./ActionTransaction.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics",
   "responseWorkflow", "cardRuntime", "canPlayCard", "getCardTargets", "moveHandToResolving",
   "finishResolvingToDiscard", "isCardCommittedToDiscard", "isCardCommittedToEquipment",
-  "cleanupFailedResolution", "clearSelection", "getActionDisplayTargets",
+  "clearSelection", "getActionDisplayTargets",
   "getActionTargetLabel", "skillRuntime", "getSkillTargets", "getHumanPlayer", "choiceCoordinator",
   "choiceContexts", "requestCardFlow", "resolveHumanPlayEnd", "createId",
-  "setResolutionSerialProjection"
+  "setResolutionSerialProjection", "createActionTransaction"
 ];
 
 /*
@@ -54,7 +55,7 @@ actionRuntime state；resolutionSerial projection 经注入 setter；Domain writ
 getCurrentActor、recordActiveSkillUse。
 
 边界与不变量
-旧 playCard/useActiveSkill/human command 的 await、lock、finally、event、destination 与 cleanup 顺序逐点保留。
+旧 playCard/useActiveSkill/human command 的 await、lock、event 与成功 destination 顺序保留；失败统一回滚而不提交部分效果。
 */
 export function createActionWorkflow(dependencies) {
   for (const name of REQUIRED_DEPENDENCIES) {
@@ -438,7 +439,7 @@ export function createActionWorkflow(dependencies) {
   source、card、requestedTargets、selection 与 options。
 
   输出
-  Promise<是否实际开始结算>。
+  Promise<是否完整提交真实 Action>。
 
   读取状态
   match application state、legality/preparation/card-zone collaborators 与 session。
@@ -447,10 +448,10 @@ export function createActionWorkflow(dependencies) {
   卡牌经 zone collaborators；card-specific resolution 经 resolver；generic locks/owners 经 actionRuntime。
 
   调用函数
-  cardRuntime.prepareCardAction/preparePostCounterEffectIntent/resolveCardAction、moveHandToResolving、emitEvent、responseWorkflow、finishResolvingToDiscard、isCardCommittedToDiscard、isCardCommittedToEquipment、cleanupFailedResolution、diagnostics.recordCardPlayed。
+  createActionTransaction、cardRuntime.prepareCardAction/preparePostCounterEffectIntent/resolveCardAction、moveHandToResolving、emitEvent、responseWorkflow、finishResolvingToDiscard、isCardCommittedToDiscard、isCardCommittedToEquipment、diagnostics.recordCardPlayed。
 
   边界与不变量
-  公开声明在反制前完成；具体效果资源只能在完整反制链后准备。借势嵌套锁豁免、counter/cancel/destination/failure cleanup 保持不变。
+  公开声明在反制前完成；具体效果资源只能在完整反制链后准备。authoritative pipeline 与 owner/lock 收束成功后立即 commit；其后的 refresh、prompt 与 human-play-end 失败只记录，不能回滚已提交 Action；nested rollback failure 不得被父 cleanup 覆盖。
   */
   async function playCard(source, card, requestedTargets = [], selection = null, options = {}) {
     const state = runtime.getState();
@@ -463,15 +464,17 @@ export function createActionWorkflow(dependencies) {
     const preparedTransfer = plan.preparedTransfer;
     const preparedLeverage = plan.preparedLeverage;
 
+    const transaction = runtime.createActionTransaction(actionRuntime);
     const previousActionLocked = actionRuntime.actionLocked;
-    actionRuntime.actionLocked = true;
-    const resolutionId = nextResolutionId();
+    let resolutionId = null;
     let completed = false;
     let enteredResolving = false;
     let destinationCommitted = false;
-    let expectedDestination = card.category === "equipment" ? "equipment" : "discard";
-    let failureReason = null;
+    let cancelledBeforeResolve = false;
+    let propagatingRollbackError = null;
     try {
+      actionRuntime.actionLocked = true;
+      resolutionId = nextResolutionId();
       let moved = false;
       try {
         moved = await runtime.moveHandToResolving(source, card, resolutionId);
@@ -491,7 +494,7 @@ export function createActionWorkflow(dependencies) {
       if (plan.useLogMessage) runtime.presentation.log(plan.useLogMessage);
       const useEvent = await runtime.emitEvent("beforeCardUse", { type: "beforeCardUse", source, card, targets, cancelled: false, metadata: {}, resolutionId });
       if (!runtime.isSessionValid(gameId)) return false;
-      let cancelledBeforeResolve = useEvent.cancelled;
+      cancelledBeforeResolve = useEvent.cancelled;
       if (!cancelledBeforeResolve && targets.length) {
         const targetEvent = { type: "targetSelected", source, card, targets, cancelled: false, metadata: {}, resolutionId };
         await runtime.emitEvent("targetSelected", targetEvent);
@@ -535,7 +538,6 @@ export function createActionWorkflow(dependencies) {
             : null;
         }
       }
-      expectedDestination = destination;
       if (destination === "discard") {
         const discarded = await runtime.finishResolvingToDiscard(card, resolutionId);
         destinationCommitted = discarded && runtime.isCardCommittedToDiscard(card);
@@ -558,37 +560,50 @@ export function createActionWorkflow(dependencies) {
       if (!runtime.isSessionValid(gameId)) return false;
       runtime.diagnostics.recordCardPlayed({ sourceId: source.id });
       if (selection?.selectionId) runtime.clearSelection(selection.selectionId);
-      runtime.presentation.refresh();
       completed = true;
       return true;
     } catch (error) {
-      failureReason = error;
+      if (error instanceof ActionRollbackError) propagatingRollbackError = error;
       throw error;
     } finally {
-      if (enteredResolving) {
-        destinationCommitted = expectedDestination === "discard"
-          ? runtime.isCardCommittedToDiscard(card)
-          : expectedDestination === "equipment"
-            ? runtime.isCardCommittedToEquipment(source, card)
-            : false;
-        if (!destinationCommitted && ownsResolution(card, resolutionId)) {
-          runtime.cleanupFailedResolution(card, failureReason, resolutionId);
-        } else if (destinationCommitted && ownsResolution(card, resolutionId)) {
-          releaseResolution(card);
+      const disposedDuringAction = state.isDisposed === true;
+      try {
+        if (!completed) transaction.rollback();
+        if (completed && enteredResolving && ownsResolution(card, resolutionId)) releaseResolution(card);
+        if (selection?.selectionId) runtime.clearSelection(selection.selectionId);
+        actionRuntime.actionLocked = previousActionLocked;
+        if (!previousActionLocked && source.controllerType !== "human") {
+          actionRuntime.interactionLocked = false;
+        }
+        if (completed) transaction.commit();
+      } catch (error) {
+        if (!propagatingRollbackError) {
+          if (completed) transaction.rollback();
+          throw error;
+        }
+      } finally {
+        if (disposedDuringAction) state.isDisposed = true;
+      }
+      try {
+        if (!previousActionLocked && source.controllerType !== "human"
+          && runtime.presentation.isThinkingActive()) {
+          runtime.presentation.clearThinking();
+        }
+        flushPendingHumanPlayEnd();
+        if (completed && !previousActionLocked && !state.isGameOver && source.alive && source.controllerType === "human"
+          && getCurrentActor(state)?.id === source.id && state.phase === "play") {
+          runtime.presentation.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌");
+        }
+        runtime.presentation.refresh();
+      } catch (error) {
+        if (!propagatingRollbackError) {
+          runtime.diagnostics.reportWorkflowError(
+            "Action",
+            `${source.name}的已提交卡牌 Action 展示收尾失败`,
+            error
+          );
         }
       }
-      if (selection?.selectionId) runtime.clearSelection(selection.selectionId);
-      actionRuntime.actionLocked = previousActionLocked;
-      if (!previousActionLocked && source.controllerType !== "human") {
-        actionRuntime.interactionLocked = false;
-        if (runtime.presentation.isThinkingActive()) runtime.presentation.clearThinking();
-      }
-      flushPendingHumanPlayEnd();
-      if (completed && !previousActionLocked && !state.isGameOver && source.alive && source.controllerType === "human"
-        && getCurrentActor(state)?.id === source.id && state.phase === "play") {
-        runtime.presentation.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌");
-      }
-      runtime.presentation.refresh();
     }
   }
 
@@ -609,13 +624,13 @@ export function createActionWorkflow(dependencies) {
   match application state、skill runtime 与 session。
 
   写入状态
-  active skill usage 经 RuleUsageTransition；资源经 skill execute。
+  active skill usage 经 RuleUsageTransition；资源经 skill execute；失败经 Action transaction 整体恢复。
 
   调用函数
-  recordActiveSkillUse、skillRuntime、getSkillTargets。
+  createActionTransaction、recordActiveSkillUse、skillRuntime、getSkillTargets。
 
   边界与不变量
-  技能规则由 skill runtime 决定，transition 只提交；finally 顺序与旧 useActiveSkill 一致。
+  技能规则由 skill runtime 决定，transition 只提交；execute 与 runtime lock 收束成功后立即 commit，其后的 refresh、prompt 与 human-play-end 失败只记录。
   */
   async function useActiveSkill(source, skillId, targets = []) {
     const state = runtime.getState();
@@ -628,9 +643,11 @@ export function createActionWorkflow(dependencies) {
     if (!legality.ok) return false;
     const legalTargets = runtime.getSkillTargets(source, skill);
     if (!["none", "allEnemies"].includes(skill.targetType) && (!targets[0] || !legalTargets.includes(targets[0]))) return false;
+    const transaction = runtime.createActionTransaction(actionRuntime);
     actionRuntime.actionLocked = true;
-    recordActiveSkillUse(state, source, skill.id);
+    let completed = false;
     try {
+      recordActiveSkillUse(state, source, skill.id);
       const targetLabel = runtime.getActionTargetLabel(source, skill, targets);
       runtime.presentation.showCurrentAction({
         skillName: skill.name,
@@ -643,19 +660,37 @@ export function createActionWorkflow(dependencies) {
         resolutionId: runtime.createId("skill-resolution"), energyCost
       });
       if (!runtime.isSessionValid(gameId)) return false;
-      runtime.presentation.refresh();
+      completed = true;
       return true;
     } finally {
-      actionRuntime.actionLocked = false;
-      if (source.controllerType !== "human") {
-        actionRuntime.interactionLocked = false;
-        if (runtime.presentation.isThinkingActive()) runtime.presentation.clearThinking();
+      const disposedDuringAction = state.isDisposed === true;
+      try {
+        if (!completed) transaction.rollback();
+        actionRuntime.actionLocked = false;
+        if (source.controllerType !== "human") actionRuntime.interactionLocked = false;
+        if (completed) transaction.commit();
+      } catch (error) {
+        if (completed) transaction.rollback();
+        throw error;
+      } finally {
+        if (disposedDuringAction) state.isDisposed = true;
       }
-      flushPendingHumanPlayEnd();
-      if (!state.isGameOver && source.controllerType === "human" && state.phase === "play") {
-        runtime.presentation.setPrompt("技能结算完成，继续出牌或结束阶段。", "选择一张可用手牌");
+      try {
+        if (source.controllerType !== "human" && runtime.presentation.isThinkingActive()) {
+          runtime.presentation.clearThinking();
+        }
+        flushPendingHumanPlayEnd();
+        if (completed && !state.isGameOver && source.controllerType === "human" && state.phase === "play") {
+          runtime.presentation.setPrompt("技能结算完成，继续出牌或结束阶段。", "选择一张可用手牌");
+        }
+        runtime.presentation.refresh();
+      } catch (error) {
+        runtime.diagnostics.reportWorkflowError(
+          "Action",
+          `${source.name}的已提交主动技能 Action 展示收尾失败`,
+          error
+        );
       }
-      runtime.presentation.refresh();
     }
   }
 
@@ -682,7 +717,7 @@ export function createActionWorkflow(dependencies) {
   canPlayCard、getCardTargets、requestTarget、requestCardFlow、playCard。
 
   边界与不变量
-  current actor/phase/lock/session 验证与旧 handleHumanCard 一致。
+  current actor/phase/lock/session 验证与旧 handleHumanCard 一致；finally cleanup 不得覆盖正在传播的 rollback failure。
   */
   async function handleHumanCard(cardId) {
     const state = runtime.getState();
@@ -696,6 +731,7 @@ export function createActionWorkflow(dependencies) {
     if (!legality.ok) { runtime.presentation.setPrompt(legality.reason); return false; }
     actionRuntime.interactionLocked = true;
     runtime.presentation.refresh();
+    let propagatingRollbackError = null;
     try {
       const legalTargets = runtime.getCardTargets(human, card);
       let targets = [];
@@ -733,10 +769,17 @@ export function createActionWorkflow(dependencies) {
       if (!runtime.isSessionValid(gameId)) return false;
       if (card.selectionFlow?.length && !selection) return false;
       return await playCard(human, card, targets, selection);
+    } catch (error) {
+      if (error instanceof ActionRollbackError) propagatingRollbackError = error;
+      throw error;
     } finally {
-      actionRuntime.interactionLocked = false;
-      flushPendingHumanPlayEnd();
-      runtime.presentation.refresh();
+      try {
+        actionRuntime.interactionLocked = false;
+        flushPendingHumanPlayEnd();
+        runtime.presentation.refresh();
+      } catch (error) {
+        if (!propagatingRollbackError) throw error;
+      }
     }
   }
 
@@ -763,7 +806,7 @@ export function createActionWorkflow(dependencies) {
   skillRuntime、getSkillTargets、requestTarget、useActiveSkill。
 
   边界与不变量
-  skill legality/lock/session 验证与旧 handleHumanSkill 一致。
+  skill legality/lock/session 验证与旧 handleHumanSkill 一致；finally cleanup 不得覆盖正在传播的 rollback failure。
   */
   async function handleHumanSkill() {
     const state = runtime.getState();
@@ -775,6 +818,7 @@ export function createActionWorkflow(dependencies) {
       || !runtime.skillRuntime.canUse(human, skill).ok) return false;
     actionRuntime.interactionLocked = true;
     runtime.presentation.refresh();
+    let propagatingRollbackError = null;
     try {
       const legalTargets = runtime.getSkillTargets(human, skill);
       let targets = [];
@@ -807,10 +851,17 @@ export function createActionWorkflow(dependencies) {
         targets = [target];
       }
       return await useActiveSkill(human, skill.id, targets);
+    } catch (error) {
+      if (error instanceof ActionRollbackError) propagatingRollbackError = error;
+      throw error;
     } finally {
-      actionRuntime.interactionLocked = false;
-      flushPendingHumanPlayEnd();
-      runtime.presentation.refresh();
+      try {
+        actionRuntime.interactionLocked = false;
+        flushPendingHumanPlayEnd();
+        runtime.presentation.refresh();
+      } catch (error) {
+        if (!propagatingRollbackError) throw error;
+      }
     }
   }
 

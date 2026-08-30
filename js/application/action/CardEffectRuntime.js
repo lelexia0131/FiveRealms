@@ -43,7 +43,7 @@ composition root。
 显式注入的 combat/response/zone/presentation/choice collaborators。
 
 输出
-冻结 { resolve, hasResolver }。
+冻结 { resolve, hasResolver, captureActionCheckpoint, restoreActionCheckpoint }。
 
 读取状态
 无。
@@ -1012,6 +1012,64 @@ runtime/card/skill facts。
 
   /*
   功能
+  捕获真实 Action 开始前的决斗 runtime context。
+
+  调用方
+  ActionTransaction composition participant。
+
+  输入
+  无。
+
+  输出
+  独立的 duelContext checkpoint 或 null。
+
+  读取状态
+  duelContext。
+
+  写入状态
+  无。
+
+  调用函数
+  Object.freeze。
+
+  边界与不变量
+  checkpoint 只含公开 player IDs，不持有新的真实实体。
+  */
+  function captureActionCheckpoint() {
+    return duelContext ? Object.freeze({ ...duelContext }) : null;
+  }
+
+  /*
+  功能
+  恢复真实 Action 开始前的决斗 runtime context。
+
+  调用方
+  ActionTransaction rollback。
+
+  输入
+  captureActionCheckpoint 返回的 context 或 null。
+
+  输出
+  无。
+
+  读取状态
+  checkpoint。
+
+  写入状态
+  duelContext。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不触碰 UI 展示或伤害状态；真实 GameState 由同一 transaction 另行恢复。
+  */
+  function restoreActionCheckpoint(checkpoint) {
+    duelContext = checkpoint ? { ...checkpoint } : null;
+  }
+
+  /*
+  功能
   解析并执行一张已通过 generic Action pipeline 的卡牌效果。
 
   调用方
@@ -1068,5 +1126,10 @@ runtime/card/skill facts。
   */
   function hasResolver(definitionId) { return typeof CARD_EFFECTS[definitionId] === "function"; }
 
-  return Object.freeze({ resolve, hasResolver });
+  return Object.freeze({
+    resolve,
+    hasResolver,
+    captureActionCheckpoint,
+    restoreActionCheckpoint
+  });
 }

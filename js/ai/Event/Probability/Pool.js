@@ -23,6 +23,44 @@ const probabilityMemo = new WeakMap();
 
 /*
 功能
+让物理充分状态完全相同的源/克隆共享只读有限池查询 memo。
+
+调用方
+Probability facade 经 World.cloneWorld 复制 canonical World。
+
+输入
+克隆前后的 ProbabilityState 对象。
+
+输出
+成功建立共享返回 true；输入非法返回 false。
+
+读取状态
+源状态当前 WeakMap memo。
+
+写入状态
+只写源/克隆对象到同一内部 memo Map 的 WeakMap 关联。
+
+调用函数
+WeakMap.get/set、Map。
+
+边界与不变量
+源与克隆在复制瞬间必须具有相同充分统计；memo 只含纯 query 结果；
+任一状态经 condition/mutation 改写时现有删除逻辑只移除该对象关联，不污染未修改兄弟状态。
+*/
+export function inheritFinitePoolMemo(sourceState, clonedState) {
+  if (!sourceState || typeof sourceState !== "object"
+    || !clonedState || typeof clonedState !== "object") return false;
+  let memo = probabilityMemo.get(sourceState);
+  if (!memo) {
+    memo = new Map();
+    probabilityMemo.set(sourceState, memo);
+  }
+  probabilityMemo.set(clonedState, memo);
+  return true;
+}
+
+/*
+功能
 把 Pool 内部数值压缩为合法概率。
 
 调用方

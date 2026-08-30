@@ -18,6 +18,7 @@ private intent 只存在于当前调用栈；公开 context 不含 hidden card e
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime 或 concrete adapters。
 */
 import { getScoutMaxRevealCount } from "../../domain/rules/card/CardEffectRules.js";
+import { ActionRollbackError } from "./ActionTransaction.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "diagnostics", "responseWorkflow", "playCard",
@@ -38,7 +39,7 @@ CardRuntime composition。
 显式注入的 legality/hidden-selection/response/move collaborators。
 
 输出
-冻结 { prepareTransferDeclaration, prepareTransferEffectIntent, prepareLeverageIntent, preparePrivateCardSelectionIntent, preparePrivateHandPeekIntent, resolvePrivateHandPeekIntent, resolveLeverage }。
+冻结 card intent API 与 Action transaction checkpoint participant。
 
 读取状态
 无。
@@ -370,7 +371,7 @@ export function createCardIntentRuntime(dependencies) {
   responseWorkflow、playCard、moveEquipmentToHand。
 
   边界与不变量
-  resolutionId 重复只允许一次；死亡/装备离场统一取消。
+  resolutionId 重复只允许一次；死亡/装备离场统一取消；nested rollback failure 必须终止父 Action。
   */
   async function resolveLeverage(source, card, intent, resolutionId) {
     const state = runtime.getState();
@@ -492,6 +493,7 @@ export function createCardIntentRuntime(dependencies) {
           parentResolutionId: resolutionId
         });
       } catch (error) {
+        if (error instanceof ActionRollbackError) throw error;
         runtime.diagnostics.reportWorkflowError("Game", `${firstTarget.name}的借势内嵌突袭结算失败`, error);
       }
       if (used) return true;
@@ -547,8 +549,70 @@ export function createCardIntentRuntime(dependencies) {
     return new Set(leverageResolutionIds);
   }
 
+  /*
+  功能
+  捕获真实 Action 开始前已消费的借势 resolution IDs。
+
+  调用方
+  ActionTransaction composition participant。
+
+  输入
+  无。
+
+  输出
+  独立 Set checkpoint。
+
+  读取状态
+  leverageResolutionIds。
+
+  写入状态
+  无。
+
+  调用函数
+  getLeverageResolutionIdsSnapshot。
+
+  边界与不变量
+  外层已成功或正在结算的 ID 必须保留；失败 Action 新增的 ID 必须可移除。
+  */
+  function captureActionCheckpoint() {
+    return getLeverageResolutionIdsSnapshot();
+  }
+
+  /*
+  功能
+  恢复真实 Action 开始前已消费的借势 resolution IDs。
+
+  调用方
+  ActionTransaction rollback。
+
+  输入
+  captureActionCheckpoint 返回的 Set。
+
+  输出
+  无。
+
+  读取状态
+  checkpoint。
+
+  写入状态
+  leverageResolutionIds。
+
+  调用函数
+  Set.clear/add。
+
+  边界与不变量
+  只恢复本 runtime 私有去重状态；牌区和 resolution owner 由同一 transaction 另行恢复。
+  */
+  function restoreActionCheckpoint(checkpoint) {
+    if (!(checkpoint instanceof Set)) throw new TypeError("CardIntentRuntime Action checkpoint 非法");
+    leverageResolutionIds.clear();
+    for (const resolutionId of checkpoint) leverageResolutionIds.add(resolutionId);
+  }
+
   return Object.freeze({
     getLeverageResolutionIdsSnapshot,
+    captureActionCheckpoint,
+    restoreActionCheckpoint,
     prepareTransferDeclaration,
     prepareTransferEffectIntent,
     prepareLeverageIntent,

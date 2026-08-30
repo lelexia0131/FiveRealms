@@ -1266,14 +1266,19 @@ export const withResource = (Base) => class Resource extends Base {
       ];
     if (!candidates.length && expectedUnknown <= PROBABILITY_EPSILON) return 0;
 
-    const anonymousState = queryAnonymousSlotDistribution(
-      state.probabilityState,
-      player.id
-    ).map((branch) => ({
-      probability: branch.probability,
-      conditions: {},
-      anonymousCount: branch.count
-    }));
+    const anonymousSlots = expectedAnonymousSlots(state.probabilityState, player.id);
+    // ProbabilityState 是匿名物理槽的唯一 authority；槽数严格为零时，
+    // 再查询完整分布只会重复扫描 factors，且结果仍只能是确定的 count=0。
+    const anonymousState = anonymousSlots <= PROBABILITY_EPSILON
+      ? [{ probability: 1, conditions: {}, anonymousCount: 0 }]
+      : queryAnonymousSlotDistribution(
+          state.probabilityState,
+          player.id
+        ).map((branch) => ({
+          probability: branch.probability,
+          conditions: {},
+          anonymousCount: branch.count
+        }));
 
     const removalWorlds = Array.isArray(options.eventWorlds) && options.eventWorlds.length
       ? this.gateEventWorlds(
@@ -1298,12 +1303,12 @@ export const withResource = (Base) => class Resource extends Base {
     ], "Simulator.removeOneRandomCardFromHand:candidate-worlds");
     const selectionKey = this.currentProbabilityEventKey(state, "random-hand-selection");
     const outcomes = [];
+    const knownWeights = candidates.map((candidate) => cardAvailability(candidate.card));
+    const knownCount = knownWeights.reduce((sum, weight) => sum + weight, 0);
     for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
       if (branchIndex % 32 === 0) this.checkpointSearchWork();
       const branch = joined[branchIndex];
       const occurs = Boolean(branch.occurs);
-      const knownWeights = candidates.map((candidate) => cardAvailability(candidate.card));
-      const knownCount = knownWeights.reduce((sum, weight) => sum + weight, 0);
       const anonymousCount = Math.max(0, Number(branch.anonymousCount) || 0);
       const total = knownCount + anonymousCount;
       if (!occurs || total <= PROBABILITY_EPSILON) {

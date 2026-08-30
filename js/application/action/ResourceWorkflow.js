@@ -847,16 +847,16 @@ export function createResourceWorkflow(runtime) {
 
     /*
     功能
-    将失败结算遗留的同一实体从所有区域归一到弃牌堆。
+    将显式请求修复的遗留实体从所有区域归一到弃牌堆。
 
     调用方
-    ActionWorkflow 的异常与后置条件失败清理路径。
+    显式资源修复 boundary 与 zone invariant tests；ActionWorkflow 失败已由整体 transaction rollback 拥有。
 
     输入
     Card entity、可选诊断原因与可选 resolutionId。
 
     输出
-    清理后实体唯一位于弃牌堆时返回 true。
+    修复后实体唯一位于弃牌堆时返回 true。
 
     读取状态
     resolution ownership、全部牌区、公开池与玩家手牌。

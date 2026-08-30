@@ -56,7 +56,7 @@ composition root。
 显式注入的 state/session/event/response/heal/card-movement/match-continuation/presentation/projection collaborators。
 
 输出
-冻结 { enter, resolve, rescueOrder, kill, cleanup, cleanupHuntMarksForSource }。
+冻结 dying workflow API 与 Action transaction checkpoint participant。
 
 读取状态
 无。
@@ -427,6 +427,74 @@ export function createDyingWorkflow(dependencies) {
     active = false;
   }
 
+  /*
+  功能
+  捕获真实 Action 开始前的濒死队列与上下文 owner 状态。
+
+  调用方
+  ActionTransaction composition participant。
+
+  输入
+  无。
+
+  输出
+  冻结的 { active, queue, currentDyingContext } checkpoint。
+
+  读取状态
+  active、queue、currentDyingContext。
+
+  写入状态
+  无。
+
+  调用函数
+  Object.freeze、Array.slice。
+
+  边界与不变量
+  队列条目保留原实体引用；MatchState.dyingContext projection 由通用对象图另行恢复。
+  */
+  function captureActionCheckpoint() {
+    return Object.freeze({
+      active,
+      queue:Object.freeze(queue.slice()),
+      currentDyingContext
+    });
+  }
+
+  /*
+  功能
+  恢复真实 Action 开始前的濒死队列与上下文 owner 状态。
+
+  调用方
+  ActionTransaction rollback。
+
+  输入
+  captureActionCheckpoint 返回的 checkpoint。
+
+  输出
+  无。
+
+  读取状态
+  checkpoint。
+
+  写入状态
+  active、queue、currentDyingContext 与 MatchState projection。
+
+  调用函数
+  setDyingContextProjection。
+
+  边界与不变量
+  只恢复 Application workflow state；HP/alive/status/牌区由同一 transaction 的对象图恢复。
+  */
+  function restoreActionCheckpoint(checkpoint) {
+    if (!checkpoint || !Array.isArray(checkpoint.queue)) {
+      throw new TypeError("DyingWorkflow Action checkpoint 非法");
+    }
+    active = Boolean(checkpoint.active);
+    queue.length = 0;
+    queue.push(...checkpoint.queue);
+    setDyingContextProjection(checkpoint.currentDyingContext ?? null);
+  }
+
   return Object.freeze({
     /*
     功能
@@ -512,5 +580,7 @@ export function createDyingWorkflow(dependencies) {
     kill,
     cleanup,
     cleanupHuntMarksForSource,
+    captureActionCheckpoint,
+    restoreActionCheckpoint
   });
 }

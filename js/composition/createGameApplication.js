@@ -56,6 +56,7 @@ import { createCombatWorkflow } from "../application/combat/CombatWorkflow.js";
 import { createMatchWorkflow } from "../application/match/MatchWorkflow.js";
 import { createTurnWorkflow } from "../application/turn/TurnWorkflow.js";
 import { createActionWorkflow } from "../application/action/ActionWorkflow.js";
+import { createActionTransaction } from "../application/action/ActionTransaction.js";
 import { createCardRuntime } from "../application/action/CardRuntime.js";
 import { getActionLogMessage as getActionLogMessageFromRuntime, getActionTargetLabel as getActionTargetLabelFromRuntime, resolveActionDisplayTargets, shouldSuppressUseLog as shouldSuppressUseLogFromRuntime } from "../application/action/ActionPresentation.js";
 import { createCardIntentRuntime } from "../application/action/CardIntentRuntime.js";
@@ -818,7 +819,6 @@ class MatchApplication {
       finishResolvingToDiscard: (...args) => this.finishResolvingToDiscard(...args),
       isCardCommittedToDiscard: (card) => this.isCardCommittedToDiscard(card),
       isCardCommittedToEquipment: (player, card) => this.isCardCommittedToEquipment(player, card),
-      cleanupFailedResolution: (...args) => this.cleanupFailedResolution(...args),
       clearSelection: (selectionId) => this.hiddenCardSelection.clearSelection(selectionId),
       getActionDisplayTargets: (source, cardOrSkill, targets) => resolveActionDisplayTargets(this.state, source, cardOrSkill, targets),
       getActionTargetLabel: (source, cardOrSkill, targets, selection) => getActionTargetLabelFromRuntime(this.state, source, cardOrSkill, targets, selection),
@@ -835,7 +835,19 @@ class MatchApplication {
       requestCardFlow: (actor, card, targets) => this.ui.requestCardFlow?.(this, actor, card, targets),
       resolveHumanPlayEnd: (gameId) => this.ui.resolveHumanPlayEnd(gameId),
       createId,
-      setResolutionSerialProjection: (value) => { this.state.resolutionSerial = value; }
+      setResolutionSerialProjection: (value) => { this.state.resolutionSerial = value; },
+      createActionTransaction: (actionRuntime) => createActionTransaction({
+        roots:[this.state, actionRuntime],
+        participants:[
+          this.responseWorkflow,
+          this.dyingWorkflow,
+          judgmentWorkflow,
+          this.cardIntentRuntime,
+          this.cardEffectRuntime,
+          this.publicCardPoolWorkflow
+        ],
+        randomPort:this.randomPort
+      })
     });
     Object.defineProperties(this, {
       actionLocked: {
@@ -877,7 +889,11 @@ class MatchApplication {
       choiceContexts: this.choiceContexts,
       createId,
       selectAction: (player, options) => this.aiController.selectAction(player, options),
+      selectRuntimeEmergencyAction: (player, excludedActions) => (
+        this.aiController.selectRuntimeEmergencyAction(player, excludedActions)
+      ),
       getAiSearchResultStatus: () => this.aiController.lastSearchResult?.status ?? null,
+      getAiSearchFailureReason: () => this.aiController.lastSearchResult?.rejectionReason ?? null,
       playCard: (...args) => this.actionWorkflow.playCard(...args),
       useActiveSkill: (...args) => this.actionWorkflow.useActiveSkill(...args),
       getAiMaxActions: () => this.aiMaxActionsPerTurn,

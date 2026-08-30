@@ -25,7 +25,10 @@ import {
   getTurnEnergyBreakdownFromRules
 } from "../../domain/rules/team/TeamRules.js";
 import { createFact } from "../Event/Fact.js";
-import { createProbabilityState } from "../Event/Probability/Probability.js";
+import {
+  createProbabilityState,
+  inheritProbabilityMemo
+} from "../Event/Probability/Probability.js";
 
 /*
 功能
@@ -213,13 +216,16 @@ Simulator 构造、clone、反事实查询与状态契约测试。
 无。
 
 调用函数
-structuredClone。
+structuredClone、inheritProbabilityMemo。
 
 边界与不变量
-任何写入不得污染根或兄弟 World；不得在 clone 时创建概率摘要或 branch hierarchy。
+任何写入不得污染根或兄弟 World；不得在 clone 时创建概率摘要或 branch hierarchy；
+相同充分状态只共享只读 query memo，后续 mutation 必须由 Probability owner 独立失效。
 */
 export function cloneWorld(world) {
-  return structuredClone(world);
+  const cloned = structuredClone(world);
+  inheritProbabilityMemo(world?.probabilityState, cloned?.probabilityState);
+  return cloned;
 }
 
 /*

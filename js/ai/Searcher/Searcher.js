@@ -28,6 +28,35 @@ import { actionIntentKey, actionSearchKey } from "../Generator/Action.js";
 
 /*
 功能
+读取只服务搜索性能诊断的单调墙钟。
+
+调用方
+Searcher candidate/value/counterfactual 诊断与 SearchBudget operation 诊断。
+
+输入
+无。
+
+输出
+高精度毫秒时间；不支持 performance 时回退 Date.now。
+
+读取状态
+globalThis.performance。
+
+写入状态
+无。
+
+调用函数
+performance.now、Date.now。
+
+边界与不变量
+不得调用注入的预算时钟，避免诊断改变确定性 TIME/NODE 观察次数或搜索选择。
+*/
+function searchDiagnosticNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+/*
+功能
 验证一次根搜索的 canonical Action 跨层 contract。
 
 调用方
@@ -138,6 +167,8 @@ export class Searcher {
     this.hiddenSampleCount = this.config.hiddenSamples;
     this.lastSearchStats = null;
     this.lastSequence = [];
+    this.candidateTimingCount = 0;
+    this.slowestCandidateTimings = [];
     this.comparisonActor = null;
     this.comparisonWorld = null;
   }
@@ -240,6 +271,38 @@ considerIncumbent 与 prune。
         this.comparisonWorld
       ) > 0 ? node : best;
     }, null);
+  }
+
+  /*
+  功能
+  记录一次 candidate 完整或中断物化的纯数字耗时，并只保留最慢条目。
+
+  调用方
+  materializeCandidate。
+
+  输入
+  canonical Action、深度、完成状态、阶段耗时与工作计数差值。
+
+  输出
+  无。
+
+  读取状态
+  当前 candidateTimingCount 与最慢条目。
+
+  写入状态
+  candidateTimingCount 加一；slowestCandidateTimings 保持最多八项。
+
+  调用函数
+  Array.sort/slice、Object.freeze。
+
+  边界与不变量
+  只保存 canonical Action 引用和数字，不保存 World；诊断不得影响候选完整性、排序或预算。
+  */
+  recordCandidateTiming(record) {
+    this.candidateTimingCount += 1;
+    this.slowestCandidateTimings = [...this.slowestCandidateTimings, Object.freeze(record)]
+      .sort((left, right) => right.durationMs - left.durationMs)
+      .slice(0, 8);
   }
 
   /*
@@ -526,6 +589,42 @@ considerIncumbent 与 prune。
 
   /*
   功能
+  执行并记录一次 Searcher 显式发起的 StateValue 查询。
+
+  调用方
+  bestFollowUpUtility。
+
+  输入
+  World、viewer ID、已准备的 lightning outcome sets 与可选 SearchBudget。
+
+  输出
+  Evaluator.stateUtility 返回的 State points。
+
+  读取状态
+  Evaluator 与输入 World。
+
+  写入状态
+  只写 SearchBudget stateUtility 计数/耗时。
+
+  调用函数
+  Evaluator.stateUtility、SearchBudget.observeStateUtility、searchDiagnosticNow。
+
+  边界与不变量
+  诊断时钟不进入值公式；一次调用只计一次，异常仍保留已消耗耗时。
+  */
+  evaluateStateUtility(state, viewerId, lightningOutcomeSets, searchBudget = null) {
+    const startedAt = searchDiagnosticNow();
+    try {
+      return this.evaluator.stateUtility(state, viewerId, lightningOutcomeSets);
+    } finally {
+      searchBudget?.observeStateUtility?.(
+        Math.max(0, searchDiagnosticNow() - startedAt)
+      );
+    }
+  }
+
+  /*
+  功能
   把一次已经模拟完成的 canonical Action 组装为完整可比较搜索候选。
 
   调用方
@@ -602,20 +701,30 @@ considerIncumbent 与 prune。
       if (baseTerms.xSkillNextEnergy === currentEnergy) {
         nextEnergyStateDelta = baseTerms.stateDelta;
       } else {
+        searchBudget?.checkpointCurrentWork?.();
         searchBudget?.observeSimulation();
         const counterfactual = simulator.buildSkillEnergyCounterfactualWorlds(
           beforeState,
           action,
           baseTerms.xSkillNextEnergy
         );
-        nextEnergyStateDelta = this.evaluator.transitionDelta(
-          counterfactual.beforeWorld,
-          counterfactual.afterWorld,
-          player.id,
-          simulator.buildLightningOutcomeSets(counterfactual.beforeWorld),
-          simulator.buildLightningOutcomeSets(counterfactual.afterWorld)
-        );
-        searchBudget?.observeCounterfactual(2);
+        searchBudget?.checkpointCurrentWork?.();
+        const counterfactualStartedAt = searchDiagnosticNow();
+        try {
+          nextEnergyStateDelta = this.evaluator.transitionDelta(
+            counterfactual.beforeWorld,
+            counterfactual.afterWorld,
+            player.id,
+            simulator.buildLightningOutcomeSets(counterfactual.beforeWorld),
+            simulator.buildLightningOutcomeSets(counterfactual.afterWorld)
+          );
+        } finally {
+          searchBudget?.observeCounterfactual(
+            2,
+            Math.max(0, searchDiagnosticNow() - counterfactualStartedAt)
+          );
+        }
+        searchBudget?.checkpointCurrentWork?.();
       }
     }
     const completeTerms = assertCompleteTransitionTerms({
@@ -811,7 +920,7 @@ considerIncumbent 与 prune。
 
   /*
   功能
-  完整执行一个普通候选的 Simulator、Evaluator 与 finalize 链。
+  物化一个普通候选的 Simulator、Evaluator 与 finalize 链。
 
   调用方
   materializeSiblingCandidates。
@@ -826,14 +935,14 @@ considerIncumbent 与 prune。
   Simulator、Evaluator 与 SearchBudget 工作计数。
 
   写入状态
-  只更新工作计数与 candidate fault diagnostics。
+  只更新工作计数、candidate fault 与纯数字阶段耗时 diagnostics。
 
   调用函数
-  Simulator.apply、evaluateCandidate、finalizeCandidate、recordCandidateFault。
+  Simulator.apply、evaluateCandidate、finalizeCandidate、recordCandidateFault、recordCandidateTiming。
 
   边界与不变量
-  普通 candidate 一旦开始不再检查 TIME/NODE；当前 SearchBudget cooperative interruption
-  只丢弃当前 candidate，真实异常才记录 candidate fault；
+  candidate atomicity 只保证 partial candidate 不得登记，不代表 candidate 不可中断；
+  safe checkpoint 的 TIME/NODE signal 会 unwind 当前未完成 candidate，且不记录 candidate fault；
   END 必须由 sibling group 在完整上下文中单独 finalize。
   */
   materializeCandidate({
@@ -847,26 +956,79 @@ considerIncumbent 与 prune。
     collectDiagnostics,
     budget
   }) {
+    const startedAt = searchDiagnosticNow();
+    const workBefore = {
+      simulationCalls:budget.simulationCalls,
+      cloneCalls:budget.cloneCalls,
+      probabilityOperations:budget.probabilityOperations,
+      probabilityWorldBranches:budget.probabilityWorldBranches,
+      stateUtilityCalls:budget.stateUtilityCalls,
+      stateUtilityDurationMs:budget.stateUtilityDurationMs ?? 0,
+      counterfactualCalls:budget.counterfactualCalls,
+      counterfactualDurationMs:budget.counterfactualDurationMs ?? 0,
+      actionGenerationPhysicalCandidates:budget.actionGenerationPhysicalCandidates,
+      actionGenerationUniqueCandidates:budget.actionGenerationUniqueCandidates
+    };
+    let mainSimulatorApplyMs = 0;
+    let valueMaterializationMs = 0;
+    let completed = false;
     try {
       budget.observeSimulation();
-      const state = simulator.apply(beforeState, action);
-      const candidate = this.evaluateCandidate({
-        action,
-        beforeState,
-        afterState:state,
-        player,
-        depth,
-        remainingProvenance,
-        simulator,
-        context,
-        collectDiagnostics,
-        searchBudget:budget
-      });
-      return action.type === "end" ? candidate : this.finalizeCandidate(candidate);
+      const applyStartedAt = searchDiagnosticNow();
+      let state;
+      try {
+        state = simulator.apply(beforeState, action);
+      } finally {
+        mainSimulatorApplyMs = Math.max(0, searchDiagnosticNow() - applyStartedAt);
+      }
+      const valueStartedAt = searchDiagnosticNow();
+      let candidate;
+      try {
+        candidate = this.evaluateCandidate({
+          action,
+          beforeState,
+          afterState:state,
+          player,
+          depth,
+          remainingProvenance,
+          simulator,
+          context,
+          collectDiagnostics,
+          searchBudget:budget
+        });
+      } finally {
+        valueMaterializationMs = Math.max(0, searchDiagnosticNow() - valueStartedAt);
+      }
+      const result = action.type === "end" ? candidate : this.finalizeCandidate(candidate);
+      completed = true;
+      return result;
     } catch (error) {
       if (budget.isCurrentWorkInterruption(error)) return null;
       this.recordCandidateFault(action, "materialize", error);
       return null;
+    } finally {
+      this.recordCandidateTiming({
+        action,
+        depth,
+        completed,
+        durationMs:Math.max(0, searchDiagnosticNow() - startedAt),
+        mainSimulatorApplyMs,
+        valueMaterializationMs,
+        simulationCalls:budget.simulationCalls - workBefore.simulationCalls,
+        cloneCalls:budget.cloneCalls - workBefore.cloneCalls,
+        probabilityOperations:budget.probabilityOperations - workBefore.probabilityOperations,
+        probabilityWorldBranches:budget.probabilityWorldBranches - workBefore.probabilityWorldBranches,
+        stateUtilityCalls:budget.stateUtilityCalls - workBefore.stateUtilityCalls,
+        stateUtilityDurationMs:(budget.stateUtilityDurationMs ?? 0)
+          - workBefore.stateUtilityDurationMs,
+        counterfactualCalls:budget.counterfactualCalls - workBefore.counterfactualCalls,
+        counterfactualDurationMs:(budget.counterfactualDurationMs ?? 0)
+          - workBefore.counterfactualDurationMs,
+        actionGenerationPhysicalCandidates:budget.actionGenerationPhysicalCandidates
+          - workBefore.actionGenerationPhysicalCandidates,
+        actionGenerationUniqueCandidates:budget.actionGenerationUniqueCandidates
+          - workBefore.actionGenerationUniqueCandidates
+      });
     }
   }
 
@@ -1182,7 +1344,8 @@ search 的 root 与逐层 beam 完整节点登记点。
   materializeCandidate、finalizeCandidate、SearchBudget.shouldStop/observeNode、continueAfterYield。
 
   边界与不变量
-  TIME/NODE 只阻止开始下一份工作；普通 candidate 开始后必须完成 Simulator→Evaluator→finalize；
+  TIME/NODE 可在候选边界阻止新工作，也可经 safe checkpoint unwind 未完成 candidate；
+  candidate atomicity 只保证 partial candidate 不得进入完整候选或 incumbent；
   END 只有在全部 canonical siblings 都成功物化时才可 finalize；candidate fault 只丢当前候选。
   */
   async materializeSiblingCandidates({
@@ -1296,6 +1459,8 @@ search 的 root 与逐层 beam 完整节点登记点。
       deadlineMs:budgetStats.deadline,
       configuredDeadline:budgetStats.deadline,
       deadlineCrossedAt:budgetStats.deadlineCrossedAt,
+      timeObservedAtMs:budgetStats.timeObservedAtMs,
+      searchReturnAtMs:budgetStats.searchReturnAtMs,
       deadlineOverrunMs:budgetStats.deadlineOverrunMs,
       expanded:budgetStats.expandedNodes,
       depth:Math.max(1, choice?.sequence.length ?? 1),
@@ -1327,7 +1492,11 @@ search 的 root 与逐层 beam 完整节点登记点。
       rawProbabilityDeadlineCrossings:budgetStats.rawProbabilityDeadlineCrossings,
       responseBranches:budgetStats.responseBranches,
       counterfactualCalls:budgetStats.counterfactualCalls,
+      counterfactualDurationMs:budgetStats.counterfactualDurationMs,
       stateUtilityCalls:budgetStats.stateUtilityCalls,
+      stateUtilityDurationMs:budgetStats.stateUtilityDurationMs,
+      candidateTimingCount:this.candidateTimingCount,
+      slowestCandidateTimings:Object.freeze([...this.slowestCandidateTimings]),
       actionGenerationPhysicalCandidates:budgetStats.actionGenerationPhysicalCandidates,
       actionGenerationUniqueCandidates:budgetStats.actionGenerationUniqueCandidates,
       yieldCount:budgetStats.yieldCount,
@@ -1385,8 +1554,8 @@ search 的 root 与逐层 beam 完整节点登记点。
   buildRootNodes、buildChildNode、prune、considerIncumbent、recordResult。
 
   边界与不变量
-  root contract 只在入口验证一次；TIME/NODE 只阻止开始下一份工作；
-  普通 candidate 一旦开始必须完整执行 Simulator→Evaluator→finalize；
+  root contract 只在入口验证一次；TIME/NODE 可在候选边界或 candidate 内 safe checkpoint 停止；
+  candidate atomicity 只保证 partial candidate 不得登记，不禁止 cooperative interruption；
   candidate-local fault 只丢当前候选，共享结构异常直接上抛；
   END 只有全部同 parent canonical siblings 完整时才可比较；
   Pattern 只调度，Evaluator comparator 是唯一 winner authority。
@@ -1397,6 +1566,8 @@ search 的 root 与逐层 beam 完整节点登记点。
     this.lastSequence = [];
     this.lastSearchStats = null;
     this.candidateFaults = [];
+    this.candidateTimingCount = 0;
+    this.slowestCandidateTimings = [];
     validateRootActionContract(player, rootActions);
 
     const budget = this.searchBudgetFactory();
@@ -1654,24 +1825,29 @@ search 的 root 与逐层 beam 完整节点登记点。
   nested State Value 查询继承同一 SearchBudget。
   */
   bestFollowUpUtility(state, actorId, simulator, searchBudget = null) {
+    searchBudget?.checkpointCurrentWork?.();
     const candidates = this.generateActions(state, actorId, searchBudget);
     let best = -Infinity;
     for (const candidate of candidates) {
+      searchBudget?.checkpointCurrentWork?.();
       searchBudget?.observeSimulation();
       const after = simulator.apply(state, candidate);
-      const utility = this.evaluator.stateUtility(
+      searchBudget?.checkpointCurrentWork?.();
+      const utility = this.evaluateStateUtility(
         after,
         actorId,
-        simulator.buildLightningOutcomeSets(after)
+        simulator.buildLightningOutcomeSets(after),
+        searchBudget
       );
       if (utility > best) best = utility;
     }
     return Number.isFinite(best)
       ? best
-      : this.evaluator.stateUtility(
+      : this.evaluateStateUtility(
           state,
           actorId,
-          simulator.buildLightningOutcomeSets(state)
+          simulator.buildLightningOutcomeSets(state),
+          searchBudget
         );
   }
 
@@ -1711,12 +1887,15 @@ search 的 root 与逐层 beam 完整节点登记点。
     if (!targetId) return 0;
     const handSamples = this.getUnknownHandEstimate(context).worlds;
     if (!handSamples.length) return 0;
+    searchBudget?.checkpointCurrentWork?.();
     const baselineBest = this.bestFollowUpUtility(afterState, actorId, simulator, searchBudget);
     const informedBestValues = [];
     for (const world of handSamples) {
+      searchBudget?.checkpointCurrentWork?.();
       const specializedBefore = simulator.specializeHiddenWorld(beforeState, world, actorId);
       searchBudget?.observeSimulation();
       const specializedAfter = simulator.apply(specializedBefore, action);
+      searchBudget?.checkpointCurrentWork?.();
       const informedBest = this.bestFollowUpUtility(
         specializedAfter,
         actorId,
@@ -1773,22 +1952,34 @@ search 的 root 与逐层 beam 完整节点登记点。
       actorId,
       addedStacks
     );
+    searchBudget?.checkpointCurrentWork?.();
     const candidates = this.generateActions(afterState, actorId, searchBudget);
     let best = 0;
     for (const candidate of candidates) {
       if (!this.evaluator.realizesExposeMarginal(candidate)) continue;
+      searchBudget?.checkpointCurrentWork?.();
       searchBudget?.observeSimulation();
       const base = simulator.apply(baselineWorld, candidate);
+      searchBudget?.checkpointCurrentWork?.();
       searchBudget?.observeSimulation();
       const boosted = simulator.apply(boostedWorld, candidate);
-      searchBudget?.observeCounterfactual(2);
-      const marginal = this.evaluator.positiveWorldMarginal(
-        base,
-        boosted,
-        actorId,
-        simulator.buildLightningOutcomeSets(base),
-        simulator.buildLightningOutcomeSets(boosted)
-      );
+      searchBudget?.checkpointCurrentWork?.();
+      const counterfactualStartedAt = searchDiagnosticNow();
+      let marginal;
+      try {
+        marginal = this.evaluator.positiveWorldMarginal(
+          base,
+          boosted,
+          actorId,
+          simulator.buildLightningOutcomeSets(base),
+          simulator.buildLightningOutcomeSets(boosted)
+        );
+      } finally {
+        searchBudget?.observeCounterfactual(
+          2,
+          Math.max(0, searchDiagnosticNow() - counterfactualStartedAt)
+        );
+      }
       if (marginal > best) best = marginal;
     }
     return best;
@@ -1837,18 +2028,28 @@ search 的 root 与逐层 beam 完整节点登记点。
       actorId,
       marginalStacks
     );
+    searchBudget?.checkpointCurrentWork?.();
     searchBudget?.observeSimulation();
     const boosted = simulator.apply(boostedWorld, action);
+    searchBudget?.checkpointCurrentWork?.();
     searchBudget?.observeSimulation();
     const baseline = simulator.apply(baselineWorld, action);
-    searchBudget?.observeCounterfactual(2);
-    return this.evaluator.positiveWorldMarginal(
-      baseline,
-      boosted,
-      actorId,
-      simulator.buildLightningOutcomeSets(baseline),
-      simulator.buildLightningOutcomeSets(boosted)
-    );
+    searchBudget?.checkpointCurrentWork?.();
+    const counterfactualStartedAt = searchDiagnosticNow();
+    try {
+      return this.evaluator.positiveWorldMarginal(
+        baseline,
+        boosted,
+        actorId,
+        simulator.buildLightningOutcomeSets(baseline),
+        simulator.buildLightningOutcomeSets(boosted)
+      );
+    } finally {
+      searchBudget?.observeCounterfactual(
+        2,
+        Math.max(0, searchDiagnosticNow() - counterfactualStartedAt)
+      );
+    }
   }
 
   /*
@@ -1997,7 +2198,9 @@ export class SearchBudget {
     this.rawProbabilityDeadlineCrossings = [];
     this.responseBranches = 0;
     this.counterfactualCalls = 0;
+    this.counterfactualDurationMs = 0;
     this.stateUtilityCalls = 0;
+    this.stateUtilityDurationMs = 0;
     this.actionGenerationPhysicalCandidates = 0;
     this.actionGenerationUniqueCandidates = 0;
     this.yieldCount = 0;
@@ -2089,7 +2292,8 @@ export class SearchBudget {
   now。
 
   边界与不变量
-  节点模式不读取时钟；已开始的不可中断物化可以轻微越过时间预算，并在下一检查点以 TIME 保留完整 best-seen。
+  节点模式不读取时钟；已开始物化可在 safe checkpoint cooperative unwind，
+  无 checkpoint 的单段工作才可能轻微越过时间预算；已完成 incumbent 必须保留。
   */
   shouldStop() {
     if (this.stopReason !== null) return true;
@@ -2398,13 +2602,13 @@ export class SearchBudget {
 
   /*
   功能
-  记录一次完整配对反事实查询及其 stateUtility 调用。
+  记录一次完整配对反事实查询及其 stateUtility 调用/耗时。
 
   调用方
   Searcher 反事实项。
 
   输入
-  本次反事实内的 stateUtility 调用数。
+  本次反事实内的 stateUtility 调用数与整段 value comparison 耗时。
 
   输出
   更新后的 counterfactualCalls。
@@ -2413,7 +2617,7 @@ export class SearchBudget {
   当前反事实与 stateUtility 计数。
 
   写入状态
-  counterfactualCalls 加一并累加 stateUtilityCalls。
+  counterfactualCalls 加一并累加 counterfactual/stateUtility 调用与耗时。
 
   调用函数
   无。
@@ -2421,10 +2625,44 @@ export class SearchBudget {
   边界与不变量
   只观察既有 paired-world 查询，不改变调用次数或 value 公式。
   */
-  observeCounterfactual(stateUtilityCalls = 0) {
+  observeCounterfactual(stateUtilityCalls = 0, durationMs = 0) {
     this.counterfactualCalls += 1;
     this.stateUtilityCalls += Math.max(0, Number(stateUtilityCalls) || 0);
+    const duration = Math.max(0, Number(durationMs) || 0);
+    this.counterfactualDurationMs += duration;
+    this.stateUtilityDurationMs += duration;
     return this.counterfactualCalls;
+  }
+
+  /*
+  功能
+  记录一次 Searcher 显式 StateValue 查询的调用与耗时。
+
+  调用方
+  Searcher.evaluateStateUtility。
+
+  输入
+  非负墙钟耗时。
+
+  输出
+  更新后的 stateUtilityCalls。
+
+  读取状态
+  当前 StateValue 诊断计数。
+
+  写入状态
+  stateUtilityCalls 加一并累加 duration。
+
+  调用函数
+  无。
+
+  边界与不变量
+  只统计已经实际发起的查询；不参与搜索、预算或 Final Utility。
+  */
+  observeStateUtility(durationMs = 0) {
+    this.stateUtilityCalls += 1;
+    this.stateUtilityDurationMs += Math.max(0, Number(durationMs) || 0);
+    return this.stateUtilityCalls;
   }
 
   /*
@@ -2586,6 +2824,10 @@ export class SearchBudget {
       deadline:this.nodeBudget === null ? this.started + this.timeBudget : null,
       elapsedMs:this.lastObservedAt - this.started,
       deadlineCrossedAt:this.deadlineCrossedAt,
+      timeObservedAtMs:this.deadlineCrossedAt === null
+        ? null
+        : Math.max(0, this.deadlineCrossedAt - this.started),
+      searchReturnAtMs:Math.max(0, this.lastObservedAt - this.started),
       deadlineOverrunMs:this.nodeBudget === null
         ? Math.max(0, this.lastObservedAt - (this.started + this.timeBudget))
         : 0,
@@ -2606,7 +2848,9 @@ export class SearchBudget {
       rawProbabilityDeadlineCrossings:[...this.rawProbabilityDeadlineCrossings],
       responseBranches:this.responseBranches,
       counterfactualCalls:this.counterfactualCalls,
+      counterfactualDurationMs:this.counterfactualDurationMs,
       stateUtilityCalls:this.stateUtilityCalls,
+      stateUtilityDurationMs:this.stateUtilityDurationMs,
       actionGenerationPhysicalCandidates:this.actionGenerationPhysicalCandidates,
       actionGenerationUniqueCandidates:this.actionGenerationUniqueCandidates,
       yieldCount:this.yieldCount,

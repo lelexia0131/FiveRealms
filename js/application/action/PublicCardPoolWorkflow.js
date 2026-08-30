@@ -214,4 +214,63 @@ export class PublicCardPoolWorkflow {
   不移动实体牌到弃牌堆。
   */
   cleanup() { this.cards = []; setPublicCardPool(this.runtime.getState(), []); }
+
+  /*
+  功能
+  捕获真实 Action 开始前由 PublicCardPoolWorkflow 持有的牌池数组身份。
+
+  调用方
+  ActionTransaction composition participant。
+
+  输入
+  无。
+
+  输出
+  当前 cards 数组引用。
+
+  读取状态
+  this.cards。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  数组内容由 MatchState 对象图 checkpoint 恢复；本 checkpoint 只保证 workflow 与 state 重新指向同一 owner 数组。
+  */
+  captureActionCheckpoint() {
+    return this.cards;
+  }
+
+  /*
+  功能
+  恢复真实 Action 开始前 PublicCardPoolWorkflow 的牌池数组身份。
+
+  调用方
+  ActionTransaction rollback。
+
+  输入
+  captureActionCheckpoint 返回的数组引用。
+
+  输出
+  无。
+
+  读取状态
+  checkpoint。
+
+  写入状态
+  this.cards。
+
+  调用函数
+  无。
+
+  边界与不变量
+  checkpoint 必须是 canonical public pool array；不在此移动或复制牌实体。
+  */
+  restoreActionCheckpoint(checkpoint) {
+    if (!Array.isArray(checkpoint)) throw new TypeError("PublicCardPool Action checkpoint 非法");
+    this.cards = checkpoint;
+  }
 }

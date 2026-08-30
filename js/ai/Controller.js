@@ -618,6 +618,7 @@ export class Controller {
     this.lastDecisionDiagnostics = null;
     this.lastMainThreadOperationDiagnostics = null;
     this.lastSearchStats = null;
+    this.lastRuntimeEmergencyFallback = null;
     this.committedRngRequestIds = new Set();
     this.searchDiagnostics = {
       SEARCH:0,
@@ -672,6 +673,73 @@ export class Controller {
       deriveCurrentCardCounts(player, currentState)
     );
     return this.actionGenerator.generate(currentWorld, player.id);
+  }
+
+  /*
+  功能
+  从当前真实状态选择一个未失败的 runtime emergency canonical Action。
+
+  调用方
+  TurnWorkflow.takeAiPlayPhase 的 Search/Action fault 恢复路径与专项测试。
+
+  输入
+  当前行动 Player，以及本轮已经绑定或执行失败的 canonical Actions。
+
+  输出
+  独立于 SearchResult 的冻结 fallback 记录；优先包含 Generator 顺序中的首个未失败 non-END，
+  只有 Generator 当前只返回唯一 canonical END 时才包含 END；候选耗尽时 action 为 null。
+
+  读取状态
+  当前 GameState、Domain Rules 与 Generator canonical Action 集合。
+
+  写入状态
+  lastRuntimeEmergencyFallback 诊断记录；不写 Searcher incumbent、stats、RNG 或未来动作队列。
+
+  调用函数
+  getActionCandidates、sameAction、Object.freeze。
+
+  边界与不变量
+  不评分、不排序、不调用 Evaluator/Pattern/Searcher；每次调用都从当前真实状态重新生成。
+  存在任何合法 non-END 时不得返回 END；排除集合只在当前故障恢复轮次生效。
+  */
+  selectRuntimeEmergencyAction(player, excludedActions = []) {
+    if (!player || typeof player.id !== "string" || !player.id) {
+      throw new TypeError("runtime emergency fallback 需要合法 Player");
+    }
+    if (!Array.isArray(excludedActions)) {
+      throw new TypeError("runtime emergency fallback 排除集合必须是 Action 数组");
+    }
+    const state = this.getState();
+    const currentPlayer = state.players.find((entry) => entry.id === player.id) ?? null;
+    if (!currentPlayer?.alive || state.phase !== "play" || !this.isSessionValid(state.gameId)) {
+      throw new Error("runtime emergency fallback 的真实行动上下文已失效");
+    }
+    const actions = this.getActionCandidates(currentPlayer);
+    const nonEndActions = actions.filter((action) => action.type !== "end");
+    const action = nonEndActions.find((candidate) => (
+      !excludedActions.some((failed) => sameAction(candidate, failed))
+    )) ?? null;
+    let status = "SELECTED_NON_END";
+    let selectedAction = action;
+    if (!selectedAction && nonEndActions.length > 0) {
+      status = "NON_END_EXHAUSTED";
+    } else if (!selectedAction) {
+      if (actions.length !== 1 || actions[0]?.type !== "end") {
+        throw new Error("Generator 未提供可恢复的 canonical Action 集合");
+      }
+      selectedAction = actions[0];
+      status = "SELECTED_END_ONLY";
+    }
+    const result = Object.freeze({
+      kind:"RUNTIME_EMERGENCY_LEGAL_FALLBACK",
+      status,
+      action:selectedAction,
+      candidateCount:actions.length,
+      nonEndCandidateCount:nonEndActions.length,
+      excludedCount:excludedActions.length
+    });
+    this.lastRuntimeEmergencyFallback = result;
+    return result;
   }
 
   /*
@@ -1081,6 +1149,7 @@ export class Controller {
     if (!player || typeof player.id !== "string" || !player.id) {
       throw new TypeError("Controller.selectAction 需要合法 Player");
     }
+    this.lastRuntimeEmergencyFallback = null;
     const state = this.getState();
     if (!this.isSessionValid(options.gameId ?? state.gameId)) {
       this.lastSearchResult = Object.freeze({
@@ -1188,6 +1257,9 @@ export class Controller {
         preWorkerConditionBranches:"unavailable",
         mainThreadOperations:Object.freeze([...mainThreadOperations]),
         searchStopReason:null,
+        watchdogFired:false,
+        workerRejectionReason:null,
+        controllerFallbackReason:result.rejectionReason,
         resultStatus:result.status
       });
       return null;
@@ -1233,6 +1305,15 @@ export class Controller {
       preWorkerConditionBranches:"unavailable",
       mainThreadOperations,
       searchStopReason:outcome?.searchStopReason ?? null,
+      watchdogFired:accepted.result?.status === SEARCH_RESULT_STATUS.WORKER_FAILURE
+        && /watchdog/iu.test(accepted.result?.rejectionReason ?? ""),
+      workerRejectionReason:outcome?.workerError
+        ?? (accepted.result?.status === SEARCH_RESULT_STATUS.WORKER_FAILURE
+          ? accepted.result?.rejectionReason ?? null
+          : null),
+      controllerFallbackReason:accepted.action
+        ? null
+        : accepted.result?.rejectionReason ?? null,
       resultStatus:accepted.result?.status ?? null
     });
     return accepted.action;

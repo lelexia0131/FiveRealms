@@ -76,7 +76,7 @@ composition root。
 显式注入的 state/session/event/deck-movement/AI-knowledge/presentation/projection collaborators。
 
 输出
-冻结 { judgeDefense, judgeDelayedStatus, judgeLightning, judgeSeal }。
+冻结 judgment workflow API 与 Action transaction checkpoint participant。
 
 读取状态
 无。
@@ -360,6 +360,64 @@ export function createJudgmentWorkflow(dependencies) {
     });
   }
 
+  /*
+  功能
+  捕获真实 Action 开始前的判定上下文 owner 状态。
+
+  调用方
+  ActionTransaction composition participant。
+
+  输入
+  无。
+
+  输出
+  currentJudgment 引用或 null。
+
+  读取状态
+  currentJudgment。
+
+  写入状态
+  无。
+
+  调用函数
+  无。
+
+  边界与不变量
+  判定牌区与 MatchState.currentJudgment projection 由通用对象图另行恢复。
+  */
+  function captureActionCheckpoint() {
+    return currentJudgment;
+  }
+
+  /*
+  功能
+  恢复真实 Action 开始前的判定上下文 owner 状态。
+
+  调用方
+  ActionTransaction rollback。
+
+  输入
+  captureActionCheckpoint 返回的 judgment 引用或 null。
+
+  输出
+  无。
+
+  读取状态
+  checkpoint。
+
+  写入状态
+  currentJudgment 与 MatchState projection。
+
+  调用函数
+  setJudgmentProjection。
+
+  边界与不变量
+  不移动判定牌或改变 phase；这些 Domain 状态已由同一 transaction 的对象图恢复。
+  */
+  function restoreActionCheckpoint(checkpoint) {
+    setJudgmentProjection(checkpoint ?? null);
+  }
+
   return Object.freeze({
     /*
     功能
@@ -391,6 +449,8 @@ export function createJudgmentWorkflow(dependencies) {
     judgeDelayedStatus,
     judgeLightning,
     judgeSeal,
-    setCurrentJudgmentProjection: setJudgmentProjection
+    setCurrentJudgmentProjection: setJudgmentProjection,
+    captureActionCheckpoint,
+    restoreActionCheckpoint
   });
 }
