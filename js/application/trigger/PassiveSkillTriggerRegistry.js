@@ -192,6 +192,7 @@ const PASSIVE_SKILLS = {
       if (actualReduction > 0) {
         event.metadata.mitigationContributions ??= [];
         event.metadata.mitigationContributions.push({
+          contributorPlayerId:owner.id,
           effectDefinitionId:"guardianAid",
           amount:actualReduction
         });

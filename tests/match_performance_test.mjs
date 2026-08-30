@@ -112,6 +112,7 @@ function trackerPlayer(id, seatIndex, battleTeam) {
     seatIndex,
     battleTeam,
     alive: true,
+    shield: 0,
     hand: [],
     turnFlags: { activeSkillUseCounts: {} }
   };
@@ -242,12 +243,112 @@ export function registerMatchPerformanceTests(test) {
       effectiveRounds: 5,
       totals: {
         allyHealing: 1,
-        allyRescueHealing: 2,
-        allyMitigation: 1,
-        allyShieldAbsorbed: 1
+        allyRescueHealing: 1,
+        allyMitigation: 2,
+        allyShieldAbsorbed: 3
       }
     }));
-    assert.equal(result.raw.support, 1.4);
+    assert.equal(result.raw.support, 1.6);
+  });
+
+  test("UI·MVP：实际减伤只归属保护队友的贡献者", async () => {
+    const protector = trackerPlayer("protector", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const { dispatcher, tracker } = trackerFixture([protector, ally, enemy]);
+    await dispatcher.emit("afterDamage", {
+      source: enemy,
+      target: ally,
+      actualAmount: 0,
+      shieldAbsorbed: 0,
+      metadata: {
+        mitigationContributions: [
+          { contributorPlayerId: protector.id, effectDefinitionId: "guardianAid", amount: 1 },
+          { contributorPlayerId: ally.id, effectDefinitionId: "selfReduction", amount: 1 },
+          { contributorPlayerId: enemy.id, effectDefinitionId: "enemyReduction", amount: 1 },
+          { contributorPlayerId: protector.id, effectDefinitionId: "noActualReduction", amount: 0 }
+        ]
+      }
+    });
+    const snapshot = tracker.finalizeMatch();
+    assert.equal(snapshot.players.find((entry) => entry.playerId === protector.id).totals.allyMitigation, 1);
+    assert.equal(snapshot.players.find((entry) => entry.playerId === ally.id).totals.allyMitigation, 0);
+    assert.equal(snapshot.players.find((entry) => entry.playerId === enemy.id).totals.allyMitigation, 0);
+  });
+
+  test("UI·MVP：混合护盾来源按获得顺序消费且只归属实际吸收的友军盾", async () => {
+    const providerA = trackerPlayer("provider-a", 0, "dawn");
+    const receiver = trackerPlayer("receiver", 1, "dawn");
+    const providerC = trackerPlayer("provider-c", 2, "dawn");
+    const enemy = trackerPlayer("enemy", 3, "dusk");
+    const { dispatcher, tracker } = trackerFixture([providerA, receiver, providerC, enemy]);
+    for (const source of [receiver, providerA, providerC]) {
+      receiver.shield += 1;
+      await dispatcher.emit("shieldGranted", {
+        source,
+        target: receiver,
+        actualAddedAmount: 1,
+        effectDefinitionId: "shield"
+      });
+    }
+    assert.equal(receiver.shield, 3);
+    assert.equal(providerA.shield, 0);
+    assert.equal(providerC.shield, 0);
+
+    receiver.shield = 1;
+    await dispatcher.emit("afterDamage", {
+      source: enemy, target: receiver, actualAmount: 0, shieldAbsorbed: 2, metadata: {}
+    });
+    assert.deepEqual(
+      tracker.shieldSourceLedgers.get(receiver.id),
+      [{ providerPlayerId: providerC.id, effectDefinitionId: "shield", remainingAmount: 1 }]
+    );
+    receiver.shield = 0;
+    await dispatcher.emit("afterDamage", {
+      source: enemy, target: receiver, actualAmount: 0, shieldAbsorbed: 1, metadata: {}
+    });
+    const snapshot = tracker.finalizeMatch();
+    assert.equal(snapshot.players.find((entry) => entry.playerId === providerA.id).totals.allyShieldAbsorbed, 1);
+    assert.equal(snapshot.players.find((entry) => entry.playerId === providerC.id).totals.allyShieldAbsorbed, 1);
+    assert.equal(snapshot.players.find((entry) => entry.playerId === receiver.id).totals.allyShieldAbsorbed, 0);
+  });
+
+  test("UI·MVP：护盾来源只记录真实新增量而不记录请求量", async () => {
+    const provider = trackerPlayer("provider", 0, "dawn");
+    const receiver = trackerPlayer("receiver", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const { dispatcher, tracker } = trackerFixture([provider, receiver, enemy]);
+    receiver.shield = 1;
+    await dispatcher.emit("shieldGranted", {
+      source: provider,
+      target: receiver,
+      requestedAmount: 2,
+      actualAddedAmount: 1,
+      effectDefinitionId: "shield"
+    });
+    receiver.shield = 0;
+    await dispatcher.emit("afterDamage", {
+      source: enemy, target: receiver, actualAmount: 0, shieldAbsorbed: 1, metadata: {}
+    });
+    assert.equal(tracker.finalizeMatch().players[0].totals.allyShieldAbsorbed, 1);
+  });
+
+  test("UI·MVP：护盾无承伤清除只同步来源账且不给提供者支援", async () => {
+    const provider = trackerPlayer("provider", 0, "dawn");
+    const receiver = trackerPlayer("receiver", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const { dispatcher, tracker } = trackerFixture([provider, receiver, enemy]);
+    receiver.shield = 1;
+    await dispatcher.emit("shieldGranted", {
+      source: provider,
+      target: receiver,
+      actualAddedAmount: 1,
+      effectDefinitionId: "shield"
+    });
+    receiver.shield = 0;
+    tracker.reconcileShieldLedger(receiver, receiver.shield);
+    assert.deepEqual(tracker.shieldSourceLedgers.get(receiver.id), []);
+    assert.equal(tracker.finalizeMatch().players[0].totals.allyShieldAbsorbed, 0);
   });
 
   test("UI·MVP：自疗与自己的护盾吸收不进入支援", () => {
@@ -441,6 +542,25 @@ export function registerMatchPerformanceTests(test) {
     const result = tracker.finalizeMatch().players[0];
     assert.equal(result.totals.enemyControls, 1);
     assert.equal(result.contributionFacts.enemyCardsTransferred, 1);
+  });
+
+  test("UI·MVP：成功把牌转移给敌人只增加敌方获牌事实", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, ally, enemy]);
+    await dispatcher.emit("cardUsed", {
+      source: actor,
+      card: { definitionId: "transfer" },
+      targets: [ally, enemy],
+      effectiveTargets: [ally, enemy],
+      resolved: true
+    });
+    const facts = tracker.finalizeMatch().players[0].contributionFacts;
+    assert.deepEqual(
+      [facts.allyCardsGranted, facts.enemyCardsTransferred, facts.enemyCardsGranted],
+      [0, 0, 1]
+    );
   });
 
   test("UI·MVP：互利按实际 recipients 汇总友方正项与敌方负项", async () => {

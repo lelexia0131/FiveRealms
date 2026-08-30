@@ -29,7 +29,7 @@ const REQUIRED_DEPENDENCIES = [
   "discardCardFromHand", "rememberPrivateCard", "cardLabelForHuman", "seatOrderFrom",
   "getEnemies", "responseWorkflow", "publicCardPool", "resolveLeverage",
   "getCardTargets", "getTransferSources", "getTransferReceivers", "diagnostics",
-  "random", "createId"
+  "random", "createId", "emitEvent"
 ];
 
 /*
@@ -254,17 +254,28 @@ runtime/card/skill facts。
 无直接 Domain write。
 
 调用函数
-下游 collaborator。
+changeShield、emitEvent 与 presentation collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+不重复 Domain rule 决定；只发布最终实际新增的护盾事实。
 */
     async shield(source, card, targets) {
       const state = runtime.getState();
       const target = targets[0];
       if (!target?.alive || target.battleTeam !== source.battleTeam) return { resolved: false };
       const shieldAmount = getShieldAmount();
+      const shieldBefore = target.shield;
       changeShield(state, target, shieldAmount);
+      const actualAddedAmount = Math.max(0, target.shield - shieldBefore);
+      if (actualAddedAmount > 0) {
+        await runtime.emitEvent("shieldGranted", {
+          source,
+          target,
+          actualAddedAmount,
+          effectDefinitionId: card.definitionId
+        });
+        if (!runtime.isSessionValid(state.gameId)) return { resolved: false };
+      }
       runtime.presentation.showShieldFeedback(target.id, shieldAmount, "gain");
       const targetLabel = target.id === source.id ? "自己" : target.name;
       runtime.presentation.log(`${source.name}使用「${card.name}」，令${targetLabel}获得${shieldAmount}点护盾，现有${target.shield}点。`, "heal");

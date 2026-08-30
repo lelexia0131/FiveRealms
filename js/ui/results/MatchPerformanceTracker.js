@@ -222,6 +222,7 @@ export class MatchPerformanceTracker {
       roundStart: () => this.handleRoundStart(),
       afterDamage: (event) => this.handleAfterDamage(event),
       afterHeal: (event) => this.handleAfterHeal(event),
+      shieldGranted: (event) => this.handleShieldGranted(event),
       beforeCardUse: (event) => this.handleBeforeCardUse(event),
       cardUsed: (event) => this.handleCardUsed(event),
       playerDead: (event) => this.handlePlayerDead(event),
@@ -287,7 +288,7 @@ export class MatchPerformanceTracker {
   无。
 
   写入状态
-  records、gameId、activeSkillTurnPlayerId、资源关联状态与 finalizedSnapshot。
+  records、gameId、activeSkillTurnPlayerId、护盾来源账、资源关联状态与 finalizedSnapshot。
 
   调用函数
   Map。
@@ -297,6 +298,7 @@ export class MatchPerformanceTracker {
   */
   reset() {
     this.records = new Map();
+    this.shieldSourceLedgers = new Map();
     this.gameId = null;
     this.activeSkillTurnPlayerId = null;
     this.pendingResolvedCounter = null;
@@ -321,7 +323,7 @@ export class MatchPerformanceTracker {
   MatchState.gameId 与 players。
 
   写入状态
-  tracker records/gameId。
+  tracker records/gameId 与每名玩家的护盾来源账。
 
   调用函数
   reset、createPlayerRecord。
@@ -338,6 +340,12 @@ export class MatchPerformanceTracker {
         (candidate) => candidate.battleTeam === player.battleTeam
       ).length;
       this.records.set(player.id, createPlayerRecord(player, initialTeamSize));
+      const initialShield = Math.max(0, Number(player.shield) || 0);
+      this.shieldSourceLedgers.set(player.id, initialShield > 0 ? [{
+        providerPlayerId: null,
+        effectDefinitionId: null,
+        remainingAmount: initialShield
+      }] : []);
     }
   }
 
@@ -402,6 +410,187 @@ export class MatchPerformanceTracker {
 
   /*
   功能
+  把指定玩家的 FIFO 护盾来源账无计分地校准到真实护盾总量。
+
+  调用方
+  handleShieldGranted、settleShieldAbsorption。
+
+  输入
+  target Player 与校准时应存在的非负护盾总量。
+
+  输出
+  校准后的可变 ledger entries。
+
+  读取状态
+  shieldSourceLedgers。
+
+  写入状态
+  对应玩家的 shieldSourceLedgers entries。
+
+  调用函数
+  Map.get、Map.set。
+
+  边界与不变量
+  未观察到的既存护盾记为 unattributed；直接移除按 FIFO 同步扣账但永不产生支援统计。
+  */
+  reconcileShieldLedger(target, expectedTotal) {
+    const targetTotal = Math.max(0, Number(expectedTotal) || 0);
+    const ledger = this.shieldSourceLedgers.get(target.id) ?? [];
+    let trackedTotal = ledger.reduce(
+      (sum, entry) => sum + Math.max(0, Number(entry.remainingAmount) || 0),
+      0
+    );
+    let excess = Math.max(0, trackedTotal - targetTotal);
+    while (excess > 0 && ledger.length) {
+      const entry = ledger[0];
+      const removed = Math.min(excess, entry.remainingAmount);
+      entry.remainingAmount -= removed;
+      excess -= removed;
+      trackedTotal -= removed;
+      if (entry.remainingAmount <= 0) ledger.shift();
+    }
+    if (trackedTotal < targetTotal) {
+      ledger.push({
+        providerPlayerId: null,
+        effectDefinitionId: null,
+        remainingAmount: targetTotal - trackedTotal
+      });
+    }
+    this.shieldSourceLedgers.set(target.id, ledger);
+    return ledger;
+  }
+
+  /*
+  功能
+  记录真实结算后新增护盾的提供者与实际新增量。
+
+  调用方
+  shieldGranted listener。
+
+  输入
+  含 source、target、actualAddedAmount 与 effectDefinitionId 的结构化事实。
+
+  输出
+  无返回值。
+
+  读取状态
+  target.shield 与 shieldSourceLedgers。
+
+  写入状态
+  target 对应 FIFO shield source ledger。
+
+  调用函数
+  reconcileShieldLedger。
+
+  边界与不变量
+  只记录最终实际新增的正数；新增前先校准既存盾，不能用角色或技能反推 provider。
+  */
+  handleShieldGranted(event) {
+    const target = event.target;
+    const actualAddedAmount = Math.max(0, Number(event.actualAddedAmount) || 0);
+    if (!target || actualAddedAmount <= 0) return;
+    const currentShield = Math.max(0, Number(target.shield) || 0);
+    const ledger = this.reconcileShieldLedger(target, Math.max(0, currentShield - actualAddedAmount));
+    ledger.push({
+      providerPlayerId: event.source?.id ?? null,
+      effectDefinitionId: event.effectDefinitionId ?? null,
+      remainingAmount: actualAddedAmount
+    });
+    this.reconcileShieldLedger(target, currentShield);
+  }
+
+  /*
+  功能
+  把真实伤害事件中的实际减伤 contribution 归属给保护队友的贡献者。
+
+  调用方
+  handleAfterDamage。
+
+  输入
+  含 target 与 metadata.mitigationContributions 的 afterDamage 事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  MatchState roster 与 tracker records。
+
+  写入状态
+  合法贡献者的 allyMitigation。
+
+  调用函数
+  areAllies、recordFor。
+
+  边界与不变量
+  只接受明确 contributorPlayerId、友军被保护者和正实际减伤；自减伤、敌方与零贡献不计。
+  */
+  settleMitigationContributions(event) {
+    const contributions = event.metadata?.mitigationContributions;
+    if (!event.target || !Array.isArray(contributions)) return;
+    for (const contribution of contributions) {
+      const amount = Math.max(0, Number(contribution?.amount) || 0);
+      if (!contribution?.contributorPlayerId || amount <= 0) continue;
+      const contributor = this.getState().players.find(
+        (player) => player.id === contribution.contributorPlayerId
+      );
+      if (!this.areAllies(contributor, event.target)) continue;
+      const record = this.recordFor(contributor);
+      if (record) record.totals.allyMitigation += amount;
+    }
+  }
+
+  /*
+  功能
+  按 FIFO 消费真实吸收量，并把被实际消耗的友军护盾归属给提供者。
+
+  调用方
+  handleAfterDamage。
+
+  输入
+  含 target 与 shieldAbsorbed 的结算后伤害事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  target.shield、MatchState roster 与 shieldSourceLedgers。
+
+  写入状态
+  shieldSourceLedgers 与合法提供者的 allyShieldAbsorbed。
+
+  调用函数
+  reconcileShieldLedger、areAllies、recordFor。
+
+  边界与不变量
+  消费量与真实 shieldAbsorbed 相同；自盾、敌方盾、unattributed 盾和未被吸收的盾不计分。
+  */
+  settleShieldAbsorption(event) {
+    const target = event.target;
+    let remaining = Math.max(0, Number(event.shieldAbsorbed) || 0);
+    if (!target || remaining <= 0) return;
+    const currentShield = Math.max(0, Number(target.shield) || 0);
+    const ledger = this.reconcileShieldLedger(target, currentShield + remaining);
+    while (remaining > 0 && ledger.length) {
+      const entry = ledger[0];
+      const consumed = Math.min(remaining, entry.remainingAmount);
+      if (entry.providerPlayerId) {
+        const provider = this.getState().players.find(
+          (player) => player.id === entry.providerPlayerId
+        );
+        if (this.areAllies(provider, target)) {
+          const record = this.recordFor(provider);
+          if (record) record.totals.allyShieldAbsorbed += consumed;
+        }
+      }
+      entry.remainingAmount -= consumed;
+      remaining -= consumed;
+      if (entry.remainingAmount <= 0) ledger.shift();
+    }
+    this.reconcileShieldLedger(target, currentShield);
+  }
+
+  /*
+  功能
   为本轮开始时仍存活的正式参与者增加一个有效回合。
 
   调用方
@@ -435,7 +624,7 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  累计对敌最终实际生命伤害。
+  累计真实减伤与护盾吸收归属，并累计对敌最终实际生命伤害。
 
   调用方
   afterDamage listener。
@@ -450,15 +639,17 @@ export class MatchPerformanceTracker {
   结构化 afterDamage fact。
 
   写入状态
-  source.enemyHpDamage。
+  合法 provider 的 allyMitigation/allyShieldAbsorbed 与 source.enemyHpDamage。
 
   调用函数
-  recordFor。
+  settleMitigationContributions、settleShieldAbsorption、recordFor。
 
   边界与不变量
   友伤、自伤、环境伤害、格挡、护盾吸收和减伤部分均不增加火力。
   */
   handleAfterDamage(event) {
+    this.settleMitigationContributions(event);
+    this.settleShieldAbsorption(event);
     if (!event.source || !event.target || event.source.battleTeam === event.target.battleTeam) return;
     const record = this.recordFor(event.source);
     if (record) record.totals.enemyHpDamage += Math.max(0, Number(event.actualAmount) || 0);
@@ -723,6 +914,9 @@ export class MatchPerformanceTracker {
         record.contributionFacts.enemyCardsTransferred += 1;
       }
       if (this.areAllies(source, receiver)) record.contributionFacts.allyCardsGranted += 1;
+      else if (receiver && receiver.battleTeam !== source.battleTeam) {
+        record.contributionFacts.enemyCardsGranted += 1;
+      }
       return;
     }
     if (this.policy.controlCardIds.includes(cardId)

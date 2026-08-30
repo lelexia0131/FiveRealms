@@ -26,7 +26,7 @@ import { decideSkillEffect } from "../../domain/rules/skill/SkillRules.js";
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "heal", "damage", "drawCards",
   "moveEquipmentToHand", "moveCardBetweenHands", "cardLabelForHuman",
-  "getEnemies", "random"
+  "getEnemies", "random", "emitEvent"
 ];
 
 /*
@@ -113,17 +113,28 @@ runtime/card/skill facts。
 无直接 Domain write。
 
 调用函数
-下游 collaborator。
+changeEnergy、changeShield、emitEvent 与 presentation collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+不重复 Domain rule 决定；只发布最终实际新增的护盾事实。
 */
     async barrier(skill, source, targets, context) {
       const state = runtime.getState();
       const decision = decideSkillEffect(skill, source, context);
       changeEnergy(state, source, -decision.energyCost);
       const target = targets[0];
+      const shieldBefore = target.shield;
       changeShield(state, target, decision.shieldAmount);
+      const actualAddedAmount = Math.max(0, target.shield - shieldBefore);
+      if (actualAddedAmount > 0) {
+        await runtime.emitEvent("shieldGranted", {
+          source,
+          target,
+          actualAddedAmount,
+          effectDefinitionId: skill.id
+        });
+        if (!runtime.isSessionValid(state.gameId)) return;
+      }
       runtime.presentation.showShieldFeedback(target.id, decision.shieldAmount, "gain");
       runtime.presentation.log(`${source.name}发动「壁垒」，令${target.name}获得${decision.shieldAmount}点护盾。`, "heal");
     },

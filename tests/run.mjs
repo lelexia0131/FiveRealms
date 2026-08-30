@@ -6335,6 +6335,26 @@ test("护盾：牌可为自己使用并在队友身上永久叠加", async () =>
   assert.equal(ally.statuses.temporaryShield, undefined);
 });
 
+test("护盾：只有队友护盾实际吸收伤害才归属提供者支援", async () => {
+  const provider = makePlayer("shield-provider", 0, "dawn"),
+    ally = makePlayer("shield-ally", 1, "dawn"),
+    enemy = makePlayer("shield-enemy", 2, "dusk"),
+    allyShield = instance("shield"),
+    selfShield = instance("shield");
+  const { game } = makeGame([provider, ally, enemy]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  provider.hand.push(allyShield, selfShield);
+
+  assert.equal(await game.playCard(provider, allyShield, [ally]), true);
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(provider).totals.allyShieldAbsorbed, 0);
+  await game.damage(enemy, ally, 1, { canBlock: false });
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(provider).totals.allyShieldAbsorbed, 1);
+
+  assert.equal(await game.playCard(provider, selfShield, [provider]), true);
+  await game.damage(enemy, provider, 1, { canBlock: false });
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(provider).totals.allyShieldAbsorbed, 1);
+});
+
 test("护盾：牌提供的护盾不会在目标回合开始时归零", async () => {
   const source = makePlayer("source", 0, "dawn"),
     ally = makePlayer("ally", 1, "dawn"),
@@ -6489,6 +6509,33 @@ test("转移：支持来源、接收者与指定牌三阶段", async () => {
   ));
   assert.equal(game.state.logs.at(-1).message, `${a.name}将${b.name}的1张手牌转移给了${c.name}。`);
   assert.ok(!game.state.logs.at(-1).message.includes(moved.name));
+});
+
+test("转移：真实转移给敌人累计敌方获牌且不重复其它牌贡献", async () => {
+  const actor = makePlayer("grant-actor", 0, "dawn", "human"),
+    ally = makePlayer("grant-ally", 1, "dawn"),
+    enemy = makePlayer("grant-enemy", 2, "dusk"),
+    transfer = instance("transfer"),
+    moved = instance("block");
+  const { game } = makeGame([actor, ally, enemy]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  actor.hand.push(transfer);
+  ally.hand.push(moved);
+  ally.bumpHandVersion(TEST_VERSION_STATE);
+  const hidden = game.hiddenCardSelection.createHiddenSelection(ally);
+
+  assert.equal(await game.playCard(actor, transfer, [], {
+    sourceId: ally.id,
+    receiverId: enemy.id,
+    tokens: [hidden.tokens[0].token],
+    selectionId: hidden.selectionId
+  }), true);
+  assert.ok(enemy.hand.includes(moved));
+  const facts = game.matchPerformanceSidecar.tracker.finalizeMatch().players[0].contributionFacts;
+  assert.deepEqual(
+    [facts.allyCardsGranted, facts.enemyCardsTransferred, facts.enemyCardsGranted],
+    [0, 0, 1]
+  );
 });
 
 test("转移：反制上下文先公开来源与接收者，链结束后才选择具体手牌", async () => {
@@ -10129,6 +10176,7 @@ test("守誓者：壁垒与护盾牌使用统一伤害吸收规则", async () =>
     shieldCard = instance("shield");
   const { game }
     = makeGame([source, target, enemy]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   source.hand.push(shieldCard);
   source.energy = 2;
   assert.equal(await game.playCard(source, shieldCard, [target]), true);
@@ -10139,6 +10187,10 @@ test("守誓者：壁垒与护盾牌使用统一伤害吸收规则", async () =>
   assert.equal(target.shield, 0);
   assert.equal(target.hp, hp - 1);
   assert.equal("temporaryShield" in target.statuses, false);
+  assert.equal(
+    game.matchPerformanceSidecar.tracker.finalizeMatch().players[0].totals.allyShieldAbsorbed,
+    2
+  );
 });
 
 test("守誓者：壁垒1能量非法、2能量可对自己或队友发动且每回合限2次", async () => {
@@ -10323,7 +10375,11 @@ test("守誓者：护援减伤至0仍完成统一伤害收尾且只记录一次�
   assert.deepEqual(afterDamage, [{
     actualAmount:0,
     shieldAbsorbed:0,
-    mitigationContributions:[{ effectDefinitionId:"guardianAid", amount:1 }]
+    mitigationContributions:[{
+      contributorPlayerId:guardian.id,
+      effectDefinitionId:"guardianAid",
+      amount:1
+    }]
   }]);
   assert.deepEqual(
     feedback.filter((entry) => entry[0] === "mitigation"),
@@ -13914,6 +13970,7 @@ test("守誓者：护援真实减伤只提交一次被保护目标反馈且不�
   guardian.hand.push(instance("charge"));
   ui.queueFeedback = (...args) => feedback.push(args);
   registerPassiveSkills(game);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   const hp = target.hp;
 
   assert.equal(await game.damage(source, target, 2, {
@@ -13931,6 +13988,9 @@ test("守誓者：护援真实减伤只提交一次被保护目标反馈且不�
     feedback.some((entry) => entry[0] === "mitigation" && entry[1] === guardian.id),
     false
   );
+  const snapshot = game.matchPerformanceSidecar.tracker.finalizeMatch();
+  assert.equal(snapshot.players.find((entry) => entry.playerId === guardian.id).totals.allyMitigation, 1);
+  assert.equal(snapshot.players.find((entry) => entry.playerId === target.id).totals.allyMitigation, 0);
 });
 
 test("隐藏信息：过期手牌版本令不透明令牌失效", () => {
@@ -24285,6 +24345,7 @@ test("AI·护盾：只为自己或存活队友生成目标并在深层模拟中�
   ally.shield = 1;
   const { game }
     = makeGame([actor, ally, enemy]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   const visible = createInitialWorld(actor.id, game.state),
     actions = game.aiController.actionGenerator.generate(
       visible, actor.id
@@ -24295,6 +24356,9 @@ test("AI·护盾：只为自己或存活队友生成目标并在深层模拟中�
     nextAlly = next.players.find((player) => player.id === ally.id);
   assert.equal(nextAlly.shield, 2);
   assert.equal(visible.players.find((player) => player.id === ally.id).shield, 1);
+  const totals = game.matchPerformanceSidecar.tracker.finalizeMatch().players
+    .find((entry) => entry.playerId === actor.id).totals;
+  assert.deepEqual([totals.allyMitigation, totals.allyShieldAbsorbed], [0, 0]);
 });
 
 // ---- AI 卡牌行为·共生 ----

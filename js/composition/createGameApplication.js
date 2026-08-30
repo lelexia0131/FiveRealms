@@ -747,7 +747,8 @@ class MatchApplication {
       moveCardBetweenHands: (...args) => this.moveCardBetweenHands(...args),
       cardLabelForHuman: (...args) => this.cardLabelForHuman(...args),
       getEnemies: (...args) => this.getEnemies(...args),
-      random: () => this.random()
+      random: () => this.random(),
+      emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload)
     });
     this.cardEffectRuntime = createCardEffectRuntime({
       getState: () => this.state,
@@ -774,7 +775,8 @@ class MatchApplication {
       getTransferReceivers: (source, from, card) => ActionLegality.getTransferReceivers(this, source, from, card),
       diagnostics: this.diagnosticsPort,
       random: () => this.random(),
-      createId
+      createId,
+      emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload)
     });
     this.cardIntentRuntime = createCardIntentRuntime({
       getState: () => this.state,
