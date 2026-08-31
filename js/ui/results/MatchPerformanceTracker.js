@@ -193,6 +193,7 @@ export class MatchPerformanceTracker {
       shieldGranted: (event) => this.handleShieldGranted(event),
       beforeCardUse: (event) => this.handleBeforeCardUse(event),
       cardUsed: (event) => this.handleCardUsed(event),
+      cardsGranted: (event) => this.handleCardsGranted(event),
       skillEnergyPaid: (event) => this.handleSkillEnergyPaid(event),
       playerDead: (event) => this.handlePlayerDead(event)
     };
@@ -736,6 +737,73 @@ export class MatchPerformanceTracker {
 
   /*
   功能
+  通过现有团队牌资源贡献字段累计一次真实给牌结果。
+
+  调用方
+  handleCardsGranted、settleMutualBenefitContribution、handleCardUsed。
+
+  输入
+  发动者 record、source、实际获牌 target 与实际张数。
+
+  输出
+  无返回值。
+
+  读取状态
+  双方阵营与玩家身份。
+
+  写入状态
+  source record 的 allyCardsGranted 或 enemyCardsGranted。
+
+  调用函数
+  areAllies。
+
+  边界与不变量
+  自己获牌与非正数不计；贡献始终归属 source，同一次事实只在本 authority 累计一次。
+  */
+  recordGrantedCards(record, source, target, actualAmount) {
+    const granted = Math.max(0, Number(actualAmount) || 0);
+    if (!record || !source || !target || target.id === source.id || !granted) return;
+    if (this.areAllies(source, target)) record.contributionFacts.allyCardsGranted += granted;
+    else if (target.battleTeam !== source.battleTeam) {
+      record.contributionFacts.enemyCardsGranted += granted;
+    }
+  }
+
+  /*
+  功能
+  把 Action 提交后发布的实际给牌事实接入团队牌资源贡献 authority。
+
+  调用方
+  cardsGranted listener。
+
+  输入
+  含 source 与 grants 的 immutable fact。
+
+  输出
+  无返回值。
+
+  读取状态
+  source record 与每项 grant 的 target/actualAmount。
+
+  写入状态
+  source record 的 contributionFacts。
+
+  调用函数
+  recordFor、recordGrantedCards。
+
+  边界与不变量
+  仅消费已提交 Action 的显式事实；普通卡牌转移仍只由 cardUsed 结算，避免重复计分。
+  */
+  handleCardsGranted(event) {
+    const record = this.recordFor(event.source);
+    if (!record || !Array.isArray(event.grants)) return;
+    for (const grant of event.grants) {
+      this.recordGrantedCards(record, event.source, grant?.target, grant?.actualAmount);
+    }
+  }
+
+  /*
+  功能
   按互利前后权威手牌差值结算友方正贡献与敌方负贡献。
 
   调用方
@@ -765,11 +833,7 @@ export class MatchPerformanceTracker {
     if (!event.resolved || !beforeHands) return;
     for (const target of this.getState().players) {
       const gained = Math.max(0, (target.hand?.length ?? 0) - (beforeHands.get(target.id) ?? 0));
-      if (!gained || target.id === source.id) continue;
-      if (this.areAllies(source, target)) record.contributionFacts.allyCardsGranted += gained;
-      else if (target.battleTeam !== source.battleTeam) {
-        record.contributionFacts.enemyCardsGranted += gained;
-      }
+      this.recordGrantedCards(record, source, target, gained);
     }
   }
 
@@ -879,10 +943,7 @@ export class MatchPerformanceTracker {
         record.totals.enemyControls += 1;
         record.contributionFacts.enemyCardsTransferred += 1;
       }
-      if (this.areAllies(source, receiver)) record.contributionFacts.allyCardsGranted += 1;
-      else if (receiver && receiver.battleTeam !== source.battleTeam) {
-        record.contributionFacts.enemyCardsGranted += 1;
-      }
+      this.recordGrantedCards(record, source, receiver, 1);
       return;
     }
     if (this.policy.controlCardIds.includes(cardId)

@@ -392,7 +392,7 @@ source.energy；目标摸牌经 drawCards collaborator。
 paySkillEnergy、drawCards 与 presentation collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+只记录 drawCards 返回的真实获牌数；自己获牌是否形成团队贡献由下游统计 authority 判断。
 */
     async resonance(skill, source, targets, context) {
       const state = runtime.getState();
@@ -400,6 +400,7 @@ paySkillEnergy、drawCards 与 presentation collaborator。
       const decision = decideSkillEffect(skill, source, context);
       paySkillEnergy(source, decision.energyCost, context.payment);
       const drawn = await runtime.drawCards(targets[0], decision.drawCount, "共鸣", { silent: true });
+      if (drawn > 0) context.cardGrants.push(Object.freeze({ target: targets[0], actualAmount: drawn }));
       if (runtime.isSessionValid(gameId)) runtime.presentation.log(`${source.name}发动「共鸣」，令${targets[0].name}${drawn ? `摸${drawn}张牌` : "未摸到牌"}。`);
     }
   };
@@ -415,26 +416,29 @@ paySkillEnergy、drawCards 与 presentation collaborator。
   skill、source、targets 与 context。
 
   输出
-  Promise<number>，返回本次 execution 在 canonical 扣款点记录的实际支付能量。
+  Promise<{ actualEnergyPaid, cardGrants }>，返回本次 execution 的真实支付量与实际给牌事实。
 
   读取状态
   skill.id、runtime state 与 execution-local payment ledger。
 
   写入状态
-  经 EFFECTS 写入真实技能效果；payment ledger 只在本次调用内可写。
+  经 EFFECTS 写入真实技能效果；payment 与 cardGrants ledger 只在本次调用内可写。
 
   调用函数
   EFFECTS。
 
   边界与不变量
-  未知 skill 抛错；发布支付事实由 Action commit boundary 负责。
+  未知 skill 抛错；统计事实只返回给 Action commit boundary，失败或回滚不得发布。
   */
   async function execute(skill, source, targets, context = {}) {
     const resolver = EFFECTS[skill.id];
     if (!resolver) throw new Error(`未注册主动技能效果：${skill.id}`);
-    const executionContext = { ...context, payment: { actualAmount: 0 } };
+    const executionContext = { ...context, payment: { actualAmount: 0 }, cardGrants: [] };
     await resolver(skill, source, targets, executionContext);
-    return executionContext.payment.actualAmount;
+    return Object.freeze({
+      actualEnergyPaid: executionContext.payment.actualAmount,
+      cardGrants: Object.freeze([...executionContext.cardGrants])
+    });
   }
 
   return Object.freeze({ execute });

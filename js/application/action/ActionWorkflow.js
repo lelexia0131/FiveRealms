@@ -630,7 +630,7 @@ export function createActionWorkflow(dependencies) {
   createActionTransaction、recordActiveSkillUse、skillRuntime、getSkillTargets、publishFact。
 
   边界与不变量
-  技能规则由 skill runtime 决定，transition 只提交；支付事实只在 transaction commit 后发布，回滚不得污染 MVP tracker。
+  技能规则由 skill runtime 决定，transition 只提交；支付与给牌事实只在 transaction commit 后发布，回滚不得污染 MVP tracker。
   */
   async function useActiveSkill(source, skillId, targets = []) {
     const state = runtime.getState();
@@ -647,6 +647,7 @@ export function createActionWorkflow(dependencies) {
     actionRuntime.actionLocked = true;
     let completed = false;
     let actualEnergyPaid = 0;
+    let cardGrants = [];
     try {
       recordActiveSkillUse(state, source, skill.id);
       const targetLabel = runtime.getActionTargetLabel(source, skill, targets);
@@ -657,9 +658,11 @@ export function createActionWorkflow(dependencies) {
         displayTargets: runtime.getActionDisplayTargets(source, skill, targets)
       });
       runtime.presentation.playActionCue("skill");
-      actualEnergyPaid = await runtime.skillRuntime.execute(skill, source, targets, {
+      const skillResult = await runtime.skillRuntime.execute(skill, source, targets, {
         resolutionId: runtime.createId("skill-resolution"), energyCost
       });
+      actualEnergyPaid = skillResult.actualEnergyPaid;
+      cardGrants = skillResult.cardGrants;
       if (!runtime.isSessionValid(gameId)) return false;
       completed = true;
     } finally {
@@ -703,6 +706,17 @@ export function createActionWorkflow(dependencies) {
         runtime.diagnostics.reportWorkflowError(
           "Action",
           `${source.name}的技能支付统计事实发布失败`,
+          error
+        );
+      }
+    }
+    if (cardGrants.length) {
+      try {
+        await runtime.publishFact("cardsGranted", { source, skill, grants: cardGrants });
+      } catch (error) {
+        runtime.diagnostics.reportWorkflowError(
+          "Action",
+          `${source.name}的技能给牌统计事实发布失败`,
           error
         );
       }

@@ -214,7 +214,9 @@ function skillPaymentFixture(energy) {
     emitEvent: (type, payload) => fixture.dispatcher.emit(type, payload)
   });
   const executeSkill = async (skill, targets, energyCost) => {
-    const actualAmount = await skillRuntime.execute(skill, actor, targets, { energyCost });
+    const { actualEnergyPaid: actualAmount } = await skillRuntime.execute(
+      skill, actor, targets, { energyCost }
+    );
     if (actualAmount > 0) {
       await fixture.dispatcher.publishFact("skillEnergyPaid", { source: actor, skill, actualAmount });
     }

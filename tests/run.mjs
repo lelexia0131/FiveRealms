@@ -12445,6 +12445,27 @@ test("调律师：共鸣1能量非法、前两次各耗2能量并各摸1张", as
   assert.equal(tuner.turnFlags.activeSkillUseCounts.resonance, 1);
 });
 
+test("调律师：共鸣实际给队友牌只为发动者累计一次贡献", async () => {
+  const tuner = makePlayer("resonance-contribution-tuner", 0, "dawn", "ai", 7),
+    ally = makePlayer("resonance-contribution-ally", 1, "dawn"),
+    enemy = makePlayer("resonance-contribution-enemy", 2, "dusk"),
+    { game } = makeGame([tuner, ally, enemy]);
+  tuner.energy = 4;
+  game.state.deck.cards.push(instance("assault"));
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+
+  assert.equal(await game.useActiveSkill(tuner, "resonance", [enemy]), false);
+  assert.equal(await game.useActiveSkill(tuner, "resonance", [ally]), true);
+  assert.equal(await game.useActiveSkill(tuner, "resonance", [ally]), true);
+  assert.equal(ally.hand.length, 1);
+
+  const snapshot = game.matchPerformanceSidecar.tracker.finalizeMatch();
+  assert.deepEqual(
+    snapshot.players.map((player) => player.contributionFacts.allyCardsGranted),
+    [1, 0, 0]
+  );
+});
+
 test("调律师：被反制的互利不建立公共牌池且不触发协调", async () => {
   const tuner = makePlayer("tuner", 0, "dawn", "ai", 7),
     counterer = makePlayer("counterer", 1, "dusk", "human"),
