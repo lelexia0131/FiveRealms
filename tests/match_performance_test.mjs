@@ -791,7 +791,7 @@ export function registerMatchPerformanceTests(test) {
     })).victoryMultiplier), [1.50, 1.30, 1.20, 1.20, 1.20, 1.00]);
   });
 
-  test("UI·MVP：三人队胜局系数区分1v2、1v1、普通多人存活胜局与阵亡玩家", () => {
+  test("UI·MVP：三人队胜局系数区分1v2、普通存活胜局与阵亡玩家", () => {
     const scenarios = [
       { aliveAtEnd: true, clutchEnemyCount: 2 },
       { aliveAtEnd: true, clutchEnemyCount: 1 },
@@ -803,7 +803,7 @@ export function registerMatchPerformanceTests(test) {
       initialTeamSize: 3,
       won: true,
       ...options
-    })).victoryMultiplier), [2.00, 1.50, 1.20, 1.20, 1.00]);
+    })).victoryMultiplier), [2.00, 1.20, 1.20, 1.20, 1.00]);
   });
 
   test("UI·MVP：失败玩家即使曾进入1v2残局也没有胜局系数", () => {
@@ -816,7 +816,7 @@ export function registerMatchPerformanceTests(test) {
     assert.equal(result.victoryMultiplier, 1.00);
   });
 
-  test("UI·MVP：成为最后存活者时冻结敌方三人且后续击杀不覆盖快照", async () => {
+  test("UI·MVP：1v3进入残局后降至1v2并获胜仍使用1v3系数", async () => {
     const survivor = trackerPlayer("survivor", 0, "dawn");
     const ally = trackerPlayer("ally", 1, "dawn");
     const enemies = [
@@ -835,10 +835,76 @@ export function registerMatchPerformanceTests(test) {
     const snapshot = tracker.finalizeMatch();
     const survivorResult = snapshot.players.find((entry) => entry.playerId === survivor.id);
     const deadAllyResult = snapshot.players.find((entry) => entry.playerId === ally.id);
+    const enemyResults = snapshot.players.filter((entry) => entry.teamId === "dusk");
     assert.equal(survivorResult.clutchEnemyCount, 3);
     assert.equal(survivorResult.won, true);
     assert.equal(deadAllyResult.clutchEnemyCount, null);
     assert.equal(deadAllyResult.won, true);
+    assert.equal(calculatePerformance(survivorResult).victoryMultiplier, 1.50);
+    assert.equal(calculatePerformance(deadAllyResult).victoryMultiplier, 1.00);
+    assert.deepEqual(enemyResults.map((entry) => entry.clutchEnemyCount), [null, null, null]);
+  });
+
+  test("UI·MVP：1v2进入残局后降至1v1并获胜仍使用1v2系数", async () => {
+    const survivor = trackerPlayer("survivor", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemies = [
+      trackerPlayer("enemy-a", 2, "dusk"),
+      trackerPlayer("enemy-b", 3, "dusk")
+    ];
+    const { state, dispatcher, tracker } = trackerFixture([survivor, ally, ...enemies]);
+    ally.alive = false;
+    await dispatcher.emit("playerDead", { source: enemies[0], target: ally });
+    for (const enemy of enemies) {
+      enemy.alive = false;
+      await dispatcher.emit("playerDead", { source: survivor, target: enemy });
+    }
+    state.winnerTeam = "dawn";
+    const survivorResult = tracker.finalizeMatch().players.find(
+      (entry) => entry.playerId === survivor.id
+    );
+    assert.equal(survivorResult.clutchEnemyCount, 2);
+    assert.equal(calculatePerformance(survivorResult).victoryMultiplier, 1.30);
+  });
+
+  test("UI·MVP：新出现的1v1不建立残局档位", async () => {
+    const survivor = trackerPlayer("survivor", 0, "dawn");
+    const allies = [
+      trackerPlayer("ally-a", 1, "dawn"),
+      trackerPlayer("ally-b", 2, "dawn")
+    ];
+    const enemy = trackerPlayer("enemy", 3, "dusk");
+    const { state, dispatcher, tracker } = trackerFixture([survivor, ...allies, enemy]);
+    for (const ally of allies) {
+      ally.alive = false;
+      await dispatcher.emit("playerDead", { source: enemy, target: ally });
+    }
+    enemy.alive = false;
+    await dispatcher.emit("playerDead", { source: survivor, target: enemy });
+    state.winnerTeam = "dawn";
+    const survivorResult = tracker.finalizeMatch().players.find(
+      (entry) => entry.playerId === survivor.id
+    );
+    assert.equal(survivorResult.clutchEnemyCount, null);
+    assert.equal(calculatePerformance(survivorResult).victoryMultiplier, 1.20);
+  });
+
+  test("UI·MVP：2v1人数优势方获胜时两名存活胜者都使用普通胜局系数", async () => {
+    const winners = [
+      trackerPlayer("winner-a", 0, "dawn"),
+      trackerPlayer("winner-b", 1, "dawn")
+    ];
+    const loser = trackerPlayer("loser", 2, "dusk");
+    const { state, dispatcher, tracker } = trackerFixture([...winners, loser]);
+    loser.alive = false;
+    await dispatcher.emit("playerDead", { source: winners[0], target: loser });
+    state.winnerTeam = "dawn";
+    const winnerResults = tracker.finalizeMatch().players.filter((entry) => entry.won);
+    assert.deepEqual(winnerResults.map((entry) => entry.clutchEnemyCount), [null, null]);
+    assert.deepEqual(
+      winnerResults.map((entry) => calculatePerformance(entry).victoryMultiplier),
+      [1.20, 1.20]
+    );
   });
 
   test("UI·MVP：十五回合600基础分按二人队1v3与三人队1v2得到918和1224", () => {

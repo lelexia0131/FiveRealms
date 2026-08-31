@@ -22,7 +22,7 @@ export const MATCH_PERFORMANCE_POLICY = Object.freeze({
   aliveVictoryMultiplier: 1.2,
   clutchVictoryMultipliersByTeamSize: Object.freeze({
     2: Object.freeze({ 2: 1.3, 3: 1.5 }),
-    3: Object.freeze({ 1: 1.5, 2: 2.0 })
+    3: Object.freeze({ 2: 2.0 })
   }),
   roundMultiplierByEffectiveRound: Object.freeze({
     1: 0.30,

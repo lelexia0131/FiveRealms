@@ -626,7 +626,7 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  累计真正由玩家导致的敌方阵亡，并在死者阵营首次只剩一人时冻结残局快照。
+  累计真正由玩家导致的敌方阵亡，并在死者阵营只剩一人时维护残局快照。
 
   调用方
   playerDead listener。
@@ -647,7 +647,7 @@ export class MatchPerformanceTracker {
   getState、recordFor。
 
   边界与不变量
-  友军击杀、自杀和无来源环境死亡不计击杀，但仍可形成残局；快照只写首次值，后续敌人阵亡不得覆盖。
+  友军击杀、自杀和无来源环境死亡不计击杀，但仍可形成残局；只记录至少 1v2，已记录人数只允许保持或扩大。
   */
   handlePlayerDead(event) {
     const source = event.source;
@@ -664,10 +664,15 @@ export class MatchPerformanceTracker {
     );
     if (survivingAllies.length !== 1) return;
     const survivorRecord = this.recordFor(survivingAllies[0]);
-    if (!survivorRecord || survivorRecord.clutchEnemyCount !== null) return;
-    survivorRecord.clutchEnemyCount = players.filter(
+    const clutchEnemyCount = players.filter(
       (player) => player.alive && player.battleTeam !== target.battleTeam
     ).length;
+    if (!survivorRecord || clutchEnemyCount < 2) return;
+    // 残局档位属于减员方的唯一幸存者；后续状态变化不得把更早的高档残局降级。
+    survivorRecord.clutchEnemyCount = Math.max(
+      survivorRecord.clutchEnemyCount ?? 0,
+      clutchEnemyCount
+    );
   }
 
   /*
