@@ -1,4 +1,5 @@
 .eyebrow { color: var(--dawn); font-size: 13px; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; }
+.start-brand-title { color: #8c6525; font: 700 clamp(18px, 2vw, 25px)/1 var(--serif); letter-spacing: .18em; text-transform: none; }
 .start-copy h1 { margin: 12px 0 22px; font: 700 clamp(64px, 8vw, 116px)/.92 var(--serif); letter-spacing: -.06em; color: #322a20; }
 .start-copy h1 span { color: var(--gold); }
 .lead { max-width: 670px; color: var(--text-secondary); font: 17px/1.9 var(--serif); }
@@ -20,6 +21,7 @@ button { border: 0; cursor: pointer; }
 .primary-button, .ghost-button, .skill-button, .toggle-button { min-height: 42px; padding: 9px 17px; border-radius: 10px; font-size: 15px; font-weight: 750; transition: transform .16s ease, box-shadow .16s ease, background .16s ease; }
 .primary-button { color: #fffdf8; background: linear-gradient(135deg, #2d857e, #206c68); box-shadow: 0 5px 12px rgba(35,125,120,.21); }
 .primary-button:hover:not(:disabled), .skill-button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(35,125,120,.24); }
+.start-screen .start-button:active:not(:disabled) { transform: translateY(0) scale(.985); box-shadow: 0 3px 8px rgba(35,125,120,.2); transition-duration: .06s; }
 .ghost-button { color: var(--text-primary); border: 1px solid var(--border-strong); background: rgba(255,253,247,.75); }
 .ghost-button:hover:not(:disabled) { background: #fff; transform: translateY(-1px); }
 .skill-button { color: #fff; background: linear-gradient(135deg, #9d6e25, #7c5319); }
@@ -27,6 +29,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .toggle-button { display: inline-flex; align-items: center; gap: 8px; padding-inline: 11px; color: var(--text-secondary); border: 1px solid var(--border); background: var(--surface); }
 .toggle-button i { width: 9px; height: 9px; border: 1px solid var(--border-strong); border-radius: 50%; background: #d5ccbc; }
 .toggle-button[aria-pressed="true"] i { border-color: var(--dawn); background: var(--dawn); box-shadow: 0 0 0 3px var(--dawn-soft); }
+.start-screen .toggle-button:hover { border-color: var(--border-strong); background: #fff; transform: translateY(-1px); }
+.start-screen .toggle-button:active { transform: translateY(0) scale(.985); transition-duration: .06s; }
 .audio-toggle-button { white-space: nowrap; }
 .audio-controls { display: inline-flex; align-items: flex-start; gap: 8px; }
 .audio-volume-stack { display: grid; grid-template-columns: max-content 92px; align-items: center; column-gap: 6px; row-gap: 4px; color: var(--text-muted); font-size: 12px; font-weight: 800; white-space: nowrap; }

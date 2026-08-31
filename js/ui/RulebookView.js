@@ -24,7 +24,7 @@ import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/d
 import { CARD_PRESENTATION } from "../adapters/ui/CardPresentationDefinitions.js";
 import { CHARACTER_PRESENTATION } from "../adapters/ui/CharacterPresentationDefinitions.js";
 import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js";
-import { escapeHtml } from "./templates.js";
+import { escapeHtml, hiddenCardBackTemplate } from "./templates.js";
 
 const USAGE_LABELS = Object.freeze({
   active:"出牌阶段",
@@ -45,6 +45,11 @@ const TARGET_LABELS = Object.freeze({
   singleEnemy:"一名敌人",
   allLiving:"所有存活角色",
   singleUnsealedEnemy:"未被封印的敌人"
+});
+
+const TARGET_LABEL_OVERRIDES = Object.freeze({
+  recover:"自己或濒死的队友",
+  harvest:"自己"
 });
 
 const CARD_GROUPS = Object.freeze({
@@ -102,11 +107,14 @@ export function getRulebookCardView(definitionId) {
     ...definition,
     ...presentation,
     usageLabel:USAGE_LABELS[definition.usageMode] ?? "出牌阶段",
-    targetLabel:TARGET_LABELS[definition.targetType] ?? "依牌面说明",
+    targetLabel:TARGET_LABEL_OVERRIDES[definitionId]
+      ?? TARGET_LABELS[definition.targetType]
+      ?? "依牌面说明",
     responseLabel:definition.category === "tactic"
       ? (definition.counterable ? "可被反制" : "不可反制")
       : (definition.usageMode === "response" ? "响应牌" : "非反制牌"),
-    rangeLabel:range
+    rangeLabel:range,
+    destinationLabel:definition.category === "equipment" ? "使用后进入装备槽" : "使用后进入弃牌堆"
   };
 }
 
@@ -147,7 +155,7 @@ function manualCardTemplate(definitionId) {
         <span><b>作用对象</b>${escapeHtml(card.targetLabel)}</span>
         <span><b>距离</b>${escapeHtml(card.rangeLabel)}</span>
         <span><b>交互</b>${escapeHtml(card.responseLabel)}</span>
-        <span><b>去向</b>使用后进入弃牌堆</span>
+        <span><b>去向</b>${escapeHtml(card.destinationLabel)}</span>
       </div>
     </div>
   </article>`;
@@ -325,14 +333,12 @@ export function buildRulebookPages() {
     {
       id:"cover",
       title:"五域纷争 · 战场手册",
-      html:`<div class="rulebook-cover-art"><img src="./assets/characters/trail-hunter.svg" alt=""></div>
+      html:`<div class="rulebook-cover-art" aria-hidden="true"></div>
         <div class="rulebook-cover-cast" aria-hidden="true">${cast.map((src) => `<img src="${src}" alt="">`).join("")}</div>
         <div class="rulebook-cover-content">
-          <span class="rulebook-cover-emblem">五</span>
           <small>FIVE REALMS · ILLUSTRATED FIELD MANUAL</small>
           <h2><span>五域</span>纷争</h2>
           <p>五名旅者分属晨星与暮影。隐藏的手牌、瞬时的响应、不断变化的距离与角色技能，共同决定哪个阵营能存活到最后。</p>
-          <div class="rulebook-cover-legend"><span>阵营对抗</span><span>回合战斗</span><span>26 张正式卡</span><span>8 名角色</span></div>
         </div>`
     },
     {
@@ -357,14 +363,14 @@ export function buildRulebookPages() {
         <div class="anatomy-scroll"><div class="rulebook-anatomy">
           <div class="anatomy-status"><span><b>五域纷争</b>当前战局</span><span><b>第 2 轮</b>当前回合</span><span><b>你的回合</b>行动角色</span><span><b>牌堆 91</b>剩余牌</span><span><b>弃牌 12</b>公开牌区</span></div>
           <div class="anatomy-field">
-            <article class="anatomy-seat anatomy-seat-dawn"><img src="./assets/characters/oath-warden.svg" alt=""><div><strong>队友 · 守誓者</strong><span>HP 4 · 护盾 1</span><span>距离 1 · 装备区</span></div></article>
-            <article class="anatomy-seat anatomy-seat-dusk"><img src="./assets/characters/ember-magus.svg" alt=""><div><strong>敌人 · 炎术师</strong><span>HP 3 · 能量 2</span><span>距离 2 · 4 张手牌</span></div></article>
+            <article class="anatomy-seat anatomy-seat-dusk"><img src="./assets/characters/ember-magus.svg" alt=""><div><strong>敌人 · 炎术师</strong><span>HP 3 · 能量 2</span><span>距离 1 · 4 张手牌</span></div></article>
+            <article class="anatomy-seat anatomy-seat-dawn"><img src="./assets/characters/oath-warden.svg" alt=""><div><strong>队友 · 守誓者</strong><span>HP 4 · 护盾 1</span><span>距离 2 · 装备区</span></div></article>
             <article class="anatomy-seat anatomy-seat-dusk"><img src="./assets/characters/trail-hunter.svg" alt=""><div><strong>敌人 · 追猎者</strong><span>HP 4 · 猎印状态</span><span>距离 2 · 装备区</span></div></article>
             <article class="anatomy-seat anatomy-seat-dusk"><img src="./assets/characters/fate-gambler.svg" alt=""><div><strong>敌人 · 赌命者</strong><span>HP 2 · 能量 3</span><span>距离 1 · 2 张手牌</span></div></article>
           </div>
-          <div class="anatomy-center"><div class="anatomy-pile"><i></i><b>牌堆 / 弃牌区</b></div><div class="anatomy-resolve"><img src="./assets/cards/assault.svg" alt="中央结算区的突袭"><small>中央结算区</small></div><div class="anatomy-command"><b>主动技能</b><b>结束出牌</b></div></div>
+          <div class="anatomy-center"><div class="anatomy-pile">${hiddenCardBackTemplate()}<b>牌堆</b></div><div class="anatomy-resolve"><img src="./assets/cards/assault.svg" alt="中央结算区的突袭"><small>中央结算区</small></div><div class="anatomy-prompt"><strong>你的出牌阶段</strong><span>选择手牌、发动技能，或结束出牌。</span></div><div class="anatomy-command"><b class="anatomy-action-skill">破军</b><b class="anatomy-action-primary">结束出牌</b><span class="anatomy-callout callout-five"><b>5</b>行动按钮</span></div></div>
           <div class="anatomy-human"><article class="anatomy-human-seat"><img src="./assets/characters/blade-walker.svg" alt=""><div><strong>你 · 刃行者</strong><span>HP 4　护盾 0　能量 2</span><span>装备：望远镜</span></div></article><div class="anatomy-hand"><img src="./assets/cards/assault.svg" alt=""><img src="./assets/cards/block.svg" alt=""><img src="./assets/cards/charge.svg" alt=""><img src="./assets/cards/counter.svg" alt=""><img src="./assets/cards/telescope.svg" alt=""></div></div>
-          <span class="anatomy-callout callout-one"><b>1</b>队友 / 敌人</span><span class="anatomy-callout callout-two"><b>2</b>HP / 护盾 / 距离</span><span class="anatomy-callout callout-three"><b>3</b>出牌与响应结算</span><span class="anatomy-callout callout-four"><b>4</b>你的角色与装备</span><span class="anatomy-callout callout-five"><b>5</b>手牌与行动按钮</span>
+          <span class="anatomy-callout callout-one"><b>1</b>队友 / 敌人</span><span class="anatomy-callout callout-two"><b>2</b>HP / 护盾 / 距离</span><span class="anatomy-callout callout-three"><b>3</b>出牌与响应结算</span><span class="anatomy-callout callout-four"><b>4</b>你的角色与装备</span><span class="anatomy-callout callout-six"><b>6</b>手牌区</span>
         </div></div>`
     },
     {
@@ -401,7 +407,7 @@ export function buildRulebookPages() {
     {
       id:"basic-cards",
       title:"五张基础牌",
-      html:`${pageHead(6, "BASIC CARDS", "每一局的基础语言", "突袭制造压力，格挡回答攻击，调息维持生命，聚能与护盾为下一轮铺路。")}${cardGridTemplate(CARD_GROUPS.basic)}`
+      html:`${pageHead(6, "BASIC CARDS", "每一局的基础语言", "突袭制造压力，格挡回答攻击，调息维持生命，聚能积攒潜力，护盾为下一轮铺路。")}${cardGridTemplate(CARD_GROUPS.basic)}`
     },
     {
       id:"assault-response",
@@ -447,22 +453,22 @@ export function buildRulebookPages() {
       title:"存活环与距离",
       html:`${pageHead(12, "DISTANCE", "相邻，不等于永远相邻", "只把存活角色按座位围成一圈；顺、逆时针步数较小者，就是两人之间的基础距离。")}
         <div class="distance-scroll"><div class="distance-arena"><div class="distance-ring"></div>
-          <div class="distance-seat"><img src="./assets/characters/blade-walker.svg" alt=""><strong>你 · 刃行者</strong><span>起点</span></div>
-          <div class="distance-seat"><img src="./assets/characters/oath-warden.svg" alt=""><strong>队友</strong><span>距离 1</span></div>
-          <div class="distance-seat"><img src="./assets/characters/ember-magus.svg" alt=""><strong>敌人</strong><span>距离 2</span></div>
-          <div class="distance-seat"><img src="./assets/characters/trail-hunter.svg" alt=""><strong>敌人</strong><span>距离 2</span></div>
-          <div class="distance-seat"><img src="./assets/characters/fate-gambler.svg" alt=""><strong>敌人</strong><span>距离 1</span></div>
+          <div class="distance-seat distance-seat-dawn"><img src="./assets/characters/blade-walker.svg" alt=""><strong>你 · 刃行者</strong><span>起点</span></div>
+          <div class="distance-seat distance-seat-dusk"><img src="./assets/characters/ember-magus.svg" alt=""><strong>敌人 · 炎术师</strong><span>距离 1</span></div>
+          <div class="distance-seat distance-seat-dawn"><img src="./assets/characters/oath-warden.svg" alt=""><strong>队友 · 守誓者</strong><span>距离 2</span></div>
+          <div class="distance-seat distance-seat-dusk"><img src="./assets/characters/trail-hunter.svg" alt=""><strong>敌人 · 追猎者</strong><span>距离 2</span></div>
+          <div class="distance-seat distance-seat-dusk"><img src="./assets/characters/fate-gambler.svg" alt=""><strong>敌人 · 赌命者</strong><span>距离 1</span></div>
           <div class="distance-center"><strong>存活角色环</strong><span>有人阵亡后重新压缩</span></div>
         </div></div>
         <div class="distance-modifiers">
           <article class="distance-modifier"><img src="./assets/cards/telescope.svg" alt="望远镜"><div><strong>望远镜 · 从你出发 -1</strong><span>你计算与其他角色的距离时减 1，结果最低仍为 1。</span></div></article>
-          <article class="distance-modifier"><img src="./assets/cards/barrier-device.svg" alt="屏障"><div><strong>屏障 · 朝目标前进 +1</strong><span>其他角色计算与你的距离时加 1；这是有方向的防御修正。</span></div></article>
+          <article class="distance-modifier"><img src="./assets/cards/barrier-device.svg" alt="屏障"><div><strong>屏障 · 目标离你 + 1</strong><span>其他角色计算与你的距离时加 1。</span></div></article>
         </div>`
     },
     {
       id:"resources",
       title:"生命、护盾与能量",
-      html:`${pageHead(13, "RESOURCES", "三条读懂生存与技能的刻度", "角色默认最大生命为 4；护盾独立吸收伤害；能量在自己回合获得并支付主动技能。")}
+      html:`${pageHead(13, "RESOURCES", "三条读懂生存与技能的刻度", "护盾独立吸收伤害；能量在自己回合获得并支付主动技能。")}
         <div class="rulebook-resource-grid">
           <article class="resource-plate"><img src="./assets/ui/recover-glyph.svg" alt="生命图标"><h3>生命 HP</h3><div class="resource-demo"><b class="hp">4</b><i>受 1 点伤害 →</i><b class="hp">3</b><i>→</i><b class="hp">2</b></div><p>治疗不能超过最大生命。回合末手牌上限等于当前 HP，因此受伤也会压缩你能保留的手牌。</p></article>
           <article class="resource-plate"><img src="./assets/ui/shield-glyph.svg" alt="护盾图标"><h3>护盾</h3><div class="resource-demo"><b>伤害 2</b><i>→</i><b class="shield">护盾 1</b><i>→</i><b class="hp">HP -1</b></div><p>护盾先于生命承受伤害；每点护盾免疫 1 点伤害，吸收后会消耗。</p></article>
@@ -503,18 +509,18 @@ export function buildRulebookPages() {
     {
       id:"hidden-information",
       title:"隐藏与公开信息",
-      html:`${pageHead(20, "HIDDEN INFORMATION", "你知道什么，桌上就显示什么", "FiveRealms 不会因为电脑持有一张牌就向真人泄露牌面；玩家视图只呈现合法公开或已识别的信息。")}
+      html:`${pageHead(20, "HIDDEN INFORMATION", "你知道什么，桌上就显示什么", "玩家视图只呈现合法公开或已识别的信息。")}
         <div class="hidden-info-stage">
-          <article class="hidden-info-card"><img src="./assets/cards/assault.svg" alt="自己的正面手牌"><h3>自己的手牌 · 正面</h3><p>你能阅读自己每张牌的名称、类别、插画和效果，并在出牌阶段选择合法行动。</p></article>
-          <article class="hidden-info-card"><div class="rulebook-card-back" aria-label="未知牌背">五</div><h3>对手未知牌 · 牌背</h3><p>通常只知道对手的手牌数量，不知道 definition、类别或具体效果。</p></article>
-          <article class="hidden-info-card"><div class="known-stack"><img src="./assets/cards/block.svg" alt=""><img src="./assets/cards/counter.svg" alt=""><b>已知</b></div><h3>窥探 / 公开 · 已识别</h3><p>窥探过的实体手牌会以正面持续显示；一旦离开原手牌区，旧识别不再追踪新的隐藏位置。</p></article>
+          <article class="hidden-info-card"><img src="./assets/cards/assault.svg" alt="自己的正面手牌"><h3>自己的手牌 · 正面</h3><p>你能阅读自己每张牌的名称、插画和效果，并在出牌阶段选择合法行动。</p></article>
+          <article class="hidden-info-card"><div class="rulebook-hidden-card">${hiddenCardBackTemplate({ compact:true })}</div><h3>对手未知牌 · 牌背</h3><p>通常只知道对手的手牌数量，不知道具体牌面。</p></article>
+          <article class="hidden-info-card"><div class="known-stack"><img src="./assets/cards/block.svg" alt=""><img src="./assets/cards/counter.svg" alt=""><b>已知</b></div><h3>窥探 / 公开 · 已识别</h3><p>窥探后，那张牌会持续以正面显示；它离开对方手牌后，就不再保持已知标记。</p></article>
         </div>
         <div class="rulebook-note">公开信息包括角色、HP、护盾、能量、装备、状态、距离、手牌数量、牌堆与弃牌数量，以及中央结算和公开选择中展示的牌。</div>`
     },
     {
       id:"example-one",
       title:"新手实战 · 出牌",
-      html:`${pageHead(21, "FIRST TURN · PART I", "漫画实战：从摸牌到一次格挡", "你控制刃行者，轮到自己行动；跟着界面完成第一张主动牌。")}
+      html:`${pageHead(21, "FIRST TURN · PART I", "从摸牌到一次格挡。", "你控制刃行者，轮到自己行动；跟着界面完成第一张主动牌。")}
         <div class="comic-grid">
           <article class="comic-panel"><img src="./assets/characters/blade-walker.svg" alt=""><span class="comic-number">01</span><span class="comic-speech">“我的回合开始。”</span><div class="comic-caption">处理状态后获得 1 点能量。</div></article>
           <article class="comic-panel"><img src="./assets/cards/harvest.svg" alt=""><span class="comic-number">02</span><span class="comic-speech">摸取本阵营的回合牌数</span><div class="comic-caption">新牌进入自己的正面手牌。</div></article>
@@ -554,7 +560,7 @@ export class RulebookView {
   UIManager 构造函数。
 
   输入
-  overlay 根元素与开始页 opener 按钮。
+  overlay 根元素、开始页 opener 按钮与统一 UI 激活音效回调。
 
   输出
   RulebookView 实例。
@@ -566,14 +572,15 @@ export class RulebookView {
   overlay markup、当前页、焦点与事件监听。
 
   调用函数
-  buildRulebookPages、render、bind。
+  buildRulebookPages、render、bind；音效由 UIManager 注入的现有播放入口负责。
 
   边界与不变量
   缺失 DOM 时保持惰性空视图；不触碰游戏状态。
   */
-  constructor(overlay, opener) {
+  constructor(overlay, opener, onActivate = null) {
     this.overlay = overlay;
     this.opener = opener;
+    this.onActivate = onActivate;
     this.pages = buildRulebookPages();
     this.currentIndex = 0;
     this.lastFocus = null;
@@ -613,7 +620,7 @@ export class RulebookView {
     const pages = this.pages.map((page, index) => `<section class="rulebook-page${index === 0 ? " rulebook-cover" : ""}" data-rulebook-page-id="${escapeHtml(page.id)}" data-folio="${page.folio}" aria-hidden="${index === 0 ? "false" : "true"}">${page.html}</section>`).join("");
     this.overlay.innerHTML = `<div class="rulebook-shell" role="document">
       <header class="rulebook-topbar">
-        <div class="rulebook-brand"><span class="rulebook-brand-mark">五</span><span><strong id="rulebook-title">战场手册</strong><small>FIVE REALMS</small></span></div>
+        <div class="rulebook-brand"><span><strong id="rulebook-title">战场手册</strong><small>FIVE REALMS</small></span></div>
         <div class="rulebook-location"><small>${this.pages[0].folio} / ${this.pages.length}</small><strong>${escapeHtml(this.pages[0].title)}</strong></div>
         <button type="button" class="rulebook-close" data-rulebook-close aria-label="关闭入局说明">×</button>
       </header>
@@ -651,22 +658,33 @@ export class RulebookView {
   DOM 事件监听。
 
   调用函数
-  open、close、show。
+  open、close、show 与 onActivate。
 
   边界与不变量
-  所有翻页事件只更新展示索引。
+  有效点击先触发统一 UI 音效；所有翻页事件只更新展示索引。
   */
   bind() {
-    this.opener.addEventListener("click", () => this.open());
+    this.opener.addEventListener("click", () => {
+      this.onActivate?.();
+      this.open();
+    });
     this.overlay.addEventListener("click", (event) => {
       if (event.target === this.overlay || event.target.closest("[data-rulebook-close]")) {
+        this.onActivate?.();
         this.close();
         return;
       }
       const pageButton = event.target.closest("[data-rulebook-page]");
-      if (pageButton) this.show(Number(pageButton.dataset.rulebookPage));
-      else if (event.target.closest("[data-rulebook-prev]")) this.show(this.currentIndex - 1);
-      else if (event.target.closest("[data-rulebook-next]")) this.show(this.currentIndex + 1);
+      if (pageButton) {
+        this.onActivate?.();
+        this.show(Number(pageButton.dataset.rulebookPage));
+      } else if (event.target.closest("[data-rulebook-prev]")) {
+        this.onActivate?.();
+        this.show(this.currentIndex - 1);
+      } else if (event.target.closest("[data-rulebook-next]")) {
+        this.onActivate?.();
+        this.show(this.currentIndex + 1);
+      }
     });
   }
 

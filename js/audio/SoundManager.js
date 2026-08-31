@@ -76,16 +76,23 @@ Array.flat、Object.freeze。
 */
 const longMelody = (...phrases) => Object.freeze(phrases.flat());
 
-// 准备阶段采用更稀疏的五声音阶旋律；末句停在属音 D4，回到开头 G4 时保持自然的 V→I 衔接。
+// 首页、说明书与征召阶段共用明快的 G 大调冒险主题；切分式拾音让旋律有桌游开场的轻盈推进感。
 const PRE_MATCH_MELODY = longMelody(
-  [67, null, 71, null, 74, null, 71, null, 69, null, 67, null, 64, null, 62, null],
-  [67, null, 69, null, 71, 74, 71, null, 69, null, 64, null, 62, null, 67, null],
-  [71, null, 74, null, 79, null, 76, null, 74, null, 71, null, 69, null, 67, null],
-  [64, null, 67, null, 71, null, 69, null, 67, null, 64, null, 62, null, 67, null],
-  [69, null, 71, null, 74, null, 76, null, 74, null, 71, null, 67, null, 64, null],
-  [67, null, 71, 74, 79, null, 76, null, 74, null, 71, null, 69, null, 67, null],
-  [64, null, 67, null, 69, null, 71, null, 74, null, 71, null, 69, null, 64, null],
-  [67, null, 64, null, 62, null, 64, null, 67, null, 69, null, 67, null, 62, null]
+  [67, null, 71, null, 74, null, 79, 76, 74, null, 71, null, 69, null, 67, null],
+  [69, null, 71, null, 74, null, 76, 74, 71, null, 69, null, 67, null, 66, null],
+  [67, null, 69, null, 71, null, 74, 76, 79, null, 76, null, 74, null, 71, null],
+  [72, null, 71, null, 69, null, 67, 69, 71, null, 74, null, 69, null, 66, null],
+  [67, null, 71, null, 74, null, 79, 81, 79, null, 76, null, 74, null, 71, null],
+  [69, null, 74, null, 76, null, 78, 79, 78, null, 76, null, 74, null, 71, null],
+  [72, null, 76, null, 79, null, 83, 81, 79, null, 76, null, 74, null, 72, null],
+  [71, null, 74, null, 79, null, 78, 76, 74, null, 71, null, 69, null, 66, null],
+  [67, null, 69, null, 71, null, 74, 76, 74, null, 71, null, 67, null, 69, null],
+  [71, null, 72, null, 74, null, 76, 78, 79, null, 78, null, 76, null, 74, null],
+  [76, null, 79, null, 83, null, 81, 79, 76, null, 74, null, 72, null, 71, null],
+  [69, null, 72, null, 76, null, 74, 71, 69, null, 67, null, 66, null, 69, null],
+  [67, null, 71, null, 74, null, 79, 76, 74, null, 71, null, 69, null, 67, null],
+  // 收尾停在属音 D4，循环回 G4 时形成自然的 V→I 开场衔接。
+  [72, null, 71, null, 69, null, 67, 69, 71, null, 69, null, 66, null, 62, null]
 );
 
 // 正式对局每个乐句16步、全曲12句，共192步；晨约74秒、昏约80秒才完成一次循环。
@@ -123,13 +130,13 @@ const DUSK_MELODY = longMelody(
 
 export const MUSIC_PROFILES = Object.freeze({
   preMatch: Object.freeze({
-    tempo: 64,
+    tempo: 102,
     lead: PRE_MATCH_MELODY,
-    bass: Object.freeze([43, 40, 45, 38, 40, 43, 38, 38, 43, 40, 45, 38, 40, 43, 38, 38]),
-    thirds: Object.freeze([4, 3, 4, 3, 3, 4, 3, 3, 4, 3, 4, 3, 3, 4, 3, 3]),
-    wave: "sine",
-    leadLevel: 0.026,
-    padLevel: 0.016
+    bass: Object.freeze([43, 38, 40, 38, 43, 36, 40, 38, 43, 38, 40, 38, 36, 38, 43, 38, 40, 38, 43, 36, 40, 38, 43, 38, 36, 40, 38, 38]),
+    thirds: Object.freeze([4, 4, 3, 4, 4, 4, 3, 4, 4, 4, 3, 4, 4, 4, 4, 4, 3, 4, 4, 4, 3, 4, 4, 4, 4, 3, 4, 4]),
+    wave: "triangle",
+    leadLevel: 0.032,
+    padLevel: 0.014
   }),
   dawn: Object.freeze({
     tempo: 78,

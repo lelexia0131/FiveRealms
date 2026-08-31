@@ -237,7 +237,11 @@ export class UIManager {
     this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
     this.judgmentView = new JudgmentView(this.elements.judgment_view);
     this.matchMvpResultView = new MatchMvpResultView(this.elements.match_mvp_result);
-    this.rulebookView = new RulebookView(this.elements.rulebook_overlay, this.elements.rules_button);
+    this.rulebookView = new RulebookView(
+      this.elements.rulebook_overlay,
+      this.elements.rules_button,
+      () => this.playSound("select")
+    );
     this.viewportWasNarrow = window.innerWidth < 1280;
     this.bindEvents();
     this.setAiSpeed(this.aiSpeed);

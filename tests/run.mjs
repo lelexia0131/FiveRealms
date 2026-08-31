@@ -155,7 +155,7 @@ import {
 } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup, orderZoneSelectionSlots } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
-import { buildRulebookPages, getRulebookCardView } from "../js/ui/RulebookView.js";
+import { RulebookView, buildRulebookPages, getRulebookCardView } from "../js/ui/RulebookView.js";
 import { PrivateRevealView } from "../js/ui/PrivateRevealView.js";
 import { AnimationController, LIGHTNING_HIT_DURATION_MS } from "../js/ui/animationController.js";
 import { JudgmentView } from "../js/ui/JudgmentView.js";
@@ -36892,8 +36892,54 @@ test("UI·入局说明：二十二页目录覆盖完整新手路径且页面 ID 
   for (const required of [
     "晨星 VS 暮影", "战斗界面解剖", "完整回合流程", "卡牌入门", "突袭与响应",
     "唯一装备槽", "存活环与距离", "生命、护盾与能量", "濒死、阵亡与观战",
-    "隐藏与公开信息", "漫画实战"
+    "隐藏与公开信息", "从摸牌到一次格挡。"
   ]) assert.match(content, new RegExp(required));
+});
+
+test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩家视角", () => {
+  const pages = Object.fromEntries(buildRulebookPages().map((page) => [page.id, page.html]));
+  assert.doesNotMatch(pages.cover, /rulebook-cover-emblem|rulebook-cover-legend|阵营对抗|回合战斗|26 张正式卡|8 名角色/);
+  assert.match(
+    pages.cover,
+    /五名旅者分属晨星与暮影。隐藏的手牌、瞬时的响应、不断变化的距离与角色技能，共同决定哪个阵营能存活到最后。/
+  );
+
+  assert.deepEqual(
+    [...pages.interface.matchAll(/class="anatomy-seat anatomy-seat-(dawn|dusk)"/g)].map((match) => match[1]),
+    ["dusk", "dawn", "dusk", "dusk"]
+  );
+  assert.match(pages.interface, /敌人 · 炎术师[\s\S]*距离 1/);
+  assert.match(pages.interface, /队友 · 守誓者[\s\S]*距离 2/);
+  assert.match(pages.interface, /class="hidden-card-back"/);
+  assert.match(pages.interface, /anatomy-action-skill">破军/);
+  assert.match(pages.interface, /anatomy-action-primary">结束出牌/);
+  assert.match(pages.interface, /callout-five"><b>5<\/b>行动按钮/);
+  assert.match(pages.interface, /callout-six"><b>6<\/b>手牌区/);
+  assert.doesNotMatch(pages.interface, /手牌与行动按钮/);
+  assert.doesNotMatch(pages.interface, />主动技能</);
+
+  assert.match(pages["basic-cards"], /聚能积攒潜力，护盾为下一轮铺路。/);
+  assert.equal(getRulebookCardView("recover").targetLabel, "自己或濒死的队友");
+  assert.equal(getRulebookCardView("harvest").targetLabel, "自己");
+  for (const definitionId of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"]) {
+    assert.equal(getRulebookCardView(definitionId).destinationLabel, "使用后进入装备槽");
+  }
+
+  assert.deepEqual(
+    [...pages.distance.matchAll(/class="distance-seat distance-seat-(dawn|dusk)"/g)].map((match) => match[1]),
+    ["dawn", "dusk", "dawn", "dusk", "dusk"]
+  );
+  assert.match(pages.distance, /队友 · 守誓者[\s\S]*距离 2/);
+  assert.match(pages.distance, /屏障 · 目标离你 \+ 1/);
+  assert.doesNotMatch(pages.distance, /朝目标前进|有方向的防御修正/);
+  assert.doesNotMatch(pages.resources, /角色默认最大生命为 4/);
+
+  assert.match(pages["hidden-information"], /玩家视图只呈现合法公开或已识别的信息。/);
+  assert.match(pages["hidden-information"], /hidden-card-back is-compact/);
+  assert.match(pages["hidden-information"], /不知道具体牌面。/);
+  assert.doesNotMatch(pages["hidden-information"], /FiveRealms 不会因为电脑|definition|类别|实体手牌/);
+  assert.match(pages["example-one"], /<h2>从摸牌到一次格挡。<\/h2>/);
+  assert.doesNotMatch(pages["example-one"], /漫画实战：/);
 });
 
 test("UI·入局说明：二十六张正式卡均以真实定义与素材逐张图解", () => {
@@ -36922,16 +36968,20 @@ test("UI·入局说明：八名正式角色逐一展示领域技能与现有立�
 });
 
 test("UI·入局说明：开始页入口、分页交互与移动端布局使用稳定本地资源", async () => {
-  const [index, manager, view, css] = await Promise.all([
+  const [index, manager, view, componentsCss, css] = await Promise.all([
     readFile(projectFile("index.html"), "utf8"),
     readFile(projectFile("js/ui/UIManager.js"), "utf8"),
     readFile(projectFile("js/ui/RulebookView.js"), "utf8"),
+    readFile(projectFile("css/components.css"), "utf8"),
     readFile(projectFile("css/rulebook.css"), "utf8")
   ]);
+  assert.match(index, /class="eyebrow start-brand-title">FiveRealms<\/p>/);
+  assert.doesNotMatch(index, /五人 · 2V3 阵营卡牌/);
   assert.match(index, /id="rules-button"[\s\S]*展开规则书/);
   assert.match(index, /id="rulebook-overlay"[^>]*role="dialog"[^>]*aria-modal="true"/);
   assert.match(index, /href="\.\/css\/rulebook\.css"/);
-  assert.match(manager, /new RulebookView\(this\.elements\.rulebook_overlay, this\.elements\.rules_button\)/);
+  assert.match(manager, /new RulebookView\([\s\S]*?this\.elements\.rulebook_overlay,[\s\S]*?this\.elements\.rules_button,[\s\S]*?\(\) => this\.playSound\("select"\)[\s\S]*?\)/);
+  assert.match(manager, /start_button\.addEventListener\("click", \(\) => \{ void this\.sound\.unlock\(\); this\.playSound\("select"\); this\.callbacks\.onStart\?\.\(\); \}\)/);
   assert.match(view, /data-rulebook-prev/);
   assert.match(view, /data-rulebook-next/);
   assert.match(view, /data-rulebook-page/);
@@ -36939,9 +36989,55 @@ test("UI·入局说明：开始页入口、分页交互与移动端布局使用�
   assert.match(view, /event\.key === "ArrowLeft"/);
   assert.match(view, /event\.key === "ArrowRight"/);
   assert.match(view, /focusTarget\?\.focus\(\)/);
+  assert.doesNotMatch(view, /playPreMatchMusic|setMusicTeam|stopMusic/);
+  assert.doesNotMatch(view, /rulebook-brand-mark|rulebook-cover-emblem|rulebook-cover-legend/);
+  assert.match(componentsCss, /\.start-brand-title\s*\{[^}]*font:[^}]*clamp\(18px, 2vw, 25px\)[^}]*letter-spacing:\s*\.18em/s);
+  assert.match(componentsCss, /\.start-screen \.start-button:active:not\(:disabled\)/);
+  assert.match(componentsCss, /\.start-screen \.toggle-button:hover/);
+  assert.match(componentsCss, /\.start-screen \.toggle-button:active/);
   assert.match(css, /@media\s*\(max-width:\s*820px\)[\s\S]*\.rulebook-shell\s*\{[^}]*height:\s*100vh/s);
+  assert.match(css, /\.rulebook-open-button:hover:not\(:disabled\)/);
+  assert.match(css, /\.rulebook-open-button:active:not\(:disabled\)/);
   assert.match(css, /\.rulebook-toc\s*\{[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.anatomy-action-skill\s*\{[^}]*#9d6e25/s);
+  assert.match(css, /\.anatomy-action-primary\s*\{[^}]*#2d857e/s);
+  assert.match(css, /\.anatomy-command\s*>\s*b\s*\{[^}]*min-width:\s*86px/s);
+  assert.doesNotMatch(css, /\.anatomy-command\s+b\s*\{/);
+  assert.match(css, /\.anatomy-callout b\s*\{[^}]*color:\s*#fff/s);
+  assert.match(css, /\.callout-two\s*\{[^}]*top:\s*190px[^}]*color:\s*var\(--text-primary\)/s);
+  assert.match(css, /\.callout-six\s*\{[^}]*color:\s*var\(--text-primary\)/s);
+  assert.doesNotMatch(css, /\.rulebook-card-back\b|\.anatomy-pile i\b/);
   assert.doesNotMatch([index, manager, view, css].join("\n"), /\?build=/);
+});
+
+test("UI·入局说明：打开、翻页与关闭统一触发现有激活音效回调", () => {
+  const opener = makeInteractiveElement();
+  const overlay = makeInteractiveElement();
+  const actions = [];
+  const context = {
+    opener,
+    overlay,
+    currentIndex:2,
+    onActivate:() => actions.push("sound"),
+    open:() => actions.push("open"),
+    close:() => actions.push("close"),
+    show:(index) => actions.push(`show:${index}`)
+  };
+  RulebookView.prototype.bind.call(context);
+
+  opener.click(opener);
+  overlay.click(clickTarget("[data-rulebook-page]", { rulebookPage:"5" }));
+  overlay.click(clickTarget("[data-rulebook-prev]"));
+  overlay.click(clickTarget("[data-rulebook-next]"));
+  overlay.click(clickTarget("[data-rulebook-close]"));
+
+  assert.deepEqual(actions, [
+    "sound", "open",
+    "sound", "show:5",
+    "sound", "show:1",
+    "sound", "show:3",
+    "sound", "close"
+  ]);
 });
 
 // ---- 编队与征召 ----
@@ -40596,11 +40692,12 @@ test("音频：合成声音覆盖通用反馈与准备阶段卡牌选择且 ligh
   if (!sound.isSupported) assert.equal(await sound.play("draw"), false);
 });
 
-test("音频：准备阶段与晨昏 BGM 使用独立且可完整循环的旋律 profile", () => {
+test("音频：首页说明书主题明快于晨昏 BGM 且使用独立完整循环 profile", () => {
   assert.notDeepEqual(MUSIC_PROFILES.preMatch.lead, MUSIC_PROFILES.dawn.lead);
   assert.notDeepEqual(MUSIC_PROFILES.preMatch.lead, MUSIC_PROFILES.dusk.lead);
-  assert.ok(MUSIC_PROFILES.preMatch.tempo < MUSIC_PROFILES.dawn.tempo);
-  assert.ok(MUSIC_PROFILES.preMatch.tempo < MUSIC_PROFILES.dusk.tempo);
+  assert.ok(MUSIC_PROFILES.preMatch.tempo > MUSIC_PROFILES.dawn.tempo);
+  assert.ok(MUSIC_PROFILES.preMatch.tempo > MUSIC_PROFILES.dusk.tempo);
+  assert.equal(MUSIC_PROFILES.preMatch.wave, "triangle");
   assert.notEqual(MUSIC_PROFILES.dawn.tempo, MUSIC_PROFILES.dusk.tempo);
   assert.notEqual(MUSIC_PROFILES.dawn.wave, MUSIC_PROFILES.dusk.wave);
   assert.notDeepEqual(MUSIC_PROFILES.dawn.lead, MUSIC_PROFILES.dusk.lead);
