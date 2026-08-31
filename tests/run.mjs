@@ -37040,6 +37040,35 @@ test("UI·入局说明：打开、翻页与关闭统一触发现有激活音效�
   ]);
 });
 
+test("UI·首页布局：开启本局与声音控制保持同一水平布局且窄屏可换行", async () => {
+  const [index, componentsCss, layoutCss, rulebookCss] = await Promise.all([
+    readFile(projectFile("index.html"), "utf8"),
+    readFile(projectFile("css/components.css"), "utf8"),
+    readFile(projectFile("css/layout.css"), "utf8"),
+    readFile(projectFile("css/rulebook.css"), "utf8")
+  ]);
+  const actions = index.match(/<div class="start-actions">([\s\S]*?)<\/div>\s*<\/div>/)?.[1] ?? "";
+  assert.match(actions, /id="start-button"/);
+  assert.match(actions, /class="audio-controls"/);
+  assert.match(componentsCss, /\.start-actions\s*\{[^}]*display:\s*flex[^}]*align-items:\s*flex-start[^}]*flex-wrap:\s*wrap/s);
+  assert.match(componentsCss, /\.start-actions\s*>\s*\.start-button,[\s\S]*?\.start-actions\s*>\s*\.audio-controls\s*\{[^}]*flex:\s*0 0 auto/s);
+  assert.match(layoutCss, /\.squad-back-button\s*\{/);
+  assert.doesNotMatch(rulebookCss, /\.start-actions\s*\{[^}]*flex-direction:\s*column/s);
+});
+
+test("UI·编队返回：返回主界面按钮位于随机分配之后并复用现有生命周期", async () => {
+  const [index, manager, main] = await Promise.all([
+    readFile(projectFile("index.html"), "utf8"),
+    readFile(projectFile("js/ui/UIManager.js"), "utf8"),
+    readFile(projectFile("js/main.js"), "utf8")
+  ]);
+  assert.match(index, /data-team-assignment-mode="random"[\s\S]*?id="back-to-start-button"/);
+  assert.match(index, /id="back-to-start-button"[^>]*class="ghost-button squad-back-button"[^>]*>\s*← 返回主界面/);
+  assert.match(manager, /back_to_start_button\.addEventListener\("click", \(\) => \{ this\.playSound\("select"\); this\.callbacks\.onBackToStart\?\.\(\); \}\)/);
+  assert.match(main, /function returnToStart\(\)[\s\S]*?game\?\.dispose\(\);[\s\S]*?game = null;[\s\S]*?ui\.attachGame\(null\);[\s\S]*?ui\.showStart\(\)/);
+  assert.match(main, /onBackToStart:\s*returnToStart/);
+});
+
 // ---- 编队与征召 ----
 
 test("UI·编队方式：独立界面提供三张原生按钮卡与专属 SVG", async () => {
@@ -40940,7 +40969,7 @@ UIManager.bindEvents、SoundManager.unlock、UIManager.playSound。
 */
 async function uiAudioLifecycleRegression() {
   const elements = Object.fromEntries([
-    "start_button", "restart_button", "play_again_button", "squad_mode_grid", "candidate_grid", "game_screen",
+    "start_button", "back_to_start_button", "restart_button", "play_again_button", "squad_mode_grid", "candidate_grid", "game_screen",
     "human_hand", "cpu_grid", "human_panel", "skill_button", "end_play_button", "discard_confirm_button",
     "cancel_interaction_button", "response_panel", "log_toggle_button", "skill_details_overlay"
   ].map((key) => [key, makeInteractiveElement()]));
@@ -40954,7 +40983,10 @@ async function uiAudioLifecycleRegression() {
     musicVolumeInputs: [],
     sfxVolumeInputs: [],
     sound: { unlock: () => unlocks.push("unlock") },
-    callbacks: { onStart: () => events.push("start") },
+    callbacks: {
+      onStart: () => events.push("start"),
+      onBackToStart: () => events.push("back")
+    },
     interactionController: { bind() { } },
     updateAudioButtons() { },
     toggleAudio() { },
@@ -40989,6 +41021,8 @@ async function uiAudioLifecycleRegression() {
     assert.deepEqual(unlocks, ["unlock"], "首次任意交互只需统一解锁一次");
     elements.start_button.click(elements.start_button);
     assert.deepEqual(events, ["sfx:select", "start"], "开始按钮必须先提交 select SFX 再切换页面");
+    elements.back_to_start_button.click(elements.back_to_start_button);
+    assert.deepEqual(events, ["sfx:select", "start", "sfx:select", "back"], "返回按钮必须复用 select SFX 链路");
   } finally {
     if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument); else delete globalThis.document;
     if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else delete globalThis.window;
@@ -40999,7 +41033,7 @@ test("UI·音频生命周期：首次任意交互解锁且开始按钮 SFX 不�
 
 /*
 功能
-验证初始开始页只登记准备音乐场景，不会在用户手势前创建 AudioContext。
+验证初始开始页立即请求 menu 音乐，并允许浏览器在 autoplay 阻止时保留待解锁状态。
 
 调用方
 当前测试。
@@ -41020,20 +41054,20 @@ SoundManager 延迟解锁状态与 AudioContext stub。
 withAudioContextStub、SoundManager.playMenuMusic。
 
 边界与不变量
-menu 主题必须可先登记；context、scheduler 和音频节点必须继续等待真实用户交互。
+menu 主题必须先登记并立即尝试解锁；autoplay 被阻止时不抛错，后续交互可再次解锁。
 */
 async function menuBootstrapDefersAudioContext() {
   await withAudioContextStub(async () => {
     const sound = new SoundManager();
     assert.equal(sound.playMenuMusic(), "menu");
     assert.equal(sound.musicTeam, "menu");
-    assert.equal(sound.context, null);
+    assert.ok(sound.context, "showStart/menu 请求应立即尝试创建 AudioContext");
     assert.equal(sound.musicTimer, null);
     assert.equal(sound.musicSources.size, 0);
   });
 }
 
-test("音频：开始页登记 menu 场景但等待用户手势解锁", menuBootstrapDefersAudioContext);
+test("音频：开始页立即请求 menu 并安全等待 autoplay 解锁", menuBootstrapDefersAudioContext);
 
 /*
 功能
@@ -41081,6 +41115,74 @@ async function lockedMenuMusicStartsAfterInteraction() {
 }
 
 test("音频：首页 BGM 在首次交互后从 locked 状态真正启动", lockedMenuMusicStartsAfterInteraction);
+
+test("音频：select 使用独立 UI gain 且不放大全部游戏 SFX", () => {
+  const sound = new SoundManager();
+  const calls = [];
+  sound.softNoise = (...args) => calls.push(args);
+  sound.sound_select(12);
+  assert.deepEqual(calls, [[12, 0.032, 0.12, 680, 0.003]]);
+  calls.length = 0;
+  sound.sound_playCard(12);
+  assert.deepEqual(calls.map((args) => args[2]), [0.065, 0.075], "其它游戏 SFX 参数不得被 UI gain 修改");
+});
+
+test("音频：showStart 请求 menu 时立即尝试解锁而非只登记 profile", () => {
+  const attempts = [];
+  const context = {
+    sound: { playMenuMusic: () => attempts.push("menu") },
+    elements: {
+      start_screen: { classList: { remove() { }, add() { } } },
+      squad_selection_screen: { classList: { add() { }, remove() { } } },
+      selection_screen: { classList: { add() { }, remove() { } } },
+      game_screen: { classList: { add() { }, remove() { } } }
+    },
+    clearLog() { }
+  };
+  UIManager.prototype.showStart.call(context);
+  assert.deepEqual(attempts, ["menu"]);
+});
+
+/*
+功能
+验证 autoplay 拒绝不会向调用方抛出未处理异常，并保留当前 menu 主题等待下次解锁。
+
+调用方
+当前测试。
+
+输入
+resume 拒绝的 suspended AudioContext 与 menu 主题。
+
+输出
+Promise；断言失败时拒绝。
+
+读取状态
+SoundManager.context、musicTeam 与 unlock 返回值。
+
+写入状态
+模拟浏览器拒绝恢复的上下文状态。
+
+调用函数
+SoundManager.unlock。
+
+边界与不变量
+autoplay 拒绝是正常锁定状态，不得产生 rejected Promise；后续交互仍可重试。
+*/
+async function autoplayRejectionIsSafe() {
+  await withAudioContextStub(async () => {
+    const sound = new SoundManager();
+    const fake = makeFakeAudioContext();
+    fake.state = "suspended";
+    fake.resume = async () => { throw new Error("autoplay blocked"); };
+    sound.context = fake;
+    sound.enabled = true;
+    sound.musicTeam = "menu";
+    assert.equal(await sound.unlock(), false);
+    assert.equal(sound.musicTeam, "menu");
+  });
+}
+
+test("音频：autoplay 拒绝安全保留 menu 播放意图", autoplayRejectionIsSafe);
 
 /** 构造最小 Web Audio 假实现，用于验证 BGM 排程连续性、索引回绕与旧节点停止。 */
 function makeFakeAudioContext() {

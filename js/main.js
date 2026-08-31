@@ -41,9 +41,42 @@ function startRecruitment() {
   ui.showSquadSelection();
 }
 
+/*
+功能
+销毁未完成的征召并返回首页。
+
+调用方
+UIManager 编队页返回主界面按钮 callback。
+
+输入
+无。
+
+输出
+无返回值。
+
+读取状态
+当前 game 与 UI session owner。
+
+写入状态
+销毁并解绑当前未开始的 game，切换 UI 到首页。
+
+调用函数
+MatchApplication.dispose、UIManager.attachGame/showStart。
+
+边界与不变量
+返回不会提交临时编队选择；再次点击开启本局时由 startRecruitment 创建全新对局。
+*/
+function returnToStart() {
+  game?.dispose();
+  game = null;
+  ui.attachGame(null);
+  ui.showStart();
+}
+
 ui.setCallbacks({
   onStart: startRecruitment,
   onRestart: startRecruitment,
+  onBackToStart: returnToStart,
   /*
   功能
   锁定本次编队方式并进入角色选择界面。

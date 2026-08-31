@@ -551,7 +551,7 @@ body.rulebook-open { overflow: hidden; }
 }
 
 @media (max-width: 520px) {
-  .start-actions { align-items: stretch; flex-direction: column; }
+  .start-actions { align-items: flex-start; }
   .rulebook-invitation-art { height: 228px; }
   .invitation-card { width: 103px; height: 145px; }
   .rulebook-cover-content { width: 100%; min-height: 48%; height: 48%; justify-content: flex-start; padding: 30px 24px 10px; }

@@ -3,8 +3,9 @@
 .start-copy h1 { margin: 12px 0 22px; font: 700 clamp(64px, 8vw, 116px)/.92 var(--serif); letter-spacing: -.06em; color: #322a20; }
 .start-copy h1 span { color: var(--gold); }
 .lead { max-width: 670px; color: var(--text-secondary); font: 17px/1.9 var(--serif); }
-.start-actions { display: flex; align-items: center; gap: 12px; margin-top: 34px; }
+.start-actions { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
 .start-button { min-width: 190px; }
+.start-actions > .start-button, .start-actions > .audio-controls { flex: 0 0 auto; }
 .rules-card { padding: 30px; border: 1px solid var(--border); border-radius: 6px 26px 6px 26px; background: linear-gradient(145deg, rgba(255,253,247,.98), rgba(244,237,222,.96)); box-shadow: var(--shadow-card); }
 .rules-heading { display: flex; align-items: center; gap: 14px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .rules-heading small, .log-heading small { color: var(--text-muted); font-size: 12px; letter-spacing: .16em; }

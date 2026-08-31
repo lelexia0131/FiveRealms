@@ -202,7 +202,7 @@ export class UIManager {
   constructor() {
     this.elements = Object.fromEntries([
       "start-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "rules-button",
-      "squad-mode-grid", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
+      "squad-mode-grid", "back-to-start-button", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
       "public-pool-view", "judgment-view", "dying-view", "duel-view",
@@ -475,6 +475,7 @@ export class UIManager {
     for (const input of this.musicVolumeInputs) input.addEventListener("input", () => this.setMusicVolume(input.value));
     for (const input of this.sfxVolumeInputs) input.addEventListener("input", () => this.setSfxVolume(input.value));
     this.elements.start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onStart?.(); });
+    this.elements.back_to_start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToStart?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.squad_mode_grid.addEventListener("click", (event) => this.handleSquadModeClick(event));

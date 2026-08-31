@@ -499,8 +499,13 @@ export class SoundManager {
   */
   async unlock() {
     if (!this.enabled || !this.isSupported) return false;
-    if (!this.context) this.createGraph();
-    if (this.context.state === "suspended") await this.context.resume();
+    try {
+      if (!this.context) this.createGraph();
+      if (this.context.state === "suspended") await this.context.resume();
+    } catch {
+      // autoplay 拒绝或上下文初始化失败是浏览器策略下的正常锁定状态；保留 musicTeam，等待下一次交互重试。
+      return false;
+    }
     if (this.musicTeam) this.startScheduler();
     // 首次解锁后后台预加载真实雷击采样，避免第一声闪电因 fetch+decode 明显延迟。
     if (!this.lightningBuffer && !this.lightningBufferPromise) void this.loadLightningBuffer();
@@ -718,10 +723,10 @@ export class SoundManager {
   setMusicTeam。
 
   边界与不变量
-  首页与说明书共用 menu；bootstrap 只登记主题，不得在用户手势前创建 AudioContext；重复进入不得重启 scheduler 或重置 musicStep。
+  首页与说明书共用 menu；进入页面立即尝试解锁，autoplay 被阻止时保留主题并由后续交互重试；重复进入不得重启 scheduler 或重置 musicStep。
   */
   playMenuMusic() {
-    return this.setMusicTeam("menu", { unlock: Boolean(this.context) });
+    return this.setMusicTeam("menu");
   }
 
   /*
@@ -750,7 +755,7 @@ export class SoundManager {
   选编队曲目不得与首页/说明书 menu profile 共用身份或旋律。
   */
   playSquadSelectionMusic() {
-    return this.setMusicTeam("squadSelection", { unlock: Boolean(this.context) });
+    return this.setMusicTeam("squadSelection");
   }
 
   /*
@@ -1292,10 +1297,11 @@ export class SoundManager {
   softNoise。
 
   边界与不变量
-  select 节流由 play 统一处理，本方法不读墙钟。
+  select 节流由 play 统一处理；局部 gain 只影响 UI 点击，不改变其它 SFX 总增益。
   */
   sound_select(time) {
-    this.softNoise(time, 0.032, 0.028, 680, 0.003);
+    // UI 点击需要在正常 BGM 下清晰可辨；只提升本 profile，不放大全部游戏 SFX。
+    this.softNoise(time, 0.032, 0.12, 680, 0.003);
   }
 
   /*
