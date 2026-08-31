@@ -206,7 +206,7 @@ export class MatchMvpResultView {
   createRadarChartMarkup、formatNumber、escapeHtml。
 
   边界与不变量
-  雷达只读取原始 ratios；回合与胜局系数只显示在最终分区域。
+  顶部战斗统计只读取 ViewModel combatStats；雷达只读取原始 ratios；回合与胜局系数只显示在最终分区域。
   */
   renderSelection() {
     if (!this.root || !this.viewModel) return;
@@ -225,7 +225,12 @@ export class MatchMvpResultView {
       <b>${formatNumber(selected.raw[key], 2)}</b>
       <strong>${formatNumber(selected.scores[key], 1)}</strong>
     </div>`).join("");
-    detail.innerHTML = `<header><div><small>当前查看</small><strong>${escapeHtml(selected.primaryName)}</strong></div><span>第 ${selected.rank} 名</span></header>
+    detail.innerHTML = `<header><div class="match-mvp-detail-copy"><small>当前查看</small><strong>${escapeHtml(selected.primaryName)}</strong>
+      <p class="match-mvp-combat-stats" aria-label="总伤 / 支援 / 承伤 ${formatNumber(selected.combatStats.totalDamage, 0)}/${formatNumber(selected.combatStats.support, 0)}/${formatNumber(selected.combatStats.damageTaken, 0)}">
+        <span>总伤 / 支援 / 承伤</span>
+        <b><i class="is-damage-dealt">${formatNumber(selected.combatStats.totalDamage, 0)}</i>/<i class="is-support">${formatNumber(selected.combatStats.support, 0)}</i>/<i class="is-damage-taken">${formatNumber(selected.combatStats.damageTaken, 0)}</i></b>
+      </p>
+    </div><span>第 ${selected.rank} 名</span></header>
       <div class="match-mvp-radar-wrap">${createRadarChartMarkup(selected.ratios)}</div>
       <div class="match-mvp-stat-table"><div class="match-mvp-stat-heading"><span>维度</span><b>原始</b><strong>得分</strong></div>${rows}</div>
       <footer class="match-mvp-totals">

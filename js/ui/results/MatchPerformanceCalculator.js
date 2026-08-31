@@ -178,7 +178,7 @@ createMatchResultViewModel 与纯公式测试。
 包含 totals、effectiveRounds、initialTeamSize、胜负与残局快照的 rawStats。
 
 输出
-冻结的玩家表现派生对象。
+冻结的玩家表现派生对象，含不参与评分的本局战斗统计摘要。
 
 读取状态
 无。
@@ -190,7 +190,7 @@ createMatchResultViewModel 与纯公式测试。
 getPerformanceThresholds、getRoundMultiplier、getVictoryMultiplier、calculateContributionTotal、normalizeForRadar。
 
 边界与不变量
-有效回合至少为一；贡献事实保留正负净值，但用于评分的每回合贡献最低为零；回合与胜局系数都不改变 raw、ratio 或单项分。
+有效回合至少为一；战斗统计摘要只汇总 tracker 事实且不参与评分；贡献事实保留正负净值，但用于评分的每回合贡献最低为零；回合与胜局系数都不改变 raw、ratio 或单项分。
 */
 export function calculatePerformance(rawStats, policy = MATCH_PERFORMANCE_POLICY) {
   const totals = rawStats.totals;
@@ -218,9 +218,19 @@ export function calculatePerformance(rawStats, policy = MATCH_PERFORMANCE_POLICY
   const baseScore = MATCH_PERFORMANCE_DIMENSIONS.reduce((sum, key) => sum + scores[key], 0);
   const roundMultiplier = getRoundMultiplier(effectiveRounds, policy);
   const victoryMultiplier = getVictoryMultiplier(rawStats, policy);
+  const combatStats = Object.freeze({
+    totalDamage: Math.max(0, Number(totals.enemyHpDamage) || 0),
+    support: Math.max(0,
+      (Number(totals.allyHealing) || 0)
+      + (Number(totals.allyRescueHealing) || 0)
+      + (Number(totals.allyMitigation) || 0)
+      + (Number(totals.allyShieldAbsorbed) || 0)),
+    damageTaken: Math.max(0, Number(totals.hpDamageTaken) || 0)
+  });
   return Object.freeze({
     ...rawStats,
     contributionTotal,
+    combatStats,
     raw,
     ratios,
     scores,

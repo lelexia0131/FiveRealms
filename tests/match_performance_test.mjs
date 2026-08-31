@@ -25,6 +25,7 @@ const TOTAL_DEFAULTS = Object.freeze({
   allyRescueHealing: 0,
   allyMitigation: 0,
   allyShieldAbsorbed: 0,
+  hpDamageTaken: 0,
   cardsPlayed: 0,
   skillEnergySpent: 0,
   enemyControls: 0
@@ -321,6 +322,67 @@ export function registerMatchPerformanceTests(test) {
       }
     }));
     assert.equal(result.raw.support, 1.6);
+  });
+
+  test("UI·MVP：真实战斗事实透传总伤支援与承伤且不改变排名雷达", async () => {
+    const actor = trackerPlayer("actor", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const enemyAlly = trackerPlayer("enemy-ally", 3, "dusk");
+    const { dispatcher, tracker } = trackerFixture([actor, ally, enemy, enemyAlly]);
+    await dispatcher.emit("afterDamage", {
+      source: actor, target: enemy, actualAmount: 18, shieldAbsorbed: 0, metadata: {}
+    });
+    await dispatcher.emit("afterHeal", {
+      source: actor, target: ally, actualAmount: 1, isDyingRescue: false
+    });
+    await dispatcher.emit("afterHeal", {
+      source: actor, target: ally, actualAmount: 1, isDyingRescue: true
+    });
+    ally.shield = 1;
+    await dispatcher.emit("shieldGranted", {
+      source: actor, target: ally, actualAddedAmount: 1, effectDefinitionId: "test-shield"
+    });
+    ally.shield = 0;
+    await dispatcher.emit("afterDamage", {
+      source: enemy,
+      target: ally,
+      actualAmount: 4,
+      shieldAbsorbed: 1,
+      metadata: {
+        mitigationContributions: [
+          { contributorPlayerId: actor.id, effectDefinitionId: "test-mitigation", amount: 2 }
+        ]
+      }
+    });
+    await dispatcher.emit("afterDamage", {
+      source: enemy, target: actor, actualAmount: 6, shieldAbsorbed: 4, metadata: {}
+    });
+    await dispatcher.emit("afterDamage", {
+      source: enemy, target: actor, actualAmount: 0, shieldAbsorbed: 3, metadata: {}
+    });
+    await dispatcher.emit("afterHpLoss", { player: actor, actualAmount: 2 });
+    await dispatcher.emit("afterHeal", {
+      source: enemy, target: actor, actualAmount: 4, isDyingRescue: false
+    });
+
+    const snapshot = tracker.finalizeMatch();
+    const viewModel = createMatchResultViewModel(snapshot);
+    const result = viewModel.players.find((player) => player.playerId === actor.id);
+    const scoreControl = calculatePerformance(rawPlayer({
+      totals: {
+        enemyHpDamage: 18,
+        allyHealing: 1,
+        allyRescueHealing: 1,
+        allyMitigation: 2,
+        allyShieldAbsorbed: 1
+      }
+    }));
+    assert.deepEqual(result.combatStats, { totalDamage: 18, support: 5, damageTaken: 8 });
+    assert.equal(snapshot.players[0].totals.hpDamageTaken, 8);
+    assert.equal(result.rank, 1);
+    assert.deepEqual(result.raw, scoreControl.raw);
+    assert.deepEqual(result.ratios, scoreControl.ratios);
   });
 
   test("UI·MVP：实际减伤只归属保护队友的贡献者", async () => {
@@ -1010,6 +1072,60 @@ export function registerMatchPerformanceTests(test) {
     assert.doesNotMatch(rankingMarkup, /match-mvp-badge/);
     assert.doesNotMatch(heroMarkup, /本场 MVP/);
     assert.match(heroMarkup, /match-mvp-hero-watermark[^>]*aria-hidden="true">MVP/);
+  });
+
+  test("UI·MVP：切换当前查看角色同步更新顶部战斗统计", () => {
+    const detail = { innerHTML: "" };
+    const buttons = ["leader", "support"].map((playerId) => ({
+      dataset: { matchPerformancePlayerId: playerId },
+      classList: { toggle() {} },
+      setAttribute() {}
+    }));
+    const root = {
+      addEventListener() {},
+      querySelectorAll() { return buttons; },
+      querySelector() { return detail; }
+    };
+    const viewModel = createMatchResultViewModel({
+      gameId: "combat-stats-switch",
+      players: [
+        rawPlayer({
+          playerId: "leader",
+          playerName: "甲",
+          seatIndex: 0,
+          totals: {
+            enemyHpDamage: 18,
+            allyHealing: 2,
+            allyMitigation: 3,
+            hpDamageTaken: 8
+          }
+        }),
+        rawPlayer({
+          playerId: "support",
+          playerName: "乙",
+          seatIndex: 1,
+          totals: {
+            enemyHpDamage: 7,
+            allyShieldAbsorbed: 1,
+            hpDamageTaken: 12
+          }
+        })
+      ]
+    });
+    const view = new MatchMvpResultView(root);
+    view.viewModel = viewModel;
+    view.selectedPlayerId = viewModel.defaultSelectedPlayerId;
+    view.renderSelection();
+    assert.match(detail.innerHTML, /甲/);
+    assert.match(detail.innerHTML, /aria-label="总伤 \/ 支援 \/ 承伤 18\/5\/8"/);
+    assert.match(detail.innerHTML, /is-damage-dealt[^>]*>18<\/i>\/.*is-support[^>]*>5<\/i>\/.*is-damage-taken[^>]*>8<\/i>/s);
+
+    view.handleClick({
+      target: { closest: () => ({ dataset: { matchPerformancePlayerId: "support" } }) }
+    });
+    assert.match(detail.innerHTML, /乙/);
+    assert.match(detail.innerHTML, /aria-label="总伤 \/ 支援 \/ 承伤 7\/1\/12"/);
+    assert.doesNotMatch(detail.innerHTML, /18\/5\/8/);
   });
 
   test("UI·MVP：本人纹章不写入结果且晨昏队伍使用不同展示图案", () => {

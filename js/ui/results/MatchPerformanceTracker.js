@@ -78,6 +78,7 @@ function createPlayerRecord(player, initialTeamSize) {
       allyRescueHealing: 0,
       allyMitigation: 0,
       allyShieldAbsorbed: 0,
+      hpDamageTaken: 0,
       cardsPlayed: 0,
       skillEnergySpent: 0,
       enemyControls: 0
@@ -190,6 +191,7 @@ export class MatchPerformanceTracker {
       gameStart: () => this.initializeRoster(),
       roundStart: () => this.handleRoundStart(),
       afterDamage: (event) => this.handleAfterDamage(event),
+      afterHpLoss: (event) => this.handleAfterHpLoss(event),
       afterHeal: (event) => this.handleAfterHeal(event),
       shieldGranted: (event) => this.handleShieldGranted(event),
       beforeCardUse: (event) => this.handleBeforeCardUse(event),
@@ -593,7 +595,7 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  累计真实减伤与护盾吸收归属，并累计对敌最终实际生命伤害。
+  累计真实减伤与护盾吸收归属、目标实际生命承伤，以及来源对敌实际生命伤害。
 
   调用方
   afterDamage listener。
@@ -608,20 +610,53 @@ export class MatchPerformanceTracker {
   结构化 afterDamage fact。
 
   写入状态
-  合法 provider 的 allyMitigation/allyShieldAbsorbed 与 source.enemyHpDamage。
+  合法 provider 的 allyMitigation/allyShieldAbsorbed、target.hpDamageTaken 与 source.enemyHpDamage。
 
   调用函数
   settleMitigationContributions、settleShieldAbsorption、recordFor。
 
   边界与不变量
-  友伤、自伤、环境伤害、格挡、护盾吸收和减伤部分均不增加火力。
+  承伤只取 actualAmount；友伤、自伤、环境伤害、格挡、护盾吸收和减伤部分均不增加火力。
   */
   handleAfterDamage(event) {
     this.settleMitigationContributions(event);
     this.settleShieldAbsorption(event);
+    const actualAmount = Math.max(0, Number(event.actualAmount) || 0);
+    const targetRecord = this.recordFor(event.target);
+    if (targetRecord) targetRecord.totals.hpDamageTaken += actualAmount;
     if (!event.source || !event.target || event.source.battleTeam === event.target.battleTeam) return;
     const record = this.recordFor(event.source);
-    if (record) record.totals.enemyHpDamage += Math.max(0, Number(event.actualAmount) || 0);
+    if (record) record.totals.enemyHpDamage += actualAmount;
+  }
+
+  /*
+  功能
+  累计绕过护盾的效果失血所造成的真实生命承伤。
+
+  调用方
+  afterHpLoss listener。
+
+  输入
+  含 player 与 actualAmount 的结算后 HP-loss 事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  结构化 afterHpLoss fact。
+
+  写入状态
+  player.hpDamageTaken。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  只取 workflow 已提交的实际失血；不读取最终 HP，不把治疗、护盾或死亡状态切换计为承伤。
+  */
+  handleAfterHpLoss(event) {
+    const record = this.recordFor(event.player);
+    if (record) record.totals.hpDamageTaken += Math.max(0, Number(event.actualAmount) || 0);
   }
 
   /*
