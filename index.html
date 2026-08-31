@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="./css/characters.css" />
   <link rel="stylesheet" href="./css/cards.css" />
   <link rel="stylesheet" href="./css/components.css" />
+  <link rel="stylesheet" href="./css/rulebook.css" />
   <link rel="stylesheet" href="./css/animations.css" />
 </head>
 
@@ -48,21 +49,27 @@
         </div>
       </div>
 
-      <div class="rules-card" aria-label="快速规则">
-        <div class="rules-heading">
-          <span class="mini-rune" aria-hidden="true">✦</span>
-          <div><small>QUICK BRIEF</small>
-            <h2>入局须知</h2>
-          </div>
+      <aside class="rulebook-invitation" aria-labelledby="rulebook-invitation-title">
+        <div class="rulebook-invitation-art" aria-hidden="true">
+          <img class="invitation-portrait invitation-portrait-left" src="./assets/characters/blade-walker.svg" alt="" />
+          <img class="invitation-card invitation-card-left" src="./assets/cards/block.svg" alt="" />
+          <img class="invitation-card invitation-card-center" src="./assets/cards/assault.svg" alt="" />
+          <img class="invitation-card invitation-card-right" src="./assets/cards/counter.svg" alt="" />
+          <img class="invitation-portrait invitation-portrait-right" src="./assets/characters/oath-warden.svg" alt="" />
+          <span class="invitation-versus">VS</span>
         </div>
-        <ol>
-          <li><strong>选择编队</strong><span>决定加入2人小队、3人大队或交给命运。</span></li>
-          <li><strong>轮流行动</strong><span>摸牌、出牌、弃牌，阵亡角色会被跳过。</span></li>
-          <li><strong>即时响应</strong><span>用格挡、反制与濒死调息改变结算。</span></li>
-          <li><strong>全灭即胜</strong><span>让敌方全部阵亡，你的阵营便会获胜。</span></li>
-        </ol>
-        <p class="rules-note">二人阵营开局摸5张、每回合摸3张；三人阵营开局摸4张、每回合摸2张。</p>
-      </div>
+        <div class="rulebook-invitation-copy">
+          <small>ILLUSTRATED FIELD MANUAL</small>
+          <h2 id="rulebook-invitation-title">入局说明</h2>
+          <p>翻开二十二页插画式战场手册，从第一张牌到第一场胜利。</p>
+          <div class="rulebook-invitation-seals" aria-label="说明书内容">
+            <span>26 张卡牌</span><span>8 名角色</span><span>完整实战</span>
+          </div>
+          <button id="rules-button" class="primary-button rulebook-open-button" type="button">
+            <span>展开规则书</span><span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </aside>
     </section>
 
     <section id="squad-selection-screen" class="screen squad-selection-screen is-hidden"
@@ -263,6 +270,9 @@
       </div>
     </section>
   </main>
+
+  <div id="rulebook-overlay" class="rulebook-overlay is-hidden" role="dialog" aria-modal="true"
+    aria-labelledby="rulebook-title"></div>
 
   <div id="skill-details-overlay" class="skill-details-overlay is-hidden" role="dialog" aria-modal="true"
     aria-labelledby="skill-details-title"></div>

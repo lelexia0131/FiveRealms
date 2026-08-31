@@ -20,6 +20,7 @@ import { SoundManager } from "../audio/SoundManager.js";
 import { normalizeAiSpeed, readAiSpeedPreference, writeAiSpeedPreference } from "../utils/aiTiming.js";
 import { TEAM_ASSIGNMENT_MODE } from "../application/match/TeamAssignmentMode.js";
 import { MatchMvpResultView } from "./results/MatchMvpResultView.js";
+import { RulebookView } from "./RulebookView.js";
 
 const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
@@ -200,7 +201,7 @@ export class UIManager {
   */
   constructor() {
     this.elements = Object.fromEntries([
-      "start-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button",
+      "start-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "rules-button",
       "squad-mode-grid", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
@@ -208,7 +209,7 @@ export class UIManager {
       "skill-button", "end-play-button", "discard-confirm-button", "cancel-interaction-button",
       "log-panel", "battle-layout", "log-toggle-button", "ai-speed-control",
       "log-list", "log-count", "skill-details-overlay", "game-over-overlay", "game-over-title", "game-over-copy",
-      "match-mvp-result", "play-again-button"
+      "match-mvp-result", "play-again-button", "rulebook-overlay"
     ].map((id) => [id.replaceAll("-", "_"), document.getElementById(id)]));
     this.callbacks = {};
     this.sound = new SoundManager();
@@ -236,6 +237,7 @@ export class UIManager {
     this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
     this.judgmentView = new JudgmentView(this.elements.judgment_view);
     this.matchMvpResultView = new MatchMvpResultView(this.elements.match_mvp_result);
+    this.rulebookView = new RulebookView(this.elements.rulebook_overlay, this.elements.rules_button);
     this.viewportWasNarrow = window.innerWidth < 1280;
     this.bindEvents();
     this.setAiSpeed(this.aiSpeed);

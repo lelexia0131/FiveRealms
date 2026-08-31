@@ -155,6 +155,7 @@ import {
 } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup, orderZoneSelectionSlots } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
+import { buildRulebookPages, getRulebookCardView } from "../js/ui/RulebookView.js";
 import { PrivateRevealView } from "../js/ui/PrivateRevealView.js";
 import { AnimationController, LIGHTNING_HIT_DURATION_MS } from "../js/ui/animationController.js";
 import { JudgmentView } from "../js/ui/JudgmentView.js";
@@ -36870,6 +36871,78 @@ test("私人情报异步边界：pending reveal 时 dispose 清理后旧 scout �
 test("私人情报异步边界：PrivateRevealView.hide settle pending show Promise 并清空 overlay", privateRevealViewHideSettlesPendingShow);
 
 registerMatchPerformanceTests(test);
+
+// ---- 开始界面与入局说明 ----
+
+test("UI·入局说明：二十二页目录覆盖完整新手路径且页面 ID 唯一", () => {
+  const pages = buildRulebookPages();
+  assert.equal(pages.length, 22);
+  assert.equal(new Set(pages.map((page) => page.id)).size, pages.length);
+  assert.deepEqual(
+    pages.map((page) => page.id),
+    [
+      "cover", "victory", "interface", "turn", "card-basics", "basic-cards",
+      "assault-response", "control-tactics", "pressure-tactics", "supply-tactics",
+      "equipment", "distance", "resources", "characters-one", "characters-two",
+      "characters-three", "characters-four", "judgment", "death", "hidden-information",
+      "example-one", "example-two"
+    ]
+  );
+  const content = pages.map((page) => `${page.title}\n${page.html}`).join("\n");
+  for (const required of [
+    "晨星 VS 暮影", "战斗界面解剖", "完整回合流程", "卡牌入门", "突袭与响应",
+    "唯一装备槽", "存活环与距离", "生命、护盾与能量", "濒死、阵亡与观战",
+    "隐藏与公开信息", "漫画实战"
+  ]) assert.match(content, new RegExp(required));
+});
+
+test("UI·入局说明：二十六张正式卡均以真实定义与素材逐张图解", () => {
+  const content = buildRulebookPages().map((page) => page.html).join("\n");
+  assert.equal((content.match(/<article class="manual-card"/g) ?? []).length, 26);
+  for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
+    const view = getRulebookCardView(definitionId);
+    assert.equal(view.description, definition.description);
+    assert.equal(view.art, CARD_PRESENTATION[definitionId].art);
+    assert.ok(content.includes(`alt="${definition.name}卡牌插画"`));
+    assert.ok(content.includes(definition.description));
+    assert.ok(content.includes(CARD_PRESENTATION[definitionId].art));
+  }
+});
+
+test("UI·入局说明：八名正式角色逐一展示领域技能与现有立绘", () => {
+  const content = buildRulebookPages().map((page) => page.html).join("\n");
+  assert.equal((content.match(/<article class="character-manual">/g) ?? []).length, 8);
+  for (const character of CHARACTER_DEFINITIONS) {
+    const active = ACTIVE_SKILL_DEFINITIONS[character.activeSkillIds[0]];
+    const passive = PASSIVE_SKILL_DEFINITIONS[character.passiveSkillIds[0]];
+    assert.ok(content.includes(CHARACTER_PRESENTATION[character.id].portrait));
+    assert.ok(content.includes(active.description));
+    assert.ok(content.includes(passive.description));
+  }
+});
+
+test("UI·入局说明：开始页入口、分页交互与移动端布局使用稳定本地资源", async () => {
+  const [index, manager, view, css] = await Promise.all([
+    readFile(projectFile("index.html"), "utf8"),
+    readFile(projectFile("js/ui/UIManager.js"), "utf8"),
+    readFile(projectFile("js/ui/RulebookView.js"), "utf8"),
+    readFile(projectFile("css/rulebook.css"), "utf8")
+  ]);
+  assert.match(index, /id="rules-button"[\s\S]*展开规则书/);
+  assert.match(index, /id="rulebook-overlay"[^>]*role="dialog"[^>]*aria-modal="true"/);
+  assert.match(index, /href="\.\/css\/rulebook\.css"/);
+  assert.match(manager, /new RulebookView\(this\.elements\.rulebook_overlay, this\.elements\.rules_button\)/);
+  assert.match(view, /data-rulebook-prev/);
+  assert.match(view, /data-rulebook-next/);
+  assert.match(view, /data-rulebook-page/);
+  assert.match(view, /event\.key === "Escape"/);
+  assert.match(view, /event\.key === "ArrowLeft"/);
+  assert.match(view, /event\.key === "ArrowRight"/);
+  assert.match(view, /focusTarget\?\.focus\(\)/);
+  assert.match(css, /@media\s*\(max-width:\s*820px\)[\s\S]*\.rulebook-shell\s*\{[^}]*height:\s*100vh/s);
+  assert.match(css, /\.rulebook-toc\s*\{[^}]*overflow-y:\s*auto/s);
+  assert.doesNotMatch([index, manager, view, css].join("\n"), /\?build=/);
+});
 
 // ---- 编队与征召 ----
 
