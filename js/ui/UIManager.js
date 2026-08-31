@@ -2807,25 +2807,28 @@ export class UIManager {
   MatchPerformanceSidecar 的 gameOver listener。
 
   输入
-  已完成评分和排序的 MatchResultViewModel。
+  已完成评分和排序的 MatchResultViewModel，以及当前绑定对局的参与者元数据。
 
   输出
   无返回值。
 
   读取状态
-  matchMvpResultView。
+  matchMvpResultView 与当前对局玩家的 controllerType/id。
 
   写入状态
   MVP 结果区域 DOM 与默认选择。
 
   调用函数
-  MatchMvpResultView.render。
+  Array.find、MatchMvpResultView.render。
 
   边界与不变量
-  不读取或修改游戏状态，不在 UIManager 内重新评分或排序。
+  本人 ID 只作为展示上下文传给 View；不写入 MVP 结果，不修改游戏状态，也不重新评分或排序。
   */
   showMatchPerformance(viewModel) {
-    this.matchMvpResultView.render(viewModel);
+    const humanPlayerId = this.game?.state?.players?.find(
+      (player) => player.controllerType === "human"
+    )?.id ?? null;
+    this.matchMvpResultView.render(viewModel, humanPlayerId);
   }
 
   /*

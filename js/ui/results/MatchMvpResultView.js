@@ -107,7 +107,7 @@ export class MatchMvpResultView {
   UIManager.showMatchPerformance。
 
   输入
-  immutable MatchResultViewModel。
+  immutable MatchResultViewModel 与仅用于展示的真人玩家 ID。
 
   输出
   无返回值。
@@ -122,16 +122,18 @@ export class MatchMvpResultView {
   escapeHtml、formatNumber、renderSelection。
 
   边界与不变量
-  排名只使用已派生结果，不在 DOM 层重新评分或排序；重复名称不生成第二行 DOM。
+  排名只使用已派生结果，不在 DOM 层重新评分或排序；真人身份与队伍图案只影响展示；重复名称不生成第二行 DOM。
   */
-  render(viewModel) {
+  render(viewModel, humanPlayerId = null) {
     if (!this.root || !viewModel?.players?.length) return;
     this.viewModel = viewModel;
     this.selectedPlayerId = viewModel.defaultSelectedPlayerId;
     const mvp = viewModel.players[0];
-    const rows = viewModel.players.map((player) => `<button class="match-mvp-ranking-row" type="button"
-      data-match-performance-player-id="${escapeHtml(player.playerId)}" aria-pressed="false">
+    const rows = viewModel.players.map((player) => `<button class="match-mvp-ranking-row${player.playerId === humanPlayerId ? " is-human-player" : ""}" type="button"
+      data-match-performance-player-id="${escapeHtml(player.playerId)}" data-match-performance-team="${escapeHtml(player.teamId)}" aria-pressed="false">
+      <span class="match-mvp-team-pattern" aria-hidden="true"></span>
       ${player.isMvp ? '<span class="match-mvp-ranking-watermark" aria-hidden="true">MVP</span>' : ""}
+      ${player.playerId === humanPlayerId ? '<span class="match-mvp-player-sigil" aria-hidden="true"></span>' : ""}
       <span class="match-mvp-rank">${player.rank}</span>
       <span class="match-mvp-player-copy"><strong>${escapeHtml(player.primaryName)}</strong>${player.secondaryLabel ? `<small>${escapeHtml(player.secondaryLabel)}</small>` : ""}</span>
       <span class="match-mvp-score">${formatNumber(player.finalScore, 1)}</span>

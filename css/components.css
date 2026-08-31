@@ -143,7 +143,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .match-mvp-ranking h3 { margin: 0 0 10px; font: 700 19px/1.2 var(--serif); }
 .match-mvp-ranking-row { position: relative; isolation: isolate; overflow: hidden; width: 100%; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 10px; color: var(--text-primary); border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: left; }
 .match-mvp-ranking-row:hover, .match-mvp-ranking-row.is-selected { border-color: var(--gold); background: var(--gold-soft); }
+.match-mvp-ranking-row.is-human-player { border-color: rgba(62,127,88,.46); background: linear-gradient(90deg, rgba(62,127,88,.18), rgba(62,127,88,.04) 58%, transparent); box-shadow: inset 3px 0 var(--success); }
+.match-mvp-ranking-row.is-human-player:hover, .match-mvp-ranking-row.is-human-player.is-selected { border-color: var(--gold); background-color: var(--gold-soft); background-image: linear-gradient(90deg, rgba(62,127,88,.2), rgba(62,127,88,.05) 58%, transparent); }
 .match-mvp-ranking-row > * { position: relative; z-index: 1; }
+.match-mvp-ranking-row > .match-mvp-team-pattern { position: absolute; z-index: 0; top: 50%; left: 44%; width: 44px; height: 44px; opacity: .18; transform: translate(-50%, -50%); pointer-events: none; }
+.match-mvp-ranking-row[data-match-performance-team="dawn"] > .match-mvp-team-pattern { background: var(--dawn); clip-path: polygon(50% 0, 61% 34%, 85% 15%, 66% 39%, 100% 50%, 66% 61%, 85% 85%, 61% 66%, 50% 100%, 39% 66%, 15% 85%, 34% 61%, 0 50%, 34% 39%, 15% 15%, 39% 34%); }
+.match-mvp-ranking-row[data-match-performance-team="dusk"] > .match-mvp-team-pattern { border-radius: 50%; background: var(--dusk); -webkit-mask: radial-gradient(circle at 68% 38%, transparent 0 47%, #000 48%); mask: radial-gradient(circle at 68% 38%, transparent 0 47%, #000 48%); }
+.match-mvp-ranking-row > .match-mvp-player-sigil { position: absolute; z-index: 0; top: 50%; left: 18px; width: 54px; height: 54px; border: 1px solid rgba(62,127,88,.42); border-radius: 50%; background: radial-gradient(circle at 50% 28%, rgba(62,127,88,.58) 0 15%, transparent 16%), radial-gradient(ellipse at 50% 80%, rgba(62,127,88,.46) 0 34%, transparent 35%); box-shadow: 0 0 0 5px rgba(62,127,88,.08), 0 0 18px rgba(62,127,88,.22); transform: translateY(-50%); pointer-events: none; }
 .match-mvp-ranking-watermark { position: absolute; z-index: 0; top: 50%; right: 12px; color: var(--gold); opacity: .14; transform: translateY(-50%) rotate(-7deg); font: italic 900 54px/.8 var(--serif); letter-spacing: .08em; pointer-events: none; user-select: none; }
 .match-mvp-rank { color: var(--text-secondary); font: 800 17px/1 var(--serif); text-align: center; }
 .match-mvp-player-copy { min-width: 0; display: grid; }
@@ -159,7 +165,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .match-mvp-radar-ring { fill: none; stroke: rgba(117,95,64,.24); stroke-width: 1; }
 .match-mvp-radar-ring.is-standard { stroke: var(--gold); stroke-width: 2; }
 .match-mvp-radar-axis { stroke: rgba(117,95,64,.28); stroke-width: 1; }
-.match-mvp-radar-performance { fill: rgba(110,78,145,.25); stroke: #6e4e91; stroke-width: 2.5; stroke-linejoin: round; pointer-events: none; }
+.match-mvp-radar-performance { fill: rgba(72,111,149,.25); stroke: var(--shield); stroke-width: 2.5; stroke-linejoin: round; pointer-events: none; }
 .match-mvp-radar-origin { fill: var(--gold); }
 .match-mvp-radar-label { fill: var(--text-primary); stroke: rgba(255,253,247,.94); stroke-width: 4px; paint-order: stroke fill; font-size: 13px; font-weight: 800; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 .match-mvp-stat-table { border-top: 1px solid var(--border); }

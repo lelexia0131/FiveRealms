@@ -46,7 +46,7 @@ export const MATCH_PERFORMANCE_POLICY = Object.freeze({
       firepower: 2.0,
       support: 0.6,
       activity: 3.2,
-      skill: 0.8,
+      skill: 1.1,
       control: 0.8,
       contribution: 0.7
     }),
@@ -54,7 +54,7 @@ export const MATCH_PERFORMANCE_POLICY = Object.freeze({
       firepower: 1.2,
       support: 0.5,
       activity: 2.6,
-      skill: 0.7,
+      skill: 1.0,
       control: 0.6,
       contribution: 0.5
     })

@@ -11,6 +11,7 @@ import {
 import { MatchPerformanceTracker } from "../js/ui/results/MatchPerformanceTracker.js";
 import { createMatchResultViewModel } from "../js/ui/results/MatchResultViewModel.js";
 import { MatchMvpResultView } from "../js/ui/results/MatchMvpResultView.js";
+import { UIManager } from "../js/ui/UIManager.js";
 import {
   calculateRadarPoints,
   createRadarChartMarkup,
@@ -252,12 +253,12 @@ export function registerMatchPerformanceTests(test) {
     const thresholds = getPerformanceThresholds(2);
     const result = calculatePerformance(rawPlayer({
       effectiveRounds: 10,
-      totals: { skillEnergySpent: 8 },
+      totals: { skillEnergySpent: 11 },
       contributionFacts: { allyCardsGranted: 7 }
     }));
     assert.deepEqual(
       MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
-      [3.2, 0.6, 0.7, 0.8, 0.8, 2.0]
+      [3.2, 0.6, 0.7, 0.8, 1.1, 2.0]
     );
     assert.deepEqual([result.scores.contribution, result.scores.skill], [100, 100]);
   });
@@ -267,12 +268,12 @@ export function registerMatchPerformanceTests(test) {
     const result = calculatePerformance(rawPlayer({
       initialTeamSize: 3,
       effectiveRounds: 10,
-      totals: { skillEnergySpent: 7 },
+      totals: { skillEnergySpent: 10 },
       contributionFacts: { allyCardsGranted: 5 }
     }));
     assert.deepEqual(
       MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
-      [2.6, 0.5, 0.5, 0.6, 0.7, 1.2]
+      [2.6, 0.5, 0.5, 0.6, 1.0, 1.2]
     );
     assert.deepEqual([result.scores.contribution, result.scores.skill], [100, 100]);
   });
@@ -847,7 +848,7 @@ export function registerMatchPerformanceTests(test) {
         enemyHpDamage: 30,
         allyHealing: 9,
         cardsPlayed: 48,
-        skillEnergySpent: 12,
+        skillEnergySpent: 16.5,
         enemyControls: 12
       },
       contributionFacts: { allyCardsGranted: 10.5 }
@@ -862,7 +863,7 @@ export function registerMatchPerformanceTests(test) {
         enemyHpDamage: 18,
         allyHealing: 7.5,
         cardsPlayed: 39,
-        skillEnergySpent: 10.5,
+        skillEnergySpent: 15,
         enemyControls: 9
       },
       contributionFacts: { allyCardsGranted: 7.5 }
@@ -939,6 +940,49 @@ export function registerMatchPerformanceTests(test) {
     assert.doesNotMatch(rankingMarkup, /match-mvp-badge/);
     assert.doesNotMatch(heroMarkup, /本场 MVP/);
     assert.match(heroMarkup, /match-mvp-hero-watermark[^>]*aria-hidden="true">MVP/);
+  });
+
+  test("UI·MVP：本人纹章不写入结果且晨昏队伍使用不同展示图案", () => {
+    const viewModel = createMatchResultViewModel({
+      gameId: "human-sigil",
+      players: [
+        rawPlayer({ playerId: "local", playerName: "甲", seatIndex: 0 }),
+        rawPlayer({ playerId: "leader", playerName: "乙", teamId: "dusk", seatIndex: 1, totals: { enemyHpDamage: 1 } })
+      ]
+    });
+    const root = {
+      innerHTML: "",
+      addEventListener() {},
+      querySelectorAll() { return []; },
+      querySelector() { return null; }
+    };
+    new MatchMvpResultView(root).render(viewModel, "local");
+    const rankingRows = root.innerHTML.match(/<button[\s\S]*?<\/button>/g) ?? [];
+    const localRow = rankingRows.find((row) => row.includes('data-match-performance-player-id="local"')) ?? "";
+    const leaderRow = rankingRows.find((row) => row.includes('data-match-performance-player-id="leader"')) ?? "";
+    assert.equal(Object.hasOwn(viewModel.players.find((player) => player.playerId === "local"), "isHumanPlayer"), false);
+    assert.match(localRow, /match-mvp-ranking-row is-human-player/);
+    assert.match(localRow, /match-mvp-player-sigil[^>]*aria-hidden="true"/);
+    assert.match(localRow, /data-match-performance-team="dawn"/);
+    assert.match(localRow, /match-mvp-team-pattern[^>]*aria-hidden="true"/);
+    assert.doesNotMatch(localRow, />本人<|>YOU<|>玩家</);
+    assert.doesNotMatch(leaderRow, /is-human-player|match-mvp-player-sigil/);
+    assert.match(leaderRow, /data-match-performance-team="dusk"/);
+    assert.match(leaderRow, /match-mvp-team-pattern[^>]*aria-hidden="true"/);
+    assert.match(leaderRow, /match-mvp-ranking-watermark[^>]*aria-hidden="true">MVP/);
+  });
+
+  test("UI·MVP：UIManager 从当前对局参与者元数据传递真人展示上下文", () => {
+    const viewModel = Object.freeze({ players: Object.freeze([]) });
+    const calls = [];
+    const manager = Object.create(UIManager.prototype);
+    manager.game = { state: { players: [
+      { id: "leader", controllerType: "ai" },
+      { id: "local", controllerType: "human" }
+    ] } };
+    manager.matchMvpResultView = { render: (...args) => calls.push(args) };
+    manager.showMatchPerformance(viewModel);
+    assert.deepEqual(calls, [[viewModel, "local"]]);
   });
 
   test("UI·MVP：详情使用回合系数与胜局系数且不再显示存活奖励", () => {
