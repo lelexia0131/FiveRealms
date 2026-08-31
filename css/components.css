@@ -161,11 +161,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .match-mvp-player-copy strong, .match-mvp-player-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .match-mvp-player-copy small { color: var(--text-secondary); font-size: 11px; }
 .match-mvp-score { font-weight: 900; font-variant-numeric: tabular-nums; }
-.match-mvp-detail > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.match-mvp-detail-copy { display: grid; }
-.match-mvp-detail > header small, .match-mvp-detail > header span { color: var(--text-secondary); font-size: 12px; }
+.match-mvp-detail > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.match-mvp-detail-copy { min-width: 0; display: flex; align-items: baseline; gap: 12px; white-space: nowrap; }
+.match-mvp-detail > header span { color: var(--text-secondary); font-size: 12px; }
+.match-mvp-detail > header > span { flex: 0 0 auto; white-space: nowrap; }
 .match-mvp-detail > header strong { font: 700 20px/1.2 var(--serif); }
-.match-mvp-combat-stats { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 5px 0 0; font-size: 12px; }
+.match-mvp-combat-stats { flex: 0 0 auto; display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 12px; }
 .match-mvp-combat-stats > b { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .match-mvp-combat-stats i { font-style: normal; }
 .match-mvp-combat-stats .is-damage-dealt { color: var(--shield); }
@@ -178,7 +179,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .match-mvp-radar-axis { stroke: rgba(117,95,64,.28); stroke-width: 1; }
 .match-mvp-radar-performance { fill: rgba(72,111,149,.25); stroke: var(--shield); stroke-width: 2.5; stroke-linejoin: round; pointer-events: none; }
 .match-mvp-radar-origin { fill: var(--gold); }
-.match-mvp-radar-label { fill: var(--text-primary); stroke: rgba(255,253,247,.94); stroke-width: 4px; paint-order: stroke fill; font-size: 13px; font-weight: 800; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+.match-mvp-radar-label { fill: var(--text-primary); font-size: 13px; font-weight: 800; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 .match-mvp-stat-table { border-top: 1px solid var(--border); }
 .match-mvp-stat-heading, .match-mvp-stat-row { display: grid; grid-template-columns: minmax(0, 1fr) 70px 70px; gap: 8px; padding: 6px 4px; font-size: 12px; }
 .match-mvp-stat-heading { color: var(--text-secondary); font-weight: 800; }

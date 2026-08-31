@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js";
 import { createSkillEffectRuntime } from "../js/application/action/SkillEffectRuntime.js";
 import { ACTIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js";
@@ -1074,7 +1075,7 @@ export function registerMatchPerformanceTests(test) {
     assert.match(heroMarkup, /match-mvp-hero-watermark[^>]*aria-hidden="true">MVP/);
   });
 
-  test("UI·MVP：切换当前查看角色同步更新顶部战斗统计", () => {
+  test("UI·MVP：切换详情角色同步更新同排顶部战斗统计", () => {
     const detail = { innerHTML: "" };
     const buttons = ["leader", "support"].map((playerId) => ({
       dataset: { matchPerformancePlayerId: playerId },
@@ -1117,6 +1118,8 @@ export function registerMatchPerformanceTests(test) {
     view.selectedPlayerId = viewModel.defaultSelectedPlayerId;
     view.renderSelection();
     assert.match(detail.innerHTML, /甲/);
+    assert.doesNotMatch(detail.innerHTML, /当前查看/);
+    assert.match(detail.innerHTML, /<header><div class="match-mvp-detail-copy"><strong>甲<\/strong>[\s\S]*<\/div><span>第 1 名<\/span><\/header>/);
     assert.match(detail.innerHTML, /aria-label="总伤 \/ 支援 \/ 承伤 18\/5\/8"/);
     assert.match(detail.innerHTML, /is-damage-dealt[^>]*>18<\/i>\/.*is-support[^>]*>5<\/i>\/.*is-damage-taken[^>]*>8<\/i>/s);
 
@@ -1209,9 +1212,13 @@ export function registerMatchPerformanceTests(test) {
     assert.deepEqual([points[3].x, points[3].y], [160, 252]);
   });
 
-  test("UI·MVP：雷达只生成六维标签而不生成中心零与百分比文字", () => {
+  test("UI·MVP：雷达只生成纯文字六维标签且无白色轮廓", async () => {
     const markup = createRadarChartMarkup({});
+    const css = await readFile(new URL("../css/components.css", import.meta.url), "utf8");
+    const labelRule = css.match(/\.match-mvp-radar-label\s*\{([^}]*)\}/)?.[1] ?? "";
     assert.doesNotMatch(markup, />0<|100%/);
+    assert.doesNotMatch(markup, /<rect|<foreignObject/);
+    assert.doesNotMatch(labelRule, /(?:^|;)\s*(?:stroke|stroke-width|paint-order|text-shadow|background)\s*:/);
     for (const label of ["行动", "支援", "贡献", "控制", "技能", "火力"]) {
       assert.match(markup, new RegExp(`>${label}<`));
     }

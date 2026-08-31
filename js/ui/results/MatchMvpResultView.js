@@ -225,7 +225,7 @@ export class MatchMvpResultView {
       <b>${formatNumber(selected.raw[key], 2)}</b>
       <strong>${formatNumber(selected.scores[key], 1)}</strong>
     </div>`).join("");
-    detail.innerHTML = `<header><div class="match-mvp-detail-copy"><small>当前查看</small><strong>${escapeHtml(selected.primaryName)}</strong>
+    detail.innerHTML = `<header><div class="match-mvp-detail-copy"><strong>${escapeHtml(selected.primaryName)}</strong>
       <p class="match-mvp-combat-stats" aria-label="总伤 / 支援 / 承伤 ${formatNumber(selected.combatStats.totalDamage, 0)}/${formatNumber(selected.combatStats.support, 0)}/${formatNumber(selected.combatStats.damageTaken, 0)}">
         <span>总伤 / 支援 / 承伤</span>
         <b><i class="is-damage-dealt">${formatNumber(selected.combatStats.totalDamage, 0)}</i>/<i class="is-support">${formatNumber(selected.combatStats.support, 0)}</i>/<i class="is-damage-taken">${formatNumber(selected.combatStats.damageTaken, 0)}</i></b>
