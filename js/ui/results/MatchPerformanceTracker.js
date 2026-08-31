@@ -2,7 +2,7 @@ import { MATCH_PERFORMANCE_POLICY } from "./MatchPerformancePolicy.js";
 
 /*
 功能
-创建一名玩家本局独立的团队牌资源贡献事实桶。
+创建一名玩家本局独立的贡献事实桶。
 
 调用方
 createPlayerRecord。
@@ -11,7 +11,7 @@ createPlayerRecord。
 无。
 
 输出
-六项从零开始的可变 contribution facts。
+七项从零开始的可变 contribution facts。
 
 读取状态
 无。
@@ -23,7 +23,7 @@ createPlayerRecord。
 无。
 
 边界与不变量
-只记录真实资源变化与成功保护；总分公式留给 calculator 派生。
+只记录真实资源变化、成功保护与封印结算；总分公式留给 calculator 派生。
 */
 function createContributionFacts() {
   return {
@@ -32,7 +32,8 @@ function createContributionFacts() {
     enemyCardsDestroyed: 0,
     enemyCardsTransferred: 0,
     allyResourceActionsProtected: 0,
-    enemyCardsGranted: 0
+    enemyCardsGranted: 0,
+    sealContribution: 0
   };
 }
 
@@ -194,6 +195,7 @@ export class MatchPerformanceTracker {
       beforeCardUse: (event) => this.handleBeforeCardUse(event),
       cardUsed: (event) => this.handleCardUsed(event),
       cardsGranted: (event) => this.handleCardsGranted(event),
+      sealSettled: (event) => this.handleSealSettled(event),
       skillEnergyPaid: (event) => this.handleSkillEnergyPaid(event),
       playerDead: (event) => this.handlePlayerDead(event)
     };
@@ -960,6 +962,40 @@ export class MatchPerformanceTracker {
         (target) => target?.battleTeam !== source.battleTeam
       ).length;
     }
+  }
+
+  /*
+  功能
+  把封印成功生效后的基础贡献与真实弃牌数累计到原始施加者。
+
+  调用方
+  sealSettled fact listener。
+
+  输入
+  含 source、target 与 discardedCount 的已提交封印结算事实。
+
+  输出
+  无返回值。
+
+  读取状态
+  source/target 阵营与 source record。
+
+  写入状态
+  source record 的 sealContribution。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  只接受敌方目标；基础贡献固定为一，附加值只取非负整数的真实弃牌数。
+  */
+  handleSealSettled(event) {
+    const source = event.source;
+    const target = event.target;
+    const record = this.recordFor(source);
+    if (!record || !source || !target || target.battleTeam === source.battleTeam) return;
+    const discardedCount = Math.max(0, Math.floor(Number(event.discardedCount) || 0));
+    record.contributionFacts.sealContribution += 1 + discardedCount;
   }
 
   /*

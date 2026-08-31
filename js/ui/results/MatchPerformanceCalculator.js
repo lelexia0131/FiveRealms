@@ -101,16 +101,16 @@ export function getVictoryMultiplier(rawStats, policy = MATCH_PERFORMANCE_POLICY
 
 /*
 功能
-把独立的团队牌资源事实合成为可正可负的贡献总量。
+把独立的贡献事实合成为可正可负的贡献总量。
 
 调用方
 calculatePerformance。
 
 输入
-contributionFacts 的六项真实资源变化累计。
+contributionFacts 的七项真实结算累计。
 
 输出
-队友获牌、敌方失牌和保护次数之和减去敌方获牌数。
+队友获牌、敌方失牌、保护次数与封印贡献之和减去敌方获牌数。
 
 读取状态
 无。
@@ -130,6 +130,7 @@ export function calculateContributionTotal(contributionFacts = {}) {
     + (Number(contributionFacts.enemyCardsDestroyed) || 0)
     + (Number(contributionFacts.enemyCardsTransferred) || 0)
     + (Number(contributionFacts.allyResourceActionsProtected) || 0)
+    + (Number(contributionFacts.sealContribution) || 0)
     - (Number(contributionFacts.enemyCardsGranted) || 0);
 }
 

@@ -36,7 +36,8 @@ const CONTRIBUTION_DEFAULTS = Object.freeze({
   enemyCardsDestroyed: 0,
   enemyCardsTransferred: 0,
   allyResourceActionsProtected: 0,
-  enemyCardsGranted: 0
+  enemyCardsGranted: 0,
+  sealContribution: 0
 });
 
 /*
@@ -570,7 +571,8 @@ export function registerMatchPerformanceTests(test) {
     await use("transfer", [actor, ally]);
     await use("seal", [enemy]);
     const actorResult = tracker.finalizeMatch().players[0];
-    assert.equal(actorResult.totals.enemyControls, 3);
+    assert.equal(actorResult.totals.enemyControls, 2);
+    assert.equal(actorResult.contributionFacts.sealContribution, 0);
     assert.equal(actorResult.contributionFacts.allyCardsGranted, 2);
     assert.equal(actorResult.contributionFacts.enemyCardsTransferred, 1);
   });

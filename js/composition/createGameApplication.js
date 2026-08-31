@@ -881,6 +881,7 @@ class MatchApplication {
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
       emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload),
+      publishFact: (type, payload) => this.eventDispatcher.publishFact(type, payload),
       presentation: this.presentationPort,
       diagnostics: this.diagnosticsPort,
       runTurn: (...args) => this.takeTurn(...args),

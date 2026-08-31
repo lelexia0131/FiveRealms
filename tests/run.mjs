@@ -8468,6 +8468,88 @@ test("共生：按全体存活角色结算治疗", async () => {
 
 // ---- 封印 ----
 
+/*
+功能
+执行一次真实封印回合并返回原始施加者获得的封印贡献。
+
+调用方
+封印 Match Performance 的抵消与实际弃牌数回归测试。
+
+输入
+封印是否被反制，以及生效场景在摸牌前已有的手牌数。
+
+输出
+封印施加者的 sealContribution 累计值。
+
+读取状态
+真实封印判定、回合摸牌与弃牌结算。
+
+写入状态
+隔离 Game fixture 的状态、牌区与 MatchPerformanceTracker。
+
+调用函数
+makeGame、forceAvailableAiCounters、takeTurn。
+
+边界与不变量
+持有者手牌上限固定为二；生效场景摸二后实际弃牌数等于 initialHandCount。
+*/
+async function settledSealContribution({ countered = false, initialHandCount = 0 } = {}) {
+  const holder = makePlayer("seal-performance-holder", 0, "dawn"),
+    source = makePlayer("seal-performance-source", 1, "dusk"),
+    { game } = makeGame([holder, source]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  holder.hp = 2;
+  holder.maxHp = 2;
+  holder.statuses.sealed = { cardDefinitionId: "seal", originPlayerId: source.id };
+  for (let index = 0; index < initialHandCount; index += 1) {
+    holder.hand.push(instance("charge"));
+  }
+  if (countered) {
+    holder.hand.push(instance("counter"));
+    forceAvailableAiCounters(game);
+  }
+  const drawA = instance("charge"), drawB = instance("shield");
+  game.state.deck.cards = countered
+    ? [drawB, drawA]
+    : [drawB, drawA, instance("assault")];
+  game.takeAiPlayPhase = async () => {};
+  await game.takeTurn(holder, game.state.gameId);
+  return game.matchPerformanceSidecar.tracker
+    .recordFor(source).contributionFacts.sealContribution;
+}
+
+test("封印：被抵消时贡献为零", async () => {
+  assert.equal(await settledSealContribution({ countered: true }), 0);
+});
+
+for (const [discardedCount, expectedContribution] of [[0, 1], [1, 2], [2, 3]]) {
+  test(`封印：生效实际弃${discardedCount}张时贡献为${expectedContribution}`, async () => {
+    assert.equal(
+      await settledSealContribution({ initialHandCount: discardedCount }),
+      expectedContribution
+    );
+  });
+}
+
+test("封印：Action rollback 不留下贡献", async () => {
+  const source = makePlayer("seal-rollback-source", 0, "dawn"),
+    target = makePlayer("seal-rollback-target", 1, "dusk"),
+    card = instance("seal"),
+    { game } = makeGame([source, target]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  source.hand.push(card);
+  game.eventDispatcher.on("cardUsed", "test:seal-performance-rollback", (event) => {
+    if (event.card === card) throw new Error("seal commit failed");
+  });
+
+  await assert.rejects(game.playCard(source, card, [target]), /seal commit failed/);
+
+  const record = game.matchPerformanceSidecar.tracker.recordFor(source);
+  assert.equal(record.contributionFacts.sealContribution, 0);
+  assert.equal(record.totals.enemyControls, 0);
+  assert.equal(target.statuses.sealed, undefined);
+});
+
 test("封印：定义、数量、牌堆与原有牌数量正确", () => {
   const seal = CARD_DEFINITIONS.seal;
   assert.ok(seal);

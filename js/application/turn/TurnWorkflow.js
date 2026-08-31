@@ -31,7 +31,7 @@ import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillD
 import { ActionRollbackError } from "../action/ActionTransaction.js";
 
 const REQUIRED_DEPENDENCIES = [
-  "getState", "isSessionValid", "emitEvent", "presentation", "diagnostics", "runTurn",
+  "getState", "isSessionValid", "emitEvent", "publishFact", "presentation", "diagnostics", "runTurn",
   "gainEnergy", "drawCards", "cleanupDefeatedZones", "delay", "getAiDelay", "now",
   "sampleAiDecisionWindow", "getRemainingAiDecisionDelay",
   "getTeamRules", "waitForHumanPlayEnd", "runAiPlayPhase", "choiceCoordinator",
@@ -215,10 +215,10 @@ export function createTurnWorkflow(dependencies) {
   MatchState、Domain Team Rules 与 Application session。
 
   写入状态
-  phase 经 MatchStateTransition；资源经注入 gainEnergy/drawCards。
+  phase 经 MatchStateTransition；资源经注入 gainEnergy/drawCards；封印贡献事实只在弃牌阶段完成后发布。
 
   调用函数
-  setMatchPhase、resetTurnFlags、resetGlobalTurnReactiveFlags、emitEvent、gainEnergy、drawCards、shouldSkipActionPhase、runPlayPhase、handleDiscardPhase。
+  setMatchPhase、resetTurnFlags、resetGlobalTurnReactiveFlags、emitEvent、publishFact、gainEnergy、drawCards、shouldSkipActionPhase、runPlayPhase、handleDiscardPhase。
 
   边界与不变量
   六阶段顺序与事件顺序不变；每个 await 后保留 session 检查。
@@ -237,11 +237,14 @@ export function createTurnWorkflow(dependencies) {
     runtime.presentation.refresh();
 
     setMatchPhase(state, "status");
+    const sealOriginPlayerId = player.statuses?.sealed?.originPlayerId ?? null;
     const statusEvent = { type: "beforeStatusResolve", player, cancelled: false };
     await runtime.emitEvent("beforeStatusResolve", statusEvent);
     if (!runtime.isSessionValid(gameId)) return;
     await runtime.emitEvent("afterStatusResolve", { ...statusEvent, type: "afterStatusResolve" });
     if (!runtime.isSessionValid(gameId) || !player.alive || state.isGameOver) return;
+    const sealSucceeded = Boolean(sealOriginPlayerId)
+      && shouldSkipActionPhase(player.turnFlags);
 
     setMatchPhase(state, "energy");
     const rules = getTeamRules(viewState, projection);
@@ -285,8 +288,16 @@ export function createTurnWorkflow(dependencies) {
     }
 
     setMatchPhase(state, "discard");
-    await handleDiscardPhase(player, gameId);
+    const discardedCount = await handleDiscardPhase(player, gameId);
     if (!runtime.isSessionValid(gameId) || state.isGameOver) return;
+    if (sealSucceeded) {
+      const source = state.players.find(
+        (candidate) => candidate.id === sealOriginPlayerId
+      );
+      if (source) {
+        await runtime.publishFact("sealSettled", { source, target: player, discardedCount });
+      }
+    }
 
     setMatchPhase(state, "turnEnd");
     await runtime.emitEvent("turnEnd", { type: "turnEnd", player });
@@ -493,7 +504,7 @@ export function createTurnWorkflow(dependencies) {
   player 与 gameId。
 
   输出
-  Promise。
+  Promise<实际成功弃牌张数>。
 
   读取状态
   player.hand、hp 与 session。
@@ -502,14 +513,14 @@ export function createTurnWorkflow(dependencies) {
   手牌经注入 discardCardFromHand 提交。
 
   调用函数
-  requestDiscard、chooseDiscards、getAiDelay、delay、discardCardFromHand。
+  createDiscardChoiceRequest、choiceCoordinator.request、getAiDelay、delay、discardCardFromHand。
 
   边界与不变量
-  human/AI 分支是 participant mechanism policy；实际 mechanism 在 composition collaborator；不迁移 discard semantic。
+  human/AI 分支是 participant mechanism policy；只累计 discardCardFromHand 确认成功的真实弃牌；不迁移 discard semantic。
   */
   async function handleDiscardPhase(player, gameId) {
     const required = Math.max(0, player.hand.length - Math.max(0, player.hp));
-    if (!required) return;
+    if (!required) return 0;
     runtime.presentation.log(`${player.name}需要弃置${required}张牌。`);
     const requestId = runtime.createId("discard-choice");
     const prompt = `手牌上限为${player.hp}，请选择${required}张弃牌`;
@@ -544,17 +555,18 @@ export function createTurnWorkflow(dependencies) {
     } finally {
       runtime.choiceContexts.delete(requestId);
     }
-    if (!runtime.isSessionValid(gameId)) return;
+    if (!runtime.isSessionValid(gameId)) return 0;
     // 真人取消交互保留原有语义；AI 的弃牌阶段必须收束到手牌上限，
     // 即使 peer adapter 异常返回 cancelled/declined 或 selectedIds 不足，也不能跳过强制弃牌。
-    if (decision.status === "cancelled" && player.controllerType === "human") return;
+    if (decision.status === "cancelled" && player.controllerType === "human") return 0;
     const cards = (decision.selectedIds ?? [])
       .map((cardId) => player.hand.find((card) => card.id === cardId))
       .filter(Boolean)
       .slice(0, required);
+    let discardedCount = 0;
     for (const card of cards) {
-      await runtime.discardCardFromHand(player, card, "弃牌阶段");
-      if (!runtime.isSessionValid(gameId)) return;
+      if (await runtime.discardCardFromHand(player, card, "弃牌阶段")) discardedCount += 1;
+      if (!runtime.isSessionValid(gameId)) return discardedCount;
     }
     // AI 不变量兜底只使用当前手牌顺序，不调用 AI 策略；正常 peer 选择成功时这里为空操作。
     if (player.controllerType !== "human") {
@@ -562,10 +574,12 @@ export function createTurnWorkflow(dependencies) {
         const fallback = player.hand[0];
         if (!fallback) break;
         const discarded = await runtime.discardCardFromHand(player, fallback, "弃牌阶段");
-        if (!runtime.isSessionValid(gameId)) return;
+        if (discarded) discardedCount += 1;
+        if (!runtime.isSessionValid(gameId)) return discardedCount;
         if (!discarded) break;
       }
     }
+    return discardedCount;
   }
 
   /*
