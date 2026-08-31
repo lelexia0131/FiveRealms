@@ -1301,7 +1301,7 @@ export class SoundManager {
   */
   sound_select(time) {
     // UI 点击需要在正常 BGM 下清晰可辨；只提升本 profile，不放大全部游戏 SFX。
-    this.softNoise(time, 0.032, 0.12, 680, 0.003);
+    this.softNoise(time, 0.032, 0.6, 680, 0.003);
   }
 
   /*
