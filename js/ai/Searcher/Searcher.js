@@ -127,7 +127,7 @@ export class Searcher {
   */
   constructor({
     evaluator,
-    patternMatcher,
+    pattern,
     getResolutionScale,
     config,
     simulatorFactory,
@@ -139,7 +139,7 @@ export class Searcher {
   } = {}) {
     const services = {
       evaluator,
-      patternMatcher
+      pattern
     };
     const capabilities = {
       getResolutionScale,
@@ -1124,7 +1124,7 @@ search 的逐层 beam expansion。
     state = null
   ) {
     const matched = (proposals ?? []).filter(
-      (proposal) => this.patternMatcher.matchesStep(proposal, stepIndex, action, state)
+      (proposal) => this.pattern.matchesStep(proposal, stepIndex, action, state)
     );
     const newlyCompletedPatternProposals = matched.filter(
       (proposal) => proposal.stepKeys.length === stepIndex + 1
@@ -1190,7 +1190,7 @@ search 的逐层 beam expansion。
     let promotedEntry = null;
     for (const proposal of proposals) {
       promotedEntry = promotableEntries.find(
-        (entry) => this.patternMatcher.matchesStep(proposal, 0, entry.action, state)
+        (entry) => this.pattern.matchesStep(proposal, 0, entry.action, state)
       ) ?? null;
       if (promotedEntry) break;
     }
@@ -1234,7 +1234,7 @@ search 的逐层 beam expansion。
       score:this.schedulingScore(action, player, state),
       key:actionIntentKey(action),
       guidedRank:proposals.findIndex((proposal) => (
-        this.patternMatcher.matchesStep(proposal, stepIndex, action, state)
+        this.pattern.matchesStep(proposal, stepIndex, action, state)
       )),
       secondaryKey:actionSearchKey(action)
     })).sort((left, right) => {
@@ -1590,7 +1590,7 @@ search 的 root 与逐层 beam 完整节点登记点。
         ? Math.floor(Number(options.rootCandidateCount))
         : rootActions.length
     );
-    const patternMatch = this.patternMatcher.match({
+    const patternMatch = this.pattern.match({
       player,
       state:world,
       legalActions:uniqueRootActions,
@@ -1687,17 +1687,6 @@ search 的 root 与逐层 beam 完整节点登记点。
       );
     }
     let activeBeam = this.prune(rootNodes, structure.beamWidth);
-    if (rootResult.stopped) {
-      return this.recordResult({
-        budget,
-        structure,
-        choice:bestSeenCandidate,
-        context,
-        rootLedgers,
-        workDiagnostics
-      });
-    }
-
     searchDepth:
     for (let depth = 2; depth <= structure.depth; depth += 1) {
       if (activeBeam.every((node) => node.terminal)) break;
@@ -1719,7 +1708,7 @@ search 的 root 与逐层 beam 完整节点登记点。
         workDiagnostics.childBranches += followActions.length;
         for (const proposal of node.activePatternProposals ?? []) {
           const resolvable = followActions.some((action) => (
-            this.patternMatcher.matchesStep(proposal, depth - 1, action, node.state)
+            this.pattern.matchesStep(proposal, depth - 1, action, node.state)
           ));
           if (resolvable
             || workDiagnostics.completedPatternProposalKeys.has(proposal.semanticKey)

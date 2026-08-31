@@ -88,7 +88,7 @@ import {
 } from "../js/ai/Event/Probability/Probability.js";
 import { Simulator as ProductionSimulator, tacticResolutionScale } from "../js/ai/Simulator/Simulator.js";
 import { SearchBudget, Searcher } from "../js/ai/Searcher/Searcher.js";
-import { Pattern as PatternMatcher } from "../js/ai/Searcher/Pattern.js";
+import { Pattern } from "../js/ai/Searcher/Pattern.js";
 import { Generator as ActionGenerator } from "../js/ai/Generator/Generator.js";
 import { Rng as SearchRng } from "../js/ai/Searcher/Rng.js";
 import {
@@ -640,14 +640,14 @@ AI 搜索、价值与隐藏信息正式测试。
 读取状态
 无。
 
-写入状态
+  写入状态
+  无。
+
+  调用函数
 无。
 
-调用函数
-无。
-
-边界与不变量
-sampleCount 必须始终等于 worlds.length；不得把样本比例标记为 EXACT。
+  边界与不变量
+  sampleCount 必须始终等于 worlds.length；不得把样本比例标记为 EXACT。
 */
 function monteCarloEstimate(worlds = []) {
   return {
@@ -4159,7 +4159,7 @@ fake calls。
 createTargetChoiceRequest、createUiChoiceAdapter。
 
 边界与不变量
-AI Planner 不走该 Choice；request 不含 Player entity。
+AI Searcher 不走该 Choice；request 不含 Player entity。
 */
 async function frArch9TargetChoicePort() {
   const request = createTargetChoiceRequest({
@@ -15138,7 +15138,7 @@ function xSkillCounterfactualCooperativeCheckpointContract() {
   };
   const searcher = new Searcher({
     evaluator,
-    patternMatcher:new PatternMatcher({ definitions:[] }),
+    pattern:new Pattern({ definitions:[] }),
     getResolutionScale:() => 1,
     config:{ depth:1, beamWidth:1, hiddenSamples:0, yieldEvery:100 },
     simulatorFactory:() => null,
@@ -16745,7 +16745,7 @@ test("AI·架构：唯一 Searcher 只通过注入能力消费 Simulator/SearchB
   assert.match(source, /searchBudgetFactory\(\)/);
   assert.throws(() => new Searcher({
     evaluator: {},
-    patternMatcher:{},
+    pattern:{},
     getResolutionScale:() => 1,
     config:{},
     simulatorFactory: () => ({}),
@@ -16886,12 +16886,12 @@ Searcher、Generator 构造函数。
 不得创建半装配组件或依赖首次运行时才暴露错误。
 */
 function testMissingAiDependenciesFailAtConstruction() {
-  assert.doesNotThrow(() => new PatternMatcher());
+  assert.doesNotThrow(() => new Pattern());
   assert.doesNotThrow(() => new ActionGenerator());
   assert.throws(() => new Searcher(), /evaluator/);
   assert.throws(() => new Searcher({
     evaluator:{},
-    patternMatcher:{},
+    pattern:{},
     getResolutionScale:() => 1,
     config:{},
     simulatorFactory: () => ({}),
@@ -17249,7 +17249,7 @@ GameState、状态契约快照。
 createStateContracts、createInitialWorld。
 
 边界与不变量
-Planner 与 Simulator 只接收同一 World；World 不复制 ProbabilityState 的充分统计或查询摘要。
+Searcher 与 Simulator 只接收同一 World；World 不复制 ProbabilityState 的充分统计或查询摘要。
 */
 function testStateContractCompositionBoundary() {
   const actor = makePlayer("facade-actor", 0, "dawn"), enemy = makePlayer("facade-enemy", 1, "dusk");
@@ -17331,7 +17331,7 @@ test("AI·World：隐藏手牌换位不改变 ProbabilityState、团队反制或
   makePlayer、makeGame、createInitialWorld。
 
   边界与不变量
-  三个夹具的公开字段和 Remaining Knowledge 必须相同，只有不可见 hand identity 换位。
+  三个夹具的公开字段和剩余牌计数必须相同，只有不可见 hand identity 换位。
   */
   function build(definitions) {
     const viewer = makePlayer("privacy-viewer", 0, "dawn"),
@@ -19984,10 +19984,10 @@ test("AI·搜索：多张同定义突袭逐动作重规划时连续兑现仍会�
 创建 Pattern infrastructure tests 使用的稳定语义卡牌动作。
 
 调用方
-runTacticalPatternFixture 与 PatternMatcher 顺序测试。
+Pattern 顺序测试。
 
 输入
-卡牌定义 ID、候选 value、SearchPrior 顺序分与实例后缀。
+卡牌定义 ID 与实例后缀。
 
 输出
 包含最小搜索字段的 data-only action。
@@ -19999,24 +19999,18 @@ runTacticalPatternFixture 与 PatternMatcher 顺序测试。
 无。
 
 调用函数
-无。
+createAction。
 
 边界与不变量
 实例后缀只用于证明 semantic identity 不依赖 card instance ID。
 */
-const tacticalPatternValues = new WeakMap();
-const tacticalPatternPriors = new WeakMap();
-
-function tacticalPatternAction(cardId, value, searchPrior, instanceSuffix = cardId) {
-  const action = createAction({
+function tacticalPatternAction(cardId, instanceSuffix = cardId) {
+  return createAction({
     type:"card",
     actorId:"pattern-actor",
     cardId,
     cardInstanceId:`${cardId}-${instanceSuffix}`
   });
-  tacticalPatternValues.set(action, value);
-  tacticalPatternPriors.set(action, searchPrior);
-  return action;
 }
 
 /*
@@ -20030,7 +20024,7 @@ productionPatternCase、Pattern 不变量与 dedupe tests。
 动作 type、definition/skill ID、目标 ID、selection 与实例后缀。
 
 输出
-可由 PatternMatcher 直接解析的 canonical Action。
+可由 Pattern 直接解析的 canonical Action。
 
 读取状态
 无。
@@ -20086,7 +20080,7 @@ production Pattern 参数化 focused tests。
 对应 definition。
 
 读取状态
-PatternMatcher.definitions。
+Pattern.definitions。
 
 写入状态
 无。
@@ -20098,14 +20092,14 @@ Array.find。
 缺失 ID 立即使测试失败，不创建 test-only 替代定义。
 */
 function productionPatternDefinition(patternId) {
-  const definition = PatternMatcher.definitions.find((entry) => entry.id === patternId);
+  const definition = Pattern.definitions.find((entry) => entry.id === patternId);
   assert.ok(definition, `缺少 production Pattern ${patternId}`);
   return definition;
 }
 
 /*
 功能
-只用一条 production definition 构造 PatternMatcher match 结果。
+只用一条 production definition 构造 Pattern match 结果。
 
 调用方
 P01-P11 focused tests。
@@ -20123,7 +20117,7 @@ matcher、match result 与行动者对象。
 无。
 
 调用函数
-PatternMatcher.match、productionPatternDefinition。
+Pattern.match、productionPatternDefinition。
 
 边界与不变量
 单 definition 隔离避免 production beam 上限掩盖某条 Pattern；不执行动作或价值计算。
@@ -20135,7 +20129,7 @@ function matchProductionPattern(
   playerId = "pattern-production-actor",
   structure = { depth:4, beamWidth:20 }
 ) {
-  const matcher = new PatternMatcher({ definitions:[productionPatternDefinition(patternId)] });
+  const matcher = new Pattern({ definitions:[productionPatternDefinition(patternId)] });
   const player = { id:playerId };
   return {
     matcher,
@@ -20167,7 +20161,7 @@ Pattern ID 与 exploration priority。
 无。
 
 边界与不变量
-只用于测试注入，不进入 PatternMatcher production definitions。
+只用于测试注入，不进入 Pattern production definitions。
 */
 /*
 功能
@@ -20255,7 +20249,7 @@ data-only root World 与测试 Evaluator scalar。
 独立 Searcher、SearchBudget 与 apply 轨迹。
 
 调用函数
-Searcher.search、SearchBudget、PatternMatcher。
+Searcher.search、SearchBudget、Pattern。
 
 边界与不变量
 默认给 END 更高的测试调度分，验证 Searcher 仍结构性优先建立 non-END baseline；
@@ -20306,7 +20300,7 @@ async function runEndSiblingBudgetFixture(
   let clockCalls = 0;
   const searcher = new Searcher({
     evaluator:createEndSiblingEvaluator(),
-    patternMatcher:new PatternMatcher({ definitions:[] }),
+    pattern:new Pattern({ definitions:[] }),
     getResolutionScale:() => 1,
     config:{
       depth:1,
@@ -20392,7 +20386,7 @@ mode 为 candidate fault、深层 incumbent、共享 invariant、only-END fault 
 独立 SearchBudget、candidate fault diagnostics 与 apply 轨迹。
 
 调用函数
-Searcher.search、SearchBudget、PatternMatcher。
+Searcher.search、SearchBudget、Pattern。
 
 边界与不变量
 candidate-local 故障由 Simulator/Evaluator 抛出；共享构造故障必须直接上抛；END 不得因缺失 sibling 被补算。
@@ -20527,15 +20521,15 @@ async function runSearcherFaultBoundaryFixture(mode) {
     },
     compareCandidates:(left, right) => left.valueScore - right.valueScore
   };
-  const patternMatcher = new PatternMatcher({ definitions:[] });
+  const pattern = new Pattern({ definitions:[] });
   if (mode === "pattern-match-shared-fault") {
-    patternMatcher.match = () => {
+    pattern.match = () => {
       throw new Error("synthetic Pattern.match shared fault");
     };
   }
   const searcher = new Searcher({
     evaluator,
-    patternMatcher,
+    pattern,
     getResolutionScale:() => 1,
     config:{
       depth:deepBestMode ? 2 : 1,
@@ -21633,155 +21627,6 @@ test("AI·搜索：ROOT sibling 中断不因已有 candidate 返回残缺 incumb
   }
 });
 
-function fakeTacticalPattern(id = "fake-a-b", explorationPriority = 10) {
-  return {
-    id,
-    match:() => true,
-    buildSequences:() => [{
-      steps:[
-        { type:"card", cardId:"pattern-a", targetIds:[], selection:null },
-        { type:"card", cardId:"pattern-b", targetIds:[], selection:null }
-      ],
-      explorationPriority,
-      reason:"test-only semantic continuation"
-    }]
-  };
-}
-
-/*
-功能
-运行最小真实 Planner/SearchBudget fixture，观察 fake Pattern 的调度、原子性与 incumbent 行为。
-
-调用方
-Pattern post-state、abort、prefix reuse、incumbent 与 starvation focused tests。
-
-输入
-Pattern/normal/child value，以及是否在 B 的 cooperative checkpoint 触发 TIME。
-
-输出
-选择动作、计划序列、搜索诊断和实际 apply/materialize 轨迹。
-
-读取状态
-仅 data-only fixture state 与注入 fake Pattern。
-
-写入状态
-独立 Planner、SearchBudget 与轨迹数组。
-
-调用函数
-PatternMatcher、Planner、SearchBudget、canonical Action。
-
-边界与不变量
-所有 candidate value 由同一 test materializer 提供；Pattern 不读写 value，也没有第二套 candidate。
-*/
-async function runTacticalPatternFixture({
-  patternValue = 1,
-  normalValue = 5,
-  continuationValue = 10,
-  abortContinuation = false,
-  omitContinuation = false
-} = {}) {
-  const patternRoot = tacticalPatternAction("pattern-a", patternValue, 1, "root"),
-    normalRoot = tacticalPatternAction("normal", normalValue, 100, "root"),
-    secondNormalRoot = tacticalPatternAction("ordinary-two", normalValue - 1, 90, "root"),
-    patternChild = tacticalPatternAction("pattern-b", continuationValue, 1, "post-state"),
-    ordinaryChild = tacticalPatternAction("ordinary-child", 50, 100, "post-state");
-  const endRoot = createAction({ type:"end", actorId:"pattern-actor" });
-  tacticalPatternValues.set(endRoot, 0);
-  tacticalPatternPriors.set(endRoot, Number.NEGATIVE_INFINITY);
-  const applied = [];
-  const materialized = [];
-  const generatedFromPaths = [];
-  let deadlineExpired = false;
-  const evaluator = {
-    evaluateTransition:({ action, beforeState }) => {
-      materialized.push({
-        cardId:action.cardId ?? null,
-        beforePath:[...(beforeState.path ?? [])]
-      });
-      const baseTransition = tacticalPatternValues.get(action);
-      return {
-        resolutionScale:1,
-        stateDelta:baseTransition,
-        stateDeltaValue:baseTransition,
-        transitionOptionPoints:0,
-        transitionOptionValue:0,
-        depth:1,
-        dangerBefore:0,
-        baseTransition,
-        xSkillNextEnergy:null,
-        discardOpportunityInputs:{ beforeOverflow:0, afterOverflow:0, stateDelta:0 },
-        endOpportunityInputs:action.type === "end"
-          ? { energy:0, turnEnergyGain:0, maxEnergy:0, activeSkillCost:0 }
-          : null
-      };
-    },
-    frontierResidual:() => null,
-    terminalFrontierValue:() => 0,
-    composeTransitionValue:({ baseTransition }) => baseTransition,
-    compareCandidates:(left, right) => left.valueScore - right.valueScore
-  };
-  const searcher = new Searcher({
-    evaluator,
-    stateValue:{},
-    valueLedger:{},
-    searchPrior:{
-      rootSchedulingScore:(action) => tacticalPatternPriors.get(action),
-      actionUtility:() => 0,
-      actionSearchPrior:() => 0
-    },
-    counterfactualTerms:{
-      createContext:() => ({ rootProvenance:null }),
-      observeCandidate:() => {},
-      candidateTerms:() => ({
-        exposeMarginal:0,
-        assaultStacksCredit:0,
-        spyGapInformationValue:0,
-        nextProvenance:null
-      }),
-      hiddenPrior:() => 0
-    },
-    patternMatcher:new PatternMatcher({ definitions:[fakeTacticalPattern()] }),
-    getResolutionScale:() => 1,
-    config:{ depth:2, beamWidth:3, hiddenSamples:0, yieldEvery:100 },
-    simulatorFactory:({ searchBudget }) => ({
-      apply:(state, action) => {
-        const cardId = action.cardId ?? action.type;
-        applied.push({ cardId, beforePath:[...(state.path ?? [])] });
-        if (abortContinuation && cardId === "pattern-b") {
-          deadlineExpired = true;
-          searchBudget.checkpointCurrentWork();
-        }
-        return { ...state, path:[...(state.path ?? []), cardId] };
-      }
-    }),
-    searchBudgetFactory:() => abortContinuation
-      ? new SearchBudget({ timeBudget:1, now:() => deadlineExpired ? 1 : 0 })
-      : new SearchBudget({ nodeBudget:4 }),
-    deduplicateActions:(actions) => actions,
-    generateActions:(state) => {
-      generatedFromPaths.push([...(state.path ?? [])]);
-      return state.path?.at(-1) === "pattern-a"
-        ? omitContinuation ? [ordinaryChild] : [ordinaryChild, patternChild]
-        : [];
-    },
-    yieldControl:async () => true
-  });
-  const selected = await searcher.search(
-    { id:"pattern-actor" },
-    { path:[] },
-    [normalRoot, secondNormalRoot, patternRoot, endRoot],
-    { gameId:"pattern-fixture" }
-  );
-  return {
-    selected,
-    sequence:searcher.lastSearchStats.bestSequence,
-    stats:searcher.lastSearchStats,
-    applied,
-    materialized,
-    generatedFromPaths
-  };
-}
-
 /*
 功能
 验证 Searcher child scheduling 只消费 Pattern 生成的 canonical proposal object。
@@ -21813,7 +21658,7 @@ async function canonicalPatternProposalContract() {
     source.indexOf("scheduleChildActions("),
     source.indexOf("observeCompletedPatterns(")
   );
-  assert.match(method, /proposals\.findIndex[\s\S]*patternMatcher\.matchesStep/);
+  assert.match(method, /proposals\.findIndex[\s\S]*pattern\.matchesStep/);
   assert.doesNotMatch(method, /legacyGuidedRanks|typeof\s+(?:proposal|key)\s*(?:===|!==)\s*["']string["']/);
   assert.doesNotMatch(method, /兼容 semantic keys/);
 }
@@ -21821,14 +21666,14 @@ async function canonicalPatternProposalContract() {
 test("AI·搜索：child scheduling 只接受 canonical Pattern proposals", canonicalPatternProposalContract);
 
 test("AI·搜索：空测试 Pattern 注入保持 diagnostics 为空且不改 production registry", () => {
-  const matcher = new PatternMatcher({ definitions:[] });
+  const matcher = new Pattern({ definitions:[] });
   const result = matcher.match({
     player:{ id:"empty-pattern-actor" },
     state:{},
-    legalActions:[tacticalPatternAction("pattern-a", 1, 1)],
+    legalActions:[tacticalPatternAction("pattern-a")],
     structure:{ depth:3, beamWidth:3 }
   });
-  assert.equal(PatternMatcher.definitions.length, 11);
+  assert.equal(Pattern.definitions.length, 11);
   assert.deepEqual(result, {
     matchedPatternCount:0,
     proposals:[],
@@ -21838,7 +21683,7 @@ test("AI·搜索：空测试 Pattern 注入保持 diagnostics 为空且不改 pr
 
 test("AI·搜索：Production Pattern registry 唯一包含 P01-P11 与固定探索优先级", () => {
   assert.deepEqual(
-    PatternMatcher.definitions.map((definition) => definition.id),
+    Pattern.definitions.map((definition) => definition.id),
     [
       "TARGET_SETUP_ASSAULT",
       "BREAK_STANCE_ASSAULT",
@@ -21854,7 +21699,7 @@ test("AI·搜索：Production Pattern registry 唯一包含 P01-P11 与固定探
     ]
   );
   assert.deepEqual(
-    Object.fromEntries(PatternMatcher.definitions.map((definition) => [
+    Object.fromEntries(Pattern.definitions.map((definition) => [
       definition.id,
       definition.explorationPriority
     ])),
@@ -21872,7 +21717,7 @@ test("AI·搜索：Production Pattern registry 唯一包含 P01-P11 与固定探
       SCOUT_INFORMATION_SETUP:45
     }
   );
-  assert.equal(new Set(PatternMatcher.definitions).size, 11);
+  assert.equal(new Set(Pattern.definitions).size, 11);
 });
 
 
@@ -22004,7 +21849,7 @@ test("AI·搜索：P01-P11 正常命中并逐步解析真实 semantic action", (
 });
 
 test("AI·搜索：P01-P11 缺失第一步或 continuation 时均不伪造动作", () => {
-  const patternIds = PatternMatcher.definitions.map((definition) => definition.id);
+  const patternIds = Pattern.definitions.map((definition) => definition.id);
   const emptyState = {
     players:[
       { id:"pattern-production-actor", hand:[] },
@@ -22172,7 +22017,7 @@ test("AI·搜索：P01/P07 相同 semantic sequence 去重且同定义多实例�
     instanceSuffix:"two"
   });
   const assault = productionPatternAction({ cardId:"assault", targetIds:[targetId] });
-  const matcher = new PatternMatcher({
+  const matcher = new Pattern({
     definitions:[
       productionPatternDefinition("TARGET_SETUP_ASSAULT"),
       productionPatternDefinition("REMOVE_RADAR_ASSAULT")
@@ -22226,7 +22071,7 @@ test("AI·搜索：P06 多个普通动作与封印实例只产生一个 suffix p
 
 
 test("AI·搜索：Pattern exact step 直接消费 canonical Action 字段", () => {
-  const matcher = new PatternMatcher({
+  const matcher = new Pattern({
     definitions:[{
       id:"fake-canonical-actions",
       match:() => true,
@@ -22240,7 +22085,7 @@ test("AI·搜索：Pattern exact step 直接消费 canonical Action 字段", () 
       }]
     }]
   });
-  const runtimeCard = tacticalPatternAction("recycleDevice", 1, 1),
+  const runtimeCard = tacticalPatternAction("recycleDevice"),
     runtimeSkill = createAction({
       type:"skill",
       actorId:"alias-actor",
@@ -22282,7 +22127,7 @@ test("AI·搜索：Pattern proposal 语义与顺序不依赖 physical hand order
       reason:"test-only order"
     }))
   };
-  const project = (actions) => new PatternMatcher({
+  const project = (actions) => new Pattern({
     definitions:[definition]
   }).match({
     player:{ id:"order-actor" },
@@ -22293,13 +22138,13 @@ test("AI·搜索：Pattern proposal 语义与顺序不依赖 physical hand order
     steps:proposal.steps,
     semanticKey:proposal.semanticKey
   }));
-  const a = tacticalPatternAction("pattern-a", 1, 1, "one"),
-    b = tacticalPatternAction("pattern-b", 1, 1, "two");
+  const a = tacticalPatternAction("pattern-a", "one"),
+    b = tacticalPatternAction("pattern-b", "two");
   assert.deepEqual(project([a, b]), project([b, a]));
 });
 
 test("AI·搜索：Pattern proposals 服从既有 depth 与 beamWidth 上限", () => {
-  const matcher = new PatternMatcher({
+  const matcher = new Pattern({
     definitions:[{
       id:"fake-bounds",
       match:() => true,
@@ -22894,7 +22739,7 @@ test("AI·搜索：已有破势但伤害纯溢出时边际接近零", () => {
 
 
 
-// ---- 通用 Planner end 机会成本语义（END-A / END-B）----
+// ---- 通用 Searcher end 机会成本语义（END-A / END-B）----
 
 
 
@@ -23127,7 +22972,7 @@ test("AI·陈旧结果拒绝：session/stateVersion/actor/phase/root identity �
 无返回值，断言失败时抛错。
 
 读取状态
-Game random、AIController selectAction 与 Planner stats。
+Game random、Controller.selectAction 与 Searcher stats。
 
 写入状态
 测试 Game 与 SearchRng。
@@ -29986,7 +29831,7 @@ const blockDistributionByCount = (distribution) => {
 
 
 
-test("AI·资源身份：Planner 描述保留 canonical 身份但不保存战略分数", () => {
+test("AI·资源身份：Searcher 描述保留 canonical 身份但不保存战略分数", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     enemy = makePlayer("enemy", 1, "dusk"),
     ally = makePlayer("ally", 2, "dawn");
@@ -36531,7 +36376,7 @@ RUNTIME_POLICY discard range、TurnWorkflow 与 ChoiceCoordinator。
 makeGame、handleDiscardPhase。
 
 边界与不变量
-弃牌阶段没有 Planner 搜索，因此不同档位只改变 presentation pacing；都必须 thinking on→decision→delay→thinking off。
+弃牌阶段没有 Searcher 搜索，因此不同档位只改变 presentation pacing；都必须 thinking on→decision→delay→thinking off。
 */
 async function discardPresentationPacingModes() {
   for (const [speed, expectedDelay] of [[1, 1600], [3, 850]]) {

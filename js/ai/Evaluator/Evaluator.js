@@ -3098,7 +3098,7 @@ export class Evaluator {
   hypergeometricProbabilityAtLeast、getBaseCardAiValue、getRecoverHealAmount。
 
   边界与不变量
-  未知手牌只按公开 handCount、合法记忆与 Remaining Knowledge 无放回估算；确定必败保持硬拒绝。
+  未知手牌只按公开 handCount、合法记忆与剩余牌计数无放回估算；确定必败保持硬拒绝。
   */
   assessDyingRescue({
     responder,

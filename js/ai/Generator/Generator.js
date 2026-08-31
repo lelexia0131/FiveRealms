@@ -6,7 +6,7 @@
 Controller 与 Searcher。
 
 下游
-Domain Card/Skill/Status Rules、Domain Definitions、Event Fact/Probability facade 与既有策略评分模块。
+Domain Card/Skill/Status Rules、Domain Definitions 与 Event Fact/Probability facade。
 
 状态边界
 只读 World，不执行或结算动作。
@@ -26,7 +26,6 @@ import {
   getTransferReceiverIds,
   getTransferSourceIds
 } from "../../domain/rules/card/CardRules.js";
-import { hasStatus } from "../../domain/rules/status/StatusRules.js";
 import {
   canUseSkillBase,
   getSkillCost,
@@ -523,7 +522,6 @@ export class Generator {
         isRangeLegal
       });
       if (!legality.ok) continue;
-      if (card.definitionId === "lightning" && hasStatus(projectRulePlayer(actor), "lightning")) continue;
       const usesRuleTargets = card.definitionId === "assault"
         || card.definitionId === "scout"
         || [
@@ -547,8 +545,6 @@ export class Generator {
         }
         continue;
       }
-      if (card.definitionId === "recover" && (actor.hp >= actor.maxHp || (actor.recoverLimit !== null && actor.recoverUsed >= actor.recoverLimit))) continue;
-      if (card.definitionId === "charge" && actor.energy >= actor.maxEnergy) continue;
       if (card.definitionId === "transfer") {
         for (const sourceId of transferSourceIds) {
           const source = state.players.find((player) => player.id === sourceId);

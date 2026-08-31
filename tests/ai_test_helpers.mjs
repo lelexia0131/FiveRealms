@@ -4,8 +4,8 @@
  * 原则：
  * - 局面构造只使用生产 Player / characterConfig / cardConfig / Game 权威定义；
  * - 不重新实现任何规则；
- * - 其他玩家的手牌仅作为"计数"参与 AI 决策，AI 可见信息由 AiVisibleState /
- *   Knowledge 过滤，本文件不写入任何作弊信息。
+ * - 其他玩家的手牌仅作为“计数”参与 AI 决策，AI 信息由 Fact / Probability /
+ *   canonical World 边界过滤，本文件不写入任何作弊信息。
  */
 import { createGameApplication } from "../js/composition/createGameApplication.js";
 import { Player } from "../js/application/match/Player.js";

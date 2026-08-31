@@ -480,7 +480,7 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   const generator = new Generator();
   const searcher = new Searcher({
     evaluator,
-    patternMatcher:new Pattern(),
+    pattern:new Pattern(),
     getResolutionScale:tacticResolutionScale,
     config,
     simulatorFactory,
@@ -789,31 +789,6 @@ export class Controller {
     return record;
   }
 
-  /*
-  功能
-  从当前真实状态构造搜索快照并请求 Searcher 选择动作。
-
-  调用方
-  TurnWorkflow.takeAiPlayPhase 与测试。
-
-  输入
-  当前行动 Player 与可选搜索上下文。
-
-  输出
-  Searcher 从 AI 候选集合中选择的当前可执行动作。
-
-  读取状态
-  当前 GameState、合法 Fact 与搜索配置。
-
-  写入状态
-  最近搜索诊断与当前 root Action acceptance 记录。
-
-  调用函数
-  deriveCurrentCardCounts、createInitialWorld、getActionCandidates、Searcher.search。
-
-  边界与不变量
-  剩余牌计数每次真实决策只计算一次，Searcher 不获得 Game 或 Controller。
-  */
   /*
   功能
   组装只理解显式毫秒预算的 data-only search configuration snapshot。
