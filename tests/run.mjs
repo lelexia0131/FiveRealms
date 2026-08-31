@@ -36981,7 +36981,7 @@ test("UI·入局说明：开始页入口、分页交互与移动端布局使用�
   assert.match(index, /id="rulebook-overlay"[^>]*role="dialog"[^>]*aria-modal="true"/);
   assert.match(index, /href="\.\/css\/rulebook\.css"/);
   assert.match(manager, /new RulebookView\([\s\S]*?this\.elements\.rulebook_overlay,[\s\S]*?this\.elements\.rules_button,[\s\S]*?\(\) => this\.playSound\("select"\)[\s\S]*?\)/);
-  assert.match(manager, /start_button\.addEventListener\("click", \(\) => \{ void this\.sound\.unlock\(\); this\.playSound\("select"\); this\.callbacks\.onStart\?\.\(\); \}\)/);
+  assert.match(manager, /start_button\.addEventListener\("click", \(\) => \{ this\.playSound\("select"\); this\.callbacks\.onStart\?\.\(\); \}\)/);
   assert.match(view, /data-rulebook-prev/);
   assert.match(view, /data-rulebook-next/);
   assert.match(view, /data-rulebook-page/);
@@ -36989,7 +36989,7 @@ test("UI·入局说明：开始页入口、分页交互与移动端布局使用�
   assert.match(view, /event\.key === "ArrowLeft"/);
   assert.match(view, /event\.key === "ArrowRight"/);
   assert.match(view, /focusTarget\?\.focus\(\)/);
-  assert.doesNotMatch(view, /playPreMatchMusic|setMusicTeam|stopMusic/);
+  assert.doesNotMatch(view, /playMenuMusic|playSquadSelectionMusic|setMusicTeam|stopMusic/);
   assert.doesNotMatch(view, /rulebook-brand-mark|rulebook-cover-emblem|rulebook-cover-legend/);
   assert.match(componentsCss, /\.start-brand-title\s*\{[^}]*font:[^}]*clamp\(18px, 2vw, 25px\)[^}]*letter-spacing:\s*\.18em/s);
   assert.match(componentsCss, /\.start-screen \.start-button:active:not\(:disabled\)/);
@@ -37096,7 +37096,7 @@ test("UI·编队方式：角色选择页显示 two、three 与 random 的征召�
     candidate_grid: { innerHTML: "" }
   };
   const context = {
-    sound: { playPreMatchMusic() { } },
+    sound: { playSquadSelectionMusic() { } },
     cancelPendingInteractions() { },
     resetCurrentCard() { },
     clearLog() { },
@@ -39437,7 +39437,7 @@ test("UI·结束页面：结束时保留现有日志且进入下一局选择时�
   let visibleLogCount = 2;
   const classList = { add() { }, remove() { } };
   UIManager.prototype.showSelection.call({
-    sound: { playPreMatchMusic() { } },
+    sound: { playSquadSelectionMusic() { } },
     cancelPendingInteractions() { },
     resetCurrentCard() { },
     clearLog() {
@@ -40692,12 +40692,15 @@ test("音频：合成声音覆盖通用反馈与准备阶段卡牌选择且 ligh
   if (!sound.isSupported) assert.equal(await sound.play("draw"), false);
 });
 
-test("音频：首页说明书主题明快于晨昏 BGM 且使用独立完整循环 profile", () => {
-  assert.notDeepEqual(MUSIC_PROFILES.preMatch.lead, MUSIC_PROFILES.dawn.lead);
-  assert.notDeepEqual(MUSIC_PROFILES.preMatch.lead, MUSIC_PROFILES.dusk.lead);
-  assert.ok(MUSIC_PROFILES.preMatch.tempo > MUSIC_PROFILES.dawn.tempo);
-  assert.ok(MUSIC_PROFILES.preMatch.tempo > MUSIC_PROFILES.dusk.tempo);
-  assert.equal(MUSIC_PROFILES.preMatch.wave, "triangle");
+test("音频：首页说明书与选编队使用独立且完整循环 profile", () => {
+  assert.notDeepEqual(MUSIC_PROFILES.menu.lead, MUSIC_PROFILES.squadSelection.lead);
+  assert.notDeepEqual(MUSIC_PROFILES.menu.lead, MUSIC_PROFILES.dawn.lead);
+  assert.notDeepEqual(MUSIC_PROFILES.menu.lead, MUSIC_PROFILES.dusk.lead);
+  assert.ok(MUSIC_PROFILES.menu.tempo > MUSIC_PROFILES.dawn.tempo);
+  assert.ok(MUSIC_PROFILES.menu.tempo > MUSIC_PROFILES.dusk.tempo);
+  assert.equal(MUSIC_PROFILES.menu.wave, "triangle");
+  assert.equal(MUSIC_PROFILES.squadSelection.tempo, 64);
+  assert.equal(MUSIC_PROFILES.squadSelection.wave, "sine");
   assert.notEqual(MUSIC_PROFILES.dawn.tempo, MUSIC_PROFILES.dusk.tempo);
   assert.notEqual(MUSIC_PROFILES.dawn.wave, MUSIC_PROFILES.dusk.wave);
   assert.notDeepEqual(MUSIC_PROFILES.dawn.lead, MUSIC_PROFILES.dusk.lead);
@@ -40845,7 +40848,7 @@ test("音频：SFX 音量按总增益缩放且不影响 BGM", audioSfxGainIndepe
 
 /*
 功能
-验证三个准备页面声明同一音乐场景，正式对局页面只负责切出该场景。
+验证首页、说明书与选编队分别声明正确音乐场景，正式对局页面只负责切出该场景。
 
 调用方
 当前测试。
@@ -40866,9 +40869,9 @@ fake screen 可见状态、页面清理记录与音乐调用记录。
 UIManager.showStart、showSquadSelection、showSelection、showGame。
 
 边界与不变量
-开始、编队与选角必须共用 preMatch 请求；进入 game screen 时必须停止它，战斗主题由既有确认流程另行选择。
+首页使用 menu，编队与选角使用 squadSelection；进入 game screen 时必须停止它，战斗主题由既有确认流程另行选择。
 */
-function preMatchPagesShareOneMusicScene() {
+function menuAndSquadPagesUseDistinctMusicScenes() {
   const musicCalls = [];
   const elements = {
     start_screen: makeInteractiveElement(),
@@ -40884,7 +40887,8 @@ function preMatchPagesShareOneMusicScene() {
   };
   const context = {
     sound: {
-      playPreMatchMusic: () => musicCalls.push("preMatch"),
+      playMenuMusic: () => musicCalls.push("menu"),
+      playSquadSelectionMusic: () => musicCalls.push("squadSelection"),
       stopMusic: () => musicCalls.push("stop")
     },
     elements,
@@ -40904,10 +40908,94 @@ function preMatchPagesShareOneMusicScene() {
   } finally {
     if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else delete globalThis.window;
   }
-  assert.deepEqual(musicCalls, ["preMatch", "preMatch", "preMatch", "stop"]);
+  assert.deepEqual(musicCalls, ["menu", "squadSelection", "squadSelection", "stop"]);
 }
 
-test("UI·准备阶段 BGM：开始、编队与角色页共用场景且正式开局切出", preMatchPagesShareOneMusicScene);
+test("UI·准备阶段 BGM：首页说明书与选编队分场景且正式开局切出", menuAndSquadPagesUseDistinctMusicScenes);
+
+/*
+功能
+验证页面级首次用户交互会解锁当前音乐，并确认开始按钮的 SFX 先于开始回调提交。
+
+调用方
+当前测试。
+
+输入
+最小 UIManager 事件绑定夹具与 document/window 监听桩。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+UIManager.bindEvents 的页面监听、SoundManager.unlock 与按钮回调。
+
+写入状态
+解锁调用记录和开始按钮 SFX/回调顺序。
+
+调用函数
+UIManager.bindEvents、SoundManager.unlock、UIManager.playSound。
+
+边界与不变量
+解锁不得依赖说明书按钮；开始按钮切换后，既有 select SFX 请求仍必须已提交。
+*/
+async function uiAudioLifecycleRegression() {
+  const elements = Object.fromEntries([
+    "start_button", "restart_button", "play_again_button", "squad_mode_grid", "candidate_grid", "game_screen",
+    "human_hand", "cpu_grid", "human_panel", "skill_button", "end_play_button", "discard_confirm_button",
+    "cancel_interaction_button", "response_panel", "log_toggle_button", "skill_details_overlay"
+  ].map((key) => [key, makeInteractiveElement()]));
+  const documentListeners = new Map();
+  const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const events = [], unlocks = [];
+  const context = {
+    elements,
+    audioButtons: [],
+    musicVolumeInputs: [],
+    sfxVolumeInputs: [],
+    sound: { unlock: () => unlocks.push("unlock") },
+    callbacks: { onStart: () => events.push("start") },
+    interactionController: { bind() { } },
+    updateAudioButtons() { },
+    toggleAudio() { },
+    setMusicVolume() { },
+    setSfxVolume() { },
+    playSound: (name) => events.push(`sfx:${name}`),
+    handleSquadModeClick() { },
+    handleCharacterCandidateClick() { },
+    bindHorizontalCardDrag() { },
+    handleHandClick() { },
+    handlePlayerClick() { },
+    handlePlayerKeydown() { },
+    handleSkillClick() { },
+    confirmDiscard() { },
+    cancelTarget() { },
+    toggleResponseCard() { },
+    confirmTarget() { },
+    resolveResponse() { },
+    setLogCollapsed() { },
+    handleViewportResize() { },
+    hideSkillDetails() { }
+  };
+  try {
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      value: { addEventListener: (type, handler) => documentListeners.set(type, handler) }
+    });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { addEventListener() { } } });
+    UIManager.prototype.bindEvents.call(context);
+    documentListeners.get("pointerdown")?.({ target: {} });
+    documentListeners.get("click")?.({ target: {} });
+    assert.deepEqual(unlocks, ["unlock"], "首次任意交互只需统一解锁一次");
+    elements.start_button.click(elements.start_button);
+    assert.deepEqual(events, ["sfx:select", "start"], "开始按钮必须先提交 select SFX 再切换页面");
+  } finally {
+    if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument); else delete globalThis.document;
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else delete globalThis.window;
+  }
+}
+
+test("UI·音频生命周期：首次任意交互解锁且开始按钮 SFX 不被切歌截断", uiAudioLifecycleRegression);
 
 /*
 功能
@@ -40929,23 +41017,70 @@ SoundManager 延迟解锁状态与 AudioContext stub。
 临时 AudioContext 全局能力。
 
 调用函数
-withAudioContextStub、SoundManager.playPreMatchMusic。
+withAudioContextStub、SoundManager.playMenuMusic。
 
 边界与不变量
-preMatch 主题必须可先登记；context、scheduler 和音频节点必须继续等待真实用户交互。
+menu 主题必须可先登记；context、scheduler 和音频节点必须继续等待真实用户交互。
 */
-async function preMatchBootstrapDefersAudioContext() {
+async function menuBootstrapDefersAudioContext() {
   await withAudioContextStub(async () => {
     const sound = new SoundManager();
-    assert.equal(sound.playPreMatchMusic(), "preMatch");
-    assert.equal(sound.musicTeam, "preMatch");
+    assert.equal(sound.playMenuMusic(), "menu");
+    assert.equal(sound.musicTeam, "menu");
     assert.equal(sound.context, null);
     assert.equal(sound.musicTimer, null);
     assert.equal(sound.musicSources.size, 0);
   });
 }
 
-test("音频：开始页登记 preMatch 场景但等待用户手势解锁", preMatchBootstrapDefersAudioContext);
+test("音频：开始页登记 menu 场景但等待用户手势解锁", menuBootstrapDefersAudioContext);
+
+/*
+功能
+验证已登记的首页主题在 AudioContext 仍锁定时，经首次交互解锁后真正启动排程。
+
+调用方
+当前测试。
+
+输入
+模拟 suspended AudioContext 与 menu 音乐主题。
+
+输出
+Promise；断言失败时拒绝。
+
+读取状态
+SoundManager.context、musicTeam、musicTimer 与 musicSources。
+
+写入状态
+模拟上下文状态、恢复调用与首页音乐调度节点。
+
+调用函数
+SoundManager.unlock、startScheduler、scheduleMusic。
+
+边界与不变量
+解锁前不得有排程；恢复后必须为当前 menu 主题启动 scheduler，而不是等待说明书按钮。
+*/
+async function lockedMenuMusicStartsAfterInteraction() {
+  await withAudioContextStub(async () => {
+    const sound = new SoundManager();
+    const fake = makeFakeAudioContext();
+    fake.state = "suspended";
+    fake.resume = async () => { fake.state = "running"; };
+    sound.context = fake;
+    sound.musicGain = fake.createGain();
+    sound.sfxGain = fake.createGain();
+    sound.enabled = true;
+    sound.musicTeam = "menu";
+    assert.equal(sound.musicTimer, null);
+    await sound.unlock();
+    sound.musicTimer?.unref?.();
+    assert.equal(fake.state, "running");
+    assert.ok(sound.musicTimer);
+    assert.ok(sound.musicSources.size > 0);
+  });
+}
+
+test("音频：首页 BGM 在首次交互后从 locked 状态真正启动", lockedMenuMusicStartsAfterInteraction);
 
 /** 构造最小 Web Audio 假实现，用于验证 BGM 排程连续性、索引回绕与旧节点停止。 */
 function makeFakeAudioContext() {
@@ -41198,18 +41333,18 @@ test("音频：同阵营重复 setMusicTeam 保持幂等", async () => {
 Promise；断言失败时拒绝。
 
 读取状态
-SoundManager preMatch 主题调度状态。
+SoundManager menu 主题调度状态。
 
 写入状态
 fake AudioContext 排程节点。
 
 调用函数
-withAudioContextStub、SoundManager.startScheduler、playPreMatchMusic。
+withAudioContextStub、SoundManager.startScheduler、playMenuMusic。
 
 边界与不变量
-三个页面可以重复声明同一场景，但音乐时间轴必须保持连续。
+首页与说明书可以重复声明同一场景，但音乐时间轴必须保持连续。
 */
-async function preMatchMusicRequestIsIdempotent() {
+async function menuMusicRequestIsIdempotent() {
   await withAudioContextStub(async () => {
     const sound = new SoundManager();
     const fake = makeFakeAudioContext();
@@ -41217,9 +41352,9 @@ async function preMatchMusicRequestIsIdempotent() {
     sound.musicGain = fake.createGain();
     sound.sfxGain = fake.createGain();
     sound.enabled = true;
-    sound.playPreMatchMusic();
+    sound.playMenuMusic();
     sound.musicTimer?.unref?.();
-    assert.equal(sound.musicTeam, "preMatch");
+    assert.equal(sound.musicTeam, "menu");
     assert.ok(sound.musicTimer);
     assert.ok(sound.musicSources.size > 0);
     assert.ok([...sound.musicSources].every((gain) => gain.connected.includes(sound.musicGain)));
@@ -41230,7 +41365,7 @@ async function preMatchMusicRequestIsIdempotent() {
     const step = sound.musicStep;
     const nextTime = sound.nextMusicTime;
     const sources = sound.musicSources.size;
-    sound.playPreMatchMusic();
+    sound.playMenuMusic();
     assert.equal(sound.musicTimer, timer);
     assert.equal(sound.musicStep, step);
     assert.equal(sound.nextMusicTime, nextTime);
@@ -41238,7 +41373,7 @@ async function preMatchMusicRequestIsIdempotent() {
   });
 }
 
-test("音频：重复声明 preMatch 场景保持 BGM 时间轴连续", preMatchMusicRequestIsIdempotent);
+test("音频：重复声明 menu 场景保持 BGM 时间轴连续", menuMusicRequestIsIdempotent);
 
 test("音频：全部 SFX 只走 sfxGain 且不触碰 musicGain", async () => {
   await withAudioContextStub(async () => {
@@ -41423,12 +41558,12 @@ test("BGM：多阵营角色轮流行动全程保持真人主题", async () => {
   fixture.game.dispose();
 });
 
-test("BGM：编队与选角阶段共用准备主题且阵营确认后启动真人主题", () => {
-  const themes = [], preMatchCalls = [];
+test("BGM：选编队与选角阶段共用 squadSelection 主题且阵营确认后启动真人主题", () => {
+  const themes = [], squadCalls = [];
   const classList = { add() { }, remove() { } };
   const context = {
     sound: {
-      playPreMatchMusic: () => preMatchCalls.push("preMatch"),
+      playSquadSelectionMusic: () => squadCalls.push("squadSelection"),
       setMusicTeam: (team) => themes.push(team)
     },
     cancelPendingInteractions() { },
@@ -41450,7 +41585,7 @@ test("BGM：编队与选角阶段共用准备主题且阵营确认后启动真�
   UIManager.prototype.showSquadSelection.call(context);
   UIManager.prototype.showSelection.call(context, [], "two");
   UIManager.prototype.setMusicTeam.call(context, "dawn");
-  assert.deepEqual(preMatchCalls, ["preMatch", "preMatch"]);
+  assert.deepEqual(squadCalls, ["squadSelection", "squadSelection"]);
   assert.deepEqual(themes, ["dawn"]);
 });
 

@@ -54,7 +54,7 @@ const musicGainForVolume = (volume) => {
 把多个乐句拼接并冻结为不可变旋律序列。
 
 调用方
-PRE_MATCH_MELODY、DAWN_MELODY、DUSK_MELODY 常量初始化。
+MENU_MELODY、SQUAD_SELECTION_MELODY、DAWN_MELODY、DUSK_MELODY 常量初始化。
 
 输入
 任意数量的音符/休止符数组。
@@ -76,8 +76,8 @@ Array.flat、Object.freeze。
 */
 const longMelody = (...phrases) => Object.freeze(phrases.flat());
 
-// 首页、说明书与征召阶段共用明快的 G 大调冒险主题；切分式拾音让旋律有桌游开场的轻盈推进感。
-const PRE_MATCH_MELODY = longMelody(
+// 首页与说明书使用明快的 G 大调冒险主题；切分式拾音让旋律有桌游开场的轻盈推进感。
+const MENU_MELODY = longMelody(
   [67, null, 71, null, 74, null, 79, 76, 74, null, 71, null, 69, null, 67, null],
   [69, null, 71, null, 74, null, 76, 74, 71, null, 69, null, 67, null, 66, null],
   [67, null, 69, null, 71, null, 74, 76, 79, null, 76, null, 74, null, 71, null],
@@ -93,6 +93,18 @@ const PRE_MATCH_MELODY = longMelody(
   [67, null, 71, null, 74, null, 79, 76, 74, null, 71, null, 69, null, 67, null],
   // 收尾停在属音 D4，循环回 G4 时形成自然的 V→I 开场衔接。
   [72, null, 71, null, 69, null, 67, 69, 71, null, 69, null, 66, null, 62, null]
+);
+
+// 选编队沿用修改前的稀疏五声音阶旋律；它必须与首页主题保持独立身份。
+const SQUAD_SELECTION_MELODY = longMelody(
+  [67, null, 71, null, 74, null, 71, null, 69, null, 67, null, 64, null, 62, null],
+  [67, null, 69, null, 71, 74, 71, null, 69, null, 64, null, 62, null, 67, null],
+  [71, null, 74, null, 79, null, 76, null, 74, null, 71, null, 69, null, 67, null],
+  [64, null, 67, null, 71, null, 69, null, 67, null, 64, null, 62, null, 67, null],
+  [69, null, 71, null, 74, null, 76, null, 74, null, 71, null, 67, null, 64, null],
+  [67, null, 71, 74, 79, null, 76, null, 74, null, 71, null, 69, null, 67, null],
+  [64, null, 67, null, 69, null, 71, null, 74, null, 71, null, 69, null, 64, null],
+  [67, null, 64, null, 62, null, 64, null, 67, null, 69, null, 67, null, 62, null]
 );
 
 // 正式对局每个乐句16步、全曲12句，共192步；晨约74秒、昏约80秒才完成一次循环。
@@ -129,14 +141,23 @@ const DUSK_MELODY = longMelody(
 );
 
 export const MUSIC_PROFILES = Object.freeze({
-  preMatch: Object.freeze({
+  menu: Object.freeze({
     tempo: 102,
-    lead: PRE_MATCH_MELODY,
+    lead: MENU_MELODY,
     bass: Object.freeze([43, 38, 40, 38, 43, 36, 40, 38, 43, 38, 40, 38, 36, 38, 43, 38, 40, 38, 43, 36, 40, 38, 43, 38, 36, 40, 38, 38]),
     thirds: Object.freeze([4, 4, 3, 4, 4, 4, 3, 4, 4, 4, 3, 4, 4, 4, 4, 4, 3, 4, 4, 4, 3, 4, 4, 4, 4, 3, 4, 4]),
     wave: "triangle",
     leadLevel: 0.032,
     padLevel: 0.014
+  }),
+  squadSelection: Object.freeze({
+    tempo: 64,
+    lead: SQUAD_SELECTION_MELODY,
+    bass: Object.freeze([43, 40, 45, 38, 40, 43, 38, 38, 43, 40, 45, 38, 40, 43, 38, 38]),
+    thirds: Object.freeze([4, 3, 4, 3, 3, 4, 3, 3, 4, 3, 4, 3, 3, 4, 3, 3]),
+    wave: "sine",
+    leadLevel: 0.026,
+    padLevel: 0.016
   }),
   dawn: Object.freeze({
     tempo: 78,
@@ -415,7 +436,7 @@ export class SoundManager {
     this.musicTimer = null;
     this.nextMusicTime = 0;
     this.musicStep = 0;
-    this.musicStepsByTeam = { preMatch: 0, dawn: 0, dusk: 0 };
+    this.musicStepsByTeam = { menu: 0, squadSelection: 0, dawn: 0, dusk: 0 };
     this.musicSources = new Set();
     this.lightningBuffer = null;
     this.lightningBufferPromise = null;
@@ -639,10 +660,10 @@ export class SoundManager {
   选择统一 BGM profile，并在主题切换时续接各自播放进度。
 
   调用方
-  UIManager.setMusicTeam、playPreMatchMusic 与对局展示流程。
+  UIManager.setMusicTeam、playMenuMusic、playSquadSelectionMusic 与对局展示流程。
 
   输入
-  preMatch/dawn/dusk 主题 ID，以及是否立即尝试解锁 AudioContext 的内部选项；未知主题表示停止音乐。
+  menu/squadSelection/dawn/dusk 主题 ID，以及是否立即尝试解锁 AudioContext 的内部选项；未知主题表示停止音乐。
 
   输出
   有效主题 ID；未知主题走 stopMusic 返回值。
@@ -676,31 +697,60 @@ export class SoundManager {
 
   /*
   功能
-  选择准备阶段 BGM，并复用统一音乐主题的幂等与续播生命周期。
+  选择首页/说明书 BGM，并复用统一音乐主题的幂等与续播生命周期。
 
   调用方
-  UIManager 的开始、编队方式和角色选择页面展示入口。
+  UIManager 的开始页与说明书展示入口。
 
   输入
   无。
 
   输出
-  preMatch 音乐主题 ID。
+  menu 音乐主题 ID。
 
   读取状态
   SoundManager 当前音乐主题。
 
   写入状态
-  仅在离开其他主题时切换到 preMatch；重复请求保持当前调度进度。
+  仅在离开其他主题时切换到 menu；重复请求保持当前调度进度。
 
   调用函数
   setMusicTeam。
 
   边界与不变量
-  三个准备页面共用同一主题；bootstrap 只登记主题，不得在用户手势前创建 AudioContext；重复进入不得重启 scheduler 或重置 musicStep。
+  首页与说明书共用 menu；bootstrap 只登记主题，不得在用户手势前创建 AudioContext；重复进入不得重启 scheduler 或重置 musicStep。
   */
-  playPreMatchMusic() {
-    return this.setMusicTeam("preMatch", { unlock: Boolean(this.context) });
+  playMenuMusic() {
+    return this.setMusicTeam("menu", { unlock: Boolean(this.context) });
+  }
+
+  /*
+  功能
+  选择选编队页面的原有 BGM，并保持独立的续播进度。
+
+  调用方
+  UIManager.showSquadSelection 与 UIManager.showSelection。
+
+  输入
+  无。
+
+  输出
+  squadSelection 音乐主题 ID。
+
+  读取状态
+  SoundManager 当前音乐主题。
+
+  写入状态
+  仅在离开其他主题时切换到 squadSelection；重复请求保持当前调度进度。
+
+  调用函数
+  setMusicTeam。
+
+  边界与不变量
+  选编队曲目不得与首页/说明书 menu profile 共用身份或旋律。
+  */
+  playSquadSelectionMusic() {
+    return this.setMusicTeam("squadSelection", { unlock: Boolean(this.context) });
   }
 
   /*

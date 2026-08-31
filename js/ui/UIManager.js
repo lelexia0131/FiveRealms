@@ -437,10 +437,44 @@ export class UIManager {
   */
   bindEvents() {
     this.updateAudioButtons();
+    let audioInteractionUnlocked = false;
+    /*
+    功能
+    在页面首次有效交互时解锁当前音频上下文。
+
+    调用方
+    bindEvents 注册的 pointerdown、keydown 与 click 监听。
+
+    输入
+    浏览器用户交互事件（事件内容不参与判断）。
+
+    输出
+    无返回值。
+
+    读取状态
+    audioInteractionUnlocked 与 SoundManager。
+
+    写入状态
+    首次调用标记解锁已提交，并异步请求 SoundManager.unlock。
+
+    调用函数
+    SoundManager.unlock。
+
+    边界与不变量
+    多种事件类型共享一次性标记；解锁不得依赖说明书或某个特定按钮。
+    */
+    const unlockAudioOnInteraction = () => {
+      if (audioInteractionUnlocked) return;
+      audioInteractionUnlocked = true;
+      void this.sound.unlock();
+    };
+    for (const eventName of ["pointerdown", "keydown", "click"]) {
+      document.addEventListener(eventName, unlockAudioOnInteraction, { capture: true, once: true });
+    }
     for (const button of this.audioButtons) button.addEventListener("click", () => this.toggleAudio());
     for (const input of this.musicVolumeInputs) input.addEventListener("input", () => this.setMusicVolume(input.value));
     for (const input of this.sfxVolumeInputs) input.addEventListener("input", () => this.setSfxVolume(input.value));
-    this.elements.start_button.addEventListener("click", () => { void this.sound.unlock(); this.playSound("select"); this.callbacks.onStart?.(); });
+    this.elements.start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onStart?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.squad_mode_grid.addEventListener("click", (event) => this.handleSquadModeClick(event));
@@ -572,16 +606,16 @@ export class UIManager {
   页面屏幕元素与 SoundManager。
 
   写入状态
-  选择准备阶段 BGM、清空日志并切换屏幕可见性。
+  选择首页/说明书 BGM、清空日志并切换屏幕可见性。
 
   调用函数
-  SoundManager.playPreMatchMusic、clearLog。
+  SoundManager.playMenuMusic、clearLog。
 
   边界与不变量
   只清理 UI，不销毁或创建 MatchApplication。
   */
   showStart() {
-    this.sound.playPreMatchMusic();
+    this.sound.playMenuMusic();
     this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
@@ -606,16 +640,16 @@ export class UIManager {
   页面屏幕元素与 SoundManager。
 
   写入状态
-  选择准备阶段 BGM、清理旧交互/日志并仅显示编队方式屏幕。
+  选择选编队 BGM、清理旧交互/日志并仅显示编队方式屏幕。
 
   调用函数
-  SoundManager.playPreMatchMusic、cancelPendingInteractions、resetCurrentCard、clearLog。
+  SoundManager.playSquadSelectionMusic、cancelPendingInteractions、resetCurrentCard、clearLog。
 
   边界与不变量
   只展示选择入口，不保存模式或解析阵营规模。
   */
   showSquadSelection() {
-    this.sound.playPreMatchMusic();
+    this.sound.playSquadSelectionMusic();
     this.cancelPendingInteractions();
     this.resetCurrentCard();
     this.clearLog();
@@ -646,7 +680,7 @@ export class UIManager {
   清理旧交互/日志/结算牌，写入模式上下文与候选 DOM。
 
   调用函数
-  SoundManager.playPreMatchMusic、cancelPendingInteractions、candidateCardTemplate。
+  SoundManager.playSquadSelectionMusic、cancelPendingInteractions、candidateCardTemplate。
 
   边界与不变量
   只展示公开候选和已确认 mode；真人阵营尚未解析，不得提前启动阵营 BGM。
@@ -654,7 +688,7 @@ export class UIManager {
   showSelection(candidates, teamAssignmentMode) {
     const presentation = TEAM_ASSIGNMENT_PRESENTATION[teamAssignmentMode];
     if (!presentation) throw new TypeError(`未知编队方式：${teamAssignmentMode}`);
-    this.sound.playPreMatchMusic();
+    this.sound.playSquadSelectionMusic();
     this.cancelPendingInteractions();
     this.resetCurrentCard();
     this.clearLog();
