@@ -179,7 +179,7 @@ import { createMatchWorkflow } from "../js/application/match/MatchWorkflow.js";
 import { CharacterSelection } from "../js/application/match/CharacterSelection.js";
 import { createTurnWorkflow } from "../js/application/turn/TurnWorkflow.js";
 import { createActionWorkflow } from "../js/application/action/ActionWorkflow.js";
-import { ActionRollbackError } from "../js/application/action/ActionTransaction.js";
+import { ActionRollbackError, createActionTransaction } from "../js/application/action/ActionTransaction.js";
 import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoiceRequest.js";
 import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js";
 import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferableHandCount, getTransferSourceIds, hasHandOrEquipmentFacts } from "../js/domain/rules/card/CardRules.js";
@@ -41901,6 +41901,75 @@ function snapshotAuthoritativeActionState(game) {
     publicCardPoolIds: game.publicCardPoolWorkflow.cards.map((card) => card.id)
   }, normalizeActionSnapshotValue));
 }
+
+test("生命周期：Action transaction 不递归 checkpoint 大量历史日志", () => {
+  const source = makePlayer("log-boundary-source", 0, "dawn"),
+    enemy = makePlayer("log-boundary-enemy", 1, "dusk"),
+    card = instance("charge"),
+    { game } = makeGame([source, enemy]);
+  let historyReads = 0;
+  const guardedHistoryEntry = new Proxy({ id:"guarded-history" }, {
+    ownKeys() {
+      historyReads += 1;
+      throw new Error("历史日志不应进入深度 checkpoint");
+    }
+  });
+  game.state.logs.push(
+    ...Array.from({ length:5000 }, (_, index) => ({ id:`history-${index}` })),
+    guardedHistoryEntry
+  );
+  source.hand.push(card);
+  return game.playCard(source, card, []).then((completed) => {
+    assert.equal(completed, true);
+    assert.equal(historyReads, 0);
+    assert.ok(game.state.logs.length > 5001, "成功 Action 的新增日志必须保留");
+  });
+});
+
+test("生命周期：Action transaction commit 保留本次新增日志", () => {
+  const historicalEntry = { id:"history" };
+  const logs = [historicalEntry];
+  const state = { logs, player:{ hp:3 } };
+  const transaction = createActionTransaction({
+    roots:[state],
+    logs,
+    randomPort:createRandomPort({ next:() => 0.25 })
+  });
+  const actionEntry = { id:"action-log" };
+  logs.push(actionEntry);
+  state.player.hp = 2;
+  transaction.commit();
+  assert.deepEqual(logs, [historicalEntry, actionEntry]);
+  assert.equal(state.player.hp, 2);
+});
+
+test("生命周期：Action transaction rollback 只删除本次日志并恢复其它状态", () => {
+  const historicalEntries = [
+    { id:"history-a", nested:{ text:"A" } },
+    { id:"history-b", nested:{ text:"B" } }
+  ];
+  const logs = [...historicalEntries];
+  const state = {
+    logs,
+    player:{ hp:3, statuses:new Set(["sealed"]) },
+    deck:{ cards:["card-a", "card-b"] }
+  };
+  const transaction = createActionTransaction({
+    roots:[state],
+    logs,
+    randomPort:createRandomPort({ next:() => 0.25 })
+  });
+  logs.push({ id:"action-log-a" }, { id:"action-log-b" });
+  state.player.hp = 1;
+  state.player.statuses.add("lightning");
+  state.deck.cards.shift();
+  transaction.rollback();
+  assert.deepEqual(logs, historicalEntries);
+  assert.equal(logs[0], historicalEntries[0]);
+  assert.equal(logs[1], historicalEntries[1]);
+  assert.deepEqual(state.player, { hp:3, statuses:new Set(["sealed"]) });
+  assert.deepEqual(state.deck.cards, ["card-a", "card-b"]);
+});
 
 // ---- 回合生命周期与全局额度重置 ----
 

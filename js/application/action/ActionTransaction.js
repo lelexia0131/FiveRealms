@@ -9,7 +9,7 @@ Application ActionWorkflow 与 composition root。
 显式 transaction participants 与 RandomPort transaction capability。
 
 状态边界
-只快照调用方明确传入的可变对象图；rollback 原位恢复既有对象和容器身份，不创建第二份 authoritative state。
+只快照调用方明确传入的可变对象图；日志只记录追加边界；rollback 原位恢复既有对象和容器身份，不创建第二份 authoritative state。
 
 信息边界
 不读取 AI World、UI、隐藏牌策略或领域定义；只保存当前真实对象引用和值。
@@ -29,13 +29,13 @@ export class ActionRollbackError extends AggregateError {}
 createActionTransaction。
 
 输入
-roots 是 MatchState、Action runtime 等明确属于本次真实 Action 的可变根对象。
+roots 是 MatchState、Action runtime 等明确属于本次真实 Action 的可变根对象；excludedLog 是不得递归进入的 append-only 日志数组。
 
 输出
 按对象身份记录的数组、Map、Set 与普通对象快照。
 
 读取状态
-roots 可达的全部非冻结 own enumerable data。
+roots 可达且未被排除的全部非冻结 own enumerable data。
 
 写入状态
 无。
@@ -44,15 +44,16 @@ roots 可达的全部非冻结 own enumerable data。
 Object.keys、Object.isFrozen、Map、Set。
 
 边界与不变量
-快照保留原对象引用并处理循环；冻结对象视为不可变叶子，函数与 primitive 按值保留。
+快照保留原对象引用并处理循环；冻结对象与 excludedLog 视为不可变叶子，函数与 primitive 按值保留。
 */
-function captureMutableGraph(roots) {
+function captureMutableGraph(roots, excludedLog = null) {
   const records = [];
   const visited = new Set();
   const pending = [...roots];
   while (pending.length) {
     const value = pending.pop();
-    if (!value || typeof value !== "object" || visited.has(value) || Object.isFrozen(value)) continue;
+    if (!value || typeof value !== "object" || visited.has(value)
+      || value === excludedLog || Object.isFrozen(value)) continue;
     visited.add(value);
     if (Array.isArray(value)) {
       const items = [...value];
@@ -143,29 +144,32 @@ function restoreMutableGraph(records) {
 ActionWorkflow.playCard、ActionWorkflow.useActiveSkill。
 
 输入
-可变 roots、拥有私有运行状态的 participants 与可回放 RandomPort。
+可变 roots、append-only logs、拥有私有运行状态的 participants 与可回放 RandomPort。
 
 输出
 冻结的 { commit, rollback } transaction handle。
 
 读取状态
-roots 对象图、participant checkpoint 与 RandomPort 当前逻辑位置。
+roots 对象图、logs 当前长度、participant checkpoint 与 RandomPort 当前逻辑位置。
 
 写入状态
-commit 只关闭 checkpoint；rollback 原位恢复全部 roots/participants 并回放本次随机读取。
+commit 只关闭 checkpoint；rollback 原位恢复全部 roots/participants、把 logs 截回 Action 开始边界并回放本次随机读取。
 
 调用函数
 captureMutableGraph、restoreMutableGraph、participant checkpoint API、RandomPort transaction API。
 
 边界与不变量
-transaction 必须严格嵌套且至多结束一次；失败不按领域字段逐项恢复，成功不改变既有结算顺序。
+transaction 必须严格嵌套且至多结束一次；logs 在 Action 内只能追加，历史条目不进入深度 checkpoint；
+失败不按领域字段逐项恢复，成功不改变既有结算顺序。
 */
-export function createActionTransaction({ roots, participants = [], randomPort }) {
+export function createActionTransaction({ roots, logs, participants = [], randomPort }) {
   if (!Array.isArray(roots) || !roots.length) throw new TypeError("ActionTransaction 需要可变 roots");
+  if (!Array.isArray(logs)) throw new TypeError("ActionTransaction 需要 logs 数组");
   if (!randomPort?.beginTransaction || !randomPort?.commitTransaction || !randomPort?.rollbackTransaction) {
     throw new TypeError("ActionTransaction 需要 transactional RandomPort");
   }
-  const graphRecords = captureMutableGraph(roots);
+  const logBoundary = { target:logs, length:logs.length };
+  const graphRecords = captureMutableGraph(roots, logBoundary.target);
   const participantRecords = [];
   for (const participant of participants) {
     if (!participant?.captureActionCheckpoint || !participant?.restoreActionCheckpoint) {
@@ -222,16 +226,17 @@ export function createActionTransaction({ roots, participants = [], randomPort }
   首次回滚返回 true；已结束返回 false。
 
   读取状态
-  graph/participant checkpoints 与 RandomPort frame。
+  graph/log/participant checkpoints 与 RandomPort frame。
 
   写入状态
-  原位恢复真实对象图、各 owner 私有状态和随机逻辑位置。
+  原位恢复真实对象图、日志追加边界、各 owner 私有状态和随机逻辑位置。
 
   调用函数
   restoreMutableGraph、participant.restoreActionCheckpoint、randomPort.rollbackTransaction。
 
   边界与不变量
-  所有 owner 都会被尝试恢复；任一恢复失败时以 AggregateError 明确暴露，不能静默留下半回滚状态。
+  所有 owner 都会被尝试恢复；日志只删除本次 Action 追加的尾部，历史条目及顺序保持原样；
+  任一恢复失败时以 AggregateError 明确暴露，不能静默留下半回滚状态。
   */
   function rollback() {
     if (!active) return false;
@@ -240,6 +245,7 @@ export function createActionTransaction({ roots, participants = [], randomPort }
     for (const { participant, snapshot } of participantRecords) {
       try { participant.restoreActionCheckpoint(snapshot); } catch (error) { errors.push(error); }
     }
+    try { logBoundary.target.length = logBoundary.length; } catch (error) { errors.push(error); }
     try { randomPort.rollbackTransaction(randomToken); } catch (error) { errors.push(error); }
     active = false;
     if (errors.length) throw new ActionRollbackError(errors, "真实 Action rollback 未完整恢复");

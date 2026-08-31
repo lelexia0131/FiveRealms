@@ -848,6 +848,7 @@ class MatchApplication {
       setResolutionSerialProjection: (value) => { this.state.resolutionSerial = value; },
       createActionTransaction: (actionRuntime) => createActionTransaction({
         roots:[this.state, actionRuntime],
+        logs:this.state.logs,
         participants:[
           this.responseWorkflow,
           this.dyingWorkflow,
