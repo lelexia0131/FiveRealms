@@ -4437,7 +4437,7 @@ export class Evaluator {
 
   边界与不变量
   futureInventory 只作诊断；held option 只允许 terminal 一次进入 Final Utility；
-  回收站按未来新 global turn 的完整额度估值，不继承当前回合已用次数。
+  回收站只按当前 global turn 的剩余额度估值，已消费额度不得在 END 时重置后重复计价。
   */
   frontierResidual(state, viewerId) {
     const viewer = state.players.find((player) => player.id === viewerId);
@@ -4447,8 +4447,13 @@ export class Evaluator {
       cardAvailability(card) > PROBABILITY_EPSILON
       && (CARD_DEFINITIONS[card.definitionId] ?? card).category === "tactic"
     )) ? 1 : 0;
+    const remainingRecycleUses = Math.max(
+      0,
+      CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
+        - Math.max(0, Number(viewer.recycleDeviceUses) || 0)
+    );
     const recycle = viewer.equipmentDefinitionId === "recycleDevice"
-      ? CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
+      ? remainingRecycleUses
         * tacticGate
         * 1.1
         * Math.max(0, Number(viewer.equipmentRetentionProbability ?? 1))

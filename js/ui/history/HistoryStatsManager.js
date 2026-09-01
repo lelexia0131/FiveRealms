@@ -12,7 +12,7 @@ main 的对局结束回调与 HistoryArchiveView。
 只读最终 MatchResult；只写独立 history_data.json 对应的历史快照。
 
 信息边界
-只保存真人玩家已经公开的终局身份、阵营、胜负、评分、回合与 MVP 事实。
+只保存真人玩家已经公开的终局身份、队友、胜负、评分、回合、MVP 与 Match Performance 最终事实。
 
 架构约束
 不得读取 GameState、MatchPerformanceTracker 或 AI；View 不得绕过本模块访问文件接口。
@@ -21,7 +21,6 @@ import { CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/Chara
 
 const HISTORY_VERSION = 1;
 const HISTORY_ENDPOINT = "/api/history";
-const MAX_RECENT_RECORDS = 50;
 const TEAM_DEFINITIONS = Object.freeze([
   Object.freeze({ id: "dawn", name: "晨星" }),
   Object.freeze({ id: "dusk", name: "暮影" })
@@ -99,6 +98,38 @@ Number、Math.max、Math.round。
 function nonNegativeNumber(value, integer = false) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
+  return integer ? Math.max(0, Math.round(number)) : Math.max(0, number);
+}
+
+/*
+功能
+规范化只在新终局记录中存在的非负事实，并保留旧档案的未知语义。
+
+调用方
+normalizeHistoryData 与 recordMatchResult。
+
+输入
+可能缺失的数值与是否要求整数。
+
+输出
+已知时返回非负有限数，缺失或非法时返回 null。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Number、Number.isFinite、Math.max、Math.round。
+
+边界与不变量
+旧记录缺字段不能归零；真实终局中的零仍必须保留为有效纪录。
+*/
+function optionalNonNegativeNumber(value, integer = false) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
   return integer ? Math.max(0, Math.round(number)) : Math.max(0, number);
 }
 
@@ -186,15 +217,22 @@ function normalizeHistoryData(source) {
     empty.teams[teamId] = { matches, wins, winRate: calculateWinRate(wins, matches) };
   }
   empty.records = Array.isArray(source.records)
-    ? source.records.slice(0, MAX_RECENT_RECORDS).filter((record) => record && typeof record === "object").map((record) => ({
+    ? source.records.filter((record) => record && typeof record === "object").map((record) => ({
       timestamp: typeof record.timestamp === "string" ? record.timestamp : "",
       characterId: typeof record.characterId === "string" ? record.characterId : "",
       characterName: typeof record.characterName === "string" ? record.characterName : "未知旅者",
       teamId: record.teamId === "dusk" ? "dusk" : "dawn",
+      teammateCharacterIds: Array.isArray(record.teammateCharacterIds)
+        ? record.teammateCharacterIds.filter((characterId) => typeof characterId === "string" && characterId)
+        : null,
       won: Boolean(record.won),
       score: nonNegativeNumber(record.score),
       rounds: nonNegativeNumber(record.rounds, true),
-      isMvp: Boolean(record.isMvp)
+      isMvp: Boolean(record.isMvp),
+      damage: optionalNonNegativeNumber(record.damage),
+      kills: optionalNonNegativeNumber(record.kills, true),
+      support: optionalNonNegativeNumber(record.support),
+      damageTaken: optionalNonNegativeNumber(record.damageTaken)
     }))
     : [];
   return empty;
@@ -260,6 +298,44 @@ function createHttpHistoryStorage(fetchImpl, endpoint) {
     },
     /*
     功能
+    仅在历史文件仍不存在时创建初始空档。
+
+    调用方
+    HistoryStatsManager.loadData。
+
+    输入
+    完整 version 1 JSON 字符串。
+
+    输出
+    创建成功返回 true；并发期间文件已出现返回 false；其他失败抛错。
+
+    读取状态
+    同源服务中的 history_data.json 是否存在。
+
+    写入状态
+    仅在缺档时创建根目录 history_data.json。
+
+    调用函数
+    fetch。
+
+    边界与不变量
+    If-None-Match 条件必须由 server 在写锁内判断，绝不以空档覆盖已存在档案。
+    */
+    async create(json) {
+      const response = await fetchImpl(endpoint, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "If-None-Match": "*"
+        },
+        body: json
+      });
+      if (response.status === 412) return false;
+      if (!response.ok) throw new Error(`创建历史档案失败：HTTP ${response.status}`);
+      return true;
+    },
+    /*
+    功能
     把 Manager 生成的完整 JSON 保存到固定同源端点。
 
     调用方
@@ -296,6 +372,87 @@ function createHttpHistoryStorage(fetchImpl, endpoint) {
 
 /*
 功能
+从完整历史记录中选出与真人同阵营场次最多的角色。
+
+调用方
+buildArchiveData。
+
+输入
+已规范化的全部历史 records。
+
+输出
+含 characterId、characterName 与 matches 的同行纪录；没有已知队友事实时返回 null。
+
+读取状态
+角色定义顺序与名称。
+
+写入状态
+无。
+
+调用函数
+Map、Set、Array.sort、CHARACTER_DEFINITIONS.find/findIndex。
+
+边界与不变量
+同一场同一角色至多计一次；并列按角色定义顺序、再按 ID 排序，刷新后结果稳定。
+*/
+function findMostFrequentCompanion(records) {
+  const counts = new Map();
+  for (const record of records) {
+    if (!Array.isArray(record.teammateCharacterIds)) continue;
+    for (const characterId of new Set(record.teammateCharacterIds)) {
+      counts.set(characterId, (counts.get(characterId) ?? 0) + 1);
+    }
+  }
+  const [winner] = [...counts.entries()].sort(([leftId, leftMatches], [rightId, rightMatches]) => {
+    if (rightMatches !== leftMatches) return rightMatches - leftMatches;
+    const leftIndex = CHARACTER_DEFINITIONS.findIndex((definition) => definition.id === leftId);
+    const rightIndex = CHARACTER_DEFINITIONS.findIndex((definition) => definition.id === rightId);
+    const stableLeftIndex = leftIndex < 0 ? Number.MAX_SAFE_INTEGER : leftIndex;
+    const stableRightIndex = rightIndex < 0 ? Number.MAX_SAFE_INTEGER : rightIndex;
+    return stableLeftIndex - stableRightIndex || leftId.localeCompare(rightId);
+  });
+  if (!winner) return null;
+  const [characterId, matches] = winner;
+  const definition = CHARACTER_DEFINITIONS.find((entry) => entry.id === characterId);
+  return {
+    characterId,
+    characterName: definition?.name ?? "未知旅者",
+    matches
+  };
+}
+
+/*
+功能
+读取一个新增单局事实在全部已知历史中的最高值。
+
+调用方
+buildArchiveData。
+
+输入
+已规范化 records 与 damage/kills/support/damageTaken 字段名。
+
+输出
+至少一场记录具有该事实时返回最高非负数，否则返回 null。
+
+读取状态
+历史记录字段。
+
+写入状态
+无。
+
+调用函数
+Array.map/filter、Math.max。
+
+边界与不变量
+旧记录的 null 不参与比较；真实零值必须作为已知纪录返回。
+*/
+function highestKnownRecordValue(records, key) {
+  const values = records.map((record) => record[key]).filter((value) => value !== null);
+  return values.length ? Math.max(...values) : null;
+}
+
+/*
+功能
 把持久化快照投影成 View 可直接展示且无需计算的数据。
 
 调用方
@@ -305,7 +462,7 @@ HistoryStatsManager.getArchiveData。
 规范化历史数据。
 
 输出
-含总体胜率、全部角色/阵营与传奇纪录的冻结查询对象。
+含总体胜率、全部角色/阵营与五项传奇纪录的冻结查询对象。
 
 读取状态
 角色定义、阵营定义与历史累计。
@@ -317,7 +474,7 @@ HistoryStatsManager.getArchiveData。
 calculateWinRate。
 
 边界与不变量
-所有当前角色和两个阵营即使零场也必须出现；最佳胜率只在有使用记录的角色中产生。
+所有当前角色和两个阵营即使零场也必须出现；传奇纪录只使用 records 中已知的最终事实。
 */
 function buildArchiveData(data) {
   const characters = CHARACTER_DEFINITIONS.map((definition, definitionIndex) => {
@@ -335,17 +492,13 @@ function buildArchiveData(data) {
       totalScore: nonNegativeNumber(stats.totalScore)
     };
   });
-  const usedCharacters = characters.filter((character) => character.matches > 0);
-  const usageOrder = [...usedCharacters].sort((left, right) => right.matches - left.matches
-    || right.wins - left.wins || left.definitionIndex - right.definitionIndex);
-  const winRateOrder = [...usedCharacters].sort((left, right) => right.winRate - left.winRate
-    || right.matches - left.matches || right.wins - left.wins || left.definitionIndex - right.definitionIndex);
   const teams = TEAM_DEFINITIONS.map((definition) => ({
     ...definition,
     matches: nonNegativeNumber(data.teams[definition.id]?.matches, true),
     wins: nonNegativeNumber(data.teams[definition.id]?.wins, true),
     winRate: nonNegativeNumber(data.teams[definition.id]?.winRate)
   }));
+  const mostFrequentCompanion = findMostFrequentCompanion(data.records);
   return Object.freeze({
     version: data.version,
     summary: Object.freeze({
@@ -355,13 +508,18 @@ function buildArchiveData(data) {
     characters: Object.freeze(characters.map((entry) => Object.freeze(entry))),
     teams: Object.freeze(teams.map((entry) => Object.freeze(entry))),
     achievements: Object.freeze({
-      highestScore: data.summary.highestScore,
-      highestRounds: data.summary.highestRounds,
-      mvpCount: data.summary.mvpCount,
-      mostUsedCharacter: usageOrder[0]?.name ?? "尚待落笔",
-      bestWinRateCharacter: winRateOrder[0]?.name ?? "尚待落笔"
+      mostFrequentCompanion: mostFrequentCompanion ? Object.freeze(mostFrequentCompanion) : null,
+      highestSingleMatchDamage: highestKnownRecordValue(data.records, "damage"),
+      highestSingleMatchKills: highestKnownRecordValue(data.records, "kills"),
+      highestSingleMatchSupport: highestKnownRecordValue(data.records, "support"),
+      highestSingleMatchDamageTaken: highestKnownRecordValue(data.records, "damageTaken")
     }),
-    records: Object.freeze(data.records.map((record) => Object.freeze({ ...record })))
+    records: Object.freeze(data.records.map((record) => Object.freeze({
+      ...record,
+      teammateCharacterIds: Array.isArray(record.teammateCharacterIds)
+        ? Object.freeze([...record.teammateCharacterIds])
+        : null
+    })))
   });
 }
 
@@ -419,7 +577,7 @@ export class HistoryStatsManager {
   this.data；缺失文件时写入 version 1 空档。
 
   调用函数
-  storage.read/write、normalizeHistoryData、createEmptyHistoryData、buildArchiveData。
+  storage.read/create/write、normalizeHistoryData、createEmptyHistoryData、buildArchiveData。
 
   边界与不变量
   并发初始化共享同一 Promise；读取失败不伪造已初始化状态，后续可重试。
@@ -453,21 +611,29 @@ export class HistoryStatsManager {
   this.data 与可能的新 history_data.json。
 
   调用函数
-  storage.read/write、normalizeHistoryData、createEmptyHistoryData、JSON.stringify。
+  storage.read/create/write、normalizeHistoryData、createEmptyHistoryData、JSON.stringify。
 
   边界与不变量
-  只有确认为不存在时才创建空档；初始保存失败仍提供空白内存档案，损坏或未来版本档案不得被静默覆盖。
+  只有确认为不存在且条件创建成功时才提交空档；并发出现的已有文件必须重新读取，任何写入失败不得伪装为内存成功。
   */
   async loadData() {
     const stored = await this.storage.read();
     if (stored === null || stored === undefined) {
       const empty = createEmptyHistoryData();
-      this.data = empty;
-      try {
-        await this.storage.write(`${JSON.stringify(empty, null, 2)}\n`);
-      } catch {
-        // 旧版静态服务没有 PUT 能力时仍允许浏览空卷册；进程重启后后续终局写入会再次尝试保存。
+      const json = `${JSON.stringify(empty, null, 2)}\n`;
+      let created = true;
+      if (typeof this.storage.create === "function") created = await this.storage.create(json);
+      else await this.storage.write(json);
+      if (created) {
+        this.data = empty;
+        return;
       }
+      const concurrent = await this.storage.read();
+      if (concurrent === null || concurrent === undefined) {
+        throw new Error("历史档案条件创建冲突后仍无法读取文件");
+      }
+      const concurrentParsed = typeof concurrent === "string" ? JSON.parse(concurrent) : concurrent;
+      this.data = normalizeHistoryData(concurrentParsed);
       return;
     }
     const parsed = typeof stored === "string" ? JSON.parse(stored) : stored;
@@ -491,16 +657,17 @@ export class HistoryStatsManager {
   this.data 与 storage 初始化状态。
 
   写入状态
-  首次调用可能初始化档案。
+  每次调用都以磁盘读取结果刷新 this.data。
 
   调用函数
-  initialize、buildArchiveData。
+  loadData、buildArchiveData。
 
   边界与不变量
-  不暴露可变持久化对象；胜率和传奇纪录在数据层完成。
+  不依赖旧 JS 内存作为查询 authority；不暴露可变持久化对象，胜率和传奇纪录在数据层完成。
   */
   async getArchiveData() {
-    if (!this.data) await this.initialize();
+    if (this.initializationPromise) await this.initializationPromise;
+    await this.loadData();
     return buildArchiveData(this.data);
   }
 
@@ -521,13 +688,13 @@ export class HistoryStatsManager {
   当前历史快照、最终 MatchResult 与注入时钟。
 
   写入状态
-  summary、真人角色、真人阵营、最近记录、内存档案与 history_data.json。
+  summary、真人角色、真人阵营、完整 records、history_data.json 与成功后的内存档案。
 
   调用函数
-  initialize、normalizeHistoryData、calculateWinRate、storage.write、buildArchiveData。
+  initialize、normalizeHistoryData、calculateWinRate、optionalNonNegativeNumber、storage.write、buildArchiveData。
 
   边界与不变量
-  只接受存在于最终结果中的真人；不重算评分、胜负或 MVP；文件失败仍保留本次会话内存档案并向调用方报告。
+  只接受存在于最终结果中的真人；不重算评分、胜负、MVP、队友身份或战斗统计；文件写入成功前不得让查询看到未持久化记录。
   */
   async recordMatchResult(matchResult, humanPlayerId) {
     if (!this.data) await this.initialize();
@@ -539,6 +706,9 @@ export class HistoryStatsManager {
     const next = normalizeHistoryData(this.data);
     const score = nonNegativeNumber(player.finalScore);
     const rounds = nonNegativeNumber(player.effectiveRounds, true);
+    const teammateCharacterIds = Array.isArray(player.teammateCharacterIds)
+      ? player.teammateCharacterIds.filter((characterId) => typeof characterId === "string" && characterId)
+      : [];
     next.summary.totalMatches += 1;
     next.summary.wins += player.won ? 1 : 0;
     next.summary.losses += player.won ? 0 : 1;
@@ -570,14 +740,18 @@ export class HistoryStatsManager {
       characterId: player.characterId,
       characterName: player.characterName,
       teamId: player.teamId,
+      teammateCharacterIds,
       won: Boolean(player.won),
       score,
       rounds,
-      isMvp: Boolean(player.isMvp)
+      isMvp: Boolean(player.isMvp),
+      damage: optionalNonNegativeNumber(player.combatStats?.totalDamage),
+      kills: optionalNonNegativeNumber(player.totals?.enemyKills, true),
+      support: optionalNonNegativeNumber(player.combatStats?.support),
+      damageTaken: optionalNonNegativeNumber(player.combatStats?.damageTaken)
     });
-    next.records = next.records.slice(0, MAX_RECENT_RECORDS);
-    this.data = next;
     await this.storage.write(`${JSON.stringify(next, null, 2)}\n`);
+    this.data = next;
     return buildArchiveData(this.data);
   }
 }

@@ -35,7 +35,7 @@ export function compareMatchPerformance(left, right) {
 
 /*
 功能
-把一局冻结的玩家统计快照转换为排名、MVP 和默认选择视图模型。
+把一局冻结的玩家统计快照转换为排名、MVP、队友身份和默认选择视图模型。
 
 调用方
 MatchPerformanceSidecar 的 gameOver 监听器。
@@ -44,7 +44,7 @@ MatchPerformanceSidecar 的 gameOver 监听器。
 一局全部玩家的 raw snapshot。
 
 输出
-冻结的 MatchResultViewModel。
+冻结的 MatchResultViewModel；每名玩家行明确带有同阵营队友角色 ID。
 
 读取状态
 无。
@@ -56,12 +56,15 @@ MatchPerformanceSidecar 的 gameOver 监听器。
 calculatePerformance、compareMatchPerformance。
 
 边界与不变量
-每名玩家只计算一次、全场只排序一次；第一名是唯一 MVP，点击选择不得重新计算。
+每名玩家只计算一次、全场只排序一次；队友列表来自同一最终 roster 且不含本人；第一名是唯一 MVP，点击选择不得重新计算。
 */
 export function createMatchResultViewModel(snapshot) {
   const ranked = snapshot.players.map((entry) => calculatePerformance(entry)).sort(compareMatchPerformance);
   const players = Object.freeze(ranked.map((entry, index) => Object.freeze({
     ...entry,
+    teammateCharacterIds: Object.freeze(snapshot.players.filter(
+      (candidate) => candidate.playerId !== entry.playerId && candidate.teamId === entry.teamId
+    ).map((candidate) => candidate.characterId).filter(Boolean)),
     primaryName: entry.playerName,
     secondaryLabel: entry.characterName && entry.characterName !== entry.playerName
       ? entry.characterName

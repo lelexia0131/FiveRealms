@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 $gameUrl = 'http://127.0.0.1:8000/'
+$historyHealthUrl = 'http://127.0.0.1:8000/api/history/health'
 $port = 8000
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $mutex = $null
@@ -21,12 +22,15 @@ function Show-ErrorMessage([string] $message) {
 function Test-FiveRealmsPage {
     try {
         $response = Invoke-WebRequest -Uri $gameUrl -UseBasicParsing -TimeoutSec 1
+        $historyResponse = Invoke-WebRequest -Uri $historyHealthUrl -UseBasicParsing -TimeoutSec 1
         $cacheControl = [string] ($response.Headers['Cache-Control'] -join ',')
         return $response.StatusCode -ge 200 -and
             $response.StatusCode -lt 400 -and
             $response.Content.Contains('<section id="game-screen"') -and
             $response.Content.Contains('<small>FIVE REALMS</small>') -and
-            $cacheControl.Contains('no-store')
+            $cacheControl.Contains('no-store') -and
+            $historyResponse.StatusCode -eq 200 -and
+            $historyResponse.Content.Contains('"ok": true')
     }
     catch {
         return $false
@@ -82,7 +86,7 @@ try {
             }
         }
         if (-not $ready) {
-            throw "Port 8000 is already in use, but $gameUrl is not the canonical no-cache FiveRealms entry page. Stop the other program or free port 8000, then try again."
+            throw "Port 8000 is already in use, but $gameUrl is not the canonical no-cache FiveRealms entry page with history API. Stop the other program or free port 8000, then try again."
         }
     }
 

@@ -73,6 +73,7 @@ function rawPlayer(options = {}) {
   return {
     playerId,
     playerName: options.playerName ?? playerId,
+    characterId: options.characterId ?? playerId,
     characterName: options.characterName ?? playerId,
     teamId: options.teamId ?? "dawn",
     seatIndex: options.seatIndex ?? 0,
@@ -1082,6 +1083,44 @@ export function registerMatchPerformanceTests(test) {
     assert.deepEqual(viewModel.players.map((entry) => entry.playerId), ["p5", "p4", "p3", "p2", "p1"]);
     assert.equal(viewModel.players[0].isMvp, true);
     assert.equal(viewModel.mvpPlayerId, "p5");
+  });
+
+  test("UI·MVP：MatchResult 暴露队友角色与现有真实战斗统计", () => {
+    const viewModel = createMatchResultViewModel({
+      gameId: "history-final-facts",
+      players: [
+        rawPlayer({
+          playerId: "human",
+          characterId: "blade-walker",
+          teamId: "dawn",
+          seatIndex: 0,
+          totals: {
+            enemyHpDamage: 21,
+            enemyKills: 3,
+            allyHealing: 2,
+            allyMitigation: 4,
+            hpDamageTaken: 7
+          }
+        }),
+        rawPlayer({
+          playerId: "ally",
+          characterId: "oath-warden",
+          teamId: "dawn",
+          seatIndex: 1
+        }),
+        rawPlayer({
+          playerId: "enemy",
+          characterId: "ember-magus",
+          teamId: "dusk",
+          seatIndex: 2
+        })
+      ]
+    });
+    const human = viewModel.players.find((entry) => entry.playerId === "human");
+    assert.deepEqual(human.teammateCharacterIds, ["oath-warden"]);
+    assert.equal(Object.isFrozen(human.teammateCharacterIds), true);
+    assert.deepEqual(human.combatStats, { totalDamage: 21, support: 6, damageTaken: 7 });
+    assert.equal(human.totals.enemyKills, 3);
   });
 
   test("UI·MVP：相同玩家与角色名只渲染一份且第一名使用背景装饰", () => {

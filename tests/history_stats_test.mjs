@@ -22,13 +22,13 @@ import { HistoryStatsManager } from "../js/ui/history/HistoryStatsManager.js";
 指定临时 JSON 文件。
 
 写入状态
-只覆盖指定临时 JSON 文件。
+条件创建或覆盖指定临时 JSON 文件。
 
 调用函数
 readFile、writeFile。
 
 边界与不变量
-只有 ENOENT 映射为未初始化；其他文件错误必须继续抛出。
+只有 ENOENT 映射为未初始化；create 使用独占文件标志防止覆盖并发出现的已有档案。
 */
 function createFileStorage(filePath) {
   return {
@@ -42,22 +42,31 @@ function createFileStorage(filePath) {
     },
     async write(json) {
       await writeFile(filePath, json, "utf8");
+    },
+    async create(json) {
+      try {
+        await writeFile(filePath, json, { encoding: "utf8", flag: "wx" });
+        return true;
+      } catch (error) {
+        if (error?.code === "EEXIST") return false;
+        throw error;
+      }
     }
   };
 }
 
 /*
 功能
-创建模拟旧版静态服务 501 写入失败的历史存储。
+创建始终拒绝持久化写入的历史存储。
 
 调用方
-历史档案降级展示与会话内累计测试。
+历史初始化与终局事务失败测试。
 
 输入
 无。
 
 输出
-read 返回缺档、write 固定抛出 HTTP 501 的存储适配器。
+可选择返回已有档案，create/write 固定抛出 HTTP 501 的存储适配器。
 
 读取状态
 无。
@@ -69,11 +78,12 @@ read 返回缺档、write 固定抛出 HTTP 501 的存储适配器。
 Error。
 
 边界与不变量
-只模拟文件写入能力缺失，不改变 Manager 的统计输入。
+只模拟文件写入能力缺失；Manager 不得把未落盘数据提交到内存查询。
 */
-function createUnsupportedWriteStorage() {
+function createUnsupportedWriteStorage(existing = null) {
   return {
-    async read() { return null; },
+    async read() { return existing; },
+    async create() { throw new Error("保存历史档案失败：HTTP 501"); },
     async write() { throw new Error("保存历史档案失败：HTTP 501"); }
   };
 }
@@ -116,7 +126,7 @@ async function createHistoryFixture() {
 
 /*
 功能
-创建只包含最终历史写入字段的 MatchResult fixture。
+创建包含完整终局事实与队伍身份的 MatchResult fixture。
 
 调用方
 胜利、失败与统计累计测试。
@@ -137,20 +147,40 @@ async function createHistoryFixture() {
 无。
 
 边界与不变量
-评分、胜负、MVP 和回合已经由上游确定，Manager 只能记录不能重算。
+评分、胜负、MVP、战斗统计和队友身份已经由上游确定，Manager 只能记录不能重算。
 */
 function matchResult(options = {}) {
+  const teamId = options.teamId ?? "dawn";
+  const teammateCharacterIds = options.teammateCharacterIds ?? ["oath-warden"];
+  const teammateNames = {
+    "oath-warden": "守誓者",
+    "spirit-medic": "灵医",
+    "shade-agent": "影客"
+  };
   return {
     gameId: options.gameId ?? "history-match",
     players: [{
       playerId: "human",
       characterId: options.characterId ?? "blade-walker",
       characterName: options.characterName ?? "刃行者",
-      teamId: options.teamId ?? "dawn",
+      teamId,
+      teammateCharacterIds,
       won: options.won ?? true,
       finalScore: options.finalScore ?? 420,
       effectiveRounds: options.effectiveRounds ?? 8,
-      isMvp: options.isMvp ?? true
+      isMvp: options.isMvp ?? true,
+      combatStats: options.combatStats ?? { totalDamage: 18, support: 5, damageTaken: 8 },
+      totals: options.totals ?? { enemyKills: 2 }
+    }, ...teammateCharacterIds.map((characterId, index) => ({
+      playerId: `ally-${index}`,
+      characterId,
+      characterName: teammateNames[characterId] ?? characterId,
+      teamId
+    })), {
+      playerId: "enemy",
+      characterId: "ember-magus",
+      characterName: "炎术师",
+      teamId: teamId === "dawn" ? "dusk" : "dawn"
     }]
   };
 }
@@ -203,25 +233,31 @@ export function registerHistoryStatsTests(test) {
     }
   });
 
-  test("UI·历史档案：旧服务不支持写入时仍展示零记录卷册且不暴露 HTTP 错误", async () => {
+  test("UI·历史档案：首次建档写入失败时展示读取错误且不伪装成持久化空档", async () => {
     const manager = new HistoryStatsManager({ storage: createUnsupportedWriteStorage() });
-    const archive = await manager.initialize();
+    await assert.rejects(manager.initialize(), /HTTP 501/);
     const root = { innerHTML: "", addEventListener() {} };
     const view = new HistoryArchiveView(root, manager, () => {});
     await view.show();
-    assert.equal(archive.summary.totalMatches, 0);
-    assert.match(root.innerHTML, /历史档案馆/);
-    assert.match(root.innerHTML, /卷宗尚未落笔/);
-    assert.doesNotMatch(root.innerHTML, /501|HTTP|保存历史档案失败|档案卷册暂时封存/);
+    assert.match(root.innerHTML, /卷册尚待展开/);
+    assert.doesNotMatch(root.innerHTML, /501|HTTP|保存历史档案失败/);
   });
 
-  test("UI·历史档案：写入暂不可用时仍保留本次会话终局记录", async () => {
-    const manager = new HistoryStatsManager({ storage: createUnsupportedWriteStorage() });
+  test("UI·历史档案：终局 PUT 失败时不把未落盘记录提交到内存", async () => {
+    const existing = JSON.stringify({
+      version: 1,
+      summary: {
+        totalMatches: 0, wins: 0, losses: 0, mvpCount: 0,
+        highestScore: 0, highestRounds: 0, totalScore: 0, totalRounds: 0
+      },
+      characters: {}, teams: {}, records: []
+    });
+    const manager = new HistoryStatsManager({ storage: createUnsupportedWriteStorage(existing) });
     await manager.initialize();
     await assert.rejects(manager.recordMatchResult(matchResult(), "human"), /HTTP 501/);
     const archive = await manager.getArchiveData();
-    assert.equal(archive.summary.totalMatches, 1);
-    assert.equal(archive.records[0].characterName, "刃行者");
+    assert.equal(archive.summary.totalMatches, 0);
+    assert.equal(archive.records.length, 0);
   });
 
   test("UI·历史档案：胜利终局累计角色、阵营、MVP 与最高纪录", async () => {
@@ -246,10 +282,15 @@ export function registerHistoryStatsTests(test) {
         characterId: "blade-walker",
         characterName: "刃行者",
         teamId: "dawn",
+        teammateCharacterIds: ["oath-warden"],
         won: true,
         score: 420,
         rounds: 8,
-        isMvp: true
+        isMvp: true,
+        damage: 18,
+        kills: 2,
+        support: 5,
+        damageTaken: 8
       });
     } finally {
       await fixture.cleanup();
@@ -304,6 +345,156 @@ export function registerHistoryStatsTests(test) {
     }
   });
 
+  test("UI·历史档案：同一 Manager 打开档案时仍重新读取磁盘 authority", async () => {
+    const fixture = await createHistoryFixture();
+    try {
+      const manager = new HistoryStatsManager({ storage: fixture.storage });
+      await manager.initialize();
+      const external = {
+        version: 1,
+        summary: {
+          totalMatches: 1, wins: 1, losses: 0, mvpCount: 0,
+          highestScore: 300, highestRounds: 7, totalScore: 300, totalRounds: 7
+        },
+        characters: {}, teams: {}, records: []
+      };
+      await writeFile(fixture.filePath, JSON.stringify(external), "utf8");
+      const archive = await manager.getArchiveData();
+      assert.equal(archive.summary.totalMatches, 1);
+      assert.equal(archive.summary.highestScore, 300);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("UI·历史档案：旧 version 1 记录保留且缺失终局事实保持未知", async () => {
+    const fixture = await createHistoryFixture();
+    try {
+      const legacy = {
+        version: 1,
+        summary: {
+          totalMatches: 1, wins: 1, losses: 0, mvpCount: 0,
+          highestScore: 300, highestRounds: 7, totalScore: 300, totalRounds: 7
+        },
+        characters: {},
+        teams: {},
+        records: [{
+          timestamp: "2026-08-01T00:00:00.000Z",
+          characterId: "blade-walker",
+          characterName: "刃行者",
+          teamId: "dawn",
+          won: true,
+          score: 300,
+          rounds: 7,
+          isMvp: false
+        }]
+      };
+      await writeFile(fixture.filePath, JSON.stringify(legacy), "utf8");
+      const manager = new HistoryStatsManager({ storage: fixture.storage });
+      const archive = await manager.initialize();
+      assert.equal(archive.records.length, 1);
+      assert.equal(archive.records[0].damage, null);
+      assert.equal(archive.records[0].kills, null);
+      assert.equal(archive.records[0].support, null);
+      assert.equal(archive.records[0].damageTaken, null);
+      assert.equal(archive.records[0].teammateCharacterIds, null);
+      assert.deepEqual(archive.achievements, {
+        mostFrequentCompanion: null,
+        highestSingleMatchDamage: null,
+        highestSingleMatchKills: null,
+        highestSingleMatchSupport: null,
+        highestSingleMatchDamageTaken: null
+      });
+
+      await manager.recordMatchResult(matchResult(), "human");
+      const persisted = JSON.parse(await readFile(fixture.filePath, "utf8"));
+      assert.equal(persisted.records.length, 2);
+      assert.equal(persisted.records[1].timestamp, legacy.records[0].timestamp);
+      assert.equal(persisted.records[1].damage, null);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("UI·历史档案：传奇记录只投影同行与四项真实单局终局事实", async () => {
+    const fixture = await createHistoryFixture();
+    try {
+      const manager = new HistoryStatsManager({ storage: fixture.storage });
+      await manager.recordMatchResult(matchResult({
+        teammateCharacterIds: ["oath-warden"],
+        combatStats: { totalDamage: 18, support: 5, damageTaken: 8 },
+        totals: { enemyKills: 2 }
+      }), "human");
+      await manager.recordMatchResult(matchResult({
+        gameId: "history-two",
+        teammateCharacterIds: ["spirit-medic"],
+        combatStats: { totalDamage: 30, support: 9, damageTaken: 4 },
+        totals: { enemyKills: 1 }
+      }), "human");
+      let archive = await manager.getArchiveData();
+      assert.deepEqual(archive.achievements.mostFrequentCompanion, {
+        characterId: "oath-warden", characterName: "守誓者", matches: 1
+      });
+
+      await manager.recordMatchResult(matchResult({
+        gameId: "history-three",
+        teammateCharacterIds: ["spirit-medic"],
+        combatStats: { totalDamage: 20, support: 2, damageTaken: 12 },
+        totals: { enemyKills: 4 }
+      }), "human");
+      archive = await manager.getArchiveData();
+      assert.deepEqual(archive.achievements, {
+        mostFrequentCompanion: {
+          characterId: "spirit-medic", characterName: "灵医", matches: 2
+        },
+        highestSingleMatchDamage: 30,
+        highestSingleMatchKills: 4,
+        highestSingleMatchSupport: 9,
+        highestSingleMatchDamageTaken: 12
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("UI·历史档案：返回旅途起点按动画偏好滚到顶部且真正返回按钮仍回首页", () => {
+    const rootScrolls = [];
+    const windowScrolls = [];
+    let reducedMotion = false;
+    let backCount = 0;
+    const root = {
+      innerHTML: "",
+      addEventListener() {},
+      scrollTo(options) { rootScrolls.push(options); },
+      ownerDocument: {
+        defaultView: {
+          matchMedia: () => ({ matches: reducedMotion }),
+          scrollTo(options) { windowScrolls.push(options); }
+        }
+      }
+    };
+    const view = new HistoryArchiveView(root, null, () => { backCount += 1; });
+    const topTarget = {
+      closest: (selector) => selector === "[data-history-top]" ? topTarget : null
+    };
+    view.handleClick({ target: topTarget });
+    assert.deepEqual(rootScrolls.at(-1), { top: 0, behavior: "smooth" });
+    assert.deepEqual(windowScrolls.at(-1), { top: 0, behavior: "smooth" });
+    assert.equal(backCount, 0);
+
+    reducedMotion = true;
+    view.handleClick({ target: topTarget });
+    assert.deepEqual(rootScrolls.at(-1), { top: 0, behavior: "auto" });
+    assert.deepEqual(windowScrolls.at(-1), { top: 0, behavior: "auto" });
+
+    const backTarget = {
+      closest: (selector) => selector === "[data-history-back]" ? backTarget : null
+    };
+    view.handleClick({ target: backTarget });
+    assert.equal(backCount, 1);
+    assert.equal(rootScrolls.length, 2);
+  });
+
   test("UI·历史档案：View 使用卡牌与纹章渲染且不生成表格", async () => {
     const fixture = await createHistoryFixture();
     try {
@@ -316,6 +507,12 @@ export function registerHistoryStatsTests(test) {
       assert.match(root.innerHTML, /history-traveler-card/);
       assert.match(root.innerHTML, /history-faction-card is-dawn/);
       assert.match(root.innerHTML, /history-journey-card is-victory/);
+      assert.match(root.innerHTML, /最常同行/);
+      assert.match(root.innerHTML, /单局最高伤害/);
+      assert.match(root.innerHTML, /单局最高击杀/);
+      assert.match(root.innerHTML, /单局最高支援/);
+      assert.match(root.innerHTML, /单局最高承伤/);
+      assert.match(root.innerHTML, /data-history-top>返回旅途起点/);
       assert.equal(root.innerHTML.match(/420\.0/g)?.length, 3);
       assert.doesNotMatch(root.innerHTML, /<table/i);
     } finally {

@@ -310,3 +310,6 @@ profiling/
 
 # Generated balance reports
 reports/
+
+# Local match history is the runtime persistence authority, not source data.
+/history_data.json

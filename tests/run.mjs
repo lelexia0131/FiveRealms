@@ -1219,6 +1219,7 @@ test("浏览器资源：一键启动器只复用 canonical no-store server", asy
   const launcher = await readFile(projectFile("tools/launcher/start-fr.ps1"), "utf8");
   assert.match(launcher, /tools\/dev-server\.py --host 127\.0\.0\.1 --port 8000/);
   assert.match(launcher, /Headers\['Cache-Control'\][\s\S]*Contains\('no-store'\)/);
+  assert.match(launcher, /api\/history\/health/);
 });
 
 // ---- 定义与所有权 ----
@@ -36673,7 +36674,7 @@ test("AI·价值归属：residual 只在前沿计入且不随路径深度重复�
   assert.ok(rAfter.futureInventory < r1.futureInventory, "未来攻击库存兑现后应减少");
 });
 
-test("AI·价值归属：terminal 回收站按未来新回合2次额度且接纳不可反制战术", () => {
+test("AI·价值归属：terminal 回收站只计当前 global turn 剩余额度且接纳不可反制战术", () => {
   const { game } = makeLedgerGame();
   const evaluator = game.aiController.evaluator;
   const state = ledgerState([
@@ -36686,9 +36687,14 @@ test("AI·价值归属：terminal 回收站按未来新回合2次额度且接纳
     ledgerPlayer("b", 1, "dusk", "oath-warden")
   ]);
   const residual = evaluator.frontierResidual(state, "a");
-  assertClose(residual.held.recycle, 2 * 1.1 * 0.5);
-  assertClose(evaluator.terminalFrontierValue(residual, true), 2 * 1.1 * 0.5 / 5);
+  assert.equal(residual.held.recycle, 0);
+  assert.equal(evaluator.terminalFrontierValue(residual, true), 0);
   assert.equal(evaluator.terminalFrontierValue(residual, false), 0);
+  const oneUseRemaining = structuredClone(state);
+  oneUseRemaining.players[0].recycleDeviceUses = 1;
+  const remainingResidual = evaluator.frontierResidual(oneUseRemaining, "a");
+  assertClose(remainingResidual.held.recycle, 1.1 * 0.5);
+  assertClose(evaluator.terminalFrontierValue(remainingResidual, true), 1.1 * 0.5 / 5);
   const withoutTactic = structuredClone(state);
   withoutTactic.players[0].hand = [ledgerCard("basic", "charge")];
   assert.equal(evaluator.frontierResidual(withoutTactic, "a").held.recycle, 0);

@@ -1437,6 +1437,8 @@ FinalTransition
   - (action is END ? statePointsToUtility(EndOpportunityPoints) : 0)
 ```
 
+`heldRecycle` 只使用当前 global turn 尚未消费的回收站额度；END 不得把已经用掉的额度按下一回合重置后再次计价。它仍只在 terminal 一次进入 Final Utility，且需要当前手牌中存在可用战术牌。
+
 `EligibleSibling` 必须来自同一 parent 的完整 canonical sibling 集合：END 确实把正 overflow 结算到零，且 sibling 与 END 具有相同的 `beforeOverflow`，并通过真实 HP/手牌变化满足 `afterOverflow < beforeOverflow`。单个 sibling 不必一次把全部 overflow 清零；只要仍能减少当前强制弃牌量，就代表 END 会丢失的真实继续行动机会。任一 canonical sibling 尚未完整物化时，END 不具备 Final Utility，也不能进入 incumbent/best-seen。`Pd` 仍只比较已物化 World 的 Raw State delta，不读取静态 CardValue、不按 overflow 张数乘固定常量，也不替代 Searcher 已有 continuation `valueScore` 累加。
 
 普通 `Ps` 的 legal skill state-value opportunity 直接复用每个已物化技能 transition 的 `RawStateDelta`，包含完整 State Value 分项；不建立技能专属价值投影。最大正变化与 `Pf + Ps + Pd` 只由 Evaluator 聚合，Searcher 只交付同 parent 的完整 canonical sibling terms。`D(X)` 继续使用既有团队危险投影，普通技能机会损失使用 `D'(X)=max(0.75,D(X))` 保留最低危险系数。

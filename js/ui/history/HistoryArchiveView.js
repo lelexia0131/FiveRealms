@@ -60,7 +60,7 @@ function formatArchiveTime(timestamp) {
 将档案中的最高评分统一格式化为一位小数。
 
 调用方
-旅者档案卡、征途总览与传奇记录渲染。
+旅者档案卡与征途总览渲染。
 
 输入
 HistoryStatsManager 提供的最高评分数值。
@@ -83,6 +83,42 @@ Number、Number.isFinite、Number.toFixed。
 function formatHighestScore(value) {
   const score = Number(value);
   return (Number.isFinite(score) ? score : 0).toFixed(1);
+}
+
+/*
+功能
+渲染一张只消费 Manager 投影的传奇记录卡。
+
+调用方
+HistoryArchiveView.render。
+
+输入
+已确定的 label、value、glyph 与可选同行角色素材。
+
+输出
+安全 HTML 字符串。
+
+读取状态
+角色 portrait 展示元数据。
+
+写入状态
+无。
+
+调用函数
+escapeHtml。
+
+边界与不变量
+不遍历 records 或计算最高值；未知纪录统一显示“尚待落笔”。
+*/
+function renderAchievementCard({ label, value, glyph, companion = null }) {
+  const portrait = companion
+    ? CHARACTER_PRESENTATION[companion.characterId]?.portrait ?? ""
+    : "";
+  const visual = companion
+    ? `<div class="history-honor-companion"><img src="${escapeHtml(portrait)}" alt="" aria-hidden="true"><i aria-hidden="true">${glyph}</i></div>`
+    : `<i aria-hidden="true">${glyph}</i>`;
+  const detail = companion ? `<small>${companion.matches} 场同行</small>` : "";
+  return `<article>${visual}<span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}${detail}</strong></article>`;
 }
 
 /*
@@ -185,7 +221,7 @@ Manager 提供的单场历史记录。
 无。
 
 调用函数
-formatArchiveTime、escapeHtml。
+formatArchiveTime、formatHighestScore、escapeHtml。
 
 边界与不变量
 胜负、评分与 MVP 均直接使用最终记录，不推导或重算。
@@ -197,14 +233,14 @@ function renderRecordCard(record) {
     <img src="${escapeHtml(portrait)}" alt="" aria-hidden="true">
     <div class="history-journey-main"><small>${escapeHtml(formatArchiveTime(record.timestamp))}</small><h3>${escapeHtml(record.characterName)}</h3><span class="history-team-mark is-${escapeHtml(record.teamId)}">${teamName}</span></div>
     <strong class="history-outcome">${record.won ? "凯旋" : "陨落"}</strong>
-    <div class="history-journey-facts"><span>评分 <b>${record.score}</b></span><span>回合 <b>${record.rounds}</b></span>${record.isMvp ? "<i>MVP</i>" : ""}</div>
+    <div class="history-journey-facts"><span>评分 <b>${formatHighestScore(record.score)}</b></span><span>回合 <b>${record.rounds}</b></span>${record.isMvp ? "<i>MVP</i>" : ""}</div>
   </article>`;
 }
 
 export class HistoryArchiveView {
   /*
   功能
-  创建档案馆页面并绑定返回首页交互。
+  创建档案馆页面并绑定返回首页与页内回顶交互。
 
   调用方
   UIManager constructor。
@@ -225,7 +261,7 @@ export class HistoryArchiveView {
   handleClick。
 
   边界与不变量
-  View 只能通过 Manager 查询数据；返回只提交页面意图。
+  View 只能通过 Manager 查询数据；返回首页与页内滚动必须保持不同意图。
   */
   constructor(root, historyStatsManager, onBack) {
     this.root = root;
@@ -298,7 +334,40 @@ export class HistoryArchiveView {
 
   /*
   功能
-  响应档案页返回按钮并提交一次返回首页意图。
+  按用户动态偏好把当前历史档案馆平滑或立即滚到顶部。
+
+  调用方
+  handleClick 的 data-history-top 分支。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  当前 root 的 owner window 与 prefers-reduced-motion。
+
+  写入状态
+  当前档案页滚动位置。
+
+  调用函数
+  matchMedia、Element.scrollTo、Window.scrollTo。
+
+  边界与不变量
+  不隐藏 View、不切换 screen、不重建 DOM；减少动态效果时行为必须为 auto。
+  */
+  scrollToTop() {
+    const viewWindow = this.root?.ownerDocument?.defaultView ?? globalThis.window;
+    const reducedMotion = viewWindow?.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+    const options = { top: 0, behavior: reducedMotion ? "auto" : "smooth" };
+    this.root?.scrollTo?.(options);
+    viewWindow?.scrollTo?.(options);
+  }
+
+  /*
+  功能
+  区分档案页返回首页按钮与底部回到页面顶部按钮。
 
   调用方
   root click listener。
@@ -310,18 +379,22 @@ export class HistoryArchiveView {
   无返回值。
 
   读取状态
-  点击目标与 onBack callback。
+  点击目标、onBack callback 与当前滚动环境。
 
   写入状态
   无。
 
   调用函数
-  Element.closest、onBack。
+  Element.closest、scrollToTop、onBack。
 
   边界与不变量
-  非返回按钮点击不得触发页面切换。
+  底部回顶只滚动；只有 data-history-back 才提交页面切换。
   */
   handleClick(event) {
+    if (event.target.closest("[data-history-top]")) {
+      this.scrollToTop();
+      return;
+    }
     if (event.target.closest("[data-history-back]")) this.onBack?.();
   }
 
@@ -352,12 +425,38 @@ export class HistoryArchiveView {
   */
   render(archive) {
     const recentRecords = archive.records.slice(0, RECENT_RECORD_LIMIT);
+    const companion = archive.achievements.mostFrequentCompanion;
     const achievementItems = [
-      ["最高评分", formatHighestScore(archive.achievements.highestScore), "✦"],
-      ["最长战斗", `${archive.achievements.highestRounds} 回合`, "⌛"],
-      ["MVP 次数", archive.achievements.mvpCount, "♛"],
-      ["最常同行", archive.achievements.mostUsedCharacter, "◇"],
-      ["胜率之冠", archive.achievements.bestWinRateCharacter, "❖"]
+      {
+        label: "最常同行",
+        value: companion?.characterName ?? "尚待落笔",
+        glyph: "◇",
+        companion
+      },
+      {
+        label: "单局最高伤害",
+        value: archive.achievements.highestSingleMatchDamage === null
+          ? "尚待落笔" : String(archive.achievements.highestSingleMatchDamage),
+        glyph: "⚔"
+      },
+      {
+        label: "单局最高击杀",
+        value: archive.achievements.highestSingleMatchKills === null
+          ? "尚待落笔" : String(archive.achievements.highestSingleMatchKills),
+        glyph: "✹"
+      },
+      {
+        label: "单局最高支援",
+        value: archive.achievements.highestSingleMatchSupport === null
+          ? "尚待落笔" : String(archive.achievements.highestSingleMatchSupport),
+        glyph: "✚"
+      },
+      {
+        label: "单局最高承伤",
+        value: archive.achievements.highestSingleMatchDamageTaken === null
+          ? "尚待落笔" : String(archive.achievements.highestSingleMatchDamageTaken),
+        glyph: "⛨"
+      }
     ];
     this.root.innerHTML = `<div class="history-archive-shell">
       <header class="history-archive-header">
@@ -388,15 +487,15 @@ export class HistoryArchiveView {
       </section>
 
       <section class="history-section" aria-labelledby="history-legends-title">
-        <div class="history-section-heading"><small>LEGENDARY HONORS</small><h2 id="history-legends-title">传奇记录</h2><span>由最高的火光与最漫长的暗夜铸成</span></div>
-        <div class="history-honor-grid">${achievementItems.map(([label, value, glyph]) => `<article><i aria-hidden="true">${glyph}</i><span>${label}</span><strong>${escapeHtml(String(value))}</strong></article>`).join("")}</div>
+        <div class="history-section-heading"><small>LEGENDARY HONORS</small><h2 id="history-legends-title">传奇记录</h2><span>同行者与每一场终局留下的真实战果</span></div>
+        <div class="history-honor-grid">${achievementItems.map(renderAchievementCard).join("")}</div>
       </section>
 
       <section class="history-section history-journeys" aria-labelledby="history-journeys-title">
         <div class="history-section-heading"><small>RECENT VOYAGES</small><h2 id="history-journeys-title">最近征途</h2><span>卷宗最上层仍带着战场尘埃的终局记录</span></div>
         <div class="history-journey-grid">${recentRecords.length ? recentRecords.map(renderRecordCard).join("") : `<div class="history-empty"><span aria-hidden="true">◇</span><strong>卷宗尚未落笔</strong><p>完成第一场对局后，旅者的名字将在这里被铭记。</p></div>`}</div>
       </section>
-      <footer class="history-archive-footer"><span>FIVE REALMS · ARCHIVE ${archive.version}</span><button class="ghost-button" type="button" data-history-back>返回旅途起点</button></footer>
+      <footer class="history-archive-footer"><span>FIVE REALMS · ARCHIVE ${archive.version}</span><button class="ghost-button" type="button" data-history-top>返回旅途起点</button></footer>
     </div>`;
   }
 

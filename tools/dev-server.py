@@ -2,6 +2,8 @@
 
 import argparse
 import json
+import os
+import tempfile
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,6 +15,23 @@ ROOT = Path(__file__).resolve().parents[1]
 HISTORY_DATA_PATH = ROOT / "history_data.json"
 MAX_HISTORY_BYTES = 1024 * 1024
 HISTORY_FILE_LOCK = Lock()
+
+
+def write_history_atomically(target_path, content):
+    """Write a complete archive beside its target and atomically replace the old file."""
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target_path.name}.", suffix=".tmp", dir=target_path.parent
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as temporary_file:
+            temporary_file.write(content)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, target_path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 class NoCacheStaticHandler(SimpleHTTPRequestHandler):
@@ -35,7 +54,11 @@ class NoCacheStaticHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if urlsplit(self.path).path != "/api/history":
+        request_path = urlsplit(self.path).path
+        if request_path == "/api/history/health":
+            self._send_json(200, {"ok": True})
+            return
+        if request_path != "/api/history":
             return super().do_GET()
         if not self.history_data_path.exists():
             self._send_json(404, {"error": "history archive not found"})
@@ -73,11 +96,13 @@ class NoCacheStaticHandler(SimpleHTTPRequestHandler):
             self._send_json(400, {"error": "unsupported history schema"})
             return
         serialized = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-        temporary_path = self.history_data_path.with_suffix(".json.tmp")
+        create_only = self.headers.get("If-None-Match", "").strip() == "*"
         try:
             with HISTORY_FILE_LOCK:
-                temporary_path.write_bytes(serialized)
-                temporary_path.replace(self.history_data_path)
+                if create_only and self.history_data_path.exists():
+                    self._send_json(412, {"error": "history archive already exists"})
+                    return
+                write_history_atomically(self.history_data_path, serialized)
         except OSError as error:
             self._send_json(500, {"error": str(error)})
             return
