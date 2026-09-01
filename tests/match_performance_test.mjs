@@ -258,12 +258,12 @@ export function registerMatchPerformanceTests(test) {
     const thresholds = getPerformanceThresholds(2);
     const result = calculatePerformance(rawPlayer({
       effectiveRounds: 10,
-      totals: { skillEnergySpent: 11 },
+      totals: { skillEnergySpent: 13 },
       contributionFacts: { allyCardsGranted: 7 }
     }));
     assert.deepEqual(
       MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
-      [3.2, 0.6, 0.7, 0.8, 1.1, 2.0]
+      [3.2, 0.6, 0.7, 1.0, 1.3, 2.0]
     );
     assert.deepEqual([result.scores.contribution, result.scores.skill], [100, 100]);
   });
@@ -273,23 +273,23 @@ export function registerMatchPerformanceTests(test) {
     const result = calculatePerformance(rawPlayer({
       initialTeamSize: 3,
       effectiveRounds: 10,
-      totals: { skillEnergySpent: 10 },
+      totals: { skillEnergySpent: 12 },
       contributionFacts: { allyCardsGranted: 5 }
     }));
     assert.deepEqual(
       MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
-      [2.6, 0.5, 0.5, 0.6, 1.0, 1.2]
+      [2.6, 0.5, 0.5, 0.8, 1.2, 1.2]
     );
     assert.deepEqual([result.scores.contribution, result.scores.skill], [100, 100]);
   });
 
-  test("UI·MVP：二人队火力按实际敌伤与真实击杀得到112.5分", async () => {
+  test("UI·MVP：二人队火力按实际敌伤与真实击杀得到75分", async () => {
     const result = calculatePerformance(rawPlayer({
       effectiveRounds: 4,
       totals: { enemyHpDamage: 4, enemyKills: 1 }
     }));
-    assert.equal(result.raw.firepower, 2.25);
-    assert.equal(result.scores.firepower, 112.5);
+    assert.equal(result.raw.firepower, 1.5);
+    assert.equal(result.scores.firepower, 75);
     const actor = trackerPlayer("actor", 0, "dawn");
     const ally = trackerPlayer("ally", 1, "dawn");
     const enemy = trackerPlayer("enemy", 2, "dusk");
@@ -302,14 +302,14 @@ export function registerMatchPerformanceTests(test) {
     assert.deepEqual([totals.enemyHpDamage, totals.enemyKills], [4, 1]);
   });
 
-  test("UI·MVP：三人队对同一火力使用独立标准得到187.5分", () => {
+  test("UI·MVP：三人队对同一火力使用独立标准得到125分", () => {
     const result = calculatePerformance(rawPlayer({
       initialTeamSize: 3,
       effectiveRounds: 4,
       totals: { enemyHpDamage: 4, enemyKills: 1 }
     }));
-    assert.equal(result.raw.firepower, 2.25);
-    assert.equal(result.scores.firepower, 187.5);
+    assert.equal(result.raw.firepower, 1.5);
+    assert.equal(result.scores.firepower, 125);
   });
 
   test("UI·MVP：濒死救援按二倍计入一次且支援原始值为1.4", () => {
@@ -1015,8 +1015,8 @@ export function registerMatchPerformanceTests(test) {
         enemyHpDamage: 30,
         allyHealing: 9,
         cardsPlayed: 48,
-        skillEnergySpent: 16.5,
-        enemyControls: 12
+        skillEnergySpent: 19.5,
+        enemyControls: 15
       },
       contributionFacts: { allyCardsGranted: 10.5 }
     }));
@@ -1030,8 +1030,8 @@ export function registerMatchPerformanceTests(test) {
         enemyHpDamage: 18,
         allyHealing: 7.5,
         cardsPlayed: 39,
-        skillEnergySpent: 15,
-        enemyControls: 9
+        skillEnergySpent: 18,
+        enemyControls: 12
       },
       contributionFacts: { allyCardsGranted: 7.5 }
     }));

@@ -17,7 +17,7 @@ export const MATCH_PERFORMANCE_LABELS = Object.freeze({
 });
 
 export const MATCH_PERFORMANCE_POLICY = Object.freeze({
-  killBonus: 5,
+  killBonus: 2,
   rescueMultiplier: 2,
   aliveVictoryMultiplier: 1.2,
   clutchVictoryMultipliersByTeamSize: Object.freeze({
@@ -46,16 +46,16 @@ export const MATCH_PERFORMANCE_POLICY = Object.freeze({
       firepower: 2.0,
       support: 0.6,
       activity: 3.2,
-      skill: 1.1,
-      control: 0.8,
+      skill: 1.3,
+      control: 1.0,
       contribution: 0.7
     }),
     3: Object.freeze({
       firepower: 1.2,
       support: 0.5,
       activity: 2.6,
-      skill: 1.0,
-      control: 0.6,
+      skill: 1.2,
+      control: 0.8,
       contribution: 0.5
     })
   }),
