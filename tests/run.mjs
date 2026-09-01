@@ -1699,10 +1699,17 @@ async function frArch15DomainClosureFinal() {
 
   const recycleSource = await readFile(projectFile("js/domain/rules/card/RecycleDeviceRules.js"), "utf8");
   assert.doesNotMatch(recycleSource, /Number\(useCount\) < 2/);
-  const recycleBase = { ownerAlive: true, currentActorId: "a", ownerId: "a", equipmentDefinitionId: "recycleDevice", cardCategory: "tactic", cardUsageMode: "active" };
+  const recycleBase = { ownerAlive: true, equipmentDefinitionId: "recycleDevice", cardCategory: "tactic" };
   assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount: 0 }), true);
   assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount: CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - 1 }), true);
   assert.equal(canTriggerRecycleDevice({ ...recycleBase, useCount: CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn }), false);
+  assert.equal(canTriggerRecycleDevice({
+    ...recycleBase,
+    currentActorId: "other",
+    ownerId: "owner",
+    cardUsageMode: "response",
+    useCount: 0
+  }), true);
 
   assert.equal(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, 2);
   assert.equal(PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain, 1);
@@ -3222,6 +3229,7 @@ async function frArch5TurnRules() {
   transitionResetGlobalTurnReactiveFlags(state, player, reactive);
   assert.equal(player.turnFlags.categoriesUsed, reactive.categoriesUsed);
   assert.equal(player.turnFlags.momentum, reactive.momentum);
+  assert.equal(player.turnFlags.recycleDeviceUses, 0);
   assert.equal(state.stateVersion, 2);
   player.roundFlags = { legacyMarker: true };
   transitionResetRoundFlags(state, player, createRoundUsageState());
@@ -9552,7 +9560,7 @@ test("充能桩：只给回合能量额外+1", () => {
 
 // ---- 回收站 ----
 
-test("回收站：每回合前两张主动战术各摸1且被反制也触发", async () => {
+test("回收站：每回合前两张战术各摸1且被反制也触发", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
     = makeGame([a, b], { response: (request) => request.type === "counter" });
@@ -9579,7 +9587,7 @@ test("回收站：每回合前两张主动战术各摸1且被反制也触发", a
   );
 });
 
-test("回收站：次数只在装备区显示并随真实回合状态重置", () => {
+test("回收站：次数只在装备区显示并随 global-turn 状态重置", () => {
   const player = makePlayer("recycle-ui", 0, "dawn", "human");
   player.equipment = instance("recycleDevice");
   for (const uses of [0, 1, 2]) {
@@ -9590,10 +9598,49 @@ test("回收站：次数只在装备区显示并随真实回合状态重置", ()
     const status = panel.match(/<span class="panel-status"[\s\S]*?<\/span>/)?.[0] ?? "";
     assert.doesNotMatch(status, /回收站|回收|\d\/2/);
   }
-  player.resetTurnFlags(TEST_VERSION_STATE, { attackLimitPerTurn: 2, recoverLimitPerTurn: null });
+  player.resetGlobalTurnReactiveFlags(TEST_VERSION_STATE);
   assert.match(equipmentSlotTemplate(player, true), />0\/2</);
   player.equipment = null;
   assert.doesNotMatch(equipmentSlotTemplate(player, true), />\d\/2</);
+});
+
+test("回收站：任意角色的新回合开始都会重置所有玩家次数", async () => {
+  const actor = makePlayer("recycle-global-actor", 0, "dawn"),
+    responder = makePlayer("recycle-global-responder", 1, "dusk"),
+    { game } = makeGame([actor, responder]);
+  actor.turnFlags.recycleDeviceUses = 2;
+  responder.turnFlags.recycleDeviceUses = 1;
+  game.aiController.selectAction = async () => ({ type: "end" });
+  game.state.deck.cards.push(instance("charge"), instance("block"), instance("shield"));
+  await game.takeTurn(actor, game.state.gameId);
+  assert.equal(actor.turnFlags.recycleDeviceUses, 0);
+  assert.equal(responder.turnFlags.recycleDeviceUses, 0);
+});
+
+test("回收站：他人回合使用且随后被反制的反制牌仍触发", async () => {
+  const actor = makePlayer("recycle-counter-actor", 0, "dawn", "human"),
+    responder = makePlayer("recycle-counter-responder", 1, "dusk", "human"),
+    counterer = makePlayer("recycle-counter-counterer", 2, "dawn", "human"),
+    tactic = instance("harvest"),
+    counter = instance("counter"),
+    counterCounter = instance("counter"),
+    { game } = makeGame([actor, responder, counterer], {
+      response: (request) => request.legalCardIds.length >= request.requiredCount
+    });
+  actor.hand.push(tactic);
+  responder.hand.push(counter);
+  responder.equipment = instance("recycleDevice");
+  counterer.hand.push(counterCounter);
+  game.state.deck.cards.push(instance("charge"), instance("block"), instance("shield"));
+  let counterUseEvent = null;
+  game.eventDispatcher.on("cardUsed", "test:recycle-countered-counter", (event) => {
+    if (event.card === counter) counterUseEvent = event;
+  });
+  await game.playCard(actor, tactic, []);
+  assert.equal(responder.turnFlags.recycleDeviceUses, 1);
+  assert.equal(responder.hand.length, 1);
+  assert.equal(counterUseEvent?.resolved, false);
+  assert.equal(counterUseEvent?.cancelled, true);
 });
 
 test("回收站：仍严格限制每回合最多触发2次", async () => {
@@ -9611,6 +9658,25 @@ test("回收站：仍严格限制每回合最多触发2次", async () => {
   assert.equal(recycleLogs.length, 2);
   assert.ok(recycleLogs.every((entry) => /（[12]\/2），摸1张牌。/.test(entry.message)));
   assert.equal(game.state.logs.filter((entry) => entry.message.includes(`${owner.name}摸了`)).length, 0);
+});
+
+test("回收站：同回合替换为新实例后立即重置并重新获得2次额度", async () => {
+  const owner = makePlayer("recycle-replacement", 0, "dawn"),
+    enemy = makePlayer("recycle-replacement-enemy", 1, "dusk"),
+    old = instance("recycleDevice"),
+    next = instance("recycleDevice"),
+    { game } = makeGame([owner, enemy]);
+  owner.equipment = old;
+  owner.turnFlags.recycleDeviceUses = 2;
+  owner.hand.push(next, instance("exposeWeakness"), instance("exposeWeakness"));
+  game.state.deck.cards.push(instance("charge"), instance("block"));
+  assert.equal(await game.playCard(owner, next, []), true);
+  assert.equal(owner.equipment, next);
+  assert.ok(game.state.deck.discardPile.includes(old));
+  assert.equal(owner.turnFlags.recycleDeviceUses, 0);
+  await game.playCard(owner, owner.hand[0], []);
+  await game.playCard(owner, owner.hand[0], []);
+  assert.equal(owner.turnFlags.recycleDeviceUses, 2);
 });
 
 /*
@@ -9639,8 +9705,9 @@ canTriggerRecycleDevice、readFile。
 predicate 只读；composition 只负责注册 trigger，不拥有 semantic formula。
 */
 async function frArch10RecycleDeviceTrigger() {
-  const facts = { ownerAlive: true, currentActorId: "a", ownerId: "a", equipmentDefinitionId: "recycleDevice", cardCategory: "tactic", cardUsageMode: "active", useCount: 1 };
+  const facts = { ownerAlive: true, equipmentDefinitionId: "recycleDevice", cardCategory: "tactic", useCount: 1 };
   assert.equal(canTriggerRecycleDevice(facts), true);
+  assert.equal(canTriggerRecycleDevice({ ...facts, currentActorId: "other", cardUsageMode: "response" }), true);
   assert.equal(canTriggerRecycleDevice({ ...facts, useCount: 2 }), false);
   assert.equal(canTriggerRecycleDevice({ ...facts, cardCategory: "basic" }), false);
   const compositionSource = await readFile(projectFile("js/composition/createGameApplication.js"), "utf8");
@@ -12876,17 +12943,21 @@ test("调律师：被下一层反制取消的反制不产生有效结算且不�
   ally.bumpHandVersion(TEST_VERSION_STATE);
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
-  const resolvedCounterIds = [];
+  const counterEvents = [];
   game.eventDispatcher.on("cardUsed", "test:counter-chain-effective-use", (event) => {
-    if (event.card.definitionId === "counter") resolvedCounterIds.push(event.card.id);
+    if (event.card.definitionId === "counter") {
+      counterEvents.push({ id:event.card.id, resolved:event.resolved });
+    }
   });
   const hidden = game.hiddenCardSelection.createHiddenSelection(ally);
   assert.equal(await game.playCard(enemy, use, [ally], {
     tokens: [hidden.tokens[0].token], selectionId: hidden.selectionId
   }), true);
   assert.equal(tuner.turnFlags.coordinationTriggered, false);
-  assert.ok(!resolvedCounterIds.includes(tunerCounter.id));
-  assert.deepEqual(resolvedCounterIds, [nextCounter.id]);
+  assert.deepEqual(counterEvents, [
+    { id:nextCounter.id, resolved:true },
+    { id:tunerCounter.id, resolved:false }
+  ]);
 });
 
 test("调律师：beforeCardUse 与 beforeCardResolve 取消的牌都不触发协调", async () => {
@@ -26619,6 +26690,72 @@ test("AI·回收站：模拟回收站在前两张战术后补牌且第三张不�
   assert.equal(thrice.players[0].recycleDeviceUses, 2);
 });
 
+test("AI·回收站：反制响应使用战术后按同一 global-turn 额度补牌", () => {
+  const state = {
+    players: [
+      {
+        id: "actor",
+        seatIndex: 0,
+        battleTeam: "dawn",
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        alive: true,
+        handCount: 1,
+        hand: [{ id: "harvest", definitionId: "harvest" }]
+      },
+      {
+        id: "responder",
+        seatIndex: 1,
+        battleTeam: "dusk",
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        alive: true,
+        handCount: 1,
+        hand: [{ id: "counter", definitionId: "counter" }],
+        equipmentDefinitionId: "recycleDevice",
+        equipmentRetentionProbability: 1,
+        recycleDeviceUses: 0
+      }
+    ]
+  };
+  const next = new Simulator(state, { decideCounter: () => true }).apply(
+    state,
+    { type: "card", card: { ...CARD_DEFINITIONS.harvest, id: "harvest" }, targets: [] },
+    "actor"
+  );
+  const responder = next.players.find((player) => player.id === "responder");
+  assert.equal(responder.recycleDeviceUses, 1);
+  assert.equal(responder.handCount, 1);
+});
+
+test("AI·回收站：模拟换装把新实例次数重置为0", () => {
+  const state = {
+    players: [{
+      id: "actor",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      alive: true,
+      handCount: 1,
+      hand: [{ id: "new-recycle", definitionId: "recycleDevice" }],
+      equipmentDefinitionId: "recycleDevice",
+      equipmentRetentionProbability: 1,
+      recycleDeviceUses: 2
+    }]
+  };
+  const next = new Simulator(state).apply(
+    state,
+    { type: "card", card: { ...CARD_DEFINITIONS.recycleDevice, id: "new-recycle" }, targets: [] },
+    "actor"
+  );
+  assert.equal(next.players[0].equipmentDefinitionId, "recycleDevice");
+  assert.equal(next.players[0].recycleDeviceUses, 0);
+});
+
 // ---- AI 装备行为·雷达 ----
 
 const radarFixtureTarget = (overrides = {}) => (
@@ -36504,6 +36641,27 @@ test("AI·价值归属：residual 只在前沿计入且不随路径深度重复�
   const after = new Simulator(state).apply(state, action, "c");
   const rAfter = evaluator.frontierResidual(after, "a");
   assert.ok(rAfter.futureInventory < r1.futureInventory, "未来攻击库存兑现后应减少");
+});
+
+test("AI·价值归属：terminal 回收站按未来新回合2次额度且接纳不可反制战术", () => {
+  const { game } = makeLedgerGame();
+  const evaluator = game.aiController.evaluator;
+  const state = ledgerState([
+    {
+      ...ledgerHand(ledgerPlayer("a", 0, "dawn", "blade-walker"), ["lightning"]),
+      equipmentDefinitionId: "recycleDevice",
+      equipmentRetentionProbability: 0.5,
+      recycleDeviceUses: 2
+    },
+    ledgerPlayer("b", 1, "dusk", "oath-warden")
+  ]);
+  const residual = evaluator.frontierResidual(state, "a");
+  assertClose(residual.held.recycle, 2 * 1.1 * 0.5);
+  assertClose(evaluator.terminalFrontierValue(residual, true), 2 * 1.1 * 0.5 / 5);
+  assert.equal(evaluator.terminalFrontierValue(residual, false), 0);
+  const withoutTactic = structuredClone(state);
+  withoutTactic.players[0].hand = [ledgerCard("basic", "charge")];
+  assert.equal(evaluator.frontierResidual(withoutTactic, "a").held.recycle, 0);
 });
 
 test("AI·价值归属：泛用手牌资源与具体响应选项不重复计价", () => {

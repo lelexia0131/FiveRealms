@@ -84,14 +84,10 @@ export function createRecycleDeviceTrigger(dependencies) {
       const owner = event.source;
       const state = runtime.getState();
       const gameId = state.gameId;
-      const current = state.players[state.currentPlayerIndex] ?? null;
       const facts = {
         ownerAlive: owner.alive,
-        currentActorId: current?.id ?? null,
-        ownerId: owner.id,
         equipmentDefinitionId: owner.equipment?.definitionId ?? null,
         cardCategory: event.card.category,
-        cardUsageMode: event.card.usageMode,
         useCount: owner.turnFlags.recycleDeviceUses ?? 0
       };
       if (!canTriggerRecycleDevice(facts)) return;

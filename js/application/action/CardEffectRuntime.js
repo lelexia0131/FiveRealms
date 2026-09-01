@@ -20,7 +20,7 @@ private intent 只存在于当前调用栈；public context 不泄漏 hidden car
 import { isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js";
 import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getScoutMaxRevealCount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 import { changeShield } from "../../domain/state/transitions/ResourceTransitions.js";
-import { incrementAttackUsed, incrementRecoverUsed } from "../../domain/state/transitions/RuleUsageTransitions.js";
+import { incrementAttackUsed, incrementRecoverUsed, setRecycleDeviceUses } from "../../domain/state/transitions/RuleUsageTransitions.js";
 import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js";
 
 const REQUIRED_DEPENDENCIES = [
@@ -118,13 +118,13 @@ export function createCardEffectRuntime(dependencies) {
   source.equipment 与 resolving zone。
 
   写入状态
-  经 equipCard collaborator。
+  经 equipCard collaborator；新回收站实例经 RuleUsageTransition 清零使用次数。
 
   调用函数
-  runtime.equipCard。
+  runtime.equipCard、setRecycleDeviceUses。
 
   边界与不变量
-  预检失败抛错并由 generic Action 清理。
+  预检失败抛错并由 generic Action 清理；只有新回收站已成为唯一装备后才重置实例额度。
   */
   async function resolveEquipment(source, card, context) {
     const state = runtime.getState();
@@ -132,6 +132,7 @@ export function createCardEffectRuntime(dependencies) {
     if (!equipped || source.equipment !== card || state.deck.resolvingCards.includes(card)) {
       throw new Error("装备牌未能进入装备区");
     }
+    if (card.definitionId === "recycleDevice") setRecycleDeviceUses(state, source, 0);
     return { destination: "equipment" };
   }
 

@@ -1143,7 +1143,7 @@ Planner / AiValueSimulationQuery
 | seal | cardRegistry.seal / Game status listener | CardEffect delegates state placement to StatusSimulation | none | first placement intentionally no normal counter | SealModel | placement/lifecycle/counter/fixed scene |
 | lightning | cardRegistry.lightning / Game status listener | CardEffect delegates state placement to StatusSimulation | hit uses Combat | first placement intentionally no normal counter | LightningModel | placement/hit/transfer/clear |
 | energyDevice | cardRegistry equipment resolver | CardEffect unified equipment write | none | card-scope counter | none | equip/replace/energy value |
-| recycleDevice | cardRegistry + Game recycle listener | CardEffect equipment + post-tactic trigger | none | card-scope counter | none | two-use cap/draw |
+| recycleDevice | cardRegistry + Game recycle listener | CardEffect equipment + every-tactic-use trigger | none | card-scope counter | none | global-turn reset/replacement reset/two-use cap/draw |
 | defenseDevice | cardRegistry + JudgmentSystem | CardEffect equipment state | Combat radar path | block after judgment | RadarModel | radar outcome/identity |
 | battleDevice | cardRegistry + ResponseSystem | CardEffect equipment state | attack dependency | two-block requirement | none | battle block matrix |
 | telescope | cardRegistry + DistanceSystem | CardEffect equipment state | range-dependent attack | none | none | discrete range branches |
@@ -1186,7 +1186,7 @@ CardEffect 不生成或评分 selection。`chooseSimulatedResourceSelection` 只
 | gambleTriggered | first tactic cardUsed | later tactic uses | every global turn start | StatusSimulation | none | none | success/failure/once |
 | coordinationTriggered | resolved ally-target action | later card/skill/rescue | every global turn start | StatusSimulation | none | heal/rescue may trigger | valid/effective targets |
 | rejuvenationTriggerCount | actual allied healing | later heal/rescue | every global turn start；cap 2 | CombatSimulation | none | heal/fatal rescue | ordinary/rescue/probability |
-| recycleDeviceUses | active tactic cardUsed while equipped | later tactics | owner turn reset；cap 2 | CardEffectSimulation | none | none | first two/third no draw |
+| recycleDeviceUses | tactic cardUsed while equipped | later tactics | every global turn start；new recycle instance reset；cap 2 | CardEffectSimulation | none | none | active/response/countered/first two/third no draw |
 
 ### Domain / Simulation and authority boundary
 

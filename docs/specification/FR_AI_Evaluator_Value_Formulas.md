@@ -1351,17 +1351,17 @@ Searcher 只负责物化 hidden worlds / follow-up；公式 owner 仍是 Evaluat
 
 # 17. Terminal Frontier Held Option
 
-源码：`Evaluator.js:4239 frontierResidual()`、`4287 terminalFrontierValue()`。
+源码：`Evaluator.js frontierResidual()`、`terminalFrontierValue()`。
 
 ## 17.1 Recycle held option
 
-仅持有 `recycleDevice`：
+若仍持有 `recycleDevice`，terminal 后进入新的角色回合时额度会刷新，因此：
 
 $$
-RemainingUses=\max(0,2-RecycleUses)
+FutureUses=2
 $$
 
-若手中至少存在一张可反制 tactic，则：
+若手中至少存在一张可在未来使用的 tactic，则：
 
 $$
 TacticGate=1
@@ -1370,7 +1370,7 @@ $$
 否则 0。
 
 $$
-\boxed{ RecycleHeld =RemainingUses\times TacticGate\times1.1\times Retention }
+\boxed{ RecycleHeld =FutureUses\times TacticGate\times1.1\times Retention }
 $$
 
 ## 17.2 Frontier Utility

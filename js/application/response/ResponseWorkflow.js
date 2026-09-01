@@ -385,13 +385,13 @@ export function createResponseWorkflow(dependencies) {
 
   /*
   功能
-  在反制链最终生效后发布 cardUsed 并公开真实关联的存活角色。
+  为已支付的反制牌发布 cardUsed，并按最终链结果区分使用与有效结算。
 
   调用方
   askForCounter 与 askForStatusCounter。
 
   输入
-  responder、counterCard 与 relatedPlayers。
+  responder、counterCard、relatedPlayers 与 resolved。
 
   输出
   Promise<event emission>。
@@ -406,25 +406,25 @@ export function createResponseWorkflow(dependencies) {
   runtime.emitCardUsed、runtime.createId。
 
   边界与不变量
-  只公开存活且去重玩家；反制牌实体保留原引用。
+  每张已支付反制只发布一次；被后续反制时仍是 cardUsed，但 effectiveTargets 为空且 resolved=false。
   */
-  async function emitResolvedCounterUse(responder, counterCard, relatedPlayers = []) {
+  async function emitCounterUse(responder, counterCard, relatedPlayers = [], resolved = true) {
     const seen = new Set();
-    const effectiveTargets = [];
+    const targets = [];
     for (const related of relatedPlayers) {
       const player = runtime.getState().players.find((candidate) => candidate.id === related?.id);
       if (!player?.alive || seen.has(player.id)) continue;
       seen.add(player.id);
-      effectiveTargets.push(player);
+      targets.push(player);
     }
     await runtime.emitCardUsed( {
       type:"cardUsed",
       source:responder,
       card:counterCard,
-      targets:effectiveTargets,
-      effectiveTargets,
-      cancelled:false,
-      resolved:true,
+      targets,
+      effectiveTargets:resolved ? targets : [],
+      cancelled:!resolved,
+      resolved,
       resolutionId:runtime.createId("counter-resolution"),
       usageContext:"response"
     });
@@ -518,13 +518,16 @@ export function createResponseWorkflow(dependencies) {
         targetCard:card, rootCard, rootSourceId, counterDepth:counterDepth + 1, rootTargetIds
       });
       if (isCancelledResponse(counterWasCountered) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
+      await emitCounterUse(
+        responder,
+        counterCard,
+        [source, ...(chainContext.relatedTargets ?? targets)],
+        counterWasCountered.status !== RESPONSE_STATUS.USED
+      );
+      if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       if (counterWasCountered.status === RESPONSE_STATUS.USED) {
         return responseResult(RESPONSE_STATUS.DECLINED);
       }
-      await emitResolvedCounterUse(
-        responder, counterCard, [source, ...(chainContext.relatedTargets ?? targets)]
-      );
-      if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       return responseResult(RESPONSE_STATUS.USED, { card:counterCard });
     }
     return responseResult(RESPONSE_STATUS.DECLINED);
@@ -550,7 +553,7 @@ export function createResponseWorkflow(dependencies) {
   经 requestCardResponse/payCardsFromHandAtomically 支付反制牌。
 
   调用函数
-  createRuleStateView、getStatusCounterResponderOrder、requestCardResponse、askForCounter、emitResolvedCounterUse。
+  createRuleStateView、getStatusCounterResponderOrder、requestCardResponse、askForCounter、emitCounterUse。
 
   边界与不变量
   响应者顺序由 Domain Rule 决定；状态持有者最先，其余存活玩家顺时针。
@@ -596,9 +599,14 @@ export function createResponseWorkflow(dependencies) {
       runtime.log(`${responder.name}对${holder.name}的「${statusName}」使用了「反制」。`, "important");
       const counterWasCountered = await askForCounter(responder, counterCard, [holder], { targetCard:null, statusCounterChain:true });
       if (isCancelledResponse(counterWasCountered) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
-      if (counterWasCountered.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.DECLINED);
-      await emitResolvedCounterUse(responder, counterCard, [holder]);
+      await emitCounterUse(
+        responder,
+        counterCard,
+        [holder],
+        counterWasCountered.status !== RESPONSE_STATUS.USED
+      );
       if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
+      if (counterWasCountered.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.DECLINED);
       return responseResult(RESPONSE_STATUS.USED, { card:counterCard });
     }
     return responseResult(RESPONSE_STATUS.DECLINED);
@@ -999,7 +1007,7 @@ export function createResponseWorkflow(dependencies) {
     requestCardResponse,
     getBlockRequirement,
     askForBlock,
-    emitResolvedCounterUse,
+    emitResolvedCounterUse:emitCounterUse,
     askForCounter,
     askForStatusCounter,
     requestDyingRescue,

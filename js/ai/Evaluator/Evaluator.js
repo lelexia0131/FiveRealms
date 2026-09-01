@@ -4433,25 +4433,25 @@ export class Evaluator {
   无。
 
   调用函数
-  exposureComponents、cardAvailability。
+  exposureComponents、cardAvailability、CardDefinitions。
 
   边界与不变量
-  futureInventory 只作诊断；held option 只允许 terminal 一次进入 Final Utility。
+  futureInventory 只作诊断；held option 只允许 terminal 一次进入 Final Utility；
+  回收站按未来新 global turn 的完整额度估值，不继承当前回合已用次数。
   */
   frontierResidual(state, viewerId) {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer || !viewer.alive) return null;
     const { futureInventory, energyPressure } = exposureComponents(state, viewer);
+    const tacticGate = (viewer.hand ?? []).some((card) => (
+      cardAvailability(card) > PROBABILITY_EPSILON
+      && (CARD_DEFINITIONS[card.definitionId] ?? card).category === "tactic"
+    )) ? 1 : 0;
     const recycle = viewer.equipmentDefinitionId === "recycleDevice"
-      ? Math.max(0, 2 - (viewer.recycleDeviceUses ?? 0))
-        * Math.min(
-          1,
-          (viewer.hand ?? []).filter(
-            (card) => card.category === "tactic" && card.counterable !== false
-          ).length
-        )
+      ? CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
+        * tacticGate
         * 1.1
-        * Math.max(0, Number(viewer.equipmentRetentionProbability) || 1)
+        * Math.max(0, Number(viewer.equipmentRetentionProbability ?? 1))
       : 0;
     const futureInventoryTotal = futureInventory + energyPressure;
     return {

@@ -28,7 +28,7 @@ import { CARD_DEFINITIONS } from "../../definitions/cards/CardDefinitions.js";
 Application Trigger。
 
 输入
-owner facts、current actor id、card category/usageMode 与 usage count。
+owner facts、card category 与 global-turn usage count。
 
 输出
 布尔值。
@@ -43,23 +43,18 @@ owner facts、current actor id、card category/usageMode 与 usage count。
 无。
 
 边界与不变量
-旧触发条件逐项保留：owner 存活且当前行动者、装备为 recycleDevice、战术牌主动使用、次数未达到 CardDefinitions.recycleDevice.maxUsesPerTurn。
+任意角色的 global turn 内，只要 owner 存活、持有 recycleDevice 并使用战术牌即可触发；是否被反制不影响使用事实。
 */
 export function canTriggerRecycleDevice({
   ownerAlive,
-  currentActorId,
-  ownerId,
   equipmentDefinitionId,
   cardCategory,
-  cardUsageMode,
   useCount = 0
 }) {
   return Boolean(
     ownerAlive
-    && currentActorId === ownerId
     && equipmentDefinitionId === "recycleDevice"
     && cardCategory === "tactic"
-    && cardUsageMode === "active"
     && Number(useCount) < CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
   );
 }

@@ -85,7 +85,7 @@ reactive 决定对象。
 无。
 
 调用函数
-createTurnUsageState。
+无。
 
 边界与不变量
 不含 actor-turn 字段。
@@ -94,6 +94,7 @@ export function createGlobalTurnReactiveState() {
   return {
     categoriesUsed: new Set(),
     momentum: 0,
+    recycleDeviceUses: 0,
     guardianAidUsed: false,
     coordinationTriggered: false,
     gambleTriggered: false,

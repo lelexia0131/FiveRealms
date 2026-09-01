@@ -369,7 +369,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     category: "equipment",
     targetType: "self",
     subtypes: Object.freeze(["equipment", "draw"]),
-    description: "自己回合主动使用战术牌后摸1张，即使该牌被反制；每回合最多触发2次。",
+    description: "每回合使用战术牌后摸1张，即使该牌被反制；每回合最多触发2次。",
     triggerDrawCount: 1,
     maxUsesPerTurn: 2,
   }),

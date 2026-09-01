@@ -1335,7 +1335,59 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
 
   /*
   功能
-  解析一次 target-scope Counter 响应并执行其唯一物理支付。
+  镜像一次战术牌使用对回收站 global-turn 额度与摸牌资源的影响。
+
+  调用方
+  主动战术结算与 Counter 响应支付编排。
+
+  输入
+  World、使用者、战术牌实际使用概率与当前事件标签。
+
+  输出
+  实际触发回收站的概率质量。
+
+  读取状态
+  使用者装备存在概率、recycleDeviceUses 与 CardDefinitions 固定上限/摸牌数。
+
+  写入状态
+  使用者 recycleDeviceUses、hand/knownCards、ProbabilityState 与响应容量摘要。
+
+  调用函数
+  getSimulatedEquipmentProbability、getEventWorlds、gainUnknownCardsWithCounterState。
+
+  边界与不变量
+  缺少使用者时不触发；额度按 global turn 共享且封顶；只依据 tactic 的使用事件，不依据其效果是否被反制。
+  */
+  triggerRecycleDeviceUse(state, player, useProbability, label) {
+    if (!player) return 0;
+    const recycleProbability = clampProbability(useProbability)
+      * this.getSimulatedEquipmentProbability(player, "recycleDevice");
+    const remainingUses = Math.max(
+      0,
+      CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - (player.recycleDeviceUses ?? 0)
+    );
+    const triggerProbability = Math.min(recycleProbability, remainingUses);
+    player.recycleDeviceUses = (player.recycleDeviceUses ?? 0) + triggerProbability;
+    if (triggerProbability <= PROBABILITY_EPSILON) return 0;
+    const recycleWorlds = this.getEventWorlds(
+      state,
+      triggerProbability,
+      null,
+      `recycle-draw:${label}`
+    );
+    this.gainUnknownCardsWithCounterState(
+      state,
+      player,
+      triggerProbability * CARD_DEFINITIONS.recycleDevice.triggerDrawCount,
+      recycleWorlds,
+      "recycle-draw"
+    );
+    return triggerProbability;
+  }
+
+  /*
+  功能
+  解析一次 target-scope Counter 响应，执行唯一物理支付并镜像回收站触发。
 
   调用方
   目标级战术、card-scope 首响应者兑现和 Simulator 专项测试。
@@ -1350,10 +1402,10 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
   Response resolved result 与已选 Counter identity request。
 
   写入状态
-  仅通过 Resource 扣除一次 Counter 身份或匿名容量。
+  通过 Resource 扣除一次 Counter 身份或匿名容量，并按实际使用概率更新响应者回收站资源。
 
   调用函数
-  resolveTargetCounterResponseWorlds、consumeCounterPayment。
+  resolveTargetCounterResponseWorlds、consumeCounterPayment、triggerRecycleDeviceUse。
 
   边界与不变量
   willingness 不得重新计算；Response 选择与 Resource 消费必须复用同一 selection partition。
@@ -1366,6 +1418,15 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       counterDecision
     );
     this.consumeCounterPayment(state, target, response.payment);
+    const counterUseProbability = totalBranchProbability(
+      response.outcomeWorlds.filter((world) => world.counterConsumed)
+    );
+    this.triggerRecycleDeviceUse(
+      state,
+      target,
+      counterUseProbability,
+      `counter-response:${target?.id ?? "unknown"}`
+    );
     return response;
   }
 
@@ -2239,6 +2300,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
           selectedCardIds:[card.id]
         });
         this.setSimulatedEquipment(equippedRecipient, card.definitionId, 1);
+        if (card.definitionId === "recycleDevice") equippedRecipient.recycleDeviceUses = 0;
         this.syncActiveSkillCosts(equipped);
         worlds.push(equipped);
       }
@@ -2688,31 +2750,21 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
         break;
       }
       default:
-        if (card.category === "equipment") this.setSimulatedEquipment(actor, card.definitionId, executionProbability);
+        if (card.category === "equipment") {
+          this.setSimulatedEquipment(actor, card.definitionId, executionProbability);
+          if (card.definitionId === "recycleDevice") actor.recycleDeviceUses = 0;
+        }
         break;
     }
     this.simulateGamble(next, actor, card, executionProbability);
     this.simulateCoordination(next, actor, coordinationTargets, coordinationProbability);
-    const recycleProbability = executionProbability * this.getSimulatedEquipmentProbability(actor, "recycleDevice");
-    if (card.category === "tactic" && recycleProbability > 0) {
-      const remainingUses = Math.max(
-        0,
-        CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - (actor.recycleDeviceUses ?? 0)
+    if (card.category === "tactic") {
+      this.triggerRecycleDeviceUse(
+        next,
+        actor,
+        executionProbability,
+        card.id ?? card.definitionId
       );
-      const triggerProbability = Math.min(recycleProbability, remainingUses);
-      actor.recycleDeviceUses = (actor.recycleDeviceUses ?? 0) + triggerProbability;
-      if (triggerProbability > PROBABILITY_EPSILON) {
-        const recycleWorlds = this.getEventWorlds(
-          next, triggerProbability, null, `recycle-draw:${card.id ?? card.definitionId}`
-        );
-        this.gainUnknownCardsWithCounterState(
-          next,
-          actor,
-          triggerProbability * CARD_DEFINITIONS.recycleDevice.triggerDrawCount,
-          recycleWorlds,
-          "recycle-draw"
-        );
-      }
     }
     if (hasPassiveSkill(actor, "momentum") && actor.alive && card.definitionId !== "assault") {
       const category = card.category ?? CARD_DEFINITIONS[card.definitionId]?.category;
