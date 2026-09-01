@@ -31,9 +31,11 @@ import {
   buildRadarJudgmentProbabilities,
   cardAvailability,
   clampProbability,
+  expectedAnonymousSlots,
   hypergeometricProbabilityAtLeast,
   probabilityFromCurrentCounts,
   queryCurrentCardCounts,
+  queryProbability,
   queryPlayerHandProbability,
   sealOutcomeProbabilities,
   statusPresence,
@@ -358,6 +360,187 @@ export function privatePeekInformationValue(state, actor, target, actualNewRevea
 
 /*
 功能
+计算一张确定身份手牌从来源转入可选接收者时的统一阵营交易点数。
+
+调用方
+resourceTransactionOptionPoints 的确定身份与匿名身份期望分支。
+
+输入
+viewer、来源、可选接收者、卡牌定义 ID 与资源实际应用概率。
+
+输出
+按接收方获得减来源方失去投影的 raw State points；Destroy 的接收者为 null。
+
+读取状态
+玩家阵营、角色 ID 与稳定 CardValue 配置。
+
+写入状态
+无。
+
+调用函数
+getBaseCardAiValue、roleCardDelta。
+
+边界与不变量
+基础材料价值对所有持有者计入；viewer 的 HandRoleDelta 已在 StateValue 中，只补其他玩家缺失的角色差量；
+阵营方向只由同一 sign primitive 决定，不为 Destroy/Plunder/Transfer 分别硬编码奖励。
+*/
+function resourceTransactionForDefinition(
+  viewer,
+  source,
+  receiver,
+  definitionId,
+  effectScale
+) {
+  const baseMaterialValue = getBaseCardAiValue(definitionId) * RESOURCE_MATERIAL_SCALE;
+  const sourceIdentityValue = baseMaterialValue
+    + (source.id === viewer.id ? 0 : roleCardDelta(source.characterId, definitionId));
+  const receiverIdentityValue = receiver
+    ? baseMaterialValue
+      + (receiver.id === viewer.id ? 0 : roleCardDelta(receiver.characterId, definitionId))
+    : 0;
+  const sourceValue = (source.battleTeam === viewer.battleTeam ? 1 : -1)
+    * sourceIdentityValue;
+  const receiverValue = receiver
+    ? (receiver.battleTeam === viewer.battleTeam ? 1 : -1) * receiverIdentityValue
+    : 0;
+  return (receiverValue - sourceValue) * effectScale;
+}
+
+/*
+功能
+从 before/after World 读取一次已选手牌资源真正发生变化的概率尺度。
+
+调用方
+resourceTransactionOptionPoints。
+
+输入
+前后 World、前后来源玩家与 canonical hand selection。
+
+输出
+零到一的实际资源移除/转移概率。
+
+读取状态
+确定身份 availability 或 Probability finite-pool 中来源匿名物理槽数。
+
+写入状态
+无。
+
+调用函数
+cardAvailability、expectedAnonymousSlots、clampProbability。
+
+边界与不变量
+只读取 Simulator 已应用后的资源差，不再乘 action availability、resolutionScale 或响应概率；
+确定身份必须按 card ID 对齐，匿名身份不得读取 definitionId。
+*/
+function resourceTransactionEffectScale(
+  beforeState,
+  afterState,
+  beforeSource,
+  afterSource,
+  selection
+) {
+  if (selection.selectionKind === "known") {
+    const beforeIdentity = [
+      ...(Array.isArray(beforeSource?.hand) ? beforeSource.hand : []),
+      ...(Array.isArray(beforeSource?.knownCards) ? beforeSource.knownCards : [])
+    ].find((entry) => (entry.id ?? entry.cardId) === selection.cardId);
+    const afterIdentity = [
+      ...(Array.isArray(afterSource?.hand) ? afterSource.hand : []),
+      ...(Array.isArray(afterSource?.knownCards) ? afterSource.knownCards : [])
+    ].find((entry) => (entry.id ?? entry.cardId) === selection.cardId);
+    return clampProbability(
+      (beforeIdentity ? cardAvailability(beforeIdentity) : 0)
+        - (afterIdentity ? cardAvailability(afterIdentity) : 0)
+    );
+  }
+  if (selection.selectionKind === "unknown") {
+    return clampProbability(
+      expectedAnonymousSlots(beforeState.probabilityState, beforeSource.id)
+        - expectedAnonymousSlots(afterState.probabilityState, afterSource.id)
+    );
+  }
+  return 0;
+}
+
+/*
+功能
+计算 Destroy、Plunder 与 Transfer 对具体手牌身份价值造成的派生 Transition Option。
+
+调用方
+deriveTransitionOptionPoints。
+
+输入
+canonical Action、viewer 与动作前后 World。
+
+输出
+ResourceTransactionOption raw State points；非手牌资源交易或未实际应用时为零。
+
+读取状态
+Action selection、玩家阵营/角色、身份 availability 与 canonical Probability finite pool。
+
+写入状态
+无。
+
+调用函数
+resourceTransactionEffectScale、resourceTransactionForDefinition、queryProbability。
+
+边界与不变量
+known 只使用合法 selection identity；unknown 对来源匿名桶的 P(C=d) 求期望，不读取真实隐藏牌；
+EffectScale 只来自已经完成的资源变化，StateValue 的 HandCount 与 viewer HandRoleDelta 不在此重复。
+*/
+function resourceTransactionOptionPoints(action, viewer, beforeState, afterState) {
+  const cardId = action?.cardId ?? null;
+  const selection = action?.selection ?? null;
+  if (!["destroy", "plunder", "transfer"].includes(cardId)
+    || selection?.zone !== "hand") return 0;
+  const sourceId = cardId === "transfer"
+    ? selection.sourceId
+    : action.targetIds?.[0];
+  const receiverId = cardId === "destroy"
+    ? null
+    : cardId === "plunder" ? action.actorId : selection.receiverId;
+  const source = beforeState.players.find((player) => player.id === sourceId) ?? null;
+  const afterSource = afterState.players.find((player) => player.id === sourceId) ?? null;
+  const receiver = receiverId
+    ? beforeState.players.find((player) => player.id === receiverId) ?? null
+    : null;
+  if (!source || !afterSource || (receiverId && !receiver)) return 0;
+  const effectScale = resourceTransactionEffectScale(
+    beforeState,
+    afterState,
+    source,
+    afterSource,
+    selection
+  );
+  if (effectScale <= PROBABILITY_EPSILON) return 0;
+  if (selection.selectionKind === "known" && selection.definitionId) {
+    return resourceTransactionForDefinition(
+      viewer,
+      source,
+      receiver,
+      selection.definitionId,
+      effectScale
+    );
+  }
+  if (selection.selectionKind !== "unknown") return 0;
+  return Object.keys(CARD_DEFINITIONS).reduce((sum, definitionId) => {
+    const identityProbability = queryProbability(beforeState.probabilityState, {
+      definitionId,
+      bucketId:source.id
+    }).slotProbability;
+    if (identityProbability <= PROBABILITY_EPSILON) return sum;
+    return sum + identityProbability * resourceTransactionForDefinition(
+      viewer,
+      source,
+      receiver,
+      definitionId,
+      effectScale
+    );
+  }, 0);
+}
+
+/*
+功能
 从 before/after World 与 canonical Action 直接派生不属于物理 State Value 的转移选项点数。
 
 调用方
@@ -367,7 +550,7 @@ Evaluator.evaluateTransition。
 动作、行动者、before/after World 与战术结算比例。
 
 输出
-窥探信息、借势获得装备和互利座次选择的 raw State points 总和。
+窥探信息、资源身份交易、借势获得装备和互利座次选择的 raw State points 总和。
 
 读取状态
 动作前后装备保留、合法手牌、Probability 当前有限池与团队关系。
@@ -376,16 +559,25 @@ Evaluator.evaluateTransition。
 无。
 
 调用函数
-privatePeekInformationValue、CardValue、mutualBenefitDraftValues。
+privatePeekInformationValue、resourceTransactionOptionPoints、CardValue、mutualBenefitDraftValues。
 
 边界与不变量
 只评价 Action 已明确的 transition；借势获得量必须由真实装备保留差反推，
-不得把 value 写回 World；Scout/互利只乘一次卡牌可用性与结算比例。
+不得把 value 写回 World；Scout/互利只乘一次卡牌可用性与结算比例；
+资源交易直接读取 after World 的实际应用概率，不得再次乘 resolutionScale。
 */
 function deriveTransitionOptionPoints(action, player, beforeState, afterState, resolutionScale) {
   const cardId = action?.cardId ?? null;
   if (!cardId || !player) return 0;
   const beforeActor = beforeState.players.find((entry) => entry.id === player.id) ?? player;
+  if (["destroy", "plunder", "transfer"].includes(cardId)) {
+    return resourceTransactionOptionPoints(
+      action,
+      beforeActor,
+      beforeState,
+      afterState
+    );
+  }
   const heldCard = (beforeActor.hand ?? []).find((entry) => (
     entry.id === action.cardInstanceId
   ));

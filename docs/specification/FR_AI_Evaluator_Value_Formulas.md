@@ -1009,7 +1009,7 @@ $$
 
 # 16. Transition Option Value
 
-`Transition Option` 只处理**不能简单作为物理 World material state 重复表达的选择权价值**。
+`Transition Option` 只处理**当前 StateValue 公式没有完整表达、且不能与已有状态项重复计分的选择权或身份价值**。
 
 总点数：
 
@@ -1017,8 +1017,11 @@ $$
 \boxed{ P_{option} =P_{derivedOption}+P_{materializedOption} }
 $$
 
-最终：
+其中：
 
+$$ P_{derivedOption}= \begin{cases} ScoutOption,&Scout\\ LeverageOption,&Leverage\\ MutualBenefitOption,&MutualBenefit\\ResourceTransactionOption,&Destroy/Plunder/Transfer\\ 0,&otherwise \end{cases} $$ 
+
+最终：
 $$
 \boxed{ V_{option}=\frac{P_{option}}{5} }
 $$
@@ -1070,7 +1073,7 @@ $$
 若被查看目标是队友：
 
 $$
-DecisionWeightedUncertainty = Uncertainty_{assault} + \max( Uncertainty_{block}, Uncertainty_{recover}, Uncertainty_{counter} )
+DecisionWeightedUncertainty = \\Uncertainty_{assault} + \max( Uncertainty_{block}, Uncertainty_{recover}, Uncertainty_{counter} )
 $$
 
 其中 `Relevance_d` 的具体计算公式在 16.1.5 说明
@@ -1235,7 +1238,98 @@ $$
 EffectScale=clamp(ExecutionProbability\times ResolutionScale)
 $$
 
-## 16.4 Adaptive Information（当前用于影客窥隙等通用自适应信息）
+## 16.4 Resource Transaction Option
+
+该项只评价 Destroy、Plunder、Transfer 已实际移除或转移的手牌身份价值；装备区资源不进入本项。设观察者为 `viewer`，玩家 `p` 持有定义 `c` 时：
+
+$$
+\boxed{ IdentityValue(p,c)=\\BaseCardValue(c)\times RESOURCE\_MATERIAL\_SCALE+MissingRoleDelta(p,c) }
+$$
+
+其中：
+
+$$
+MissingRoleDelta(p,c)=
+\begin{cases}
+0,&p=viewer\\
+RoleDelta(p,c),&p\ne viewer
+\end{cases}
+$$
+
+当前：
+
+$$
+RESOURCE\_MATERIAL\_SCALE=0.25
+$$
+
+viewer 自己的 `HandRoleDelta` 已进入 StateValue，因此本项只补具体手牌身份的基础材料价值，以及其他玩家在 StateValue 中缺失的 `RoleDelta`。
+
+阵营符号统一为：
+
+$$
+Sign(p)=
+\begin{cases}
++1,&ally\\
+-1,&enemy
+\end{cases}
+$$
+
+同一个 transaction primitive 表示资源从 `source` 转移到 `receiver`：
+
+$$
+Transaction(source,receiver,c)=\\Sign(receiver)\times IdentityValue(receiver,c)-Sign(source)\times IdentityValue(source,c)
+$$
+
+Destroy 的 `receiver=null`，receiver 项为 0。因此三类动作分别为：
+
+$$
+ DestroyResourceOption=-Sign(source)\times IdentityValue(source,c)\times EffectScale 
+$$
+
+$$
+PlunderResourceOption=\\\left[Sign(actor)\times IdentityValue(actor,c)-Sign(source)\times IdentityValue(source,c)\right]\times EffectScale
+$$
+
+$$
+TransferResourceOption=\\\left[Sign(receiver)\times IdentityValue(receiver,c)-Sign(source)\times IdentityValue(source,c)\right]\\\times EffectScale
+$$
+
+统一写为：
+
+$$
+ResourceTransactionOption=E\left[Transaction(source,receiver,c)\right]\times EffectScale
+$$
+
+确定身份直接使用该定义。未知身份只查询当前来源匿名 bucket 的 Probability finite-pool：
+
+$$
+\boxed{ E[Transaction(source,receiver,c)]=\sum_dP(C=d)\times Transaction(source,receiver,d) }
+$$
+
+其中：
+
+$$
+P(C=d)=slotProbability(sourceBucket,d)
+$$
+
+该概率来自 `queryProbability(..., bucketId=source.id).slotProbability`。
+
+`EffectScale` 直接读取 Simulator 已完成的实际资源变化。
+
+known identity 使用：
+$$
+EffectScale_{known}=clamp_{[0,1]}\left(Availability_{before}(c)-Availability_{after}(c)\right)
+$$
+
+unknown identity 使用：
+
+$$
+EffectScale_{unknown}=clamp_{[0,1]}\left(AnonymousSlots_{before}(source)-AnonymousSlots_{after}(source)\right)
+$$
+
+这个差值已经表达该资源真实发生移除或转移的概率。
+
+## 16.5 Adaptive Information（当前用于影客窥隙等通用自适应信息）
 
 Evaluator 公式：
 
@@ -1252,6 +1346,8 @@ $$
 Searcher 只负责物化 hidden worlds / follow-up；公式 owner 仍是 Evaluator。
 
 源码：`Evaluator.js:2236 adaptiveInformationOptionPoints()`。
+
+
 
 # 17. Terminal Frontier Held Option
 
@@ -1422,7 +1518,7 @@ $$
 \Delta_s^+=0\Rightarrow P_s=0
 $$
 
-## 18.5 强制弃牌机会损失
+## 18.5 强制弃牌机会损失 Pd
 
 Pd 该项只在 END 的真实 Simulator 结果确实发生强制弃牌时考虑。 设 END 与同 parent sibling 的原始状态变化分别为：
 
@@ -1490,8 +1586,7 @@ $$
 
 # 20. Card / Resource Policy Value 公式
 
-这些值用于资源选择、弃牌、转移、response 或 search prior；除非通过实际 World 变化进入 StateDelta，否则不直接加进 Final Utility。
-
+这些值用于资源选择、弃牌、转移、response 或 search prior，本身不直接加进 Final Utility。
 ## 20.1 已知牌 Transfer Card Value
 
 基础：
@@ -3119,7 +3214,7 @@ X 技能反事实只使用 canonical World 的 `energy/maxEnergy` 与真实 Simu
 | `StateValue.js`              | HP、生存、能量、护盾、威胁、封印机会等非卡牌 state primitives | 卡牌资产、最终候选比较                                       |
 | `CardValue.js`               | 卡牌/资源静态值、角色差量、保留/转移/弃牌 policy primitives  | World transition、最终 Utility                               |
 | `Evaluator.js`               | 唯一 State/Card 聚合、Transition、END、Frontier、Response、Search Prior、价值聚合与比较语义 | Simulator/Generator/Searcher 的状态构造                      |
-| `Event/Probability`          | 概率、有限池、availability、判定、range probability          | 价值权重                                                     |
+| `Event/Probability`          | 概率、有限池、availability、来源匿名 bucket 的 identity slot probability、判定、range probability | 价值权重                                                     |
 | `Domain Rules`               | 能量上限、能量获取、治疗量、座次等游戏规则事实               | AI value                                                     |
 | `Searcher`                   | 搜索、sibling 完整性、候选集合、beam、budget 与 incumbent 维护；调用 Evaluator 获取价值结果 | State/Card 价值、sibling 价值聚合、END/Final Utility、最终偏好公式 |
 | `Simulator`                  | `Action + World → World`                                     | AI value                                                     |

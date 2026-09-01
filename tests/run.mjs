@@ -207,7 +207,7 @@ import {
   getBaseCardAiValue, getRoleCardAiValue,
   getDiscardKeepValue, getResourceDefinitionUtility, getResourceUnknownUtility,
   getTransferCardValue as cardSituationValue, getUnknownTransferCardValue,
-  UNKNOWN_HAND_EXPECTED_VALUE
+  RESOURCE_MATERIAL_SCALE, UNKNOWN_HAND_EXPECTED_VALUE, roleCardDelta
 } from "../js/ai/Evaluator/CardValue.js";
 import {
   ROLE_CARD_VALUE_DELTAS as OWNED_ROLE_CARD_VALUE_DELTAS,
@@ -15428,6 +15428,315 @@ async function adaptiveInformationTransitionOptionClosure() {
 test(
   "AI·价值归属：V02 自适应信息只经 generic TransitionOption 进入最终价值",
   adaptiveInformationTransitionOptionClosure
+);
+
+/*
+功能
+验证 Destroy 未知手牌只按来源 finite-pool 身份分布产生 ResourceTransactionOption。
+
+调用方
+AI 价值归属回归测试。
+
+输入
+无；函数内构造一张未被 viewer 记忆的敌方匿名手牌。
+
+输出
+无；隐藏身份读取、阵营符号、IdentityValue 或 Final Utility 单位错误时抛出断言。
+
+读取状态
+canonical World、来源匿名桶 Probability 与 CardValue 配置。
+
+写入状态
+仅独立 Simulator after World。
+
+调用函数
+queryProbability、Simulator.apply、Evaluator.evaluateTransition。
+
+边界与不变量
+Action.selection 不携带 definitionId；期望必须逐定义消费同一个 finite-pool slotProbability，
+StateValue 的手牌数量变化与 ResourceTransactionOption 分开断言。
+*/
+function destroyUnknownResourceTransactionOptionRegression() {
+  const game = makeBenchmarkGame({
+    players: [
+      {
+        id:"resource-destroy-actor",
+        team:"dawn",
+        character:"shade-agent",
+        hand:[makeBenchmarkCard("destroy", "resource-destroy-use")]
+      },
+      {
+        id:"resource-destroy-source",
+        team:"dusk",
+        character:"oath-warden",
+        hand:[makeBenchmarkCard("block", "resource-destroy-hidden")]
+      }
+    ],
+    options:{ actorId:"resource-destroy-actor", seed:20260901, nodeBudget:20 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const source = world.players.find((player) => player.id === "resource-destroy-source");
+    const anonymousCount = expectedAnonymousSlots(world.probabilityState, source.id);
+    assert.equal(anonymousCount, 1);
+    const action = createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"destroy",
+      cardInstanceId:"resource-destroy-use",
+      targetIds:[source.id],
+      selection:{
+        zone:"hand",
+        selectionKind:"unknown",
+        cardId:null,
+        definitionId:null,
+        knownCardIds:[],
+        availableUnknownCount:anonymousCount
+      }
+    });
+    const after = new Simulator(world).apply(world, action);
+    let expectedOption = 0;
+    for (const definitionId of Object.keys(CARD_DEFINITIONS)) {
+      const identityProbability = queryProbability(world.probabilityState, {
+        definitionId,
+        bucketId:source.id
+      }).slotProbability;
+      expectedOption += identityProbability * (
+        getBaseCardAiValue(definitionId) * RESOURCE_MATERIAL_SCALE
+          + roleCardDelta(source.characterId, definitionId)
+      );
+    }
+    const terms = game.aiController.evaluator.evaluateTransition({
+      action,
+      player:world.players.find((player) => player.id === actor.id),
+      beforeState:world,
+      afterState:after
+    });
+    assertClose(terms.transitionOptionPoints, expectedOption, 1e-12);
+    assertClose(terms.transitionOptionValue, expectedOption / OWNED_HP_VALUE, 1e-12);
+    assertClose(
+      terms.baseTransition,
+      terms.stateDeltaValue + terms.transitionOptionValue,
+      1e-12
+    );
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test(
+  "AI·价值归属：ResourceTransactionOption Destroy 未知手牌复用 finite-pool 身份期望",
+  destroyUnknownResourceTransactionOptionRegression
+);
+
+/*
+功能
+验证 Plunder 按同一交易 primitive 计算敌方来源到 viewer 的已知手牌身份变化。
+
+调用方
+AI 价值归属回归测试。
+
+输入
+无；函数内把已知资源 availability 设为二分之一。
+
+输出
+无；viewer RoleDelta 重复、来源 RoleDelta 遗漏或 EffectScale 重复相乘时抛出断言。
+
+读取状态
+canonical World 的合法记忆身份、阵营与 availability。
+
+写入状态
+只调整测试 World 的已知身份 availability 并构造 after World。
+
+调用函数
+Simulator.apply、Evaluator.evaluateTransition。
+
+边界与不变量
+viewer 获得侧只计 BaseCardValue×0.25；其他玩家来源侧补 RoleDelta；
+实际应用概率只取来源 identity 的前后 availability 差一次。
+*/
+function plunderKnownResourceTransactionOptionRegression() {
+  const game = makeBenchmarkGame({
+    players: [
+      {
+        id:"resource-plunder-actor",
+        team:"dawn",
+        character:"resonance-tuner",
+        hand:[makeBenchmarkCard("plunder", "resource-plunder-use")],
+        aiMemory:{
+          knownCardsByPlayer:{
+            "resource-plunder-source":[
+              { id:"resource-plunder-charge", definitionId:"charge" }
+            ]
+          }
+        }
+      },
+      {
+        id:"resource-plunder-source",
+        team:"dusk",
+        character:"spirit-medic",
+        hand:[makeBenchmarkCard("charge", "resource-plunder-charge")]
+      }
+    ],
+    options:{ actorId:"resource-plunder-actor", seed:20260901, nodeBudget:20 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const source = world.players.find((player) => player.id === "resource-plunder-source");
+    source.knownCards.find(
+      (card) => (card.id ?? card.cardId) === "resource-plunder-charge"
+    ).availability = 0.5;
+    const action = createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"plunder",
+      cardInstanceId:"resource-plunder-use",
+      targetIds:[source.id],
+      selection:{
+        zone:"hand",
+        selectionKind:"known",
+        cardId:"resource-plunder-charge",
+        definitionId:"charge",
+        availableUnknownCount:0
+      }
+    });
+    const after = new Simulator(world).apply(world, action);
+    const baseMaterial = getBaseCardAiValue("charge") * RESOURCE_MATERIAL_SCALE;
+    const sourceIdentity = baseMaterial + roleCardDelta(source.characterId, "charge");
+    const expectedOption = (baseMaterial - (-sourceIdentity)) * 0.5;
+    const terms = game.aiController.evaluator.evaluateTransition({
+      action,
+      player:world.players.find((player) => player.id === actor.id),
+      beforeState:world,
+      afterState:after
+    });
+    assertClose(world.players[1].handCount - after.players[1].handCount, 0.5, 1e-12);
+    assertClose(terms.transitionOptionPoints, expectedOption, 1e-12);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test(
+  "AI·价值归属：ResourceTransactionOption Plunder 只缩放一次实际应用概率",
+  plunderKnownResourceTransactionOptionRegression
+);
+
+/*
+功能
+验证 Transfer 与 Plunder 共用接收方获得减来源方失去的阵营交易公式。
+
+调用方
+AI 价值归属回归测试。
+
+输入
+无；函数内从敌方来源向非 viewer 队友转移一张已知牌。
+
+输出
+无；接收方/来源方符号、非 viewer RoleDelta 或最终派生项位置错误时抛出断言。
+
+读取状态
+canonical World 的合法记忆身份与双方角色/阵营。
+
+写入状态
+仅独立 Simulator after World。
+
+调用函数
+Simulator.apply、Evaluator.evaluateTransition。
+
+边界与不变量
+双方都不是 viewer 时各自补 RoleDelta；Transfer 不得按阵营方向另设固定 bonus。
+*/
+function transferKnownResourceTransactionOptionRegression() {
+  const game = makeBenchmarkGame({
+    players: [
+      {
+        id:"resource-transfer-actor",
+        team:"dawn",
+        character:"resonance-tuner",
+        hand:[makeBenchmarkCard("transfer", "resource-transfer-use")],
+        aiMemory:{
+          knownCardsByPlayer:{
+            "resource-transfer-source":[
+              { id:"resource-transfer-charge", definitionId:"charge" }
+            ]
+          }
+        }
+      },
+      {
+        id:"resource-transfer-source",
+        team:"dusk",
+        character:"spirit-medic",
+        hand:[makeBenchmarkCard("charge", "resource-transfer-charge")]
+      },
+      {
+        id:"resource-transfer-receiver",
+        team:"dawn",
+        character:"oath-warden",
+        hand:[]
+      }
+    ],
+    options:{ actorId:"resource-transfer-actor", seed:20260901, nodeBudget:20 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const source = world.players.find((player) => player.id === "resource-transfer-source");
+    const receiver = world.players.find((player) => player.id === "resource-transfer-receiver");
+    const action = createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"transfer",
+      cardInstanceId:"resource-transfer-use",
+      selection:{
+        sourceId:source.id,
+        receiverId:receiver.id,
+        zone:"hand",
+        selectionKind:"known",
+        cardId:"resource-transfer-charge",
+        definitionId:"charge",
+        availableUnknownCount:0
+      }
+    });
+    const after = new Simulator(world).apply(world, action);
+    const baseMaterial = getBaseCardAiValue("charge") * RESOURCE_MATERIAL_SCALE;
+    const sourceIdentity = baseMaterial + roleCardDelta(source.characterId, "charge");
+    const receiverIdentity = baseMaterial + roleCardDelta(receiver.characterId, "charge");
+    const expectedOption = receiverIdentity - (-sourceIdentity);
+    const terms = game.aiController.evaluator.evaluateTransition({
+      action,
+      player:world.players.find((player) => player.id === actor.id),
+      beforeState:world,
+      afterState:after
+    });
+    assertClose(terms.transitionOptionPoints, expectedOption, 1e-12);
+    assertClose(
+      terms.baseTransition,
+      terms.stateDeltaValue + terms.transitionOptionValue,
+      1e-12
+    );
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test(
+  "AI·价值归属：ResourceTransactionOption Transfer 复用统一阵营交易 primitive",
+  transferKnownResourceTransactionOptionRegression
 );
 
 /*
