@@ -21,6 +21,7 @@ import { normalizeAiSpeed, readAiSpeedPreference, writeAiSpeedPreference } from 
 import { TEAM_ASSIGNMENT_MODE } from "../application/match/TeamAssignmentMode.js";
 import { MatchMvpResultView } from "./results/MatchMvpResultView.js";
 import { RulebookView } from "./RulebookView.js";
+import { HistoryArchiveView } from "./history/HistoryArchiveView.js";
 
 const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
@@ -182,7 +183,7 @@ export class UIManager {
   main bootstrap。
 
   输入
-  无；使用当前 document/window。
+  可选 HistoryStatsManager；页面元素使用当前 document/window。
 
   输出
   UIManager 实例。
@@ -191,7 +192,7 @@ export class UIManager {
   页面 DOM、窗口宽度与已持久化声音偏好。
 
   写入状态
-  初始化元素引用、交互状态、声音、动画和各 View，并绑定事件。
+  初始化元素引用、交互状态、声音、动画、历史数据展示边界和各 View，并绑定事件。
 
   调用函数
   SoundManager、AnimationController、InteractionController、各 View 构造器、bindEvents、setAiSpeed。
@@ -199,9 +200,9 @@ export class UIManager {
   边界与不变量
   UI 只提交 ID/token/intent，不直接修改权威游戏状态。
   */
-  constructor() {
+  constructor({ historyStatsManager = null } = {}) {
     this.elements = Object.fromEntries([
-      "start-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "rules-button",
+      "start-screen", "history-archive-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "rules-button",
       "squad-mode-grid", "back-to-start-button", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
@@ -238,6 +239,11 @@ export class UIManager {
     this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
     this.judgmentView = new JudgmentView(this.elements.judgment_view);
     this.matchMvpResultView = new MatchMvpResultView(this.elements.match_mvp_result);
+    this.historyArchiveView = new HistoryArchiveView(
+      this.elements.history_archive_screen,
+      historyStatsManager,
+      () => this.hideHistoryArchive()
+    );
     this.rulebookView = new RulebookView(
       this.elements.rulebook_overlay,
       this.elements.rules_button,
@@ -476,6 +482,7 @@ export class UIManager {
     for (const input of this.musicVolumeInputs) input.addEventListener("input", () => this.setMusicVolume(input.value));
     for (const input of this.sfxVolumeInputs) input.addEventListener("input", () => this.setSfxVolume(input.value));
     this.elements.start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onStart?.(); });
+    this.elements.history_button?.addEventListener("click", () => { this.playSound("select"); void this.showHistoryArchive(); });
     this.elements.back_to_start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToStart?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
@@ -621,9 +628,75 @@ export class UIManager {
     this.sound.playMenuMusic();
     this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
+    this.elements.history_archive_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
+  }
+
+  /*
+  功能
+  经现有顶层屏幕生命周期进入独立历史档案馆并请求最新查询数据。
+
+  调用方
+  首页历史档案馆按钮。
+
+  输入
+  无。
+
+  输出
+  档案页面加载完成的 Promise。
+
+  读取状态
+  页面屏幕元素、SoundManager 与 HistoryArchiveView。
+
+  写入状态
+  仅切换顶层 screen 显隐并渲染档案页。
+
+  调用函数
+  SoundManager.playMenuMusic、HistoryArchiveView.show。
+
+  边界与不变量
+  不创建、销毁或修改 MatchApplication；从首页进入时战斗流程保持未启动。
+  */
+  async showHistoryArchive() {
+    this.sound.playMenuMusic();
+    this.elements.start_screen.classList.add("is-hidden");
+    this.elements.squad_selection_screen.classList.add("is-hidden");
+    this.elements.selection_screen.classList.add("is-hidden");
+    this.elements.game_screen.classList.add("is-hidden");
+    this.elements.history_archive_screen.classList.remove("is-hidden");
+    await this.historyArchiveView.show();
+  }
+
+  /*
+  功能
+  离开历史档案馆并恢复主页面。
+
+  调用方
+  HistoryArchiveView 返回按钮 callback。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  HistoryArchiveView。
+
+  写入状态
+  收束档案页并切换到首页。
+
+  调用函数
+  HistoryArchiveView.hide、showStart。
+
+  边界与不变量
+  返回不写历史数据，也不启动征召或对局。
+  */
+  hideHistoryArchive() {
+    this.historyArchiveView.hide();
+    this.showStart();
   }
 
   /*
@@ -657,6 +730,7 @@ export class UIManager {
     this.resetCurrentCard();
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
+    this.elements.history_archive_screen?.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.remove("is-hidden");
@@ -696,6 +770,7 @@ export class UIManager {
     this.resetCurrentCard();
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
+    this.elements.history_archive_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.remove("is-hidden");
@@ -738,6 +813,7 @@ export class UIManager {
     this.resetCurrentCard();
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
+    this.elements.history_archive_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.remove("is-hidden");

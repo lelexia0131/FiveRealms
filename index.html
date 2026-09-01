@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="./css/cards.css" />
   <link rel="stylesheet" href="./css/components.css" />
   <link rel="stylesheet" href="./css/rulebook.css" />
+  <link rel="stylesheet" href="./css/history.css" />
   <link rel="stylesheet" href="./css/animations.css" />
 </head>
 
@@ -35,6 +36,9 @@
         <div class="start-actions">
           <button id="start-button" class="primary-button start-button" type="button">
             <span>开启本局</span><span aria-hidden="true">→</span>
+          </button>
+          <button id="history-button" class="ghost-button history-entry-button" type="button">
+            <span>历史档案馆</span><span aria-hidden="true">◇</span>
           </button>
           <div class="audio-controls">
             <button class="toggle-button audio-toggle-button" type="button" data-audio-toggle aria-pressed="true"><i
@@ -71,6 +75,8 @@
         </div>
       </aside>
     </section>
+
+    <section id="history-archive-screen" class="screen history-archive-screen is-hidden" aria-label="历史档案馆"></section>
 
     <section id="squad-selection-screen" class="screen squad-selection-screen is-hidden"
       aria-labelledby="squad-selection-title">

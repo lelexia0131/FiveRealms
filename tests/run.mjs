@@ -202,6 +202,7 @@ import {
 } from "./ai_test_helpers.mjs";
 import { configureAllAiRoster } from "./headless_match_setup.mjs";
 import { registerMatchPerformanceTests } from "./match_performance_test.mjs";
+import { registerHistoryStatsTests } from "./history_stats_test.mjs";
 import {
   CARD_AI_VALUES, ROLE_CARD_VALUE_DELTAS, cardPlayerValueTerms,
   getBaseCardAiValue, getRoleCardAiValue,
@@ -37672,6 +37673,7 @@ test("私人情报异步边界：pending reveal 时 dispose 清理后旧 scout �
 test("私人情报异步边界：PrivateRevealView.hide settle pending show Promise 并清空 overlay", privateRevealViewHideSettlesPendingShow);
 
 registerMatchPerformanceTests(test);
+registerHistoryStatsTests(test);
 
 // ---- 开始界面与入局说明 ----
 

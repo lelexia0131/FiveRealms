@@ -66,6 +66,7 @@ function createPlayerRecord(player, initialTeamSize) {
   return {
     playerId: player.id,
     playerName: player.name,
+    characterId: player.character?.id ?? null,
     characterName: player.character?.name ?? player.name,
     teamId: player.battleTeam,
     seatIndex: player.seatIndex,

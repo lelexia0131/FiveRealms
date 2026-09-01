@@ -388,6 +388,39 @@ function assembleApplicationBoundary(application) {
   return application;
 }
 
+/*
+功能
+把一次已完成评分和 MVP 排名的 MatchResult 分发给单局展示与可选长期结果观察者。
+
+调用方
+MatchPerformanceSidecar 的 onResult callback。
+
+输入
+当前 MatchApplication 与冻结 MatchResultViewModel。
+
+输出
+外部 onMatchResult callback 的返回值；未配置时为 undefined。
+
+读取状态
+当前 UI session、公开玩家 controllerType/id 与 onMatchResult callback。
+
+写入状态
+MVP 结果 DOM；长期历史写入由注入 callback 自行拥有。
+
+调用函数
+UI.showMatchPerformance、Array.find、onMatchResult。
+
+边界与不变量
+只分发最终结果，不重算胜负/评分/MVP；同一 sidecar gameOver listener 只调用一次。
+*/
+function deliverMatchResult(application, viewModel) {
+  application.ui.showMatchPerformance?.(viewModel);
+  const humanPlayerId = application.state.players.find(
+    (player) => player.controllerType === "human"
+  )?.id ?? null;
+  return application.onMatchResult?.(viewModel, humanPlayerId);
+}
+
 class MatchApplication {
   /*
   功能
@@ -397,7 +430,7 @@ class MatchApplication {
   main.js 与测试 fixture。
 
   输入
-  UI 实例、可替换真实游戏随机源与可选 choice/search/presentationRandom/clock 注入项。
+  UI 实例、可替换真实游戏随机源与可选 choice/search/presentationRandom/clock/onMatchResult 注入项。
 
   输出
   已完成 service 组合但尚未发牌/启动的 MatchApplication 实例。
@@ -423,6 +456,7 @@ class MatchApplication {
     this.now = typeof options.now === "function"
       ? options.now
       : () => globalThis.performance?.now?.() ?? Date.now();
+    this.onMatchResult = typeof options.onMatchResult === "function" ? options.onMatchResult : null;
     this.cleanupManager = new CleanupManager();
     this.characterSelection = new CharacterSelection(this.random);
     const deck = new Deck(this.random, (channel, message, data) => Debug.log(channel, message, data));
@@ -459,7 +493,7 @@ class MatchApplication {
     this.matchPerformanceSidecar = createMatchPerformanceSidecar({
       eventDispatcher: this.eventDispatcher,
       getState: () => this.state,
-      onResult: (viewModel) => this.ui.showMatchPerformance?.(viewModel)
+      onResult: (viewModel) => deliverMatchResult(this, viewModel)
     });
     this.matchLogAdapter = new MatchLogAdapter(this.state, this.ui);
     this.choiceContexts = new Map();
@@ -967,7 +1001,7 @@ class MatchApplication {
 main.js、headless tests 与 balance harness。
 
 输入
-UI adapter、真实结算随机源与可选 choice/search/presentation 注入项。
+UI adapter、真实结算随机源与可选 choice/search/presentation/onMatchResult 注入项。
 
 输出
 单局应用边界。

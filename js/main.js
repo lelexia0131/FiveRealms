@@ -3,10 +3,45 @@
  */
 import { createGameApplication } from "./composition/createGameApplication.js";
 import { UIManager } from "./ui/UIManager.js";
+import { HistoryStatsManager } from "./ui/history/HistoryStatsManager.js";
 import { Debug } from "./utils/debug.js";
 
-const ui = new UIManager();
+const historyStatsManager = new HistoryStatsManager();
+const ui = new UIManager({ historyStatsManager });
 let game = null;
+
+/*
+功能
+在 MVP 终局结果确定后把真人一行提交给长期历史档案。
+
+调用方
+MatchApplication 的 onMatchResult callback。
+
+输入
+冻结 MatchResult 与真人 playerId。
+
+输出
+保存尝试完成的 Promise。
+
+读取状态
+HistoryStatsManager。
+
+写入状态
+history_data.json；失败仅写诊断日志。
+
+调用函数
+HistoryStatsManager.recordMatchResult、Debug.log。
+
+边界与不变量
+不得重新计算评分、胜负或 MVP；档案写入失败不得阻断终局展示和下一局流程。
+*/
+async function recordHistoryMatchResult(matchResult, humanPlayerId) {
+  try {
+    await historyStatsManager.recordMatchResult(matchResult, humanPlayerId);
+  } catch (error) {
+    Debug.log("History", "历史档案保存失败", error);
+  }
+}
 
 /*
 功能
@@ -35,7 +70,7 @@ MatchApplication.dispose/setAiSpeed、createGameApplication、UIManager.attachGa
 */
 function startRecruitment() {
   game?.dispose();
-  game = createGameApplication(ui);
+  game = createGameApplication(ui, Math.random, { onMatchResult: recordHistoryMatchResult });
   ui.attachGame(game);
   game.setAiSpeed(ui.aiSpeed);
   ui.showSquadSelection();
@@ -155,3 +190,4 @@ ui.setCallbacks({
 });
 
 ui.showStart();
+void historyStatsManager.initialize().catch((error) => Debug.log("History", "历史档案初始化失败", error));

@@ -28,10 +28,41 @@ MatchPerformanceTracker、createMatchResultViewModel、EventDispatcher.on。
 */
 export function createMatchPerformanceSidecar({ eventDispatcher, getState, onResult }) {
   const tracker = new MatchPerformanceTracker({ eventDispatcher, getState }).start();
+  let resultDelivered = false;
+  /*
+  功能
+  在首次 gameOver 时派生并分发一次最终 MatchResult。
+
+  调用方
+  EventDispatcher gameOver listener。
+
+  输入
+  无；事件 payload 不参与最终统计。
+
+  输出
+  首次返回 onResult 结果，重复事件返回 undefined。
+
+  读取状态
+  resultDelivered 与 tracker 最终快照。
+
+  写入状态
+  首次调用把 resultDelivered 设为 true。
+
+  调用函数
+  tracker.finalizeMatch、createMatchResultViewModel、onResult。
+
+  边界与不变量
+  同一 sidecar 生命周期内即使收到重复 gameOver，也不得重复展示或写入长期历史。
+  */
+  function deliverResultOnce() {
+    if (resultDelivered) return undefined;
+    resultDelivered = true;
+    return onResult(createMatchResultViewModel(tracker.finalizeMatch()));
+  }
   const unsubscribeGameOver = eventDispatcher.on(
     "gameOver",
     "match-performance:finalize",
-    () => onResult(createMatchResultViewModel(tracker.finalizeMatch()))
+    deliverResultOnce
   );
   return Object.freeze({
     tracker,

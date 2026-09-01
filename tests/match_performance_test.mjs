@@ -10,6 +10,7 @@ import {
   normalizeForRadar
 } from "../js/ui/results/MatchPerformanceCalculator.js";
 import { MatchPerformanceTracker } from "../js/ui/results/MatchPerformanceTracker.js";
+import { createMatchPerformanceSidecar } from "../js/ui/results/MatchPerformanceSidecar.js";
 import { createMatchResultViewModel } from "../js/ui/results/MatchResultViewModel.js";
 import { MatchMvpResultView } from "../js/ui/results/MatchMvpResultView.js";
 import { UIManager } from "../js/ui/UIManager.js";
@@ -1290,5 +1291,27 @@ export function registerMatchPerformanceTests(test) {
       effectiveTargets: [enemy]
     });
     assert.equal(tracker.finalizeMatch().players[0].totals.cardsPlayed, 1);
+  });
+
+  test("UI·MVP：同一 sidecar 重复收到 gameOver 仍只分发一次 MatchResult", async () => {
+    const state = {
+      gameId: "single-result",
+      stateVersion: 0,
+      players: [trackerPlayer("human", 0, "dawn"), trackerPlayer("enemy", 1, "dusk")],
+      winnerTeam: "dawn",
+      phase: "gameOver",
+      currentPlayerIndex: 0
+    };
+    const dispatcher = new EventDispatcher(() => true);
+    let deliveries = 0;
+    const sidecar = createMatchPerformanceSidecar({
+      eventDispatcher: dispatcher,
+      getState: () => state,
+      onResult: () => { deliveries += 1; }
+    });
+    await dispatcher.emit("gameOver", { winnerTeam: "dawn" });
+    await dispatcher.emit("gameOver", { winnerTeam: "dawn" });
+    assert.equal(deliveries, 1);
+    sidecar.dispose();
   });
 }
