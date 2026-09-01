@@ -1096,7 +1096,7 @@ export class UIManager {
     }).join("") || '<div class="empty-hand"><span aria-hidden="true">◇</span><strong>手牌为空</strong><small>下一次摸牌会从牌堆飞入这里</small></div>';
     restoreHorizontalCardScroll(hand, previousScrollLeft);
     if (this.discardState) this.elements.hand_hint.textContent = `已选 ${this.discardState.selectedIds.size} / ${this.discardState.count}`;
-    else if (!this.targetState) this.elements.hand_hint.textContent = `${human.hand.length}张 · 不可用的牌仍可聚焦查看`;
+    else if (!this.targetState) this.elements.hand_hint.textContent = `${human.hand.length}张手牌`;
   }
 
   /*

@@ -43,7 +43,7 @@ requestId、actorId、ownerId、gameId、stateVersion、mode、maximum、exact�
 Object.freeze。
 
 边界与不变量
-options 不含牌面定义；zone 模式允许公开装备由 adapter 私有上下文重绑，取消始终合法。
+options 不含牌面定义；zone 模式允许公开装备由 adapter 私有上下文重绑；请求发生在效果进入结算后，玩家不可放弃。
 */
 export function createHiddenCardChoiceRequest({
   requestId,
@@ -75,7 +75,7 @@ export function createHiddenCardChoiceRequest({
       exact: Boolean(exact),
       mode
     }),
-    canDecline: true,
+    canDecline: false,
     context: Object.freeze({
       ownerId,
       prompt: typeof prompt === "string" ? prompt : ""

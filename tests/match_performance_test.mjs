@@ -285,13 +285,13 @@ export function registerMatchPerformanceTests(test) {
     assert.deepEqual([result.scores.contribution, result.scores.skill], [100, 100]);
   });
 
-  test("UI·MVP：二人队火力按实际敌伤与真实击杀得到75分", async () => {
+  test("UI·MVP：二人队火力按实际敌伤与真实击杀得到87.5分", async () => {
     const result = calculatePerformance(rawPlayer({
       effectiveRounds: 4,
       totals: { enemyHpDamage: 4, enemyKills: 1 }
     }));
-    assert.equal(result.raw.firepower, 1.5);
-    assert.equal(result.scores.firepower, 75);
+    assert.equal(result.raw.firepower, 1.75);
+    assert.equal(result.scores.firepower, 87.5);
     const actor = trackerPlayer("actor", 0, "dawn");
     const ally = trackerPlayer("ally", 1, "dawn");
     const enemy = trackerPlayer("enemy", 2, "dusk");
@@ -304,14 +304,14 @@ export function registerMatchPerformanceTests(test) {
     assert.deepEqual([totals.enemyHpDamage, totals.enemyKills], [4, 1]);
   });
 
-  test("UI·MVP：三人队对同一火力使用独立标准得到125分", () => {
+  test("UI·MVP：三人队对同一火力使用独立标准得到145.833分", () => {
     const result = calculatePerformance(rawPlayer({
       initialTeamSize: 3,
       effectiveRounds: 4,
       totals: { enemyHpDamage: 4, enemyKills: 1 }
     }));
-    assert.equal(result.raw.firepower, 1.5);
-    assert.equal(result.scores.firepower, 125);
+    assert.equal(result.raw.firepower, 1.75);
+    assert.equal(result.scores.firepower, 145.83333333333334);
   });
 
   test("UI·MVP：濒死救援按二倍计入一次且支援原始值为1.4", () => {

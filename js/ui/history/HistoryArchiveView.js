@@ -20,8 +20,6 @@ HistoryStatsManager 查询接口与公开角色展示素材。
 import { CHARACTER_PRESENTATION } from "../../adapters/ui/CharacterPresentationDefinitions.js";
 import { escapeHtml } from "../templates.js";
 
-const RECENT_RECORD_LIMIT = 8;
-
 /*
 功能
 把历史时间戳格式化为档案题记日期。
@@ -421,10 +419,10 @@ export class HistoryArchiveView {
   renderCharacterCard、renderTeamCard、renderRecordCard、escapeHtml。
 
   边界与不变量
-  不出现 table，不计算胜率；最近征途只取已按新到旧排序的前八条。
+  不出现 table，不计算胜率；最近征途直接消费 Manager 已按新到旧限制为十条的记录。
   */
   render(archive) {
-    const recentRecords = archive.records.slice(0, RECENT_RECORD_LIMIT);
+    const recentRecords = archive.records;
     const companion = archive.achievements.mostFrequentCompanion;
     const achievementItems = [
       {

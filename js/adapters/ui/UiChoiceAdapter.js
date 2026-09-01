@@ -108,7 +108,8 @@ export function createUiChoiceAdapter({
             choiceContext.actor,
             choiceContext.owner,
             choiceContext.reason,
-            choiceContext.excludedCardIds
+            choiceContext.excludedCardIds,
+            { canDecline: choiceRequest.canDecline }
           );
           if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
           if (!selection?.selectionId) return createChoiceResult("declined");
@@ -145,7 +146,8 @@ export function createUiChoiceAdapter({
             exact: choiceContext.exact,
             viewer: choiceContext.actor,
             owner: choiceContext.owner,
-            orderZoneSelection: choiceContext.aiContext?.purpose === "transfer"
+            orderZoneSelection: choiceContext.aiContext?.purpose === "transfer",
+            canDecline: choiceRequest.canDecline
           }
         );
         if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");

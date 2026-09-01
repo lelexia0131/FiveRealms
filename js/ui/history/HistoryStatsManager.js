@@ -21,6 +21,7 @@ import { CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/Chara
 
 const HISTORY_VERSION = 1;
 const HISTORY_ENDPOINT = "/api/history";
+const RECENT_RECORD_LIMIT = 10;
 const TEAM_DEFINITIONS = Object.freeze([
   Object.freeze({ id: "dawn", name: "晨星" }),
   Object.freeze({ id: "dusk", name: "暮影" })
@@ -66,6 +67,13 @@ export function createEmptyHistoryData() {
     },
     characters: {},
     teams: {},
+    achievements: {
+      companions: {},
+      highestSingleMatchDamage: null,
+      highestSingleMatchKills: null,
+      highestSingleMatchSupport: null,
+      highestSingleMatchDamageTaken: null
+    },
     records: []
   };
 }
@@ -216,7 +224,7 @@ function normalizeHistoryData(source) {
     const wins = Math.min(matches, nonNegativeNumber(value.wins, true));
     empty.teams[teamId] = { matches, wins, winRate: calculateWinRate(wins, matches) };
   }
-  empty.records = Array.isArray(source.records)
+  const normalizedRecords = Array.isArray(source.records)
     ? source.records.filter((record) => record && typeof record === "object").map((record) => ({
       timestamp: typeof record.timestamp === "string" ? record.timestamp : "",
       characterId: typeof record.characterId === "string" ? record.characterId : "",
@@ -235,6 +243,38 @@ function normalizeHistoryData(source) {
       damageTaken: optionalNonNegativeNumber(record.damageTaken)
     }))
     : [];
+  const achievementSource = source.achievements && typeof source.achievements === "object"
+    ? source.achievements
+    : {};
+  const companionSource = achievementSource.companions && typeof achievementSource.companions === "object"
+    ? achievementSource.companions
+    : null;
+  if (companionSource) {
+    for (const [characterId, value] of Object.entries(companionSource)) {
+      if (typeof characterId !== "string" || !characterId) continue;
+      const matches = nonNegativeNumber(value?.matches ?? value, true);
+      if (matches) empty.achievements.companions[characterId] = { matches };
+    }
+  } else {
+    for (const record of normalizedRecords) {
+      if (!Array.isArray(record.teammateCharacterIds)) continue;
+      for (const characterId of new Set(record.teammateCharacterIds)) {
+        const companion = empty.achievements.companions[characterId] ?? { matches: 0 };
+        companion.matches += 1;
+        empty.achievements.companions[characterId] = companion;
+      }
+    }
+  }
+  for (const [achievementKey, recordKey] of [
+    ["highestSingleMatchDamage", "damage"],
+    ["highestSingleMatchKills", "kills"],
+    ["highestSingleMatchSupport", "support"],
+    ["highestSingleMatchDamageTaken", "damageTaken"]
+  ]) {
+    const storedValue = optionalNonNegativeNumber(achievementSource[achievementKey], recordKey === "kills");
+    empty.achievements[achievementKey] = storedValue ?? highestKnownRecordValue(normalizedRecords, recordKey);
+  }
+  empty.records = normalizedRecords.slice(0, RECENT_RECORD_LIMIT);
   return empty;
 }
 
@@ -372,13 +412,13 @@ function createHttpHistoryStorage(fetchImpl, endpoint) {
 
 /*
 功能
-从完整历史记录中选出与真人同阵营场次最多的角色。
+从持久化同行累计中选出与真人同阵营场次最多的角色。
 
 调用方
 buildArchiveData。
 
 输入
-已规范化的全部历史 records。
+已规范化的 companions 累计对象。
 
 输出
 含 characterId、characterName 与 matches 的同行纪录；没有已知队友事实时返回 null。
@@ -390,20 +430,15 @@ buildArchiveData。
 无。
 
 调用函数
-Map、Set、Array.sort、CHARACTER_DEFINITIONS.find/findIndex。
+Object.entries、Array.sort、CHARACTER_DEFINITIONS.find/findIndex。
 
 边界与不变量
-同一场同一角色至多计一次；并列按角色定义顺序、再按 ID 排序，刷新后结果稳定。
+计数由 recordMatchResult 保证同一场同一角色至多累计一次；并列按角色定义顺序、再按 ID 排序，刷新后结果稳定。
 */
-function findMostFrequentCompanion(records) {
-  const counts = new Map();
-  for (const record of records) {
-    if (!Array.isArray(record.teammateCharacterIds)) continue;
-    for (const characterId of new Set(record.teammateCharacterIds)) {
-      counts.set(characterId, (counts.get(characterId) ?? 0) + 1);
-    }
-  }
-  const [winner] = [...counts.entries()].sort(([leftId, leftMatches], [rightId, rightMatches]) => {
+function findMostFrequentCompanion(companions) {
+  const [winner] = Object.entries(companions).map(([characterId, value]) => (
+    [characterId, nonNegativeNumber(value?.matches, true)]
+  )).filter(([, matches]) => matches > 0).sort(([leftId, leftMatches], [rightId, rightMatches]) => {
     if (rightMatches !== leftMatches) return rightMatches - leftMatches;
     const leftIndex = CHARACTER_DEFINITIONS.findIndex((definition) => definition.id === leftId);
     const rightIndex = CHARACTER_DEFINITIONS.findIndex((definition) => definition.id === rightId);
@@ -498,7 +533,7 @@ function buildArchiveData(data) {
     wins: nonNegativeNumber(data.teams[definition.id]?.wins, true),
     winRate: nonNegativeNumber(data.teams[definition.id]?.winRate)
   }));
-  const mostFrequentCompanion = findMostFrequentCompanion(data.records);
+  const mostFrequentCompanion = findMostFrequentCompanion(data.achievements.companions);
   return Object.freeze({
     version: data.version,
     summary: Object.freeze({
@@ -509,10 +544,10 @@ function buildArchiveData(data) {
     teams: Object.freeze(teams.map((entry) => Object.freeze(entry))),
     achievements: Object.freeze({
       mostFrequentCompanion: mostFrequentCompanion ? Object.freeze(mostFrequentCompanion) : null,
-      highestSingleMatchDamage: highestKnownRecordValue(data.records, "damage"),
-      highestSingleMatchKills: highestKnownRecordValue(data.records, "kills"),
-      highestSingleMatchSupport: highestKnownRecordValue(data.records, "support"),
-      highestSingleMatchDamageTaken: highestKnownRecordValue(data.records, "damageTaken")
+      highestSingleMatchDamage: data.achievements.highestSingleMatchDamage,
+      highestSingleMatchKills: data.achievements.highestSingleMatchKills,
+      highestSingleMatchSupport: data.achievements.highestSingleMatchSupport,
+      highestSingleMatchDamageTaken: data.achievements.highestSingleMatchDamageTaken
     }),
     records: Object.freeze(data.records.map((record) => Object.freeze({
       ...record,
@@ -688,7 +723,7 @@ export class HistoryStatsManager {
   当前历史快照、最终 MatchResult 与注入时钟。
 
   写入状态
-  summary、真人角色、真人阵营、完整 records、history_data.json 与成功后的内存档案。
+  summary、真人角色、真人阵营、同行/传奇累计、最近 records、history_data.json 与成功后的内存档案。
 
   调用函数
   initialize、normalizeHistoryData、calculateWinRate、optionalNonNegativeNumber、storage.write、buildArchiveData。
@@ -735,6 +770,21 @@ export class HistoryStatsManager {
     team.winRate = calculateWinRate(team.wins, team.matches);
     next.teams[player.teamId] = team;
 
+    for (const characterId of new Set(teammateCharacterIds)) {
+      const companion = next.achievements.companions[characterId] ?? { matches: 0 };
+      companion.matches += 1;
+      next.achievements.companions[characterId] = companion;
+    }
+    const singleMatchAchievements = {
+      highestSingleMatchDamage: optionalNonNegativeNumber(player.combatStats?.totalDamage),
+      highestSingleMatchKills: optionalNonNegativeNumber(player.totals?.enemyKills, true),
+      highestSingleMatchSupport: optionalNonNegativeNumber(player.combatStats?.support),
+      highestSingleMatchDamageTaken: optionalNonNegativeNumber(player.combatStats?.damageTaken)
+    };
+    for (const [key, value] of Object.entries(singleMatchAchievements)) {
+      if (value !== null) next.achievements[key] = Math.max(next.achievements[key] ?? 0, value);
+    }
+
     next.records.unshift({
       timestamp: this.now().toISOString(),
       characterId: player.characterId,
@@ -750,6 +800,7 @@ export class HistoryStatsManager {
       support: optionalNonNegativeNumber(player.combatStats?.support),
       damageTaken: optionalNonNegativeNumber(player.combatStats?.damageTaken)
     });
+    next.records.length = Math.min(next.records.length, RECENT_RECORD_LIMIT);
     await this.storage.write(`${JSON.stringify(next, null, 2)}\n`);
     this.data = next;
     return buildArchiveData(this.data);

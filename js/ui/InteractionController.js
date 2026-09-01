@@ -146,7 +146,7 @@ export class InteractionController {
       const confirm = event.target.closest("[data-interaction-confirm]");
       if (confirm) this.confirm();
       const cancel = event.target.closest("[data-interaction-cancel]");
-      if (cancel) this.cancel();
+      if (cancel && this.pending?.canDecline) this.cancel();
     });
   }
 
@@ -240,7 +240,7 @@ export class InteractionController {
   UIManager.requestZoneCard、UiChoiceAdapter hiddenCard 请求。
 
   输入
-  当前 MatchApplication、观察者、区域所有者、提示及排除实体 ID。
+  当前 MatchApplication、观察者、区域所有者、提示、排除实体 ID 及是否允许放弃。
 
   输出
   选中区域及 token/装备 ID；取消或过期返回 null。
@@ -257,7 +257,7 @@ export class InteractionController {
   边界与不变量
   未知手牌只以 token 呈现；公开装备使用固定 UI token 并排在手牌前，返回前必须复核 gameId。
   */
-  async requestZoneCard(game, actor, owner, prompt, excludedCardIds = null) {
+  async requestZoneCard(game, actor, owner, prompt, excludedCardIds = null, options = {}) {
     const gameId = game.state.gameId;
     if (!game.isSessionValid(gameId)) return null;
     const eligibleHand = owner?.hand?.filter((card) => !excludedCardIds?.has(card.id)) ?? [];
@@ -270,7 +270,12 @@ export class InteractionController {
       equipmentSlots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name, categoryName, description, art, icon, accent, frameStyle, flavorText });
     }
     const slots = orderZoneSelectionSlots(equipmentSlots, handSlots);
-    const selected = await this.requestHiddenCards(hidden, 1, prompt, { exact:true, slots, totalCount:slots.length });
+    const selected = await this.requestHiddenCards(hidden, 1, prompt, {
+      exact:true,
+      slots,
+      totalCount:slots.length,
+      canDecline:options.canDecline
+    });
     if (!game.isSessionValid(gameId)) return null;
     if (!selected?.length) return null;
     if (selected[0] === EQUIPMENT_OPTION_TOKEN) return { zone:"equipment", equipmentCardId:owner.equipment?.id ?? null, selectionId:hidden.selectionId };
@@ -285,7 +290,7 @@ export class InteractionController {
   requestZoneCard 与 UiChoiceAdapter。
 
   输入
-  隐藏 selection、最大数量、提示及 exact/slots/viewer/owner/区域排序展示选项。
+  隐藏 selection、最大数量、提示及 exact/slots/viewer/owner/区域排序/放弃展示选项。
 
   输出
   解析为 token 数组或取消时 null 的 Promise。
@@ -300,7 +305,7 @@ export class InteractionController {
   cancel、createHiddenSelectionView、orderZoneSelectionSlots、hiddenSelectionMarkup、UIManager.render。
 
   边界与不变量
-  新请求先收束旧请求；只有明确的区域排序请求复用已知槽位分组；DOM 不得接收未知牌的实体或定义信息。
+  新请求先收束旧请求；只有 authority 允许放弃时才渲染取消按钮；只有明确的区域排序请求复用已知槽位分组；DOM 不得接收未知牌的实体或定义信息。
   */
   requestHiddenCards(selection, count, prompt, options = {}) {
     this.cancel();
@@ -310,10 +315,11 @@ export class InteractionController {
       const slots = options.orderZoneSelection
         ? orderZoneSelectionSlots([], displaySlots)
         : displaySlots;
-      this.pending = { type:"hidden", selection, count, exact:Boolean(options.exact), selected, resolve };
+      const canDecline = options.canDecline !== false;
+      this.pending = { type:"hidden", selection, count, exact:Boolean(options.exact), canDecline, selected, resolve };
       this.ui.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(prompt)}</strong><span>${options.totalCount ?? selection.tokens.length}张</span></div>
         <div class="hidden-card-grid">${hiddenSelectionMarkup(selection, slots)}</div>
-        <div class="response-actions"><button class="primary-button" type="button" data-interaction-confirm disabled>确认选择</button><button class="ghost-button" type="button" data-interaction-cancel>取消</button></div>`;
+        <div class="response-actions"><button class="primary-button" type="button" data-interaction-confirm disabled>确认选择</button>${canDecline ? '<button class="ghost-button" type="button" data-interaction-cancel>取消</button>' : ""}</div>`;
       this.ui.elements.response_panel.classList.remove("is-hidden");
       if (this.ui.game) this.ui.render(this.ui.game);
     });

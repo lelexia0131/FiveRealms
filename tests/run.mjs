@@ -5957,6 +5957,7 @@ async function hiddenChoiceRoutesThroughChoicePort() {
     optionIds: ["opaque-a", "opaque-b"]
   });
   assert.equal(contract.kind, "hiddenCard");
+  assert.equal(contract.canDecline, false);
   assert.deepEqual(contract.options.map((option) => option.optionId), ["opaque-a", "opaque-b"]);
   assert.doesNotMatch(JSON.stringify(contract), /definitionId|charge|block/);
 
@@ -5968,14 +5969,16 @@ async function hiddenChoiceRoutesThroughChoicePort() {
   owner.equipment = equipment;
   const { game } = makeGame([human, ai, owner]);
   let humanHandRequests = 0, humanZoneRequests = 0, aiHandRequests = 0;
-  const humanHandExactValues = [];
+  const humanHandExactValues = [], humanCanDeclineValues = [];
   game.ui.requestHiddenCards = async (selection, _maximum, _reason, options) => {
     humanHandRequests += 1;
     humanHandExactValues.push(options.exact);
+    humanCanDeclineValues.push(options.canDecline);
     return [selection.tokens[1].token];
   };
-  game.ui.requestZoneCard = async (_game, _actor, target) => {
+  game.ui.requestZoneCard = async (_game, _actor, target, _reason, _excluded, options) => {
     humanZoneRequests += 1;
+    humanCanDeclineValues.push(options.canDecline);
     const selection = game.hiddenCardSelection.createHiddenSelection(target);
     return { zone: "equipment", equipmentCardId: target.equipment.id, selectionId: selection.selectionId };
   };
@@ -6010,6 +6013,7 @@ async function hiddenChoiceRoutesThroughChoicePort() {
     { humanHandRequests: 1, humanZoneRequests: 1, aiHandRequests: 1 }
   );
   assert.deepEqual(humanHandExactValues, [true]);
+  assert.deepEqual(humanCanDeclineValues, [false, false]);
   assert.equal(game.choiceContexts.size, 0);
   assert.equal(game.hiddenCardSelection.sessions.size, 0);
 
@@ -38465,6 +38469,27 @@ test("UI·玩家面板：关闭技能弹窗后焦点返回原生触发按钮", (
 
 // ---- 手牌与对手面板 ----
 
+test("UI·手牌池：顶部只显示当前动态手牌数量", () => {
+  const human = makePlayer("hand-count-human", 0, "dawn", "human"),
+    enemy = makePlayer("hand-count-enemy", 1, "dusk"),
+    { game } = makeGame([human, enemy]);
+  human.hand.push(instance("assault"), instance("block"), instance("recover"), instance("charge"));
+  const hand = { innerHTML: "", scrollLeft: 0, scrollWidth: 0, clientWidth: 0 },
+    handHint = { textContent: "" },
+    ui = {
+      discardState: null,
+      targetState: null,
+      isInteractionActive: () => false,
+      elements: { human_hand: hand, hand_hint: handHint }
+    };
+  UIManager.prototype.renderHand.call(ui, game, human);
+  assert.equal(handHint.textContent, "4张手牌");
+  assert.doesNotMatch(handHint.textContent, /不可用的牌仍可聚焦查看|张 ·/);
+  human.hand.pop();
+  UIManager.prototype.renderHand.call(ui, game, human);
+  assert.equal(handHint.textContent, "3张手牌");
+});
+
 test("UI·横向卡牌拖拽：五类真实卡牌容器共享拖动规则与原生 scrollbar", async () => {
   const index = await readFile(projectFile("index.html"), "utf8"),
     layout = await readFile(projectFile("css/layout.css"), "utf8"),
@@ -39944,6 +39969,32 @@ test("UI·互利选择：所有隐藏选择池都不显示令牌或核心校验�
   assert.equal(await pending, null);
 });
 
+test("UI·强制选牌：结算中的隐藏手牌与区域选择只保留确认按钮", async () => {
+  const panel = makeInteractiveElement();
+  panel.querySelectorAll = () => [];
+  panel.querySelector = () => null;
+  const controller = new InteractionController({
+    game: null,
+    elements: { response_panel: panel },
+    render() { }
+  });
+  controller.bind(panel);
+  const selection = { selectionId: "required-choice", tokens: [{ token: "opaque-required" }] };
+  const pending = controller.requestHiddenCards(
+    selection,
+    1,
+    "掠夺：选择1张手牌或装备牌",
+    { exact: true, canDecline: false }
+  );
+  assert.match(panel.innerHTML, /data-interaction-confirm/);
+  assert.doesNotMatch(panel.innerHTML, /data-interaction-cancel|>取消</);
+  panel.click(clickTarget("[data-interaction-cancel]"));
+  assert.equal(controller.pending?.selection, selection);
+  controller.pending.selected.add("opaque-required");
+  controller.confirm();
+  assert.deepEqual(await pending, ["opaque-required"]);
+});
+
 // ---- 中央结算卡与日志 ----
 
 test("UI·中央结算卡：对局记录计数显示条目单位和明确的辅助说明", () => {
@@ -40690,8 +40741,8 @@ fake DOM overlay、class 与控制器短生命周期记录。
 UIManager.queueFeedback、UIManager.playFeedbackSound、AnimationController.flush、clear。
 
 边界与不变量
-多个目标可并存；护援复用同一 overlay/cleanup 且不显示数值；新正向 overlay 与 shield loss 不得叠加旧人物框动画；
-每项 feedback 只能在自身展示启动时触发一次声音，逐目标队列的最后一项与中间项走同一路径。
+  多个目标可并存；护援复用同一 overlay/cleanup 且不显示数值；新正向 overlay 与 shield loss 不得叠加旧人物框动画；
+  每项 feedback 只能在自身展示启动时触发一次声音，同一刷新中的多目标伤害不得串行排队。
 */
 function frVfxOverlayLifecycle() {
   const panels = new Map();
@@ -40870,42 +40921,26 @@ function frVfxOverlayLifecycle() {
   queueFeedback("damage", "target-a", 1, "burning-field");
   queueFeedback("damage", "target-b", 1, "burning-field");
   queueFeedback("damage", "target-c", 1, "burning-field");
-  assert.deepEqual(sounds, [], "焚场后续目标不得在表现入队时提前出声");
+  assert.deepEqual(sounds, [], "焚场反馈入队时不得抢在表现开始前出声");
   controller.flush(doc);
-  assert.deepEqual(sounds, ["hit"], "焚场首个目标只触发自己的 hit");
-  let burningOverlays = doc.body.children.filter((overlay) => overlay.className.includes("is-burning-field"));
-  assert.equal(burningOverlays.length, 1, "焚场同一时刻只启动一个目标的爆燃");
-  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-duration"), "880ms");
-  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-left"), "30px");
-  assert.equal(controller.sequentialDamageFeedback.length, 2);
-  burningOverlays[0].listeners.get("animationend")({
-    target: burningOverlays[0], animationName: "resolutionVfxLifetime"
-  });
-  clearTimeout(controller.sequentialDamageTimer);
-  controller.sequentialDamageTimer = null;
-  controller.playNextSequentialDamageFeedback();
-  assert.deepEqual(sounds, ["hit", "hit"], "焚场第二个目标在自身动画启动时触发 hit");
-  burningOverlays = doc.body.children.filter((overlay) => overlay.className.includes("is-burning-field"));
-  assert.equal(burningOverlays.length, 1);
-  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-left"), "370px");
-  assert.equal(controller.sequentialDamageFeedback.length, 1);
-  burningOverlays[0].listeners.get("animationend")({
-    target: burningOverlays[0], animationName: "resolutionVfxLifetime"
-  });
-  clearTimeout(controller.sequentialDamageTimer);
-  controller.sequentialDamageTimer = null;
-  controller.playNextSequentialDamageFeedback();
-  assert.deepEqual(sounds, ["hit", "hit", "hit"], "焚场最后一个目标不得丢失 hit");
-  burningOverlays = doc.body.children.filter((overlay) => overlay.className.includes("is-burning-field"));
-  assert.equal(burningOverlays.length, 1);
-  assert.equal(burningOverlays[0].style.getPropertyValue("--resolution-vfx-left"), "710px");
-  assert.equal(controller.sequentialDamageFeedback.length, 0);
+  assert.deepEqual(sounds, ["hit", "hit", "hit"], "焚场三个目标在同一次表现提交时各触发 hit");
+  const burningOverlays = doc.body.children.filter((overlay) => overlay.className.includes("is-burning-field"));
+  assert.equal(burningOverlays.length, 3, "焚场多目标的爆燃、数字和受击反馈必须同时开始");
+  assert.deepEqual(
+    burningOverlays.map((overlay) => overlay.style.getPropertyValue("--resolution-vfx-left")),
+    ["30px", "370px", "710px"]
+  );
+  for (const overlay of burningOverlays) {
+    assert.equal(overlay.style.getPropertyValue("--resolution-vfx-duration"), "880ms");
+  }
+  for (const playerId of ["target-a", "target-b", "target-c"]) {
+    assert.equal(panels.get(playerId).classList.contains("feedback-damage"), true);
+  }
   controller.clear();
-  assert.equal(controller.sequentialDamageTimer, null);
   assert.equal(doc.body.children.length, 0);
 }
 
-test("UI·结算特效：signed 数值、逐目标技能、SFX 与 overlay 生命周期保持独立", frVfxOverlayLifecycle);
+test("UI·结算特效：signed 数值、多目标同步、SFX 与 overlay 生命周期保持独立", frVfxOverlayLifecycle);
 
 /*
 功能
@@ -40993,7 +41028,7 @@ css/animations.css 与 js/ui/animationController.js。
 readFile、正则断言。
 
 边界与不变量
-卡牌与技能伤害选择器必须不同；正向效果共用单一连续动画且 cleanup 不早于视觉结束；数值 feedback 保持独立。
+卡牌与技能伤害选择器必须不同；正向效果共用单一连续动画且 cleanup 不早于视觉结束；数值 feedback 保持独立，多目标不得使用 FIFO。
 */
 async function frVfxCssContract() {
   const [source, controllerSource] = await Promise.all([
@@ -41029,7 +41064,7 @@ async function frVfxCssContract() {
   assert.ok(huntDurationMs >= 600 && huntDurationMs <= 800);
   assert.ok(burningFieldDurationMs >= 750 && burningFieldDurationMs <= 950);
   assert.ok(guardianAidDurationMs >= 500 && guardianAidDurationMs <= 800);
-  assert.match(controllerSource, /const SEQUENTIAL_DAMAGE_VFX = new Set\(\["burning-field"\]\)/);
+  assert.doesNotMatch(controllerSource, /SEQUENTIAL_DAMAGE_VFX|sequentialDamageFeedback|playNextSequentialDamageFeedback/);
   assert.match(controllerSource, /"guardian-aid": GUARDIAN_AID_DURATION_MS/);
   assert.doesNotMatch(
     controllerSource,

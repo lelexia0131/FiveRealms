@@ -68,20 +68,21 @@
 .history-honor-grid span { margin: 10px 0 5px; color: #88847b; font-size: 10px; letter-spacing: .12em; }
 .history-honor-grid strong { color: #eee0c5; font: 700 18px/1.3 var(--serif); }
 .history-honor-grid strong small { display: block; margin-top: 3px; color: #88847b; font: 10px/1.3 var(--sans); }
-.history-journey-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.history-journey-card { position: relative; overflow: hidden; display: grid; grid-template-columns: 76px 1fr auto; align-items: center; gap: 16px; min-height: 112px; padding: 13px 18px 13px 12px; border: 1px solid rgba(211, 175, 102, .23); border-left: 3px solid #7d7568; background: rgba(24, 29, 32, .92); }
+.history-journey-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 122px; align-items: stretch; gap: 12px; }
+.history-journey-card { position: relative; overflow: hidden; display: grid; grid-template-columns: 76px minmax(0, 1fr) minmax(128px, auto); grid-template-rows: 1fr auto; align-items: center; gap: 4px 16px; box-sizing: border-box; height: 100%; padding: 13px 18px 13px 12px; border: 1px solid rgba(211, 175, 102, .23); border-left: 3px solid #7d7568; background: rgba(24, 29, 32, .92); }
 .history-journey-card.is-victory { border-left-color: #cba75f; }
 .history-journey-card.is-defeat { border-left-color: #80404a; }
-.history-journey-card > img { width: 72px; height: 86px; object-fit: cover; object-position: top; opacity: .78; filter: saturate(.72); }
-.history-journey-main { display: grid; align-content: center; }
+.history-journey-card > img { grid-row: 1 / -1; width: 72px; height: 86px; object-fit: cover; object-position: top; opacity: .78; filter: saturate(.72); }
+.history-journey-main { grid-row: 1 / -1; display: grid; min-width: 0; align-content: center; }
+.history-journey-main small, .history-journey-main h3 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-journey-main small { color: #716f69; font-size: 10px; }
 .history-journey-main h3 { color: #e8ddc9; font: 700 20px/1.35 var(--serif); }
 .history-team-mark { width: max-content; padding: 1px 7px; border-radius: 999px; font-size: 10px; }
 .history-team-mark.is-dawn { color: #71bdb4; background: rgba(35, 125, 120, .17); }
 .history-team-mark.is-dusk { color: #d27b87; background: rgba(154, 63, 75, .17); }
-.history-outcome { align-self: start; color: #b79c65; font: 700 18px/1 var(--serif); }
+.history-outcome { grid-column: 3; grid-row: 1; align-self: start; justify-self: end; color: #b79c65; font: 700 18px/1 var(--serif); }
 .history-journey-card.is-defeat .history-outcome { color: #a76670; }
-.history-journey-facts { grid-column: 3; display: flex; align-self: end; gap: 8px; color: #77736a; font-size: 10px; }
+.history-journey-facts { grid-column: 3; grid-row: 2; display: flex; min-height: 17px; align-self: end; justify-self: end; gap: 8px; color: #77736a; font-size: 10px; white-space: nowrap; }
 .history-journey-facts b { color: #d5c6a9; font-size: 12px; }
 .history-journey-facts i { padding: 1px 6px; color: #17130c; border-radius: 3px; background: #caa659; font-style: normal; font-weight: 900; }
 .history-empty, .history-loading, .history-error { display: grid; place-items: center; align-content: center; min-height: 250px; padding: 30px; color: #918a7c; border: 1px dashed rgba(211, 175, 102, .28); text-align: center; }
@@ -102,7 +103,7 @@
   .history-faction-card dl { grid-column: 1 / -1; justify-content: center; }
 }
 @media (max-width: 720px) {
-  .history-archive-shell { width: min(100% - 28px, 1480px); padding-top: 24px; }
+  .history-archive-shell { width: min(calc(100% - 28px), 1480px); padding-top: 24px; }
   .history-archive-header { grid-template-columns: 1fr auto; min-height: 0; }
   .history-title-lockup { grid-column: 1 / -1; grid-row: 2; }
   .history-header-seal { width: 58px; height: 58px; }
@@ -110,5 +111,13 @@
   .history-traveler-grid, .history-faction-grid, .history-journey-grid { grid-template-columns: 1fr; }
   .history-section-heading { grid-template-columns: 1fr; }
   .history-faction-card { padding: 22px; }
-  .history-journey-facts { grid-column: 2 / -1; }
+  .history-journey-grid { grid-auto-rows: 122px; }
+}
+@media (max-width: 520px) {
+  .history-journey-grid { grid-auto-rows: 132px; }
+  .history-journey-card { grid-template-columns: 68px minmax(0, 1fr); grid-template-rows: 1fr auto; gap: 4px 12px; padding-right: 12px; }
+  .history-journey-card > img { width: 64px; height: 82px; }
+  .history-journey-main { grid-column: 2; grid-row: 1; padding-right: 58px; }
+  .history-outcome { position: absolute; right: 12px; top: 13px; }
+  .history-journey-facts { grid-column: 2; grid-row: 2; justify-self: start; }
 }

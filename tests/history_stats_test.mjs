@@ -226,6 +226,13 @@ export function registerHistoryStatsTests(test) {
         },
         characters: {},
         teams: {},
+        achievements: {
+          companions: {},
+          highestSingleMatchDamage: null,
+          highestSingleMatchKills: null,
+          highestSingleMatchSupport: null,
+          highestSingleMatchDamageTaken: null
+        },
         records: []
       });
     } finally {
@@ -457,6 +464,35 @@ export function registerHistoryStatsTests(test) {
     }
   });
 
+  test("UI·历史档案：最近征途持久化十局且同行按完整历史累计并可重读", async () => {
+    const fixture = await createHistoryFixture();
+    try {
+      const manager = new HistoryStatsManager({ storage: fixture.storage });
+      for (let index = 0; index < 12; index += 1) {
+        await manager.recordMatchResult(matchResult({
+          gameId: `history-retention-${index}`,
+          teammateCharacterIds: [index < 7 ? "oath-warden" : "spirit-medic"]
+        }), "human");
+      }
+      const persisted = JSON.parse(await readFile(fixture.filePath, "utf8"));
+      assert.equal(persisted.summary.totalMatches, 12);
+      assert.equal(persisted.records.length, 10);
+      assert.deepEqual(persisted.achievements.companions, {
+        "oath-warden": { matches: 7 },
+        "spirit-medic": { matches: 5 }
+      });
+
+      const reopened = new HistoryStatsManager({ storage: createFileStorage(fixture.filePath) });
+      const archive = await reopened.getArchiveData();
+      assert.equal(archive.records.length, 10);
+      assert.deepEqual(archive.achievements.mostFrequentCompanion, {
+        characterId: "oath-warden", characterName: "守誓者", matches: 7
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
   test("UI·历史档案：返回旅途起点按动画偏好滚到顶部且真正返回按钮仍回首页", () => {
     const rootScrolls = [];
     const windowScrolls = [];
@@ -515,6 +551,14 @@ export function registerHistoryStatsTests(test) {
       assert.match(root.innerHTML, /data-history-top>返回旅途起点/);
       assert.equal(root.innerHTML.match(/420\.0/g)?.length, 3);
       assert.doesNotMatch(root.innerHTML, /<table/i);
+      const [css, layout] = await Promise.all([
+        readFile(new URL("../css/history.css", import.meta.url), "utf8"),
+        readFile(new URL("../css/layout.css", import.meta.url), "utf8")
+      ]);
+      assert.match(css, /\.history-journey-grid\s*\{[^}]*grid-auto-rows:\s*122px/s);
+      assert.match(css, /\.history-outcome\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*1/s);
+      assert.match(css, /\.history-journey-facts\s*\{[^}]*grid-column:\s*3;[^}]*grid-row:\s*2/s);
+      assert.match(layout, /body:has\(\.history-archive-screen:not\(\.is-hidden\)\)\s*\{\s*min-width:\s*0/);
     } finally {
       await fixture.cleanup();
     }
