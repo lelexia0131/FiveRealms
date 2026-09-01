@@ -1834,29 +1834,28 @@ test("牌堆：重洗计数会准确累加", () => {
 
 // ---- 阵营与座位 ----
 
-test("阵营：始终严格2V3", () => {
+test("阵营：多次随机分配始终固定晨星2人暮影3人", () => {
   for (let i = 0; i < 50; i += 1) {
     const teams = TeamManager.assignTeams(() => (i % 17) / 17, "random");
     const dawn = teams.filter((t) => t === "dawn").length;
     const dusk = teams.filter((t) => t === "dusk").length;
-    assert.deepEqual([dawn, dusk].sort(), [2, 3]);
+    assert.deepEqual([dawn, dusk], [2, 3]);
   }
 });
 
 test("阵营：小队两名成员在环形座位上不相邻", () => {
   for (let i = 0; i < 40; i += 1) {
     const teams = TeamManager.assignTeams(() => (i % 19) / 19, "random");
-    const small = ["dawn", "dusk"].find((team) => teams.filter((entry) => entry === team).length === 2);
-    const seats = teams.map((team, index) => team === small ? index : -1).filter((index) => index >= 0);
+    const seats = teams.map((team, index) => team === "dawn" ? index : -1).filter((index) => index >= 0);
     const raw = Math.abs(seats[0] - seats[1]);
     assert.ok(Math.min(raw, 5 - raw) > 1);
   }
 });
 
-test("阵营：随机编队保持旧三次 RNG 与真人 2/5 进入二人阵营的语义", () => {
+test("阵营：随机编队只随机座次且真人仍有2/5概率进入晨星", () => {
   const sizes = [], callCounts = [];
   for (let rotation = 0; rotation < 5; rotation += 1) {
-    const rolls = [0.25, 0.75, (rotation + 0.1) / 5];
+    const rolls = [0.75, (rotation + 0.1) / 5];
     let calls = 0;
     const teams = TeamManager.assignTeams(() => rolls[calls++], "random");
     sizes.push(teams.filter((team) => team === teams[0]).length);
@@ -1864,20 +1863,23 @@ test("阵营：随机编队保持旧三次 RNG 与真人 2/5 进入二人阵营�
   }
   assert.deepEqual(sizes.filter((size) => size === 2).length, 2);
   assert.deepEqual(sizes.filter((size) => size === 3).length, 3);
-  assert.deepEqual(callCounts, [3, 3, 3, 3, 3]);
+  assert.deepEqual(callCounts, [2, 2, 2, 2, 2]);
 });
 
 test("阵营：固定二人或三人模式不执行随机规模决策", () => {
-  for (const [mode, expectedHumanSize] of [["two", 2], ["three", 3]]) {
+  for (const [mode, expectedHumanSize, expectedHumanTeam] of [["two", 2, "dawn"], ["three", 3, "dusk"]]) {
     for (const formationRoll of [0.05, 0.45, 0.95]) {
-      const rolls = [0.25, formationRoll];
+      const rolls = [formationRoll];
       let calls = 0;
       const teams = TeamManager.assignTeams(() => rolls[calls++], mode);
       const humanSize = teams.filter((team) => team === teams[0]).length;
       const enemySize = teams.length - humanSize;
+      assert.equal(teams[0], expectedHumanTeam, mode);
+      assert.equal(teams.filter((team) => team === "dawn").length, 2, mode);
+      assert.equal(teams.filter((team) => team === "dusk").length, 3, mode);
       assert.equal(humanSize, expectedHumanSize, mode);
       assert.equal(enemySize, 5 - expectedHumanSize, mode);
-      assert.equal(calls, 2, `${mode} 只能随机阵营名与合法阵型`);
+      assert.equal(calls, 1, `${mode} 只能随机合法阵型`);
     }
   }
 });
@@ -4015,6 +4017,9 @@ test("Match setup：二人小队在角色确认后生成真人 2 人阵营", asy
   assert.equal(game.state.players.length, 0);
   await game.confirmCharacter(candidates[0].id);
   const human = game.state.players[0];
+  assert.equal(human.battleTeam, "dawn");
+  assert.equal(game.state.players.filter((player) => player.battleTeam === "dawn").length, 2);
+  assert.equal(game.state.players.filter((player) => player.battleTeam === "dusk").length, 3);
   assert.equal(game.state.players.filter((player) => player.battleTeam === human.battleTeam).length, 2);
   assert.equal(game.state.players.filter((player) => player.battleTeam !== human.battleTeam).length, 3);
   game.dispose();
@@ -4029,6 +4034,9 @@ test("Match setup：三人大队在角色确认后生成真人 3 人阵营", asy
   assert.equal(game.state.players.length, 0);
   await game.confirmCharacter(candidates[0].id);
   const human = game.state.players[0];
+  assert.equal(human.battleTeam, "dusk");
+  assert.equal(game.state.players.filter((player) => player.battleTeam === "dawn").length, 2);
+  assert.equal(game.state.players.filter((player) => player.battleTeam === "dusk").length, 3);
   assert.equal(game.state.players.filter((player) => player.battleTeam === human.battleTeam).length, 3);
   assert.equal(game.state.players.filter((player) => player.battleTeam !== human.battleTeam).length, 2);
   game.dispose();
@@ -4043,6 +4051,8 @@ test("Match setup：随机编队只在角色确认后解析为 2 人或 3 人阵
   assert.equal(game.state.players.length, 0);
   await game.confirmCharacter(candidates[0].id);
   const human = game.state.players[0];
+  assert.equal(game.state.players.filter((player) => player.battleTeam === "dawn").length, 2);
+  assert.equal(game.state.players.filter((player) => player.battleTeam === "dusk").length, 3);
   assert.ok([2, 3].includes(
     game.state.players.filter((player) => player.battleTeam === human.battleTeam).length
   ));
@@ -44236,6 +44246,8 @@ test("生命周期：重新征召后按新阵营重新设置能量上限和无�
       const player of game.state.players
     ) assert.equal(player.maxEnergy, game.teamRules.getTeamSize(player) === 2 ? 4 : 3);
     await game.confirmCharacter(candidates[0].id);
+    assert.equal(game.state.players.filter((player) => player.battleTeam === "dawn").length, 2);
+    assert.equal(game.state.players.filter((player) => player.battleTeam === "dusk").length, 3);
     for (const player of game.state.players) {
       assert.equal(player.maxEnergy, game.teamRules.getMaxEnergy(player));
       assert.equal(player.turnFlags.recoverLimit, null);

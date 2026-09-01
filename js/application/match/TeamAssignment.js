@@ -3,6 +3,9 @@ import { getTeamSize } from "../../domain/rules/team/TeamRules.js";
 import { createRuleStateView } from "../../domain/state/queries/RuleStateView.js";
 import { TEAM_ASSIGNMENT_MODE, TEAM_ASSIGNMENT_MODES } from "./TeamAssignmentMode.js";
 
+const SMALL_TEAM_ID = "dawn";
+const LARGE_TEAM_ID = "dusk";
+
 export class TeamAssignment {
   /*
   功能
@@ -12,10 +15,10 @@ export class TeamAssignment {
   MatchWorkflow 初始化与测试。
 
   输入
-  random，返回 [0, 1) 数值的随机函数；mode 为 two、three 或 random。
+  random，返回 [0, 1) 数值的座次随机函数；mode 为 two、three 或 random。
 
   输出
-  与座位索引一一对应的 dawn/dusk 数组。
+  与座位索引一一对应的 dawn/dusk 数组，其中 dawn 固定两人、dusk 固定三人。
 
   读取状态
   RULESET_DEFINITION 的玩家数与两队人数。
@@ -27,7 +30,7 @@ export class TeamAssignment {
   random、Array.reverse、Array.map。
 
   边界与不变量
-  人数配置必须闭合且两名小队成员始终隔座；random 保持旧阵营、翻转、旋转三次调用，固定模式不执行规模抽签。
+  人数配置必须闭合且两名晨星成员始终隔座；阵营 ID 只由人数绑定，随机数只能改变合法座次。
   */
   static assignTeams(random = Math.random, mode) {
     if (RULESET_DEFINITION.smallTeamSize + RULESET_DEFINITION.largeTeamSize !== RULESET_DEFINITION.playerCount) {
@@ -36,28 +39,24 @@ export class TeamAssignment {
     if (!TEAM_ASSIGNMENT_MODES.includes(mode)) throw new TypeError(`未知编队方式：${mode}`);
 
     if (mode !== TEAM_ASSIGNMENT_MODE.RANDOM) {
-      const humanTeam = random() < 0.5 ? "dawn" : "dusk";
-      const opposingTeam = humanTeam === "dawn" ? "dusk" : "dawn";
       if (mode === TEAM_ASSIGNMENT_MODE.TWO) {
         const teammateSeats = [2, 3];
         const teammateSeat = teammateSeats[Math.floor(random() * teammateSeats.length)];
         return Array.from(
           { length: RULESET_DEFINITION.playerCount },
-          (_, seatIndex) => seatIndex === 0 || seatIndex === teammateSeat ? humanTeam : opposingTeam
+          (_, seatIndex) => seatIndex === 0 || seatIndex === teammateSeat ? SMALL_TEAM_ID : LARGE_TEAM_ID
         );
       }
       const opposingSeatPairs = [[1, 3], [1, 4], [2, 4]];
       const opposingSeats = opposingSeatPairs[Math.floor(random() * opposingSeatPairs.length)];
       return Array.from(
         { length: RULESET_DEFINITION.playerCount },
-        (_, seatIndex) => opposingSeats.includes(seatIndex) ? opposingTeam : humanTeam
+        (_, seatIndex) => opposingSeats.includes(seatIndex) ? SMALL_TEAM_ID : LARGE_TEAM_ID
       );
     }
 
-    const smallTeam = random() < 0.5 ? "dawn" : "dusk";
-    const largeTeam = smallTeam === "dawn" ? "dusk" : "dawn";
     // 两名小队成员固定隔座，再随机旋转与翻转；因此永不相邻且真人仍可能进入任一队。
-    let seats = [smallTeam, largeTeam, smallTeam, largeTeam, largeTeam];
+    let seats = [SMALL_TEAM_ID, LARGE_TEAM_ID, SMALL_TEAM_ID, LARGE_TEAM_ID, LARGE_TEAM_ID];
     if (random() < 0.5) seats = [...seats].reverse();
     const rotation = Math.floor(random() * seats.length);
     return seats.map((_, index) => seats[(index + rotation) % seats.length]);
