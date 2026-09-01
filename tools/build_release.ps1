@@ -1,7 +1,8 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = (Resolve-Path -LiteralPath $PSScriptRoot).Path
+# The script lives under tools; the project root is its parent directory.
+$ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $ReleaseRoot = Join-Path -Path $ProjectRoot -ChildPath "FiveRealms1.0.0"
 
 if ([IO.Path]::GetFullPath($ReleaseRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) -eq
@@ -99,10 +100,33 @@ foreach ($file in $runtimeRootFiles + $runtimeCssFiles + $runtimeJsFiles + $runt
     Copy-WhitelistedFile -RelativePath $file
 }
 
-# history_data.json is an optional runtime snapshot; a clean checkout initializes it on first use.
-if (Test-Path -LiteralPath (Join-Path $ProjectRoot "history_data.json") -PathType Leaf) {
-    Copy-WhitelistedFile -RelativePath "history_data.json"
+# Always start a release with a fresh history archive; never carry over local match data.
+$emptyHistoryJson = @'
+{
+  "version": 1,
+  "summary": {
+    "totalMatches": 0,
+    "wins": 0,
+    "losses": 0,
+    "mvpCount": 0,
+    "highestScore": 0,
+    "highestRounds": 0,
+    "totalScore": 0,
+    "totalRounds": 0
+  },
+  "characters": {},
+  "teams": {},
+  "achievements": {
+    "companions": {},
+    "highestSingleMatchDamage": null,
+    "highestSingleMatchKills": null,
+    "highestSingleMatchSupport": null,
+    "highestSingleMatchDamageTaken": null
+  },
+  "records": []
 }
+'@
+Set-Content -LiteralPath (Join-Path $ReleaseRoot "history_data.json") -Value $emptyHistoryJson -Encoding UTF8
 
 Write-Output "Release directory: $ReleaseRoot"
 Write-Output "Whitelisted runtime files copied successfully."
