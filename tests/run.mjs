@@ -37841,6 +37841,20 @@ test("UI·入局说明：打开、翻页与关闭统一触发现有激活音效�
   ]);
 });
 
+test("UI·对局标题：仅保留文字且首页品牌保持不变", async () => {
+  const [index, componentsCss] = await Promise.all([
+    readFile(projectFile("index.html"), "utf8"),
+    readFile(projectFile("css/components.css"), "utf8")
+  ]);
+  const startScreen = index.match(/<section id="start-screen"[\s\S]*?<section id="squad-selection-screen"/)?.[0] ?? "";
+  const gameScreen = index.match(/<section id="game-screen"[\s\S]*?<\/main>/)?.[0] ?? "";
+  assert.match(startScreen, /class="eyebrow start-brand-title">FiveRealms<\/p>[\s\S]*?<h1 id="game-title"><span>五域<\/span>纷争<\/h1>/);
+  assert.match(gameScreen, /class="brand-lockup">\s*<div><strong>五域纷争<\/strong><small>FIVE REALMS<\/small><\/div>/);
+  assert.doesNotMatch(gameScreen, /class="brand-mark"/);
+  assert.doesNotMatch(componentsCss, /\.brand-mark\s*\{/);
+  assert.match(gameScreen, /id="game-over-overlay"/);
+});
+
 test("UI·首页布局：开启本局与声音控制保持同一水平布局且窄屏可换行", async () => {
   const [index, componentsCss, layoutCss, rulebookCss] = await Promise.all([
     readFile(projectFile("index.html"), "utf8"),

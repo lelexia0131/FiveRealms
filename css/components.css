@@ -62,7 +62,6 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .team-preview .team-dusk { color: var(--dusk); }
 
 .brand-lockup { display: flex; align-items: center; gap: 9px; }
-.brand-mark { display: grid; place-items: center; width: 39px; height: 39px; color: #fff; border-radius: 50% 50% 46% 54%; background: linear-gradient(145deg, #b58a3b, #8c6525); font: 700 21px/1 var(--serif); box-shadow: inset 0 0 0 2px rgba(255,255,255,.3); }
 .brand-lockup div { display: grid; }
 .brand-lockup strong { font: 700 18px/1.15 var(--serif); }
 .brand-lockup small { color: var(--text-muted); font-size: 12px; letter-spacing: .11em; }
