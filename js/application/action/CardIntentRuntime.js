@@ -365,13 +365,14 @@ export function createCardIntentRuntime(dependencies) {
   state/session/response/equipment identity。
 
   写入状态
-  nested action 与 equipment movement 经 collaborators。
+  当前调用栈把 resolutionId 加入去重 Set；nested action/equipment movement 经 collaborators；finally 释放该 ID。
 
   调用函数
   responseWorkflow、playCard、moveEquipmentToHand。
 
   边界与不变量
-  resolutionId 重复只允许一次；死亡/装备离场统一取消；nested rollback failure 必须终止父 Action。
+  resolutionId 在当前借势调用栈内重复只允许一次，完成或失败后必须释放；
+  死亡/装备离场统一取消；nested rollback failure 必须终止父 Action。
   */
   async function resolveLeverage(source, card, intent, resolutionId) {
     const state = runtime.getState();
@@ -460,64 +461,68 @@ export function createCardIntentRuntime(dependencies) {
       && intent.firstTarget?.equipment === intent.equipmentCard);
     if (!runtime.isSessionValid(gameId) || !intent || !resolutionId || leverageResolutionIds.has(resolutionId)) return false;
     leverageResolutionIds.add(resolutionId);
-
-    if (!playersValid()) {
-      runtime.presentation.log(`目标已离场，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-    if (!equipmentValid()) {
-      runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-
-    const { firstTarget, secondTarget, equipmentCard } = intent;
-    const response = await runtime.responseWorkflow.requestLeverageAssault(firstTarget, secondTarget, {
-      source, card, equipment: equipmentCard
-    });
-    if (!runtime.isSessionValid(gameId) || response.status === "cancelled") return false;
-
-    if (!playersValid()) {
-      runtime.presentation.log(`目标已离场，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-    if (!equipmentValid()) {
-      runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-
-    if (response.status === "used" && response.card) {
-      let used = false;
-      try {
-        used = await runtime.playCard(firstTarget, response.card, [secondTarget], null, {
-          usageContext: "leverageAssault",
-          parentResolutionId: resolutionId
-        });
-      } catch (error) {
-        if (error instanceof ActionRollbackError) throw error;
-        runtime.diagnostics.reportWorkflowError("Game", `${firstTarget.name}的借势内嵌突袭结算失败`, error);
+    try {
+      if (!playersValid()) {
+        runtime.presentation.log(`目标已离场，「${card.name}」结算取消。`, "important");
+        return false;
       }
-      if (used) return true;
-      if (!runtime.isSessionValid(gameId)) return false;
-    }
+      if (!equipmentValid()) {
+        runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+        return false;
+      }
 
-    if (!playersValid()) {
-      runtime.presentation.log(`目标已离场，「${card.name}」结算取消。`, "important");
+      const { firstTarget, secondTarget, equipmentCard } = intent;
+      const response = await runtime.responseWorkflow.requestLeverageAssault(firstTarget, secondTarget, {
+        source, card, equipment: equipmentCard
+      });
+      if (!runtime.isSessionValid(gameId) || response.status === "cancelled") return false;
+
+      if (!playersValid()) {
+        runtime.presentation.log(`目标已离场，「${card.name}」结算取消。`, "important");
+        return false;
+      }
+      if (!equipmentValid()) {
+        runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+        return false;
+      }
+
+      if (response.status === "used" && response.card) {
+        let used = false;
+        try {
+          used = await runtime.playCard(firstTarget, response.card, [secondTarget], null, {
+            usageContext: "leverageAssault",
+            parentResolutionId: resolutionId
+          });
+        } catch (error) {
+          if (error instanceof ActionRollbackError) throw error;
+          runtime.diagnostics.reportWorkflowError("Game", `${firstTarget.name}的借势内嵌突袭结算失败`, error);
+        }
+        if (used) return true;
+        if (!runtime.isSessionValid(gameId)) return false;
+      }
+
+      if (!playersValid()) {
+        runtime.presentation.log(`目标已离场，「${card.name}」结算取消。`, "important");
+        return false;
+      }
+      if (!equipmentValid()) {
+        runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+        return false;
+      }
+      const moved = await runtime.moveEquipmentToHand(firstTarget, source, equipmentCard, "借势");
+      if (!runtime.isSessionValid(gameId)) return false;
+      if (moved) {
+        runtime.presentation.log(`${firstTarget.name}拒绝使用「突袭」，${source.name}获得了其「${equipmentCard.name}」。`, "important");
+        return true;
+      }
+      if (!equipmentValid()) {
+        runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
+      }
       return false;
+    } finally {
+      // resolutionId 只防当前借势调用栈重入；内嵌 Action 已结束后，历史 ID 不再有合法消费者。
+      leverageResolutionIds.delete(resolutionId);
     }
-    if (!equipmentValid()) {
-      runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
-      return false;
-    }
-    const moved = await runtime.moveEquipmentToHand(firstTarget, source, equipmentCard, "借势");
-    if (!runtime.isSessionValid(gameId)) return false;
-    if (moved) {
-      runtime.presentation.log(`${firstTarget.name}拒绝使用「突袭」，${source.name}获得了其「${equipmentCard.name}」。`, "important");
-      return true;
-    }
-    if (!equipmentValid()) {
-      runtime.presentation.log(`指定装备已离开装备区，「${card.name}」结算取消。`, "important");
-    }
-    return false;
   }
 
   /*
@@ -572,7 +577,7 @@ export function createCardIntentRuntime(dependencies) {
   getLeverageResolutionIdsSnapshot。
 
   边界与不变量
-  外层已成功或正在结算的 ID 必须保留；失败 Action 新增的 ID 必须可移除。
+  只保留 checkpoint 时仍在结算的外层 ID；已完成历史 ID 不得进入后续 Action checkpoint。
   */
   function captureActionCheckpoint() {
     return getLeverageResolutionIdsSnapshot();

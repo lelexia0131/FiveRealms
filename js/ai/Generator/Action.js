@@ -214,9 +214,11 @@ Action 普通数据。
 调用函数
 JSON.stringify。
 
-边界与不变量
-比较包含 card instance；不得进行部分 selection 匹配或重新生成合法动作。
+  边界与不变量
+  同一 canonical 引用直接成功；跨 Worker clone 才比较完整普通字段；
+  比较包含 card instance，不得进行部分 selection 匹配或重新生成合法动作。
 */
 export function sameAction(left, right) {
-  return Boolean(left && right) && JSON.stringify(left) === JSON.stringify(right);
+  return Boolean(left && right)
+    && (left === right || JSON.stringify(left) === JSON.stringify(right));
 }

@@ -448,13 +448,14 @@ export class MatchPerformanceTracker {
   target.shield 与 shieldSourceLedgers。
 
   写入状态
-  target 对应 FIFO shield source ledger。
+  target 对应 FIFO shield source ledger；相邻同 attribution entry 原位合并。
 
   调用函数
   reconcileShieldLedger。
 
   边界与不变量
-  只记录最终实际新增的正数；新增前先校准既存盾，不能用角色或技能反推 provider。
+  只记录最终实际新增的正数；新增前先校准既存盾，不能用角色或技能反推 provider；
+  仅相邻且 provider/effect 都相同的来源可合并，FIFO 归属与真实数值必须不变。
   */
   handleShieldGranted(event) {
     const target = event.target;
@@ -462,11 +463,15 @@ export class MatchPerformanceTracker {
     if (!target || actualAddedAmount <= 0) return;
     const currentShield = Math.max(0, Number(target.shield) || 0);
     const ledger = this.reconcileShieldLedger(target, Math.max(0, currentShield - actualAddedAmount));
-    ledger.push({
-      providerPlayerId: event.source?.id ?? null,
-      effectDefinitionId: event.effectDefinitionId ?? null,
-      remainingAmount: actualAddedAmount
-    });
+    const providerPlayerId = event.source?.id ?? null;
+    const effectDefinitionId = event.effectDefinitionId ?? null;
+    const previous = ledger.at(-1) ?? null;
+    if (previous?.providerPlayerId === providerPlayerId
+      && previous?.effectDefinitionId === effectDefinitionId) {
+      previous.remainingAmount += actualAddedAmount;
+    } else {
+      ledger.push({ providerPlayerId, effectDefinitionId, remainingAmount:actualAddedAmount });
+    }
     this.reconcileShieldLedger(target, currentShield);
   }
 

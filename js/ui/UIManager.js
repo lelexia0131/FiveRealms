@@ -227,6 +227,7 @@ export class UIManager {
     this.skillDetailsTrigger = null;
     this.aiSpeed = readAiSpeedPreference();
     this.logCollapsed = false;
+    this.logFollowingBottom = true;
     this.horizontalCardDragRoot = null;
     this.horizontalCardDragState = null;
     this.horizontalCardDragSuppressClick = false;
@@ -513,6 +514,7 @@ export class UIManager {
     });
     this.interactionController.bind(this.elements.response_panel);
     this.elements.log_toggle_button.addEventListener("click", () => this.setLogCollapsed(!this.logCollapsed));
+    this.elements.log_list.addEventListener("scroll", () => this.handleLogScroll());
     window.addEventListener("resize", () => this.handleViewportResize());
     this.elements.ai_speed_control?.addEventListener("click", (event) => {
       const button = event.target.closest("[data-ai-speed]");
@@ -2410,27 +2412,88 @@ export class UIManager {
   无返回值。
 
   读取状态
-  entry.kind/fragments 与 log_list。
+  entry.kind/fragments、log_list 与滚动事件维护的 logFollowingBottom。
 
   写入状态
-  追加日志 DOM、更新计数，并按插入前位置决定是否跟随底部。
+  追加日志 DOM、更新计数；跟随模式下只写最大 scrollTop 请求。
 
   调用函数
   formatLogEntry、updateLogCount。
 
   边界与不变量
-  动态内容必须经结构化日志格式器转义；只有插入前距底部不超过 2px 时才跟随新内容；不得写入 AI 私密信息。
+  动态内容必须经结构化日志格式器转义；不得在 append 后读取 scrollHeight 强制同步 layout；
+  用户上滚后的阅读位置由浏览器保持，只有滚动事件确认跟随时才请求滚到底部；不得写入 AI 私密信息。
   */
   appendLog(entry, count) {
     const list = this.elements.log_list;
-    const previousScrollTop = list.scrollTop;
-    const wasFollowingBottom = list.scrollHeight - list.scrollTop - list.clientHeight <= LOG_BOTTOM_TOLERANCE_PX;
     const node = document.createElement("div");
     node.className = `log-entry ${entry.kind === "normal" ? "" : `is-${entry.kind}`}`;
     node.innerHTML = formatLogEntry(entry);
     list.append(node);
     this.updateLogCount(count);
-    list.scrollTop = wasFollowingBottom ? list.scrollHeight : previousScrollTop;
+    if (this.logFollowingBottom !== false) list.scrollTop = Number.MAX_SAFE_INTEGER;
+  }
+
+  /*
+  功能
+  把可见日志裁回 Action 开始时的尾部边界并同步计数。
+
+  调用方
+  ActionTransaction 经 composition 注入的日志展示恢复回调。
+
+  输入
+  rollback 后 state.logs 的日志数量。
+
+  输出
+  无返回值。
+
+  读取状态
+  log_list 当前尾部节点数量。
+
+  写入状态
+  仅删除超出边界的日志尾部 DOM 节点，并更新 log_count。
+
+  调用函数
+  DOM removeChild、updateLogCount。
+
+  边界与不变量
+  不重建或替换边界内节点，历史日志的内容、顺序和 DOM 对象身份保持不变。
+  */
+  restoreLogBoundary(count) {
+    const list = this.elements.log_list;
+    while (list.children.length > count) list.removeChild(list.lastElementChild);
+    this.updateLogCount(count);
+  }
+
+  /*
+  功能
+  在用户滚动日志时更新后续追加是否继续跟随底部。
+
+  调用方
+  bindEvents 注册的 log_list scroll listener。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  log_list 当前 scrollHeight、scrollTop 与 clientHeight。
+
+  写入状态
+  logFollowingBottom。
+
+  调用函数
+  无。
+
+  边界与不变量
+  layout 读取只发生在滚动事件边界，不得回到每条日志 append 的热路径。
+  */
+  handleLogScroll() {
+    const list = this.elements.log_list;
+    this.logFollowingBottom = list.scrollHeight - list.scrollTop - list.clientHeight
+      <= LOG_BOTTOM_TOLERANCE_PX;
   }
 
   /*
@@ -2461,6 +2524,7 @@ export class UIManager {
   clearLog() {
     this.elements.log_list.innerHTML = "";
     this.elements.log_list.scrollTop = 0;
+    this.logFollowingBottom = true;
     this.updateLogCount(0);
   }
 

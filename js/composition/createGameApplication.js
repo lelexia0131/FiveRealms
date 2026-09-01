@@ -529,8 +529,8 @@ class MatchApplication {
       log:(message, kind = "normal") => this.log(message, kind),
       emitCardUsed:(payload) => this.eventDispatcher.emit("cardUsed", payload),
       getForceAiRescueHuman:() => this.forceAiRescueHuman ?? AI_RUNTIME_POLICY.forceAiRescueHuman,
-      isAiDyingRescueGuaranteedImpossible:(rescuer, target) => (
-        this.aiController.assessDyingRescue(rescuer, target).guaranteedImpossible
+      isAiDyingRescueGuaranteedImpossible:async (rescuer, target) => (
+        (await this.aiController.assessDyingRescue(rescuer, target))?.guaranteedImpossible === true
       ),
       setThinking:(isThinking, player, message) => this.ui.setThinking(isThinking, player, message),
       delayResponse:async (options) => this.cleanupManager.delay(getAiDelay(this, "response", options)),
@@ -849,6 +849,7 @@ class MatchApplication {
       createActionTransaction: (actionRuntime) => createActionTransaction({
         roots:[this.state, actionRuntime],
         logs:this.state.logs,
+        restoreLogPresentation: (count) => this.ui.restoreLogBoundary?.(count),
         participants:[
           this.responseWorkflow,
           this.dyingWorkflow,

@@ -907,18 +907,25 @@ export class SoundManager {
   MUSIC_PROFILES、context.currentTime、musicTeam、musicStep 与 nextMusicTime。
 
   写入状态
-  推进 musicStep 与 nextMusicTime。
+  正常推进 musicStep 与 nextMusicTime；长时间落后时跳过已错过步进并把时间基准移到当前未来。
 
   调用函数
   scheduleMusicStep。
 
   边界与不变量
-  未启用、无主题或 context 非 running 时不得推进步进。
+  未启用、无主题或 context 非 running 时不得推进步进；正常一个步长内的调度节奏不变，
+  超过一个步长的历史事件不得在主线程恢复后同步补播。
   */
   scheduleMusic() {
     const profile = MUSIC_PROFILES[this.musicTeam];
     if (!this.enabled || !profile || !this.context || this.context.state !== "running") return;
     const stepDuration = 30 / profile.tempo;
+    const now = this.context.currentTime;
+    if (this.nextMusicTime < now - stepDuration) {
+      const missedSteps = Math.max(1, Math.ceil((now - this.nextMusicTime) / stepDuration));
+      this.musicStep += missedSteps;
+      this.nextMusicTime = now + 0.02;
+    }
     while (this.nextMusicTime < this.context.currentTime + 1.1) {
       this.scheduleMusicStep(profile, this.musicStep, this.nextMusicTime, stepDuration);
       this.musicStep += 1;

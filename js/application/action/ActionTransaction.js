@@ -144,7 +144,7 @@ function restoreMutableGraph(records) {
 ActionWorkflow.playCard、ActionWorkflow.useActiveSkill。
 
 输入
-可变 roots、append-only logs、拥有私有运行状态的 participants 与可回放 RandomPort。
+可变 roots、append-only logs、日志展示恢复回调、拥有私有运行状态的 participants 与可回放 RandomPort。
 
 输出
 冻结的 { commit, rollback } transaction handle。
@@ -153,18 +153,23 @@ ActionWorkflow.playCard、ActionWorkflow.useActiveSkill。
 roots 对象图、logs 当前长度、participant checkpoint 与 RandomPort 当前逻辑位置。
 
 写入状态
-commit 只关闭 checkpoint；rollback 原位恢复全部 roots/participants、把 logs 截回 Action 开始边界并回放本次随机读取。
+commit 只关闭 checkpoint；rollback 原位恢复全部 roots/participants、把 logs 与日志展示截回 Action 开始边界并回放本次随机读取。
 
 调用函数
-captureMutableGraph、restoreMutableGraph、participant checkpoint API、RandomPort transaction API。
+captureMutableGraph、restoreMutableGraph、日志展示恢复回调、participant checkpoint API、RandomPort transaction API。
 
 边界与不变量
 transaction 必须严格嵌套且至多结束一次；logs 在 Action 内只能追加，历史条目不进入深度 checkpoint；
 失败不按领域字段逐项恢复，成功不改变既有结算顺序。
 */
-export function createActionTransaction({ roots, logs, participants = [], randomPort }) {
+export function createActionTransaction({
+  roots, logs, restoreLogPresentation = null, participants = [], randomPort
+}) {
   if (!Array.isArray(roots) || !roots.length) throw new TypeError("ActionTransaction 需要可变 roots");
   if (!Array.isArray(logs)) throw new TypeError("ActionTransaction 需要 logs 数组");
+  if (restoreLogPresentation !== null && typeof restoreLogPresentation !== "function") {
+    throw new TypeError("ActionTransaction 日志展示恢复能力必须是函数");
+  }
   if (!randomPort?.beginTransaction || !randomPort?.commitTransaction || !randomPort?.rollbackTransaction) {
     throw new TypeError("ActionTransaction 需要 transactional RandomPort");
   }
@@ -229,10 +234,10 @@ export function createActionTransaction({ roots, logs, participants = [], random
   graph/log/participant checkpoints 与 RandomPort frame。
 
   写入状态
-  原位恢复真实对象图、日志追加边界、各 owner 私有状态和随机逻辑位置。
+  原位恢复真实对象图、日志追加边界、日志展示、各 owner 私有状态和随机逻辑位置。
 
   调用函数
-  restoreMutableGraph、participant.restoreActionCheckpoint、randomPort.rollbackTransaction。
+  restoreMutableGraph、restoreLogPresentation、participant.restoreActionCheckpoint、randomPort.rollbackTransaction。
 
   边界与不变量
   所有 owner 都会被尝试恢复；日志只删除本次 Action 追加的尾部，历史条目及顺序保持原样；
@@ -246,6 +251,9 @@ export function createActionTransaction({ roots, logs, participants = [], random
       try { participant.restoreActionCheckpoint(snapshot); } catch (error) { errors.push(error); }
     }
     try { logBoundary.target.length = logBoundary.length; } catch (error) { errors.push(error); }
+    if (restoreLogPresentation) {
+      try { restoreLogPresentation(logBoundary.length); } catch (error) { errors.push(error); }
+    }
     try { randomPort.rollbackTransaction(randomToken); } catch (error) { errors.push(error); }
     active = false;
     if (errors.length) throw new ActionRollbackError(errors, "真实 Action rollback 未完整恢复");

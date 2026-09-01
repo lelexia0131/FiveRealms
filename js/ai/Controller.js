@@ -174,7 +174,7 @@ export function createSearchRequest({
 WorkerSearchRuntime 与 Controller transport-failure outcome。
 
 输入
-Request 与当前 root canonical Action、stats、RNG continuation、取消或错误字段。
+Request 与当前 root canonical Action、其 root index、stats、RNG continuation、取消或错误字段。
 
 输出
 Structured-clone-safe plain object。
@@ -186,18 +186,25 @@ Request identity 与结果普通值。
 无。
 
 调用函数
-Object.freeze。
+sameAction、Object.freeze。
 
 边界与不变量
-Payload 不是第二 Action/World model；只运输本次真实执行所需的 root Action。
+Payload 不是第二 Action/World model；只运输本次真实执行所需的选中 Action 与 scalar root index，
+生产 search 已给出 index，只有直接构造的测试/故障 outcome 才按完整身份查找一次。
 */
 export function createWorkerSearchOutcome({ request, ...result }) {
+  const selectedRootIndex = Number.isInteger(result.selectedRootIndex)
+    ? result.selectedRootIndex
+    : result.action
+      ? request.rootActions.findIndex((rootAction) => sameAction(rootAction, result.action))
+      : null;
   return Object.freeze({
     requestId:request.requestId,
     gameId:request.gameId,
     stateVersion:request.stateVersion,
     actorId:request.actorId,
     action:result.action ?? null,
+    selectedRootIndex,
     stats:result.stats ? Object.freeze({ ...result.stats }) : null,
     searchStopReason:result.searchStopReason ?? null,
     searchFault:result.searchFault ? Object.freeze({ ...result.searchFault }) : null,
@@ -513,7 +520,7 @@ WorkerSearchRuntime 的 local 与 Dedicated Worker dispatch。
 Canonical request 与 Worker-safe runtime control。
 
 输出
-当前 root canonical Action、stats、stop reason、RNG continuation 与取消标记。
+当前 root canonical Action、其 request root index、stats、stop reason、RNG continuation 与取消标记。
 
 读取状态
 request 的 World、Action、config 与 RNG snapshot。
@@ -525,7 +532,7 @@ request 的 World、Action、config 与 RNG snapshot。
 Rng.restore、createSearchEngine、Searcher.search。
 
 边界与不变量
-不创建 transport DTO；返回值直接引用 canonical Action，Worker 只补 request identity 并序列化。
+不创建 transport DTO；返回值直接引用 canonical Action，并用其原 root index 供 Main Thread 常数次验收。
 */
 export async function executeSearchRequest(request, runtimeControl = {}) {
   const rng = Rng.restore(request.rng);
@@ -542,8 +549,13 @@ export async function executeSearchRequest(request, runtimeControl = {}) {
     }
   );
   const cancelled = engine.searcher.lastSearchStats?.stopReason === "CANCELLED";
+  const selectedRootIndex = action ? request.rootActions.indexOf(action) : null;
+  if (action && selectedRootIndex < 0) {
+    throw new Error("Searcher 返回的 Action 不是 request root 引用");
+  }
   return {
     action,
+    selectedRootIndex,
     stats:engine.searcher.lastSearchStats,
     searchStopReason:engine.searcher.lastSearchStats?.stopReason ?? null,
     rngAfter:rng.snapshot(),
@@ -911,7 +923,7 @@ export class Controller {
   acceptWorkerSearchOutcome。
 
   输入
-  canonical Action 与 request.rootActions。
+  canonical Action、request.rootActions 与可选 Worker root index。
 
   输出
   布尔值。
@@ -926,9 +938,15 @@ export class Controller {
   sameAction。
 
   边界与不变量
-  只用稳定普通字段比较；不会把策略收窄后的 root set 当成完整游戏合法集。
+  生产 Worker outcome 必须给出原 root index，只对该位置做一次稳定字段比较；
+  无 index 的直接测试兼容路径才扫描集合，不会把策略收窄后的 root set 当成完整游戏合法集。
   */
-  isActionInRootSet(action, rootActions) {
+  isActionInRootSet(action, rootActions, rootIndex = null) {
+    if (Number.isInteger(rootIndex)) {
+      return rootIndex >= 0
+        && rootIndex < rootActions.length
+        && sameAction(rootActions[rootIndex], action);
+    }
     return rootActions.some((entry) => sameAction(entry, action));
   }
 
@@ -1062,8 +1080,10 @@ export class Controller {
       return { action:null, result };
     }
 
-    const action = outcome.action;
-    if (!this.isActionInRootSet(action, acceptedRootActions)) {
+    const acceptedRootIndex = Number.isInteger(outcome.selectedRootIndex)
+      ? outcome.selectedRootIndex
+      : acceptedRootActions.findIndex((rootAction) => sameAction(rootAction, outcome.action));
+    if (!this.isActionInRootSet(outcome.action, acceptedRootActions, acceptedRootIndex)) {
       const result = createSearchResult({
         request,
         action:null,
@@ -1076,6 +1096,7 @@ export class Controller {
       this.lastSearchResult = result;
       return { action:null, result };
     }
+    const action = acceptedRootActions[acceptedRootIndex];
 
     const rngCommitted = this.commitWorkerRng(request, outcome);
     const result = createSearchResult({
@@ -1531,23 +1552,25 @@ export class Controller {
   响应者、响应类型、真实公开上下文和合法响应卡数组。
 
   输出
-  不含 Game/Simulator 引用且只暴露合法信息的 DecisionContext。
+  Promise<不含 Game/Simulator 引用且只暴露合法信息的 DecisionContext>；会话失效时为 null。
 
   读取状态
   当前 GameState、Fact、Team Rules、Dying order 与显式 Value/Domain query。
 
   写入状态
-  只有被调用的未知位置/状态查询可能写 query 私有缓存；真实状态不变。
+  只有被调用的未知位置/状态查询可能写 query 私有缓存；cooperative yield 不写真实状态。
 
   调用函数
-  createInitialWorld、Simulator paired-world construction 与 Evaluator data/value helpers。
+  createInitialWorld、yieldControl、Simulator paired-world construction 与 Evaluator data/value helpers。
 
   边界与不变量
-  Controller 只负责 runtime entity/context binding；所有价值比较由同一 Evaluator 完成，所需 Worlds/标量按响应类型预物化且每分支至多一次。
+  Controller 只负责 runtime entity/context binding；所有价值比较由同一 Evaluator 完成，所需 Worlds/标量按响应类型预物化且每分支至多一次；
+  yield 只插在完整 World/反事实阶段之间，不改变分支、构造顺序或比较输入。
   */
-  buildResponseDecisionContext(responder, type, rawContext, cards = []) {
+  async buildResponseDecisionContext(responder, type, rawContext, cards = []) {
     const state = this.getState();
     const remainingCardCounts = deriveCurrentCardCounts(responder, state);
+    if (!(await this.yieldControl(state.gameId))) return null;
     const world = createInitialWorld(responder.id, state, remainingCardCounts);
     const players = world.players;
     const byId = new Map(players.map((player) => [player.id, player]));
@@ -1634,6 +1657,7 @@ export class Controller {
       rootFlipWorlds:null,
       counterSelection:null
     };
+    if (!(await this.yieldControl(state.gameId))) return null;
     if (type === "leverageAssault") {
       const target = publicContext.target ?? responderView;
       decision.leverageMetrics = this.evaluator.leverageResponseMetrics(
@@ -1649,10 +1673,13 @@ export class Controller {
           rawContext.source?.id ?? null,
           Math.max(0, Number(rawContext.amount) || 0)
         );
+      if (!(await this.yieldControl(state.gameId))) return null;
+      const stayLightningOutcomeSets = simulator.buildLightningOutcomeSets(worlds.stayWorld);
+      if (!(await this.yieldControl(state.gameId))) return null;
       decision.guardianAidWorlds = {
         stayWorld:worlds.stayWorld,
         aidWorld:worlds.aidWorld,
-        stayLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.stayWorld),
+        stayLightningOutcomeSets,
         aidLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.aidWorld)
       };
     } else if (type === "counter" && publicContext.statusCounterContext) {
@@ -1674,11 +1701,11 @@ export class Controller {
           const transferred = receiver
             ? simulator.buildTransferredLightningWorld(world, holder, receiver)
             : null;
+          if (!(await this.yieldControl(state.gameId))) return null;
+          const stayOutcomeSet = simulator.buildLightningOutcomeWorlds(world, holder);
+          if (!(await this.yieldControl(state.gameId))) return null;
           decision.lightningCounterWorlds = {
-            stayOutcomeSet:simulator.buildLightningOutcomeWorlds(
-              world,
-              holder
-            ),
+            stayOutcomeSet,
             transferredWorld:transferred?.world ?? null,
             transferredOutcomeSet:transferred
               ? simulator.buildLightningOutcomeWorlds(transferred.world, transferred.holder, 1)
@@ -1711,10 +1738,13 @@ export class Controller {
           rootAction,
           rawContext.counterDepth ?? 0
         );
+        if (!(await this.yieldControl(state.gameId))) return null;
         if (worlds) {
+          const baseLightningOutcomeSets = simulator.buildLightningOutcomeSets(worlds.baseWorld);
+          if (!(await this.yieldControl(state.gameId))) return null;
           decision.rootFlipWorlds = {
             ...worlds,
-            baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.baseWorld),
+            baseLightningOutcomeSets,
             resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.resolvedWorld)
           };
         }
@@ -1734,7 +1764,7 @@ export class Controller {
   响应者、响应类型、公开上下文与合法候选牌。
 
   输出
-  是否响应的布尔值。
+  Promise<是否响应的布尔值>；cooperative yield 期间会话失效时为 null。
 
   读取状态
   当前 GameState、Fact、runtime binding 与 Evaluator。
@@ -1746,13 +1776,13 @@ export class Controller {
   buildResponseDecisionContext、Evaluator.shouldRespond。
 
   边界与不变量
-  候选牌默认空数组；门面不得构造或泄露额外隐藏信息。
+  候选牌默认空数组；门面不得构造或泄露额外隐藏信息；null 只表示会话取消，不能解释为 PASS。
   */
-  shouldRespond(player, type, context, cards = []) {
+  async shouldRespond(player, type, context, cards = []) {
     const startedAt = decisionNow();
-    const decision = this.evaluator.shouldRespond(
-      this.buildResponseDecisionContext(player, type, context, cards)
-    );
+    const decisionContext = await this.buildResponseDecisionContext(player, type, context, cards);
+    if (!decisionContext) return null;
+    const decision = this.evaluator.shouldRespond(decisionContext);
     this.recordMainThreadOperation(
       "Controller.shouldRespond",
       startedAt,
@@ -1772,7 +1802,7 @@ export class Controller {
   响应者与濒死目标真实实体。
 
   输出
-  Evaluator 生成的救援 assessment object。
+  Promise<Evaluator 生成的救援 assessment object>；会话失效时为 null。
 
   读取状态
   Controller 绑定的当前公开状态、合法记忆与 Probability。
@@ -1786,14 +1816,15 @@ export class Controller {
   边界与不变量
   Controller 只返回 data-only assessment；不得让 Application 直接访问 Evaluator 内部 owner。
   */
-  assessDyingRescue(responder, target) {
+  async assessDyingRescue(responder, target) {
     const startedAt = decisionNow();
-    const decision = this.buildResponseDecisionContext(
+    const decision = await this.buildResponseDecisionContext(
       responder,
       "dyingRescue",
       { target },
       []
     );
+    if (!decision) return null;
     const assessment = this.evaluator.assessDyingRescue({
       responder:decision.responder,
       target:decision.context.target,

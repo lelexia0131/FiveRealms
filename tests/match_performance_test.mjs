@@ -448,6 +448,40 @@ export function registerMatchPerformanceTests(test) {
     assert.equal(snapshot.players.find((entry) => entry.playerId === receiver.id).totals.allyShieldAbsorbed, 0);
   });
 
+  test("UI·MVP：连续同来源护盾合并 ledger 且支援归属不变", async () => {
+    const provider = trackerPlayer("merged-provider", 0, "dawn");
+    const receiver = trackerPlayer("merged-receiver", 1, "dawn");
+    const enemy = trackerPlayer("merged-enemy", 2, "dusk");
+    const { dispatcher, tracker } = trackerFixture([provider, receiver, enemy]);
+    for (let index = 0; index < 100; index += 1) {
+      receiver.shield += 1;
+      await dispatcher.emit("shieldGranted", {
+        source:provider,
+        target:receiver,
+        actualAddedAmount:1,
+        effectDefinitionId:"shield"
+      });
+    }
+    assert.deepEqual(tracker.shieldSourceLedgers.get(receiver.id), [{
+      providerPlayerId:provider.id,
+      effectDefinitionId:"shield",
+      remainingAmount:100
+    }]);
+    receiver.shield = 40;
+    await dispatcher.emit("afterDamage", {
+      source:enemy,
+      target:receiver,
+      actualAmount:0,
+      shieldAbsorbed:60,
+      metadata:{}
+    });
+    assert.equal(
+      tracker.finalizeMatch().players.find((entry) => entry.playerId === provider.id)
+        .totals.allyShieldAbsorbed,
+      60
+    );
+  });
+
   test("UI·MVP：护盾来源只记录真实新增量而不记录请求量", async () => {
     const provider = trackerPlayer("provider", 0, "dawn");
     const receiver = trackerPlayer("receiver", 1, "dawn");

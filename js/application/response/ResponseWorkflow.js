@@ -656,7 +656,7 @@ export function createResponseWorkflow(dependencies) {
     const aiSelfRescue = shouldForceAiSelfRescue(rescuer, target);
     const forcedHumanRescue = shouldForceAiRescueHuman(rescuer, target, runtime.getForceAiRescueHuman());
     const mustDeclineGuaranteedImpossible = (aiSelfRescue || forcedHumanRescue)
-      && runtime.isAiDyingRescueGuaranteedImpossible?.(rescuer, target) === true;
+      && await runtime.isAiDyingRescueGuaranteedImpossible?.(rescuer, target) === true;
 
     if (aiSelfRescue || forcedHumanRescue) {
       decision = await waitForFixedAiDecision(

@@ -132,12 +132,15 @@ export function createAiChoiceAdapter({
       if (choiceRequest.options.length < choiceRequest.constraints.requiredCount) {
         return createChoiceResult("declined");
       }
-      const use = shouldRespond(
+      const use = await shouldRespond(
         choiceContext.responder,
         choiceRequest.constraints.responseType,
         choiceContext.context,
         choiceContext.cards
       );
+      if (use == null || !isSessionValid(choiceRequest.gameId)) {
+        return createChoiceResult("cancelled");
+      }
       return use
         ? createChoiceResult("selected", {
             selectedIds: choiceRequest.options

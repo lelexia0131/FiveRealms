@@ -155,6 +155,7 @@ import {
 } from "../js/ui/templates.js";
 import { InteractionController, hiddenSelectionMarkup, orderZoneSelectionSlots } from "../js/ui/InteractionController.js";
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
+import { MatchLogAdapter } from "../js/adapters/ui/MatchLogAdapter.js";
 import { RulebookView, buildRulebookPages, getRulebookCardView } from "../js/ui/RulebookView.js";
 import { PrivateRevealView } from "../js/ui/PrivateRevealView.js";
 import { AnimationController, LIGHTNING_HIT_DURATION_MS } from "../js/ui/animationController.js";
@@ -15557,8 +15558,8 @@ test(
   consecutiveEnergyTransitionGenealogyContract
 );
 
-test("AI·响应一致性：Block planning 与 runtime 共享致命和资源意愿", () => {
-  const run = (hp) => {
+test("AI·响应一致性：Block planning 与 runtime 共享致命和资源意愿", async () => {
+  const run = async (hp) => {
     const source = makePlayer(`block-source-${hp}`, 0, "dusk", "ai", 4),
       target = makePlayer(`block-target-${hp}`, 1, "dawn", "ai", 0),
       allyA = makePlayer(`block-ally-a-${hp}`, 2, "dawn", "ai", 2),
@@ -15568,7 +15569,7 @@ test("AI·响应一致性：Block planning 与 runtime 共享致命和资源意�
     target.shield = 0;
     target.hand.push(block, instance("charge"), instance("charge"));
     const { game } = makeGame([source, target, allyA, allyB]);
-    const decision = game.aiController.buildResponseDecisionContext(
+    const decision = await game.aiController.buildResponseDecisionContext(
       target,
       "block",
       { target, source, amount: 1, requiredCount: 1 },
@@ -15592,12 +15593,12 @@ test("AI·响应一致性：Block planning 与 runtime 共享致命和资源意�
     assert.equal(planning, runtime);
     return runtime;
   };
-  assert.equal(run(1), true);
-  assert.equal(run(4), false);
+  assert.equal(await run(1), true);
+  assert.equal(await run(4), false);
 });
 
-test("AI·响应一致性：Guardian planning 与 runtime 共享穿盾意愿", () => {
-  const run = (targetHp, targetShield) => {
+test("AI·响应一致性：Guardian planning 与 runtime 共享穿盾意愿", async () => {
+  const run = async (targetHp, targetShield) => {
     const source = makePlayer(`guardian-source-${targetShield}`, 0, "dusk", "ai", 4),
       target = makePlayer(`guardian-target-${targetShield}`, 1, "dawn", "ai", 0),
       guardian = makePlayer(`guardian-${targetShield}`, 2, "dawn", "ai", 1);
@@ -15605,7 +15606,7 @@ test("AI·响应一致性：Guardian planning 与 runtime 共享穿盾意愿", (
     target.shield = targetShield;
     guardian.hand.push(instance("charge"));
     const { game } = makeGame([source, target, guardian]);
-    const decision = game.aiController.buildResponseDecisionContext(
+    const decision = await game.aiController.buildResponseDecisionContext(
       guardian,
       "skill",
       { target, source, amount: 1 },
@@ -15631,12 +15632,12 @@ test("AI·响应一致性：Guardian planning 与 runtime 共享穿盾意愿", (
     assert.equal(planning, runtime);
     return runtime;
   };
-  assert.equal(run(1, 0), true);
-  assert.equal(run(4, 2), false);
+  assert.equal(await run(1, 0), true);
+  assert.equal(await run(4, 2), false);
 });
 
-test("AI·响应一致性：Rescue planning 与 runtime 共享可救和必败合同", () => {
-  const run = (targetHp) => {
+test("AI·响应一致性：Rescue planning 与 runtime 共享可救和必败合同", async () => {
+  const run = async (targetHp) => {
     const target = makePlayer(`rescue-target-${targetHp}`, 0, "dawn", "ai", 2),
       rescuer = makePlayer(`rescue-helper-${targetHp}`, 1, "dawn", "ai", 0),
       enemy = makePlayer(`rescue-enemy-${targetHp}`, 2, "dusk", "ai", 4),
@@ -15644,7 +15645,7 @@ test("AI·响应一致性：Rescue planning 与 runtime 共享可救和必败合
     target.hp = targetHp;
     rescuer.hand.push(recover);
     const { game } = makeGame([target, rescuer, enemy]);
-    const decision = game.aiController.buildResponseDecisionContext(
+    const decision = await game.aiController.buildResponseDecisionContext(
       rescuer,
       "dyingRescue",
       { target },
@@ -15661,12 +15662,12 @@ test("AI·响应一致性：Rescue planning 与 runtime 共享可救和必败合
     assert.equal(planning, runtime);
     return runtime;
   };
-  assert.equal(run(0), true);
-  assert.equal(run(-1), false);
+  assert.equal(await run(0), true);
+  assert.equal(await run(-1), false);
 });
 
-test("AI·响应一致性：Counter planning 与 runtime 共享全体受益合同", () => {
-  const run = (largeTeamSize) => {
+test("AI·响应一致性：Counter planning 与 runtime 共享全体受益合同", async () => {
+  const run = async (largeTeamSize) => {
     const responder = makePlayer(`counter-small-a-${largeTeamSize}`, 0, "dawn", "ai", 0),
       source = makePlayer(`counter-large-a-${largeTeamSize}`, 1, "dusk", "ai", 0),
       ally = makePlayer(`counter-small-b-${largeTeamSize}`, 2, "dawn", "ai", 0),
@@ -15677,7 +15678,7 @@ test("AI·响应一致性：Counter planning 与 runtime 共享全体受益合�
     responder.hand.push(counter);
     if (largeTeamSize === 2) enemyC.alive = false;
     const { game } = makeGame([responder, source, ally, enemyB, enemyC]);
-    const decision = game.aiController.buildResponseDecisionContext(
+    const decision = await game.aiController.buildResponseDecisionContext(
       responder,
       "counter",
       { source, rootSource: source, card: rootCard, rootCard },
@@ -15697,8 +15698,8 @@ test("AI·响应一致性：Counter planning 与 runtime 共享全体受益合�
     assert.equal(planning, runtime);
     return runtime;
   };
-  assert.equal(run(3), true);
-  assert.equal(run(2), false);
+  assert.equal(await run(3), true);
+  assert.equal(await run(2), false);
 });
 
 /*
@@ -15726,7 +15727,7 @@ buildResponseDecisionContext、Evaluator.decidePlanningCounter/shouldRespond。
 边界与不变量
 Counter/Plunder/Destroy/Transfer 都必须进入同一 gain→willingness primitive；selection 身份只来自 canonical Action 或合法记忆。
 */
-function assertCounterPlanningRuntimeParity(definitionId) {
+async function assertCounterPlanningRuntimeParity(definitionId) {
   const responder = makePlayer(`counter-parity-responder-${definitionId}`, 0, "dawn", "ai", 0);
   const source = makePlayer(`counter-parity-source-${definitionId}`, 1, "dusk", "ai", 3);
   const owner = makePlayer(`counter-parity-owner-${definitionId}`, 2, "dawn", "ai", 1);
@@ -15784,7 +15785,7 @@ function assertCounterPlanningRuntimeParity(definitionId) {
   const { game } = makeGame([responder, source, owner, enemyAlly, ally]);
   if (owner.hand.includes(selectedCard)) game.rememberPrivateCard(responder, owner, selectedCard);
   try {
-    const decision = game.aiController.buildResponseDecisionContext(
+    const decision = await game.aiController.buildResponseDecisionContext(
       responder,
       "counter",
       {
@@ -15840,23 +15841,23 @@ function assertCounterPlanningRuntimeParity(definitionId) {
   }
 }
 
-test("AI·响应一致性：Counter against Counter planning/runtime 同一意愿", () => {
-  assertCounterPlanningRuntimeParity("counter");
+test("AI·响应一致性：Counter against Counter planning/runtime 同一意愿", async () => {
+  await assertCounterPlanningRuntimeParity("counter");
 });
 
-test("AI·响应一致性：Counter against Plunder selection planning/runtime 同一意愿", () => {
-  assertCounterPlanningRuntimeParity("plunder");
+test("AI·响应一致性：Counter against Plunder selection planning/runtime 同一意愿", async () => {
+  await assertCounterPlanningRuntimeParity("plunder");
 });
 
-test("AI·响应一致性：Counter against Destroy selection planning/runtime 同一意愿", () => {
-  assertCounterPlanningRuntimeParity("destroy");
+test("AI·响应一致性：Counter against Destroy selection planning/runtime 同一意愿", async () => {
+  await assertCounterPlanningRuntimeParity("destroy");
 });
 
-test("AI·响应一致性：Counter against Transfer selection planning/runtime 同一意愿", () => {
-  assertCounterPlanningRuntimeParity("transfer");
+test("AI·响应一致性：Counter against Transfer selection planning/runtime 同一意愿", async () => {
+  await assertCounterPlanningRuntimeParity("transfer");
 });
 
-test("AI·响应一致性：Block 1/2 容量 planning/runtime 分别判断", () => {
+test("AI·响应一致性：Block 1/2 容量 planning/runtime 分别判断", async () => {
   /*
   功能
   比较一份确定 Block 容量在 planning/runtime 的相同响应结果。
@@ -15882,7 +15883,7 @@ test("AI·响应一致性：Block 1/2 容量 planning/runtime 分别判断", () 
   边界与不变量
   planning 必须显式消费当前分支容量；不得读取其他 probability branch。
   */
-  const decide = (blockCount) => {
+  const decide = async (blockCount) => {
     const source = makePlayer(`block-branch-source-${blockCount}`, 0, "dusk", "ai", 4);
     const target = makePlayer(`block-branch-target-${blockCount}`, 1, "dawn", "ai", 0);
     const allyA = makePlayer(`block-branch-ally-a-${blockCount}`, 2, "dawn", "ai", 2);
@@ -15892,7 +15893,7 @@ test("AI·响应一致性：Block 1/2 容量 planning/runtime 分别判断", () 
     target.hand.push(...blocks);
     const { game } = makeGame([source, target, allyA, enemy, allyB]);
     try {
-      const decision = game.aiController.buildResponseDecisionContext(
+      const decision = await game.aiController.buildResponseDecisionContext(
         target,
         "block",
         { target, source, amount: 1, requiredCount: 2 },
@@ -15920,9 +15921,116 @@ test("AI·响应一致性：Block 1/2 容量 planning/runtime 分别判断", () 
       game.dispose();
     }
   };
-  assert.equal(decide(1), false);
-  assert.equal(decide(2), true);
+  assert.equal(await decide(1), false);
+  assert.equal(await decide(2), true);
 });
+
+/*
+功能
+验证 Response cooperative yield 只改变调度边界，不改变各响应类型的最终决定。
+
+调用方
+AI 响应一致性回归测试。
+
+输入
+无。
+
+输出
+Promise<void>；断言失败时抛错。
+
+读取状态
+五组独立 Game fixture 的 Block、Counter、Guardian、Seal 与 Lightning DecisionContext。
+
+写入状态
+只替换各 fixture Controller 的测试 yieldControl 并累计调用次数。
+
+调用函数
+buildResponseDecisionContext、Evaluator.shouldRespond、Controller.shouldRespond。
+
+边界与不变量
+每组同步 Evaluator 输入与 cooperative Controller 输入完全相同；不得引入 timeout、预算或 fallback。
+*/
+async function responseCooperativeYieldParity() {
+  const fixtures = [
+    () => {
+      const source = makePlayer("yield-block-source", 0, "dusk", "ai", 4);
+      const responder = makePlayer("yield-block-responder", 1, "dawn", "ai", 0);
+      const ally = makePlayer("yield-block-ally", 2, "dawn", "ai", 1);
+      const counterweight = makePlayer("yield-block-enemy", 3, "dusk", "ai", 2);
+      const block = instance("block");
+      responder.hp = 1;
+      responder.hand.push(block);
+      const { game } = makeGame([source, responder, ally, counterweight]);
+      return { game, responder, type:"block", context:{ target:responder, source, amount:1, requiredCount:1 }, cards:[block] };
+    },
+    () => {
+      const responder = makePlayer("yield-counter-responder", 0, "dawn", "ai", 0);
+      const source = makePlayer("yield-counter-source", 1, "dusk", "ai", 4);
+      const ally = makePlayer("yield-counter-ally", 2, "dawn", "ai", 1);
+      const enemy = makePlayer("yield-counter-enemy", 3, "dusk", "ai", 2);
+      const counter = instance("counter");
+      const rootCard = instance("mutualBenefit");
+      responder.hand.push(counter);
+      const { game } = makeGame([responder, source, ally, enemy]);
+      return { game, responder, type:"counter", context:{ source, rootSource:source, card:rootCard, rootCard }, cards:[counter] };
+    },
+    () => {
+      const source = makePlayer("yield-guardian-source", 0, "dusk", "ai", 4);
+      const target = makePlayer("yield-guardian-target", 1, "dawn", "ai", 0);
+      const responder = makePlayer("yield-guardian-responder", 2, "dawn", "ai", 1);
+      responder.hand.push(instance("charge"));
+      const { game } = makeGame([source, target, responder]);
+      return { game, responder, type:"skill", context:{ target, source, amount:1 }, cards:[] };
+    },
+    () => {
+      const responder = makePlayer("yield-seal-responder", 0, "dawn", "ai", 0);
+      const holder = makePlayer("yield-seal-holder", 1, "dawn", "ai", 1);
+      const enemy = makePlayer("yield-seal-enemy", 2, "dusk", "ai", 4);
+      const counter = instance("counter");
+      holder.statuses.sealed = { stacks:1 };
+      responder.hand.push(counter);
+      const { game } = makeGame([responder, holder, enemy]);
+      return { game, responder, type:"counter", context:{ statusCounterContext:{ holderId:holder.id, statusId:"sealed" } }, cards:[counter] };
+    },
+    () => {
+      const responder = makePlayer("yield-lightning-responder", 0, "dawn", "ai", 0);
+      const holder = makePlayer("yield-lightning-holder", 1, "dawn", "ai", 1);
+      const enemy = makePlayer("yield-lightning-enemy", 2, "dusk", "ai", 4);
+      const counter = instance("counter");
+      holder.statuses.lightning = { stacks:1 };
+      responder.hand.push(counter);
+      const { game } = makeGame([responder, holder, enemy]);
+      return { game, responder, type:"counter", context:{ statusCounterContext:{ holderId:holder.id, statusId:"lightning" } }, cards:[counter] };
+    }
+  ];
+  for (const build of fixtures) {
+    const fixture = build();
+    let yieldCount = 0;
+    fixture.game.aiController.yieldControl = async (gameId) => {
+      yieldCount += 1;
+      await Promise.resolve();
+      return fixture.game.isSessionValid(gameId);
+    };
+    const decisionContext = await fixture.game.aiController.buildResponseDecisionContext(
+      fixture.responder,
+      fixture.type,
+      fixture.context,
+      fixture.cards
+    );
+    const expected = fixture.game.aiController.evaluator.shouldRespond(decisionContext);
+    const actual = await fixture.game.aiController.shouldRespond(
+      fixture.responder,
+      fixture.type,
+      fixture.context,
+      fixture.cards
+    );
+    assert.equal(actual, expected, fixture.type);
+    assert.ok(yieldCount >= 2, fixture.type);
+    fixture.game.dispose();
+  }
+}
+
+test("AI·响应一致性：cooperative yield 保持 Block/Counter/Guardian/状态/Lightning 决定", responseCooperativeYieldParity);
 
 test("AI·响应一致性：Block mixed distribution 逐分支应用 willingness", () => {
   const source = makePlayer("mixed-block-source", 0, "dusk", "ai", 4);
@@ -18264,7 +18372,13 @@ async function symbiosisIncompleteRootCoverageRegression() {
       interrupted,
       "coverage-symbiosis-actor"
     );
-    assert.equal(interruptedDecision.stats.scheduledRootOrder[0].cardId, "symbiosis");
+    assert.equal(
+      interrupted.aiController.lastSearchRequest.rootActions[
+        interruptedDecision.stats.firstScheduledRootIndex
+      ].cardId,
+      "symbiosis"
+    );
+    assert.equal("scheduledRootOrder" in interruptedDecision.stats, false);
     assert.equal(interruptedDecision.stats.completedRootCandidateCount, 1);
     assert.equal(interruptedDecision.stats.uniqueRootCandidateCount, 3);
     assert.equal(interruptedDecision.stats.bestValueScore, null);
@@ -18559,8 +18673,11 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
       ["card", "assault", "b"]
     ], JSON.stringify(stats));
     assert.deepEqual(stats.bestSequence[0], action);
-    assert.notDeepEqual(stats.scheduledRootOrder[0], action,
+    assert.notDeepEqual(
+      game.aiController.lastSearchRequest.rootActions[stats.firstScheduledRootIndex],
+      action,
       "最终 root 必须由完整未来价值决定，而不是照搬首个调度动作");
+    assert.equal("scheduledRootOrder" in stats, false);
     assert.equal(stats.expanded, 102);
     assert.equal(stats.depth, 3);
     assert.equal(stats.hiddenSamples, 10);
@@ -20897,7 +21014,7 @@ test("AI·搜索：合法负无穷 Final Utility 保持完整但不可竞争", a
 
 test("AI·搜索：多 root 未完整覆盖时不建立正式 baseline incumbent", async () => {
   const result = await runEndSiblingBudgetFixture("NODE", { siblingType: "card" });
-  assert.equal(result.stats.scheduledRootOrder[0], result.sibling);
+  assert.equal(result.rootActions[result.stats.firstScheduledRootIndex], result.sibling);
   assert.equal(result.selected, null);
   assert.deepEqual(result.applied, ["card"]);
   assert.equal(result.stats.completedRootCandidateCount, 1);
@@ -23473,6 +23590,8 @@ async function frArch14RunSearchRequest() {
   assert.equal(typeof outcome.action, "object");
   assert.equal(outcome.action?.cardInstanceId == null
     || typeof outcome.action.cardInstanceId === "string", true);
+  assert.ok(Number.isInteger(outcome.selectedRootIndex));
+  assert.equal(outcome.stats && "scheduledRootOrder" in outcome.stats, false);
   const accepted = game.aiController.acceptWorkerSearchOutcome(request, outcome);
   assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
   assert.equal(accepted.result.action, outcome.action);
@@ -23482,6 +23601,51 @@ async function frArch14RunSearchRequest() {
 }
 
 test("AI·Worker 搜索请求：serializable Worker outcome + main acceptance", frArch14RunSearchRequest);
+
+test("AI·Worker 搜索请求：大 root 集按 Worker index 常数次验收选中 Action", () => {
+  const actor = makePlayer("root-index-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("root-index-enemy", 1, "dusk", "ai", 1);
+  const { game } = makeGame([actor, enemy]);
+  const guardedRoots = Array.from({ length:2000 }, (_, index) => {
+    const root = createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"charge",
+      cardInstanceId:`root-index-${index}`
+    });
+    return new Proxy(root, {
+      get(target, property, receiver) {
+        if (property === "toJSON") throw new Error("不得序列化未选中的 root Action");
+        return Reflect.get(target, property, receiver);
+      }
+    });
+  });
+  const selected = createAction({ type:"end", actorId:actor.id });
+  const rootActions = [...guardedRoots, selected];
+  const request = createSearchRequest({
+    requestId:"large-root-index-acceptance",
+    gameId:game.state.gameId,
+    stateVersion:game.state.stateVersion,
+    actorId:actor.id,
+    phase:game.state.phase,
+    currentRound:game.state.currentRound,
+    world:createInitialWorld(actor.id, game.state),
+    searchConfig:game.aiController.buildSearchConfig(),
+    rng:game.aiController.searchRng.snapshot(),
+    rootActions
+  });
+  const outcome = createWorkerSearchOutcome({
+    request,
+    action:structuredClone(selected),
+    selectedRootIndex:rootActions.length - 1,
+    stats:{ stopReason:"COMPLETE" },
+    searchStopReason:"COMPLETE",
+    rngAfter:game.aiController.searchRng.snapshot()
+  });
+  const accepted = game.aiController.acceptWorkerSearchOutcome(request, outcome, rootActions);
+  assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
+  assert.equal(accepted.action, selected);
+});
 
 /*
 功能
@@ -25207,7 +25371,7 @@ test("AI·借势：深层生成在无普通突袭敌人时仍枚举同阵营借�
   );
 });
 
-test("AI·借势：在已用次数耗尽时仍能评估并接受残血击杀", () => {
+test("AI·借势：在已用次数耗尽时仍能评估并接受残血击杀", async () => {
   const actor = makePlayer("actor", 0, "dawn"),
     first = makePlayer("first", 1, "dusk", "ai"),
     second = makePlayer("second", 2, "dawn", "ai"),
@@ -25224,7 +25388,7 @@ test("AI·借势：在已用次数耗尽时仍能评估并接受残血击杀", (
   assert.equal(usable.length, 1);
   assert.equal(usable[0], assault);
   assert.equal(
-    game.aiController.shouldRespond(
+    await game.aiController.shouldRespond(
       first, "leverageAssault", { target: second, equipment }, usable
     ),
     true
@@ -25321,7 +25485,7 @@ test("AI·借势：planning 与 runtime facts 进入同一 canonical response �
   assert.equal(runtimeDecision, planningDecision);
 });
 
-test("AI·借势：响应通过可见快照评估真实玩家状态", () => {
+test("AI·借势：响应通过可见快照评估真实玩家状态", async () => {
   const actor = makePlayer("actor", 0, "dawn"),
     first = makePlayer("first", 1, "dusk"),
     equipment = instance("battleDevice"),
@@ -25330,7 +25494,7 @@ test("AI·借势：响应通过可见快照评估真实玩家状态", () => {
   first.equipment = equipment;
   const { game }
     = makeGame([actor, first]);
-  const decision = game.aiController.shouldRespond(
+  const decision = await game.aiController.shouldRespond(
     first, "leverageAssault", { target: actor, equipment }, [assault]
   );
   assert.equal(typeof decision, "boolean");
@@ -27272,7 +27436,7 @@ test("AI·守誓者：护援在单个模拟快照内只触发一次且零伤害�
 
 
 
-test("AI·守誓者：1HP队友面临将通过的真实伤害时使用护援", () => {
+test("AI·守誓者：1HP队友面临将通过的真实伤害时使用护援", async () => {
   const source = makePlayer("aid-lethal-source", 0, "dusk", "ai", 4),
     target = makePlayer("aid-lethal-target", 1, "dawn", "ai", 0),
     guardian = makePlayer("aid-lethal-guardian", 2, "dawn", "ai", 1);
@@ -27280,7 +27444,7 @@ test("AI·守誓者：1HP队友面临将通过的真实伤害时使用护援", (
   guardian.hand.push(instance("charge"));
   const { game } = makeGame([source, target, guardian]);
   assert.equal(
-    game.aiController.shouldRespond(
+    await game.aiController.shouldRespond(
       guardian, "skill", { target, source, amount: 1 }, []
     ),
     true,
@@ -27288,7 +27452,7 @@ test("AI·守誓者：1HP队友面临将通过的真实伤害时使用护援", (
   );
 });
 
-test("AI·守誓者：伤害会被目标护盾完全吸收时不使用护援", () => {
+test("AI·守誓者：伤害会被目标护盾完全吸收时不使用护援", async () => {
   const source = makePlayer("aid-shield-source", 0, "dusk", "ai", 4),
     target = makePlayer("aid-shield-target", 1, "dawn", "ai", 0),
     guardian = makePlayer("aid-shield-guardian", 2, "dawn", "ai", 1);
@@ -27297,7 +27461,7 @@ test("AI·守誓者：伤害会被目标护盾完全吸收时不使用护援", (
   guardian.hand.push(instance("charge"));
   const { game } = makeGame([source, target, guardian]);
   assert.equal(
-    game.aiController.shouldRespond(
+    await game.aiController.shouldRespond(
       guardian, "skill", { target, source, amount: 1 }, []
     ),
     false,
@@ -27305,7 +27469,7 @@ test("AI·守誓者：伤害会被目标护盾完全吸收时不使用护援", (
   );
 });
 
-test("AI·守誓者：敌方已兑现突袭不再重复计未来库存时非致命伤害护援为正收益", () => {
+test("AI·守誓者：敌方已兑现突袭不再重复计未来库存时非致命伤害护援为正收益", async () => {
   const source = makePlayer("aid-conserve-source", 0, "dusk", "ai", 4),
     target = makePlayer("aid-conserve-target", 1, "dawn", "ai", 0),
     guardian = makePlayer("aid-conserve-guardian", 2, "dawn", "ai", 1),
@@ -27322,7 +27486,7 @@ test("AI·守誓者：敌方已兑现突袭不再重复计未来库存时非致�
   };
   const { game } = makeGame([source, target, guardian]);
   assert.equal(
-    game.aiController.shouldRespond(
+    await game.aiController.shouldRespond(
       guardian, "skill", { target, source, amount: 1 }, []
     ),
     true,
@@ -27330,7 +27494,7 @@ test("AI·守誓者：敌方已兑现突袭不再重复计未来库存时非致�
   );
 });
 
-test("AI·守誓者：护援额度本全局回合已用时不重复使用", () => {
+test("AI·守誓者：护援额度本全局回合已用时不重复使用", async () => {
   const source = makePlayer("aid-used-source", 0, "dusk", "ai", 4),
     target = makePlayer("aid-used-target", 1, "dawn", "ai", 0),
     guardian = makePlayer("aid-used-guardian", 2, "dawn", "ai", 1);
@@ -27339,7 +27503,7 @@ test("AI·守誓者：护援额度本全局回合已用时不重复使用", () =
   const { game } = makeGame([source, target, guardian]);
   guardian.turnFlags.guardianAidUsed = true;
   assert.equal(
-    game.aiController.shouldRespond(
+    await game.aiController.shouldRespond(
       guardian, "skill", { target, source, amount: 1 }, []
     ),
     false,
@@ -27347,20 +27511,20 @@ test("AI·守誓者：护援额度本全局回合已用时不重复使用", () =
   );
 });
 
-test("AI·守誓者：护援拒绝非合法场景（自己/敌方/无手牌/零伤害）", () => {
+test("AI·守誓者：护援拒绝非合法场景（自己/敌方/无手牌/零伤害）", async () => {
   const source = makePlayer("aid-guard-source", 0, "dusk", "ai", 4),
     ally = makePlayer("aid-guard-ally", 1, "dawn", "ai", 0),
     guardian = makePlayer("aid-guard-guardian", 2, "dawn", "ai", 1);
   guardian.hand.push(instance("charge"));
   const { game } = makeGame([source, ally, guardian]);
   const policy = game.aiController;
-  assert.equal(policy.shouldRespond(guardian, "skill", { target: guardian, source, amount: 1 }, []), false, "不能护援自己");
-  assert.equal(policy.shouldRespond(guardian, "skill", { target: source, source, amount: 1 }, []), false, "不能护援敌方");
-  assert.equal(policy.shouldRespond(guardian, "skill", { target: ally, source, amount: 0 }, []), false, "零伤害不护援");
+  assert.equal(await policy.shouldRespond(guardian, "skill", { target: guardian, source, amount: 1 }, []), false, "不能护援自己");
+  assert.equal(await policy.shouldRespond(guardian, "skill", { target: source, source, amount: 1 }, []), false, "不能护援敌方");
+  assert.equal(await policy.shouldRespond(guardian, "skill", { target: ally, source, amount: 0 }, []), false, "零伤害不护援");
   const emptyGuardian = makePlayer("aid-guard-empty", 3, "dawn", "ai", 1);
   const { game: game2 } = makeGame([source, ally, emptyGuardian]);
   assert.equal(
-    game2.aiController.shouldRespond(
+    await game2.aiController.shouldRespond(
       emptyGuardian,
       "skill",
       { target: ally, source, amount: 1 },
@@ -27436,11 +27600,11 @@ test("AI·守誓者：护援与真实选牌一致弃装备替换冗余牌", () =
 });
 
 
-test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突袭重复计未来库存", () => {
+test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突袭重复计未来库存", async () => {
   // 便宜牌 + 高价值格挡：确定性反事实知道会弃便宜牌，AID 收益超过未来额度成本。
   const cheap = makeGuardianAidFlipGame(["charge", "block"]);
   assert.equal(
-    cheap.game.aiController.shouldRespond(
+    await cheap.game.aiController.shouldRespond(
       cheap.guardian,
       "skill",
       { target: cheap.target, source: cheap.source, amount: 1 },
@@ -27453,7 +27617,7 @@ test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突�
   // 同一额度成本下护援本次确定伤害仍为净正收益。
   const forcedExpensive = makeGuardianAidFlipGame(["block"]);
   assert.equal(
-    forcedExpensive.game.aiController.shouldRespond(
+    await forcedExpensive.game.aiController.shouldRespond(
       forcedExpensive.guardian,
       "skill",
       { target: forcedExpensive.target, source: forcedExpensive.source, amount: 1 },
@@ -27464,10 +27628,10 @@ test("AI·守誓者：护援反事实按真实弃牌语义且不把已兑现突�
   );
 });
 
-test("AI·守誓者：敌方已兑现突袭时即使弃关键防御牌护援仍为正收益", () => {
+test("AI·守誓者：敌方已兑现突袭时即使弃关键防御牌护援仍为正收益", async () => {
   const fixture = makeGuardianAidFlipGame(["block", "counter"]);
   assert.equal(
-    fixture.game.aiController.shouldRespond(
+    await fixture.game.aiController.shouldRespond(
       fixture.guardian,
       "skill",
       { target: fixture.target, source: fixture.source, amount: 1 },
@@ -28607,7 +28771,7 @@ const counterProbabilityOf = (player) => (
 
 
 
-test("AI·反制：counter opportunity cost 只计一次", () => {
+test("AI·反制：counter opportunity cost 只计一次", async () => {
   const a = makePlayer("a", 0, "dawn", "ai", 0),
     ally = makePlayer("ally", 1, "dawn", "ai", 0),
     enemyA = makePlayer("enemy-a", 2, "dusk", "ai", 0),
@@ -28622,13 +28786,13 @@ test("AI·反制：counter opportunity cost 只计一次", () => {
   enemyB.hp -= 1;
   enemyC.hp -= 1;
   assert.equal(
-    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    await game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     true
   );
   // 净差值 2（低于 2.8）时不反制：边界精确对应单次机会成本。
   enemyB.hp = enemyB.maxHp;
   assert.equal(
-    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    await game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
 });
@@ -28645,7 +28809,7 @@ test("AI·反制：counter opportunity cost 只计一次", () => {
 
 
 
-test("AI·反制：共生 root 按当前缺血量估值，目标满血时恢复无收益", () => {
+test("AI·反制：共生 root 按当前缺血量估值，目标满血时恢复无收益", async () => {
   const a = makePlayer("a", 0, "dawn", "ai", 0),
     ally = makePlayer("ally", 1, "dawn", "ai", 1),
     enemyA = makePlayer("enemy-a", 2, "dusk", "ai", 2),
@@ -28659,7 +28823,7 @@ test("AI·反制：共生 root 按当前缺血量估值，目标满血时恢复�
   enemyA.hp = enemyA.maxHp;
   enemyB.hp = enemyB.maxHp;
   assert.equal(
-    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    await game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
 });
@@ -28980,7 +29144,7 @@ test("AI·反制概率：队友的全体受益牌在首张反制阶段受保护�
   assert.equal(next.players[3].hp, 3);
 });
 
-test("AI·反制概率：不会反制对己方净治疗明显有利的共生", () => {
+test("AI·反制概率：不会反制对己方净治疗明显有利的共生", async () => {
   const a = makePlayer("a", 0, "dawn"),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
@@ -28988,14 +29152,14 @@ test("AI·反制概率：不会反制对己方净治疗明显有利的共生", (
   ally.hp -= 1;
   const { game }
     = makeGame([a, ally, enemy]);
-  const use = game.aiController.shouldRespond(
+  const use = await game.aiController.shouldRespond(
     a, "counter", { source: enemy, card: instance("symbiosis") }, [instance("counter")]
   );
   assert.equal(use, false);
 });
 
 
-test("AI·反制概率：对共生按双方本次实际治疗量与反制机会成本决定是否反制", () => {
+test("AI·反制概率：对共生按双方本次实际治疗量与反制机会成本决定是否反制", async () => {
   const a = makePlayer("a", 0, "dawn"),
     ally = makePlayer("ally", 1, "dawn"),
     enemyA = makePlayer("enemy-a", 2, "dusk"),
@@ -29009,21 +29173,21 @@ test("AI·反制概率：对共生按双方本次实际治疗量与反制机会�
   ally.hp -= 1;
   enemyA.hp -= 1;
   assert.equal(
-    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    await game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
   // 差值小于反制牌机会成本（counter.aiValue × 0.35）时保留反制，不无脑救。
   ally.hp = ally.maxHp;
   enemyB.hp -= 1;
   assert.equal(
-    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    await game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
   // 差值达到/超过机会成本才反制：我方满血、三名敌人受损 → net=-3，收益超过成本。
   a.hp = a.maxHp;
   enemyC.hp -= 1;
   assert.equal(
-    game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
+    await game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     true
   );
 });
@@ -29319,7 +29483,7 @@ test("AI·格挡概率：获得确定非格挡牌不能恢复旧概率", () => {
 
 
 
-test("AI·格挡概率：格挡决策随可用格挡数单调且先验证实际支付数量", () => {
+test("AI·格挡概率：格挡决策随可用格挡数单调且先验证实际支付数量", async () => {
   const responder = makePlayer("block-policy", 0, "dawn", "ai"),
     ally1 = makePlayer("block-ally-1", 1, "dawn"),
     enemy1 = makePlayer("block-enemy-1", 2, "dusk"),
@@ -29334,7 +29498,7 @@ test("AI·格挡概率：格挡决策随可用格挡数单调且先验证实际�
       ...Array.from({ length: 4 - count }, () => instance("charge"))
     ];
     decisions.push(
-      policy.shouldRespond(
+      await policy.shouldRespond(
         responder,
         "block",
         { target: responder, amount: 1, requiredCount: 1 },
@@ -29347,20 +29511,20 @@ test("AI·格挡概率：格挡决策随可用格挡数单调且先验证实际�
   responder.shield = 0;
   responder.hand = [instance("block")];
   assert.equal(
-    policy.shouldRespond(
+    await policy.shouldRespond(
       responder, "block", { target: responder, amount: 1, requiredCount: 1 }, responder.hand
     ),
     true
   );
   responder.hp = 2;
   assert.equal(
-    policy.shouldRespond(
+    await policy.shouldRespond(
       responder, "block", { target: responder, amount: 1, requiredCount: 1 }, responder.hand
     ),
     true
   );
   assert.equal(
-    policy.shouldRespond(
+    await policy.shouldRespond(
       responder, "block", { target: responder, amount: 2, requiredCount: 2 }, responder.hand
     ),
     false
@@ -29502,7 +29666,7 @@ test("AI·救援：三人阵营 AI 能协作各交一张调息救回负1血队�
   const { game }
     = makeGame([target, ally1, ally2, enemy]);
   ally1.aiMemory.knownCardsByPlayer[ally2.id] = { [ally2.hand[0].id]: "recover" };
-  const assessment = game.aiController.assessDyingRescue(ally1, target);
+  const assessment = await game.aiController.assessDyingRescue(ally1, target);
   assert.equal(assessment.strategic, true);
   assert.equal(assessment.guaranteedSurvivable, true);
   assert.equal(assessment.guaranteedImpossible, false);
@@ -29520,10 +29684,10 @@ test("AI·救援：当前调息足够时正常响应并救活", async () => {
   target.hp = 0;
   ally.hand.push(instance("recover"));
   const { game } = makeGame([target, ally, enemy]);
-  const assessment = game.aiController.assessDyingRescue(ally, target);
+  const assessment = await game.aiController.assessDyingRescue(ally, target);
   assert.equal(assessment.guaranteedSurvivable, true);
   assert.equal(
-    game.aiController.shouldRespond(ally, "dyingRescue", { target }, ally.hand),
+    await game.aiController.shouldRespond(ally, "dyingRescue", { target }, ally.hand),
     true
   );
   await game.dyingWorkflow.enter(target, enemy);
@@ -29545,10 +29709,10 @@ test("AI·救援：已知1+2协作容量足够时连续救活负2血队友", asy
   ally1.aiMemory.knownCardsByPlayer[ally2.id] = Object.fromEntries(
     ally2.hand.map((card) => [card.id, card.definitionId])
   );
-  const assessment = game.aiController.assessDyingRescue(ally1, target);
+  const assessment = await game.aiController.assessDyingRescue(ally1, target);
   assert.equal(assessment.guaranteedSurvivable, true);
   assert.equal(
-    game.aiController.shouldRespond(ally1, "dyingRescue", { target }, [ally1.hand[0]]),
+    await game.aiController.shouldRespond(ally1, "dyingRescue", { target }, [ally1.hand[0]]),
     true
   );
   await game.dyingWorkflow.enter(target, enemy);
@@ -29643,7 +29807,8 @@ test("AI·救援：确定必败：固定拒绝仍经过 AI timing 且不消耗�
   };
   const result = await game.responseWorkflow.requestDyingRescue(ally, human, recover);
   assert.equal(result.status, "declined");
-  assert.equal(delays.length, 1);
+  assert.ok(delays.length >= 2);
+  assert.equal(delays[0], 0, "反事实评估前应先 cooperative yield");
   assert.ok(ui.thinking.some(([active, player]) => active && player.id === ally.id));
   assert.equal(ui.thinking.at(-1)[0], false);
   assert.equal(ally.hand.length, 1);
@@ -29658,10 +29823,10 @@ test("AI·救援：确定必败：普通响应路径不消耗调息", async () =
   target.hp = -1;
   ally.hand.push(instance("recover"));
   const { game } = makeGame([target, ally, enemy]);
-  const assessment = game.aiController.assessDyingRescue(ally, target);
+  const assessment = await game.aiController.assessDyingRescue(ally, target);
   assert.equal(assessment.guaranteedImpossible, true);
   assert.equal(
-    game.aiController.shouldRespond(ally, "dyingRescue", { target }, ally.hand),
+    await game.aiController.shouldRespond(ally, "dyingRescue", { target }, ally.hand),
     false
   );
   await game.dyingWorkflow.enter(target, enemy);
@@ -29851,7 +30016,7 @@ test("AI·救援：强制救援：救援经过 Game.heal 并产生治疗事件�
   assert.equal(human.hp, 1);
 });
 
-test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", () => {
+test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", async () => {
   const a = makePlayer("a", 0, "dawn"),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
@@ -29859,13 +30024,13 @@ test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", (
     = makeGame([a, ally, enemy]);
   a.hand.push(instance("recover"));
   assert.equal(
-    game.aiController.shouldRespond(
+    await game.aiController.shouldRespond(
       a, "dyingRescue", { target: a }, [instance("recover")]
     ),
     true
   );
   assert.equal(
-    game.aiController.shouldRespond(
+    await game.aiController.shouldRespond(
       enemy, "dyingRescue", { target: a }, [instance("recover")]
     ),
     false
@@ -29902,14 +30067,14 @@ test("AI·救援：strategic 目标在极低成功率下不能覆盖负期望", 
   assert.equal(policy.shouldRespond(decision), false);
 });
 
-test("AI·救援：planning 与 runtime 共享 canonical common value semantic", () => {
+test("AI·救援：planning 与 runtime 共享 canonical common value semantic", async () => {
   const target = makePlayer("rescue-authority-target", 0, "dawn", "ai", 4);
   const responder = makePlayer("rescue-authority-responder", 1, "dawn", "ai", 3);
   const enemy = makePlayer("rescue-authority-enemy", 2, "dusk", "ai", 4);
   target.hp = 0;
   responder.hand.push(instance("recover"));
   const { game } = makeGame([target, responder, enemy]);
-  const decision = game.aiController.buildResponseDecisionContext(
+  const decision = await game.aiController.buildResponseDecisionContext(
     responder,
     "dyingRescue",
     { target },
@@ -39473,11 +39638,11 @@ test("UI·日志：位于底部时新日志继续自动跟随", () => {
   globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
   try {
     UIManager.prototype.appendLog.call(
-      { elements: { log_list: list }, updateLogCount() { } },
+      { elements: { log_list: list }, logFollowingBottom:true, updateLogCount() { } },
       { kind: "normal", message: "新日志" },
       1
     );
-    assert.equal(list.scrollTop, list.scrollHeight);
+    assert.equal(list.scrollTop, Number.MAX_SAFE_INTEGER);
   } finally {
     if (previousDocument === undefined) delete globalThis.document;
     else globalThis.document = previousDocument;
@@ -39495,7 +39660,7 @@ test("UI·日志：用户上滚时新日志保持原阅读位置", () => {
   globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
   try {
     UIManager.prototype.appendLog.call(
-      { elements: { log_list: list }, updateLogCount() { } },
+      { elements: { log_list: list }, logFollowingBottom:false, updateLogCount() { } },
       { kind: "normal", message: "新日志" },
       1
     );
@@ -39516,12 +39681,13 @@ test("UI·日志：用户重新滚到底部后恢复自动跟随", () => {
   };
   globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
   try {
-    const fake = { elements: { log_list: list }, updateLogCount() { } };
+    const fake = { elements: { log_list: list }, logFollowingBottom:false, updateLogCount() { } };
     UIManager.prototype.appendLog.call(fake, { kind: "normal", message: "第一条" }, 1);
     assert.equal(list.scrollTop, 40);
     list.scrollTop = list.scrollHeight - list.clientHeight;
+    UIManager.prototype.handleLogScroll.call(fake);
     UIManager.prototype.appendLog.call(fake, { kind: "normal", message: "第二条" }, 2);
-    assert.equal(list.scrollTop, list.scrollHeight);
+    assert.equal(list.scrollTop, Number.MAX_SAFE_INTEGER);
   } finally {
     if (previousDocument === undefined) delete globalThis.document;
     else globalThis.document = previousDocument;
@@ -41111,7 +41277,7 @@ async function uiAudioLifecycleRegression() {
   const elements = Object.fromEntries([
     "start_button", "back_to_start_button", "restart_button", "play_again_button", "squad_mode_grid", "candidate_grid", "game_screen",
     "human_hand", "cpu_grid", "human_panel", "skill_button", "end_play_button", "discard_confirm_button",
-    "cancel_interaction_button", "response_panel", "log_toggle_button", "skill_details_overlay"
+    "cancel_interaction_button", "response_panel", "log_toggle_button", "log_list", "skill_details_overlay"
   ].map((key) => [key, makeInteractiveElement()]));
   const documentListeners = new Map();
   const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -41146,6 +41312,7 @@ async function uiAudioLifecycleRegression() {
     confirmTarget() { },
     resolveResponse() { },
     setLogCollapsed() { },
+    handleLogScroll() { },
     handleViewportResize() { },
     hideSkillDetails() { }
   };
@@ -41468,6 +41635,24 @@ test("音频：BGM 排程跨乐句循环时保持时间轴连续且旋律/低音
   const before = sound.nextMusicTime;
   sound.scheduleMusic();
   assert.equal(sound.nextMusicTime, before, "重复排程不应重置时间轴");
+});
+
+test("音频：BGM scheduler 长时间落后时跳过历史步进而只排未来窗口", () => {
+  const sound = new SoundManager();
+  const fake = makeFakeAudioContext();
+  sound.context = fake;
+  sound.musicGain = fake.destination;
+  sound.sfxGain = fake.destination;
+  sound.enabled = true;
+  sound.musicTeam = "dawn";
+  sound.musicStep = 0;
+  sound.nextMusicTime = 1;
+  fake.currentTime = 101;
+  sound.scheduleMusic();
+  assert.ok(sound.musicStep > 100, "落后的音乐步进应被推进而不是逐个补播");
+  assert.ok(sound.nextMusicTime > fake.currentTime);
+  assert.ok(fake.oscillators.length < 50, "恢复后只允许创建当前前瞻窗口所需节点");
+  assert.ok(fake.oscillators.every((node) => node.startTime >= fake.currentTime));
 });
 
 test("音频：阵营切换停止已排程的旧音乐节点而非仅停 scheduler", () => {
@@ -41902,6 +42087,87 @@ function snapshotAuthoritativeActionState(game) {
   }, normalizeActionSnapshotValue));
 }
 
+/*
+功能
+在真实 MatchLogAdapter 与 UIManager 日志边界上运行一次 Action 日志事务场景。
+
+调用方
+Action transaction 日志 DOM 一致性回归测试。
+
+输入
+run 接收 state、日志 adapter、DOM 替身、计数元素与 transaction factory。
+
+输出
+返回 run 的同步结果。
+
+读取状态
+无。
+
+写入状态
+临时替换 globalThis.document，并写入隔离的日志 state 与 DOM 替身。
+
+调用函数
+MatchLogAdapter、UIManager 日志方法、createActionTransaction、createRandomPort。
+
+边界与不变量
+每个场景结束后恢复原 document；DOM removeChild 只允许删除当前尾节点。
+*/
+function withActionLogTransactionFixture(run) {
+  const previousDocument = globalThis.document;
+  const children = [];
+  const list = {
+    children,
+    lastElementChild: null,
+    scrollTop: 0,
+    append(node) {
+      children.push(node);
+      this.lastElementChild = children.at(-1) ?? null;
+    },
+    removeChild(node) {
+      assert.equal(node, children.at(-1));
+      const removed = children.pop();
+      this.lastElementChild = children.at(-1) ?? null;
+      return removed;
+    }
+  };
+  const countElement = {
+    textContent: "",
+    title: "",
+    attributes: new Map(),
+    setAttribute(name, value) { this.attributes.set(name, value); }
+  };
+  const ui = {
+    elements: { log_list:list, log_count:countElement },
+    logFollowingBottom: false,
+    appendLog: UIManager.prototype.appendLog,
+    restoreLogBoundary: UIManager.prototype.restoreLogBoundary,
+    updateLogCount: UIManager.prototype.updateLogCount
+  };
+  const state = { players:[], logs:[] };
+  const logAdapter = new MatchLogAdapter(state, ui);
+  const randomPort = createRandomPort({ next:() => 0.25 });
+  globalThis.document = { createElement: () => ({ className:"", innerHTML:"" }) };
+  try {
+    logAdapter.add("历史日志 A");
+    logAdapter.add("历史日志 B");
+    return run({
+      state,
+      logAdapter,
+      children,
+      countElement,
+      createTransaction: () => createActionTransaction({
+        roots:[state],
+        logs:state.logs,
+        restoreLogPresentation: (count) => ui.restoreLogBoundary(count),
+        randomPort
+      })
+    });
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+}
+
 test("生命周期：Action transaction 不递归 checkpoint 大量历史日志", () => {
   const source = makePlayer("log-boundary-source", 0, "dawn"),
     enemy = makePlayer("log-boundary-enemy", 1, "dusk"),
@@ -41924,6 +42190,41 @@ test("生命周期：Action transaction 不递归 checkpoint 大量历史日志"
     assert.equal(historyReads, 0);
     assert.ok(game.state.logs.length > 5001, "成功 Action 的新增日志必须保留");
   });
+});
+
+test("UI·日志：大量追加完整保留且 append 热路径不读取 layout", () => {
+  const previousDocument = globalThis.document;
+  const nodes = [];
+  let layoutReads = 0;
+  const list = {
+    scrollTop: 0,
+    get scrollHeight() {
+      layoutReads += 1;
+      throw new Error("append 不得读取 scrollHeight");
+    },
+    append(node) { nodes.push(node); }
+  };
+  globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
+  try {
+    const fake = {
+      elements: { log_list: list },
+      logFollowingBottom: true,
+      updateLogCount() { }
+    };
+    for (let index = 0; index < 2000; index += 1) {
+      UIManager.prototype.appendLog.call(
+        fake,
+        { kind: "normal", message: `日志-${index}` },
+        index + 1
+      );
+    }
+    assert.equal(nodes.length, 2000);
+    assert.equal(layoutReads, 0);
+    assert.equal(list.scrollTop, Number.MAX_SAFE_INTEGER);
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
 });
 
 test("生命周期：Action transaction commit 保留本次新增日志", () => {
@@ -41969,6 +42270,83 @@ test("生命周期：Action transaction rollback 只删除本次日志并恢复�
   assert.equal(logs[1], historicalEntries[1]);
   assert.deepEqual(state.player, { hp:3, statuses:new Set(["sealed"]) });
   assert.deepEqual(state.deck.cards, ["card-a", "card-b"]);
+});
+
+test("生命周期：Action transaction rollback 同步裁剪多条日志 DOM 与计数", () => {
+  withActionLogTransactionFixture(({ state, logAdapter, children, countElement, createTransaction }) => {
+    const historicalEntries = [...state.logs];
+    const historicalNodes = [...children];
+    const transaction = createTransaction();
+    logAdapter.add("Action 日志 1");
+    logAdapter.add("Action 日志 2");
+    logAdapter.add("Action 日志 3");
+    assert.equal(state.logs.length, 5);
+    assert.equal(children.length, 5);
+    transaction.rollback();
+    assert.deepEqual(state.logs, historicalEntries);
+    assert.deepEqual(children, historicalNodes);
+    assert.equal(state.logs[0], historicalEntries[0]);
+    assert.equal(state.logs[1], historicalEntries[1]);
+    assert.equal(children[0], historicalNodes[0]);
+    assert.equal(children[1], historicalNodes[1]);
+    assert.equal(countElement.textContent, "2 条");
+    assert.equal(countElement.attributes.get("aria-label"), "共 2 条对局记录");
+  });
+});
+
+test("生命周期：Action transaction commit 保留新增日志 DOM 与计数", () => {
+  withActionLogTransactionFixture(({ state, logAdapter, children, countElement, createTransaction }) => {
+    const transaction = createTransaction();
+    logAdapter.add("提交日志 1");
+    logAdapter.add("提交日志 2");
+    transaction.commit();
+    assert.equal(state.logs.length, 4);
+    assert.equal(children.length, 4);
+    assert.equal(countElement.textContent, "4 条");
+  });
+});
+
+test("生命周期：Action transaction rollback 后正常追加日志不偏移", () => {
+  withActionLogTransactionFixture(({ state, logAdapter, children, countElement, createTransaction }) => {
+    const transaction = createTransaction();
+    logAdapter.add("待回滚日志 1");
+    logAdapter.add("待回滚日志 2");
+    transaction.rollback();
+    const nextEntry = logAdapter.add("回滚后正常日志");
+    assert.equal(state.logs.length, 3);
+    assert.equal(state.logs.at(-1), nextEntry);
+    assert.equal(children.length, 3);
+    assert.equal(countElement.textContent, "3 条");
+  });
+});
+
+test("生命周期：Action transaction 多次 commit rollback 交替后日志仍一致", () => {
+  withActionLogTransactionFixture(({ state, logAdapter, children, countElement, createTransaction }) => {
+    const historicalEntries = [...state.logs];
+    const historicalNodes = [...children];
+    const firstCommit = createTransaction();
+    const committedA = logAdapter.add("保留日志 A");
+    firstCommit.commit();
+    const committedNodeA = children.at(-1);
+
+    const firstRollback = createTransaction();
+    logAdapter.add("删除日志 A");
+    logAdapter.add("删除日志 B");
+    firstRollback.rollback();
+
+    const secondCommit = createTransaction();
+    const committedB = logAdapter.add("保留日志 B");
+    const committedNodeB = children.at(-1);
+    secondCommit.commit();
+
+    const secondRollback = createTransaction();
+    logAdapter.add("删除日志 C");
+    secondRollback.rollback();
+
+    assert.deepEqual(state.logs, [...historicalEntries, committedA, committedB]);
+    assert.deepEqual(children, [...historicalNodes, committedNodeA, committedNodeB]);
+    assert.equal(countElement.textContent, "4 条");
+  });
 });
 
 // ---- 回合生命周期与全局额度重置 ----
@@ -42475,7 +42853,27 @@ test("生命周期：借势内嵌突袭异常只回滚内层且外层借势正�
   assertCardOnlyIn(game, leverage, "discard");
   assertCardOnlyIn(game, equipment, `hand:${actor.id}`);
   assert.equal(game.resolutionOwners.size, 0);
+  assert.equal(game.leverageResolutionIds.size, 0);
   assert.equal(game.actionLocked, false);
+});
+
+test("生命周期：历史借势结算完成后 resolution 去重状态不累积", async () => {
+  const actor = makePlayer("leverage-history-actor", 0, "dawn", "human"),
+    first = makePlayer("leverage-history-first", 1, "dusk", "human"),
+    { game } = makeGame([actor, first], { response: () => false });
+  for (let index = 0; index < 40; index += 1) {
+    const leverage = instance("leverage");
+    const equipment = instance("energyDevice");
+    actor.hand.push(leverage);
+    first.equipment = equipment;
+    assert.equal(await game.playCard(actor, leverage, [], {
+      firstTargetId:first.id,
+      equipmentCardId:equipment.id,
+      equipmentDefinitionId:equipment.definitionId,
+      secondTargetId:actor.id
+    }), true);
+    assert.equal(game.leverageResolutionIds.size, 0);
+  }
 });
 
 test("生命周期：借势内嵌 rollback failure 禁止父 Action 继续或提交", async () => {
@@ -42539,6 +42937,7 @@ test("生命周期：借势内嵌 rollback failure 禁止父 Action 继续或提
   assertCardOnlyIn(game, assault, `hand:${first.id}`);
   assertCardOnlyIn(game, leverage, `hand:${actor.id}`);
   assertCardOnlyIn(game, equipment, `equipment:${first.id}`);
+  assert.equal(game.leverageResolutionIds.size, 0);
 });
 
 test("生命周期：Human card fatal 不被 handler finally presentation failure 覆盖", async () => {

@@ -1519,7 +1519,10 @@ search 的 root 与逐层 beam 完整节点登记点。
       rootCandidateCount:workDiagnostics.rootCandidateCount,
       uniqueRootCandidateCount:workDiagnostics.uniqueRootCandidateCount,
       equivalentRootCandidatesEliminated:workDiagnostics.equivalentRootCandidatesEliminated,
-      scheduledRootOrder:workDiagnostics.scheduledRootOrder,
+      firstScheduledRootIndex:workDiagnostics.firstScheduledRootIndex,
+      ...(workDiagnostics.scheduledRootOrder
+        ? { scheduledRootOrder:workDiagnostics.scheduledRootOrder }
+        : {}),
       completedRootCandidateCount:workDiagnostics.completedRootCandidateCount,
       childBranches:workDiagnostics.childBranches,
       completedChildCandidateCount:workDiagnostics.completedChildCandidateCount,
@@ -1612,7 +1615,10 @@ search 的 root 与逐层 beam 完整节点登记点。
         0,
         rootCandidateCount - uniqueRootActions.length
       ),
-      scheduledRootOrder:[...scheduledRootActions],
+      firstScheduledRootIndex:rootActions.indexOf(scheduledRootActions[0]),
+      scheduledRootOrder:options.collectAiDecisionDiagnostics
+        ? [...scheduledRootActions]
+        : null,
       completedRootCandidateCount:0,
       childBranches:0,
       completedChildCandidateCount:0,
