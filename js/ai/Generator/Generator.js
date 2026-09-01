@@ -867,13 +867,13 @@ export class Generator {
 
   /*
   功能
-  在首次创建 Action 前确认目标与选择仍可能成立。
+  在首次创建 Action 前确认目标与选择仍可能成立，并排除 AI 专属候选禁令。
 
   调用方
   generate 的每个规则合法候选。
 
   输入
-  World、行动者、动作类型、卡牌或技能定义、目标实体、selection、能量费用与可选 SearchBudget。
+  World、行动者角色与阵营、动作类型、卡牌或技能定义、目标实体、selection、能量费用与可选 SearchBudget。
 
   输出
   target 与 selection 完整的 canonical Action；无可能世界时返回 null。
@@ -889,6 +889,7 @@ export class Generator {
 
   边界与不变量
   Generator 只判断 possible/impossible，不计算联合概率、次数槽或执行世界；
+  非调律师不得生成破坏队友手牌的 Action，敌方手牌、队友装备与调律师例外保持可生成；
   返回后 Searcher/Simulator 不得补 target、selection 或重新创建另一种 Action。
   */
   createCompleteAction(
@@ -902,6 +903,12 @@ export class Generator {
     searchBudget = null
   ) {
     const targetIds = targets.map((target) => target.id);
+    const target = targets[0] ?? null;
+    // 调律师可能通过协调从队友资源损失中获益；其余 AI 不搜索破坏队友手牌的分支。
+    if (definition.definitionId === "destroy"
+      && actor.characterId !== "resonance-tuner"
+      && target?.battleTeam === actor.battleTeam
+      && selection?.zone === "hand") return null;
     if (!this.isActionConditionPossible(
       state, actor, type, definition, targets, selection
     ) || !this.isSelectionPossible(state, selection, targetIds)) return null;

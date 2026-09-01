@@ -18076,25 +18076,54 @@ test("AI·动作生成：动态距离变化后不根据固定 seatIndex 选择�
   assert.ok(targets.includes("C"));
 });
 
-test("AI·动作生成：破坏与掠夺枚举全部规则合法目标，窃取仍排除队友", () => {
+test("AI·动作生成：掠夺枚举全部规则合法目标，窃取仍排除队友", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   ally.hand.push(instance("block"));
   enemy.hand.push(instance("block"));
-  const destroy = instance("destroy"), plunder = instance("plunder");
-  actor.hand.push(destroy, plunder);
+  actor.hand.push(instance("plunder"));
   const { game }
     = makeGame([actor, ally, enemy]);
   const world = createInitialWorld(actor.id, game.state);
   const actions = game.aiController.actionGenerator.generate(world, actor.id);
-  for (const id of ["destroy", "plunder"]) {
-    const targetIds = actions.filter(
-      (action) => action.cardId === id
-    ).map((action) => action.targetIds[0]);
-    assert.deepEqual([...new Set(targetIds)].sort(), [ally.id, enemy.id].sort());
-  }
+  const targetIds = actions.filter(
+    (action) => action.cardId === "plunder"
+  ).map((action) => action.targetIds[0]);
+  assert.deepEqual([...new Set(targetIds)].sort(), [ally.id, enemy.id].sort());
   assert.ok(!ActionLegality.getSkillTargets(game, actor, ACTIVE_SKILLS.stealSkill).includes(ally));
+});
+
+test("AI·动作生成：非调律师不破坏队友手牌但保留其他资源候选和调律师例外", () => {
+  const actor = makePlayer("destroy-actor", 0, "dawn", "ai", 0),
+    tuner = makePlayer("destroy-tuner", 1, "dawn", "ai", 7),
+    ally = makePlayer("destroy-ally", 2, "dawn"),
+    enemy = makePlayer("destroy-enemy", 3, "dusk");
+  actor.hand.push(instance("destroy"));
+  tuner.hand.push(instance("destroy"));
+  ally.hand.push(instance("block"));
+  ally.equipment = instance("energyDevice");
+  enemy.hand.push(instance("block"));
+  const { game }
+    = makeGame([actor, tuner, ally, enemy]);
+  const actorActions = game.aiController.actionGenerator.generate(
+      createInitialWorld(actor.id, game.state), actor.id
+    ).filter((action) => action.cardId === "destroy"),
+    tunerActions = game.aiController.actionGenerator.generate(
+      createInitialWorld(tuner.id, game.state), tuner.id
+    ).filter((action) => action.cardId === "destroy");
+  assert.ok(!actorActions.some(
+    (action) => action.targetIds[0] === ally.id && action.selection.zone === "hand"
+  ));
+  assert.ok(actorActions.some(
+    (action) => action.targetIds[0] === enemy.id && action.selection.zone === "hand"
+  ));
+  assert.ok(actorActions.some(
+    (action) => action.targetIds[0] === ally.id && action.selection.zone === "equipment"
+  ));
+  assert.ok(tunerActions.some(
+    (action) => action.targetIds[0] === ally.id && action.selection.zone === "hand"
+  ));
 });
 
 test("AI·动作生成：使用同一距离合法性", () => {
