@@ -32,7 +32,7 @@ js/
 │  │  └─ worker/
 │  ├─ ui/
 │  └─ diagnostics/
-├─ ai/{domain,policy,search,simulation,state,value}
+├─ ai/
 ├─ composition/
 ├─ ui/
 ├─ audio/
@@ -122,8 +122,9 @@ Definitions are split by ownership instead of being reassembled into a mixed con
 
 - Domain fixed facts: `CardDefinitions`, `CharacterDefinitions`, `SkillDefinitions`, `StatusDefinitions`, `RulesetDefinition`.
 - UI labels, art and presentation metadata: `js/adapters/ui/*Presentation*.js`.
-- AI card values and character role metadata: `js/ai/value/CardValue.js` and `js/ai/policy/CharacterRoleMetadata.js`.
-- AI search and response policy: `js/ai/policy/AiRuntimePolicy.js`.
+- AI card/resource value：`js/ai/Evaluator/CardValue.js`。
+- AI state/value aggregation：`js/ai/Evaluator/{StateValue,Evaluator}.js`。
+- AI search scheduling/policy：`js/ai/Searcher/{Searcher,Pattern,Rng}.js`。
 - Application timing/debug policy: `js/application/policy/RuntimePolicy.js`.
 - Character selection metadata: `js/application/match/CharacterSelectionMetadata.js`.
 
