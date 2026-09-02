@@ -563,4 +563,31 @@ export function registerHistoryStatsTests(test) {
       await fixture.cleanup();
     }
   });
+
+  test("UI·历史档案：最近征途事实按 MVP、评分、回合顺序稳定对齐", async () => {
+    const fixture = await createHistoryFixture();
+    try {
+      let minute = 0;
+      const manager = new HistoryStatsManager({
+        storage: fixture.storage,
+        now: () => new Date(Date.UTC(2026, 8, 1, 8, minute++, 0))
+      });
+      await manager.recordMatchResult(matchResult({ gameId: "history-mvp", isMvp: true }), "human");
+      await manager.recordMatchResult(matchResult({ gameId: "history-no-mvp", isMvp: false }), "human");
+      const root = { innerHTML: "", addEventListener() {} };
+      const view = new HistoryArchiveView(root, manager, () => {});
+      await view.show();
+
+      const facts = [...root.innerHTML.matchAll(/<div class="history-journey-facts">([\s\S]*?)<\/div>/g)].map((match) => match[1]);
+      assert.equal(facts.length, 2);
+      assert.match(facts[0], /<i class="history-journey-mvp is-placeholder" aria-hidden="true">MVP<\/i><span>评分/);
+      assert.match(facts[1], /<i class="history-journey-mvp">MVP<\/i><span>评分/);
+      assert.match(facts[0], /<span>评分[\s\S]*<span>回合/);
+      assert.match(facts[1], /<span>评分[\s\S]*<span>回合/);
+      const css = await readFile(new URL("../css/history.css", import.meta.url), "utf8");
+      assert.match(css, /\.history-journey-facts i\.is-placeholder\s*\{[^}]*visibility:\s*hidden/s);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
 }

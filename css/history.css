@@ -85,6 +85,7 @@
 .history-journey-facts { grid-column: 3; grid-row: 2; display: flex; min-height: 17px; align-self: end; justify-self: end; gap: 8px; color: #77736a; font-size: 10px; white-space: nowrap; }
 .history-journey-facts b { color: #d5c6a9; font-size: 12px; }
 .history-journey-facts i { padding: 1px 6px; color: #17130c; border-radius: 3px; background: #caa659; font-style: normal; font-weight: 900; }
+.history-journey-facts i.is-placeholder { visibility: hidden; }
 .history-empty, .history-loading, .history-error { display: grid; place-items: center; align-content: center; min-height: 250px; padding: 30px; color: #918a7c; border: 1px dashed rgba(211, 175, 102, .28); text-align: center; }
 .history-empty { grid-column: 1 / -1; }
 .history-empty > span, .history-loading > span, .history-error > span { color: #b89555; font-size: 36px; }

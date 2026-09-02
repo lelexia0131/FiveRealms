@@ -169,7 +169,7 @@ function manualCardTemplate(definitionId) {
 基础牌、战术牌与装备章节。
 
 输入
-definitionId 数组与可选四列布局标记。
+definitionId 数组、可选四列布局标记与可选样式变体。
 
 输出
 卡牌图鉴 HTML。
@@ -186,8 +186,9 @@ manualCardTemplate。
 边界与不变量
 保留输入顺序，不筛改任何领域定义。
 */
-function cardGridTemplate(definitionIds, fourColumns = false) {
-  return `<div class="rulebook-card-grid${fourColumns ? " is-four" : ""}">${definitionIds.map(manualCardTemplate).join("")}</div>`;
+function cardGridTemplate(definitionIds, fourColumns = false, variant = "") {
+  const classes = ["rulebook-card-grid", fourColumns ? "is-four" : "", variant].filter(Boolean).join(" ");
+  return `<div class="${classes}">${definitionIds.map(manualCardTemplate).join("")}</div>`;
 }
 
 /*
@@ -301,7 +302,7 @@ function characterPage(number, ids, title, kicker) {
 
 /*
 功能
-构建全部二十二页插画式规则书内容。
+构建全部二十三页插画式规则书内容。
 
 调用方
 RulebookView.render 与 UI 回归测试。
@@ -441,7 +442,7 @@ export function buildRulebookPages() {
       id:"equipment",
       title:"唯一装备槽",
       html:`${pageHead(11, "EQUIPMENT", "装上一件，替换一件", "装备牌从手牌使用后留在角色面板的装备区；每名角色只有一个装备槽。")}
-        ${cardGridTemplate(CARD_GROUPS.equipment, true)}
+        ${cardGridTemplate(CARD_GROUPS.equipment, false, "is-equipment")}
         <div class="rulebook-rule-strip">
           <div><strong>装备与替换</strong><span>打出新装备时立即生效，并把原装备移入弃牌堆。</span></div>
           <div><strong>被取得或破坏</strong><span>掠夺、破坏、借势与窃取会按各自规则移动或弃置装备；离开装备槽后效果结束。</span></div>
@@ -542,6 +543,27 @@ export function buildRulebookPages() {
           <article class="comic-panel"><img src="./assets/cards/assault.svg" alt=""><span class="comic-number">✓</span><div class="comic-caption"><strong>目标先看距离</strong><br>突袭通常只能指定距离 1 的敌人。</div></article>
           <article class="comic-panel"><img src="./assets/cards/counter.svg" alt=""><span class="comic-number">✓</span><div class="comic-caption"><strong>牌要看使用时机</strong><br>格挡、反制、濒死调息都在窗口中使用。</div></article>
           <article class="comic-panel"><img src="./assets/ui/recover-glyph.svg" alt=""><span class="comic-number">✓</span><div class="comic-caption"><strong>结束前看 HP</strong><br>当前 HP 就是回合末手牌上限。</div></article>
+        </div>`
+    },
+    {
+      id:"horizontal-card-view",
+      title:"横向卡牌查看",
+      html:`${pageHead(23, "HORIZONTAL CARD VIEW", "横向牌区，左右滑动查看", "当卡牌沿水平方向排列时，未显示的剩余卡牌仍在同一牌区内等待查看。")}
+        <div class="rulebook-horizontal-stage">
+          <div class="rulebook-horizontal-rail" aria-hidden="true">
+            <img src="./assets/cards/assault.svg" alt="">
+            <img src="./assets/cards/block.svg" alt="">
+            <img src="./assets/cards/charge.svg" alt="">
+            <img src="./assets/cards/transfer.svg" alt="">
+            <img src="./assets/cards/telescope.svg" alt="">
+            <img src="./assets/cards/barrier-device.svg" alt="">
+          </div>
+          <div class="rulebook-horizontal-direction" aria-hidden="true"><span>←</span><strong>左右拖动 / 滑动</strong><span>→</span></div>
+        </div>
+        <div class="rulebook-rule-strip">
+          <div><strong>所有横向卡牌区</strong><span>自己的手牌区、对手手牌区、隐藏牌选择区与私密展示区，都可以用鼠标左右拖动或滑动查看当前未显示的牌。</span></div>
+          <div><strong>所有横向卡牌池</strong><span>公共牌池等沿水平方向排列的卡牌池，同样可以左右拖动或滑动，查看牌区中暂时未显示的剩余卡牌。</span></div>
+          <div><strong>牌面不因查看改变</strong><span>拖动或滑动只改变当前可见位置，不改变卡牌顺序、归属、公开状态或结算结果。</span></div>
         </div>`
     }
   ];

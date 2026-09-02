@@ -38200,9 +38200,9 @@ registerHistoryStatsTests(test);
 
 // ---- 开始界面与入局说明 ----
 
-test("UI·入局说明：二十二页目录覆盖完整新手路径且页面 ID 唯一", () => {
+test("UI·入局说明：二十三页目录覆盖完整新手路径且页面 ID 唯一", () => {
   const pages = buildRulebookPages();
-  assert.equal(pages.length, 22);
+  assert.equal(pages.length, 23);
   assert.equal(new Set(pages.map((page) => page.id)).size, pages.length);
   assert.deepEqual(
     pages.map((page) => page.id),
@@ -38211,14 +38211,14 @@ test("UI·入局说明：二十二页目录覆盖完整新手路径且页面 ID 
       "assault-response", "control-tactics", "pressure-tactics", "supply-tactics",
       "equipment", "distance", "resources", "characters-one", "characters-two",
       "characters-three", "characters-four", "judgment", "death", "hidden-information",
-      "example-one", "example-two"
+      "example-one", "example-two", "horizontal-card-view"
     ]
   );
   const content = pages.map((page) => `${page.title}\n${page.html}`).join("\n");
   for (const required of [
     "晨星 VS 暮影", "战斗界面解剖", "完整回合流程", "卡牌入门", "突袭与响应",
     "唯一装备槽", "存活环与距离", "生命、护盾与能量", "濒死、阵亡与观战",
-    "隐藏与公开信息", "从摸牌到一次格挡。"
+    "隐藏与公开信息", "从摸牌到一次格挡。", "横向牌区，左右滑动查看"
   ]) assert.match(content, new RegExp(required));
 });
 
@@ -38264,6 +38264,9 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(pages["hidden-information"], /hidden-card-back is-compact/);
   assert.match(pages["hidden-information"], /不知道具体牌面。/);
   assert.doesNotMatch(pages["hidden-information"], /FiveRealms 不会因为电脑|definition|类别|实体手牌/);
+  assert.match(pages.equipment, /rulebook-card-grid is-equipment/);
+  assert.match(pages["horizontal-card-view"], /自己的手牌区、对手手牌区、隐藏牌选择区与私密展示区/);
+  assert.match(pages["horizontal-card-view"], /公共牌池/);
   assert.match(pages["example-one"], /<h2>从摸牌到一次格挡。<\/h2>/);
   assert.doesNotMatch(pages["example-one"], /漫画实战：/);
 });
@@ -38332,6 +38335,9 @@ test("UI·入局说明：开始页入口、分页交互与移动端布局使用�
   assert.match(css, /\.anatomy-callout b\s*\{[^}]*color:\s*#fff/s);
   assert.match(css, /\.callout-two\s*\{[^}]*top:\s*190px[^}]*color:\s*var\(--text-primary\)/s);
   assert.match(css, /\.callout-six\s*\{[^}]*color:\s*var\(--text-primary\)/s);
+  assert.match(css, /\.rulebook-card-grid\.is-equipment\s*\{[^}]*grid-template-columns:\s*repeat\(3/s);
+  assert.match(css, /\.rulebook-card-grid\.is-equipment\s*\{[^}]*grid-auto-rows:\s*190px/s);
+  assert.match(css, /\.rulebook-hidden-card \.hidden-card-back\.is-compact\s*\{[^}]*width:\s*150px[^}]*height:\s*210px/s);
   assert.doesNotMatch(css, /\.rulebook-card-back\b|\.anatomy-pile i\b/);
   assert.doesNotMatch([index, manager, view, css].join("\n"), /\?build=/);
 });
@@ -39007,8 +39013,9 @@ test("UI·手牌：目标选择期间来源牌保持选中并在状态清除后�
   const human = makePlayer("selected-source-human", 0, "dawn", "human"),
     enemy = makePlayer("selected-source-enemy", 1, "dusk"),
     card = instance("plunder"),
+    otherCard = instance("block"),
     { game } = makeGame([human, enemy]);
-  human.hand.push(card);
+  human.hand.push(card, otherCard);
   const hand = { innerHTML: "", scrollLeft: 0, scrollWidth: 0, clientWidth: 0 },
     ui = {
       discardState: null,
@@ -39025,6 +39032,26 @@ test("UI·手牌：目标选择期间来源牌保持选中并在状态清除后�
   UIManager.prototype.renderHand.call(ui, game, human);
   assert.doesNotMatch(hand.innerHTML, /class="hand-card[^"]*is-selected/);
   assert.match(hand.innerHTML, /aria-pressed="false"/);
+});
+
+test("UI·手牌：弃牌阶段继续按 selectedIds 保持多选高亮", () => {
+  const human = makePlayer("discard-selected-human", 0, "dawn", "human"),
+    enemy = makePlayer("discard-selected-enemy", 1, "dusk"),
+    selectedCard = instance("plunder"),
+    otherCard = instance("block"),
+    { game } = makeGame([human, enemy]);
+  human.hand.push(selectedCard, otherCard);
+  const hand = { innerHTML: "", scrollLeft: 0, scrollWidth: 0, clientWidth: 0 },
+    ui = {
+      discardState: { selectedIds: new Set([selectedCard.id]), count: 1 },
+      targetState: null,
+      isInteractionActive() { return Boolean(this.discardState); },
+      elements: { human_hand: hand, hand_hint: { textContent: "" } }
+  };
+
+  UIManager.prototype.renderHand.call(ui, game, human);
+  assert.match(hand.innerHTML, new RegExp(`<button(?=[^>]*data-card-id="${selectedCard.id}")(?=[^>]*is-selected)[^>]*>`));
+  assert.match(hand.innerHTML, new RegExp(`<button(?=[^>]*data-card-id="${otherCard.id}")(?!(?:[^>]*is-selected))[^>]*>`));
 });
 
 test("UI·横向卡牌拖拽：五类真实卡牌容器共享拖动规则且战场手牌隐藏滑条", async () => {
@@ -39586,19 +39613,15 @@ test("UI·手牌：人物席、中央消息区和真人区各占独立网格行�
   );
 });
 
-test("UI·手牌：对手手牌隐藏滑条且阵营与行动徽章位于裁切边界内", async () => {
+test("UI·手牌：对手手牌隐藏滑条且行动状态只保留文字提示", async () => {
   const css = await readFile(projectFile("css/characters.css"), "utf8");
   assert.match(css, /\.cpu-seat \.seat-main\s*\{[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto/s);
   assert.match(css, /\.opponent-hand-strip\s*\{[^}]*height:\s*197px[^}]*overflow-x:\s*auto/s);
   assert.match(css, /\.player-seat\.is-ally::before[^}]*\{[^}]*top:\s*6px[^}]*left:\s*6px/s);
-  assert.match(css, /\.player-seat\.is-active::after\s*\{[^}]*bottom:\s*8px/s);
   assert.match(css, /\.cpu-seat\.is-active\s*\{[^}]*transform:\s*none/s);
   assert.doesNotMatch(css, /\.cpu-seat\.is-active \.seat-main\s*\{[^}]*padding-bottom/s);
-  assert.match(css, /\.cpu-seat\.is-active::after\s*\{[^}]*bottom:\s*212px/s);
-  assert.match(
-    css,
-    /@media \(max-height:\s*1080px\)[\s\S]*\.cpu-seat\.is-active::after\s*\{[^}]*bottom:\s*calc\(clamp\(155px,\s*20vh,\s*183px\)\s*\+\s*6px\)/
-  );
+  assert.doesNotMatch(css, /\.player-seat\.is-active::after|\.cpu-seat\.is-active::after/);
+  assert.doesNotMatch(css, /行动中/);
 });
 
 test("UI·手牌：主玩家人物框与手牌框等高且信息纵向填满", async () => {
