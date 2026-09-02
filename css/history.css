@@ -82,9 +82,10 @@
 .history-team-mark.is-dusk { color: #d27b87; background: rgba(154, 63, 75, .17); }
 .history-outcome { grid-column: 3; grid-row: 1; align-self: start; justify-self: end; color: #b79c65; font: 700 18px/1 var(--serif); }
 .history-journey-card.is-defeat .history-outcome { color: #a76670; }
-.history-journey-facts { grid-column: 3; grid-row: 2; display: flex; min-height: 17px; align-self: end; justify-self: end; gap: 8px; color: #77736a; font-size: 10px; white-space: nowrap; }
-.history-journey-facts b { color: #d5c6a9; font-size: 12px; }
-.history-journey-facts i { padding: 1px 6px; color: #17130c; border-radius: 3px; background: #caa659; font-style: normal; font-weight: 900; }
+.history-journey-facts { grid-column: 3; grid-row: 2; display: grid; grid-template-columns: 32px 58px 48px; min-height: 17px; align-self: end; justify-self: end; gap: 8px; color: #77736a; font-size: 10px; white-space: nowrap; }
+.history-journey-facts b { color: #d5c6a9; font-size: 12px; font-variant-numeric: tabular-nums; }
+.history-journey-facts i { box-sizing: border-box; width: 32px; padding: 1px 0; color: #17130c; border-radius: 3px; background: #caa659; font-style: normal; font-weight: 900; text-align: center; }
+.history-journey-score, .history-journey-rounds { width: 100%; }
 .history-journey-facts i.is-placeholder { visibility: hidden; }
 .history-empty, .history-loading, .history-error { display: grid; place-items: center; align-content: center; min-height: 250px; padding: 30px; color: #918a7c; border: 1px dashed rgba(211, 175, 102, .28); text-align: center; }
 .history-empty { grid-column: 1 / -1; }
@@ -120,5 +121,5 @@
   .history-journey-card > img { width: 64px; height: 82px; }
   .history-journey-main { grid-column: 2; grid-row: 1; padding-right: 58px; }
   .history-outcome { position: absolute; right: 12px; top: 13px; }
-  .history-journey-facts { grid-column: 2; grid-row: 2; justify-self: start; }
+  .history-journey-facts { grid-column: 2; grid-row: 2; justify-self: end; }
 }

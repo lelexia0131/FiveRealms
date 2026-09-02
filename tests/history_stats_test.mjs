@@ -572,19 +572,22 @@ export function registerHistoryStatsTests(test) {
         storage: fixture.storage,
         now: () => new Date(Date.UTC(2026, 8, 1, 8, minute++, 0))
       });
-      await manager.recordMatchResult(matchResult({ gameId: "history-mvp", isMvp: true }), "human");
-      await manager.recordMatchResult(matchResult({ gameId: "history-no-mvp", isMvp: false }), "human");
+      await manager.recordMatchResult(matchResult({ gameId: "history-mvp", effectiveRounds: 11, isMvp: true }), "human");
+      await manager.recordMatchResult(matchResult({ gameId: "history-no-mvp", effectiveRounds: 3, isMvp: false }), "human");
       const root = { innerHTML: "", addEventListener() {} };
       const view = new HistoryArchiveView(root, manager, () => {});
       await view.show();
 
       const facts = [...root.innerHTML.matchAll(/<div class="history-journey-facts">([\s\S]*?)<\/div>/g)].map((match) => match[1]);
       assert.equal(facts.length, 2);
-      assert.match(facts[0], /<i class="history-journey-mvp is-placeholder" aria-hidden="true">MVP<\/i><span>评分/);
-      assert.match(facts[1], /<i class="history-journey-mvp">MVP<\/i><span>评分/);
-      assert.match(facts[0], /<span>评分[\s\S]*<span>回合/);
-      assert.match(facts[1], /<span>评分[\s\S]*<span>回合/);
+      assert.match(facts[0], /<i class="history-journey-mvp is-placeholder" aria-hidden="true">MVP<\/i><span class="history-journey-score">评分/);
+      assert.match(facts[1], /<i class="history-journey-mvp">MVP<\/i><span class="history-journey-score">评分/);
+      assert.match(facts[0], /history-journey-score[\s\S]*history-journey-rounds">回合 <b>3<\/b>/);
+      assert.match(facts[1], /history-journey-score[\s\S]*history-journey-rounds">回合 <b>11<\/b>/);
       const css = await readFile(new URL("../css/history.css", import.meta.url), "utf8");
+      assert.match(css, /\.history-journey-facts\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*32px 58px 48px;[^}]*justify-self:\s*end/s);
+      assert.match(css, /\.history-journey-score,\s*\.history-journey-rounds\s*\{[^}]*width:\s*100%/s);
+      assert.match(css, /\.history-journey-facts b\s*\{[^}]*font-variant-numeric:\s*tabular-nums/s);
       assert.match(css, /\.history-journey-facts i\.is-placeholder\s*\{[^}]*visibility:\s*hidden/s);
     } finally {
       await fixture.cleanup();

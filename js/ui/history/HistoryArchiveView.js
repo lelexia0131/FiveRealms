@@ -231,7 +231,7 @@ function renderRecordCard(record) {
     <img src="${escapeHtml(portrait)}" alt="" aria-hidden="true">
     <div class="history-journey-main"><small>${escapeHtml(formatArchiveTime(record.timestamp))}</small><h3>${escapeHtml(record.characterName)}</h3><span class="history-team-mark is-${escapeHtml(record.teamId)}">${teamName}</span></div>
     <strong class="history-outcome">${record.won ? "凯旋" : "陨落"}</strong>
-    <div class="history-journey-facts"><i class="history-journey-mvp${record.isMvp ? "" : " is-placeholder"}"${record.isMvp ? "" : " aria-hidden=\"true\""}>MVP</i><span>评分 <b>${formatHighestScore(record.score)}</b></span><span>回合 <b>${record.rounds}</b></span></div>
+    <div class="history-journey-facts"><i class="history-journey-mvp${record.isMvp ? "" : " is-placeholder"}"${record.isMvp ? "" : " aria-hidden=\"true\""}>MVP</i><span class="history-journey-score">评分 <b>${formatHighestScore(record.score)}</b></span><span class="history-journey-rounds">回合 <b>${record.rounds}</b></span></div>
   </article>`;
 }
 
