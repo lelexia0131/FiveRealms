@@ -2,7 +2,7 @@
 .hand-card::before { content: ""; position: absolute; inset: 4px; pointer-events: none; border: 1px solid color-mix(in srgb, var(--card-accent), #fff 58%); border-radius: 11px; }
 .hand-card::after { content: ""; position: absolute; top: 0; left: 18%; width: 64%; height: 3px; border-radius: 0 0 6px 6px; background: var(--card-accent); }
 .hand-card:hover, .hand-card:focus-visible { z-index: 5; transform: translateY(-13px) rotate(-.3deg); box-shadow: 0 20px 32px rgba(68,50,27,.24), var(--focus-ring); }
-.hand-card.is-selected { transform: translateY(-17px); box-shadow: 0 0 0 4px rgba(181,138,59,.4), 0 20px 34px rgba(68,50,27,.26); }
+.hand-card.is-selected { outline: 3px solid var(--gold-soft); transform: translateY(-17px); box-shadow: 0 0 0 3px var(--gold), 0 20px 34px rgba(68,50,27,.26); }
 .hand-card.is-disabled { cursor: not-allowed; filter: saturate(.46) contrast(.94); background: linear-gradient(145deg, #f6f2e8, #ddd6c9); }
 .hand-card.is-disabled:hover, .hand-card.is-disabled:focus-visible { transform: translateY(-6px); }
 .card-topline { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 2px 4px; }
@@ -21,6 +21,9 @@
 .hand-card .card-rules.is-description-long .card-flavor { display: none; }
 .hand-card .card-rules.is-description-very-long .card-description { font-size: 9px; line-height: 1.18; }
 .hand-card .card-rules.is-description-very-long .card-flavor { display: none; }
+/* 真人主战场隐藏风味短句；规则正文及共享到其他界面的完整牌面保持不变。 */
+.human-hand .card-flavor { display: none; }
+.human-hand .card-rules { justify-content: flex-start; padding: 4px 5px; }
 .frame-strike .card-art, .frame-impact .card-art { clip-path: polygon(0 0, 100% 0, 94% 100%, 6% 100%); }
 .frame-guard::before, .frame-ward::before { border-width: 2px; }
 .frame-seal .card-crest, .frame-oracle .card-crest { border-radius: 8px; transform: rotate(6deg); }
@@ -88,6 +91,22 @@
   .card-flavor { display: none; }
   .resolving-card { min-height: 76px; grid-template-columns: 62px minmax(0, 1fr); }
   .resolving-card > img { width: 60px; height: 60px; }
+}
+
+@media (max-height: 1080px) {
+  .human-hand .hand-card { flex: 0 0 140px; width: 140px; height: 196px; aspect-ratio: auto; grid-template-rows: 31px 68px minmax(0, 1fr) !important; padding: 5px; }
+  .human-hand .hand-card > .card-art { block-size: 68px !important; min-block-size: 68px !important; max-block-size: 68px !important; }
+  .human-hand .hand-card:hover, .human-hand .hand-card:focus-visible { transform: translateY(-9px) rotate(-.3deg); }
+  .human-hand .hand-card.is-disabled:hover, .human-hand .hand-card.is-disabled:focus-visible { transform: translateY(-4px); }
+  .human-hand .hand-card.is-selected,
+  .human-hand .hand-card.is-selected:hover,
+  .human-hand .hand-card.is-selected:focus-visible { z-index: 4; transform: translateY(-12px); }
+  .human-hand .card-name { font-size: 17px; }
+  .human-hand .card-category { font-size: 11px; }
+  .command-deck .resolving-card { min-height: 64px; grid-template-columns: 54px minmax(0, 1fr); gap: 8px; padding: 5px; }
+  .command-deck .resolving-card > img { width: 50px; height: 50px; }
+  .command-deck .resolving-card.is-skill, .command-deck .resolving-card.is-empty { grid-template-columns: 48px minmax(0, 1fr); }
+  .command-deck .skill-sigil { width: 44px; height: 44px; font-size: 21px; }
 }
 
 /* 牌面插画高度是跨卡牌不变量。放在文件末尾以阻止描述长度规则覆盖它。 */

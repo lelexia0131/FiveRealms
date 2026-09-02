@@ -1072,7 +1072,7 @@ export class UIManager {
   无返回值。
 
   读取状态
-  human.hand、discardState、交互锁、当前 scrollLeft 与 ActionLegality.canPlayCard。
+  human.hand、discardState、targetState 来源卡、交互锁、当前 scrollLeft 与 ActionLegality.canPlayCard。
 
   写入状态
   更新真人手牌和提示 DOM。
@@ -1081,7 +1081,8 @@ export class UIManager {
   isInteractionActive、ActionLegality.canPlayCard、handCardTemplate、restoreHorizontalCardScroll。
 
   边界与不变量
-  牌的可用性必须来自合法性查询；同一 gameId 才保留位置，新对局首帧从初始位置开始。
+  牌的可用性必须来自合法性查询；目标选择期间来源牌持续保持选中，状态清空后同步取消；
+  同一 gameId 才保留位置，新对局首帧从初始位置开始。
   */
   renderHand(game, human, { preserveScroll = true } = {}) {
     const inDiscard = Boolean(this.discardState);
@@ -1090,7 +1091,8 @@ export class UIManager {
     const previousScrollLeft = preserveScroll ? hand.scrollLeft : 0;
     hand.innerHTML = human.hand.map((card) => {
       const playable = ActionLegality.canPlayCard(game, human, card).ok;
-      const selected = this.discardState?.selectedIds.has(card.id);
+      const selected = this.discardState?.selectedIds.has(card.id)
+        || this.targetState?.meta?.card?.id === card.id;
       const disabled = !inDiscard && (!playable || blockedByInteraction || game.actionLocked);
       return handCardTemplate(card, { selected, disabled });
     }).join("") || '<div class="empty-hand"><span aria-hidden="true">◇</span><strong>手牌为空</strong><small>下一次摸牌会从牌堆飞入这里</small></div>';

@@ -39003,7 +39003,31 @@ test("UI·手牌池：顶部只显示当前动态手牌数量", () => {
   assert.equal(handHint.textContent, "3张手牌");
 });
 
-test("UI·横向卡牌拖拽：五类真实卡牌容器共享拖动规则与原生 scrollbar", async () => {
+test("UI·手牌：目标选择期间来源牌保持选中并在状态清除后复位", () => {
+  const human = makePlayer("selected-source-human", 0, "dawn", "human"),
+    enemy = makePlayer("selected-source-enemy", 1, "dusk"),
+    card = instance("plunder"),
+    { game } = makeGame([human, enemy]);
+  human.hand.push(card);
+  const hand = { innerHTML: "", scrollLeft: 0, scrollWidth: 0, clientWidth: 0 },
+    ui = {
+      discardState: null,
+      targetState: { meta: { card } },
+      isInteractionActive() { return Boolean(this.targetState); },
+      elements: { human_hand: hand, hand_hint: { textContent: "" } }
+    };
+
+  UIManager.prototype.renderHand.call(ui, game, human);
+  assert.match(hand.innerHTML, /class="hand-card[^"]*is-selected/);
+  assert.match(hand.innerHTML, /aria-pressed="true"/);
+
+  ui.targetState = null;
+  UIManager.prototype.renderHand.call(ui, game, human);
+  assert.doesNotMatch(hand.innerHTML, /class="hand-card[^"]*is-selected/);
+  assert.match(hand.innerHTML, /aria-pressed="false"/);
+});
+
+test("UI·横向卡牌拖拽：五类真实卡牌容器共享拖动规则且战场手牌隐藏滑条", async () => {
   const index = await readFile(projectFile("index.html"), "utf8"),
     layout = await readFile(projectFile("css/layout.css"), "utf8"),
     characters = await readFile(projectFile("css/characters.css"), "utf8"),
@@ -39043,8 +39067,10 @@ test("UI·横向卡牌拖拽：五类真实卡牌容器共享拖动规则与原�
   const publicElement = { innerHTML: "", classList: { add() { }, remove() { } } };
   new PublicPoolView(publicElement).show([instance("mutualBenefit")]);
   assert.match(publicElement.innerHTML, /class="tableau-cards"/);
-  assert.match(layout, /\.human-hand\s*\{[^}]*overflow-x:\s*auto/s);
-  assert.match(characters, /\.opponent-hand-strip\s*\{[^}]*overflow-x:\s*auto/s);
+  assert.match(layout, /\.human-hand\s*\{[^}]*overflow-x:\s*auto[^}]*scrollbar-width:\s*none/s);
+  assert.match(layout, /\.human-hand::-webkit-scrollbar\s*\{[^}]*display:\s*none/s);
+  assert.match(characters, /\.opponent-hand-strip\s*\{[^}]*overflow-x:\s*auto[^}]*scrollbar-width:\s*none/s);
+  assert.match(characters, /\.opponent-hand-strip::-webkit-scrollbar\s*\{[^}]*display:\s*none/s);
   assert.match(cardsCss, /\.hidden-card-grid,\s*\.private-card-grid,\s*\.tableau-cards\s*\{[^}]*overflow-x:\s*auto/s);
   for (const className of [
     "human-hand", "opponent-hand-strip", "hidden-card-grid", "private-card-grid", "tableau-cards"
@@ -39530,58 +39556,137 @@ test("UI·手牌：已知对手手牌保留中文实体卡层级、删除英文�
   assert.match(markup, new RegExp(card.description.slice(0, 6)));
   assert.match(markup, new RegExp(presentation.flavorText.slice(0, 4)));
   assert.match(
-    css, /\.opponent-card-slot\s*\{[^}]*flex:\s*0\s+0\s+124px[^}]*width:\s*124px[^}]*height:\s*174px/s
+    css, /\.opponent-card-slot\s*\{[^}]*flex:\s*0\s+0\s+132px[^}]*width:\s*132px[^}]*height:\s*185px/s
+  );
+  assert.match(
+    css,
+    /\.opponent-hand-strip \.hidden-card-back\.is-compact\s*\{[^}]*flex-basis:\s*132px[^}]*width:\s*132px[^}]*height:\s*185px/s
+  );
+  assert.match(
+    css,
+    /\.opponent-card-slot::after\s*\{[^}]*left:\s*18%[^}]*width:\s*64%[^}]*height:\s*3px[^}]*background:\s*var\(--card-accent\)/s
   );
 });
 
-test("UI·手牌：人物席、中央消息区和真人区各占独立网格行且低高度改为内部滚动", async () => {
+test("UI·手牌：人物席、中央消息区和真人区各占独立网格行且桌面高度动态压缩", async () => {
   const layoutCss = await readFile(projectFile("css/layout.css"), "utf8"),
     characterCss = await readFile(projectFile("css/characters.css"), "utf8");
   assert.match(
     layoutCss,
-    /\.battlefield\s*\{[^}]*grid-template-rows:\s*minmax\(480px,[^}]*minmax\(174px,[^}]*minmax\(270px,[^}]*overflow-y:\s*auto/s
+    /@media \(max-height:\s*1080px\)[\s\S]*\.battlefield\s*\{[^}]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
   );
   assert.match(layoutCss, /\.cpu-grid\s*\{[^}]*overflow:\s*hidden/s);
-  assert.match(layoutCss, /\.command-deck\s*\{[^}]*min-height:\s*174px/s);
+  assert.match(
+    layoutCss,
+    /@media \(max-height:\s*1080px\)[\s\S]*\.command-deck\s*\{[^}]*max-width:\s*1120px[^}]*min-height:\s*130px[^}]*grid-template-rows:\s*minmax\(67px,\s*1fr\)/
+  );
   assert.match(
     characterCss,
-    /\.player-seat\s*\{[^}]*grid-template-rows:\s*minmax\(245px,[^}]*202px[^}]*overflow:\s*hidden/s
+    /@media \(max-height:\s*1080px\)[\s\S]*\.player-seat\s*\{[^}]*grid-template-rows:\s*clamp\(185px,\s*21vh,\s*195px\)\s+clamp\(153px,\s*19\.7vh,\s*178px\)[^}]*align-content:\s*start/
   );
 });
 
-test("UI·手牌：对手手牌滚动条预留独立高度且阵营与行动徽章位于裁切边界内", async () => {
+test("UI·手牌：对手手牌隐藏滑条且阵营与行动徽章位于裁切边界内", async () => {
   const css = await readFile(projectFile("css/characters.css"), "utf8");
+  assert.match(css, /\.cpu-seat \.seat-main\s*\{[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto/s);
   assert.match(css, /\.opponent-hand-strip\s*\{[^}]*height:\s*197px[^}]*overflow-x:\s*auto/s);
   assert.match(css, /\.player-seat\.is-ally::before[^}]*\{[^}]*top:\s*6px[^}]*left:\s*6px/s);
   assert.match(css, /\.player-seat\.is-active::after\s*\{[^}]*bottom:\s*8px/s);
-  assert.match(css, /\.cpu-seat\.is-active::after\s*\{[^}]*bottom:\s*206px/s);
+  assert.match(css, /\.cpu-seat\.is-active\s*\{[^}]*transform:\s*none/s);
+  assert.doesNotMatch(css, /\.cpu-seat\.is-active \.seat-main\s*\{[^}]*padding-bottom/s);
+  assert.match(css, /\.cpu-seat\.is-active::after\s*\{[^}]*bottom:\s*212px/s);
+  assert.match(
+    css,
+    /@media \(max-height:\s*1080px\)[\s\S]*\.cpu-seat\.is-active::after\s*\{[^}]*bottom:\s*calc\(clamp\(155px,\s*20vh,\s*183px\)\s*\+\s*6px\)/
+  );
 });
 
-test("UI·手牌：主玩家人物框与手牌框在 human-zone 内自然等高且行动徽标空间常驻", async () => {
+test("UI·手牌：主玩家人物框与手牌框等高且信息纵向填满", async () => {
   const layout = await readFile(projectFile("css/layout.css"), "utf8"),
     css = await readFile(projectFile("css/characters.css"), "utf8");
   assert.match(layout, /\.human-zone\s*\{[^}]*align-content:\s*start/s);
   assert.doesNotMatch(layout, /\.human-panel\s*\{[^}]*align-self:\s*start/s);
   assert.match(css, /\.human-seat\s*\{[^}]*height:\s*100%/s);
+  assert.match(css, /\.human-seat \.seat-main\s*\{[^}]*justify-content:\s*space-between/s);
   assert.match(css, /\.player-seat\.human-seat\s*\{[^}]*padding-bottom:\s*32px/s);
   assert.doesNotMatch(css, /\.human-seat\.is-active\s*\{[^}]*padding-bottom/s);
 });
 
-test("UI·手牌：低高度战场压缩为单屏且真人手牌顶部保留安全间距", async () => {
+test("UI·手牌：常见桌面高度压缩为单屏且真人手牌溢出时保持固定尺寸", async () => {
   const layout = await readFile(projectFile("css/layout.css"), "utf8"),
     cards = await readFile(projectFile("css/cards.css"), "utf8"),
     characters = await readFile(projectFile("css/characters.css"), "utf8");
   assert.match(
     layout,
-    /@media \(max-height:\s*920px\)[\s\S]*grid-template-rows:\s*410px\s+135px\s+minmax\(250px,\s*1fr\)/
+    /@media \(max-height:\s*1080px\)[\s\S]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
   );
-  assert.match(layout, /\.human-hand\s*\{[^}]*padding:\s*4px\s+5px\s+7px/s);
   assert.match(
-    cards, /@media \(max-height:\s*920px\)[\s\S]*\.hand-card\s*\{[^}]*clamp\(136px,\s*8\.5vw,\s*148px\)/
+    cards,
+    /@media \(max-height:\s*1080px\)[\s\S]*\.human-hand \.hand-card\s*\{[^}]*flex:\s*0\s+0\s+140px[^}]*width:\s*140px[^}]*height:\s*196px/
+  );
+  assert.match(
+    cards,
+    /\.human-hand \.hand-card:hover,[^}]*\{[^}]*transform:\s*translateY\(-9px\)/s
+  );
+  assert.match(
+    cards,
+    /\.hand-card\.is-selected\s*\{[^}]*outline:\s*3px\s+solid\s+var\(--gold-soft\)[^}]*box-shadow:\s*0\s+0\s+0\s+3px\s+var\(--gold\)/s
+  );
+  assert.match(
+    cards,
+    /\.human-hand \.hand-card\.is-selected,[^}]*\.human-hand \.hand-card\.is-selected:hover,[^}]*\{[^}]*z-index:\s*4[^}]*transform:\s*translateY\(-12px\)/s
+  );
+  assert.match(
+    layout,
+    /\.hand-wrap\s*\{[^}]*isolation:\s*isolate[^}]*overflow:\s*hidden/s
+  );
+  assert.match(
+    layout,
+    /\.hand-heading\s*\{[^}]*z-index:\s*2/s
+  );
+  assert.match(
+    layout,
+    /\.human-hand\s*\{[^}]*z-index:\s*1/s
   );
   assert.match(
     characters,
-    /@media \(max-height:\s*920px\)[\s\S]*grid-template-rows:\s*minmax\(194px,\s*1fr\)\s+197px/
+    /@media \(max-height:\s*1080px\)[\s\S]*\.opponent-hand-strip\s*\{[^}]*height:\s*clamp\(153px,\s*18\.7vh,\s*176px\)/
+  );
+  assert.match(
+    characters,
+    /@media \(max-height:\s*1080px\)[\s\S]*\.opponent-card-slot,[\s\S]*?\.opponent-hand-strip \.hidden-card-back\.is-compact\s*\{[^}]*flex-basis:\s*clamp\(103px,\s*12\.6vh,\s*118px\)[^}]*height:\s*clamp\(144px,\s*17\.64vh,\s*165px\)/
+  );
+  assert.match(
+    characters,
+    /\.resource-pill\s*\{[^}]*display:\s*grid[^}]*justify-items:\s*center/
+  );
+  assert.match(
+    characters,
+    /\.cpu-seat \.resource-pill\s*\{[^}]*min-height:\s*32px[^}]*padding:\s*3px/
+  );
+  assert.doesNotMatch(
+    characters,
+    /\.cpu-seat \.resource-pill\s*\{[^}]*display:\s*flex/
+  );
+  assert.match(
+    characters,
+    /@media \(max-height:\s*1080px\)[\s\S]*\.opponent-card-slot\s*\{[^}]*grid-template-rows:\s*clamp\(23px,\s*2\.8vh,\s*26px\)\s+clamp\(50px,\s*6\.1vh,\s*57px\)\s+minmax\(0,\s*1fr\)/
+  );
+  assert.match(
+    characters,
+    /@media \(max-height:\s*1080px\)[\s\S]*\.opponent-card-slot\s*>\s*\.card-art\s*\{[^}]*height:\s*clamp\(50px,\s*6\.1vh,\s*57px\)/
+  );
+  assert.match(
+    characters,
+    /@media \(max-height:\s*1080px\)[\s\S]*\.opponent-card-slot \.card-name\s*\{[^}]*font-size:\s*clamp\(13px,\s*1\.5vh,\s*14px\)/
+  );
+  assert.match(
+    characters,
+    /@media \(max-height:\s*1080px\)[\s\S]*\.opponent-card-slot \.card-crest\s*\{[^}]*width:\s*clamp\(22px,\s*2\.6vh,\s*25px\)[^}]*height:\s*clamp\(22px,\s*2\.6vh,\s*25px\)/
+  );
+  assert.match(
+    characters,
+    /@media \(max-height:\s*1080px\)[\s\S]*\.opponent-card-slot \.card-description\s*\{[^}]*font-size:\s*clamp\(8px,\s*1vh,\s*9px\)[^}]*line-height:\s*1\.32/
   );
 });
 
@@ -41740,8 +41845,8 @@ test("UI·布局样式：牌面 CSS 将长描述标记限制在文字区且不�
     css, /\.\w*-?card(?:-slot)?\.is-description-(?:very-)?long\s*\{[^}]*grid-template-rows/s
   );
   assert.match(cards, /overflow-wrap:\s*anywhere/);
-  const lowHeight = cards.match(/@media \(max-height:\s*920px\)[\s\S]*$/)?.[0] ?? "";
-  assert.doesNotMatch(lowHeight, /\.card-description\s*\{[^}]*display:\s*none/s);
+  assert.match(cards, /\.human-hand \.card-flavor\s*\{[^}]*display:\s*none/s);
+  assert.doesNotMatch(cards, /(^|\n)\.card-description\s*\{[^}]*display:\s*none/s);
   assert.doesNotMatch(cards, /\.card-description\s*\{[^}]*overflow:\s*hidden/s);
 });
 
@@ -41856,11 +41961,11 @@ test("UI·布局样式：护盾和反制等长描述牌与普通牌保持相同�
     /@media\s*\(max-height:\s*920px\)[\s\S]*?\.hand-card\s*>\s*\.card-art\s*\{[^}]*height:\s*66px;[^}]*min-height:\s*66px;[^}]*max-height:\s*66px;/s
   );
   assert.match(
-    characters, /\.opponent-card-slot\s*\{[^}]*grid-template-rows:\s*27px\s+70px\s+minmax\(0,\s*1fr\)/s
+    characters, /\.opponent-card-slot\s*\{[^}]*grid-template-rows:\s*32px\s+62px\s+minmax\(0,\s*1fr\)/s
   );
   assert.match(
     characters,
-    /\.opponent-card-slot\s*>\s*\.card-art\s*\{[^}]*height:\s*70px;[^}]*min-height:\s*70px;[^}]*max-height:\s*70px;/s
+    /\.opponent-card-slot\s*>\s*\.card-art\s*\{[^}]*height:\s*62px;[^}]*min-height:\s*62px;[^}]*max-height:\s*62px;/s
   );
   assert.doesNotMatch(
     `${cards}\n${characters}`,

@@ -52,7 +52,8 @@
 .player-seat.is-self::before { content: "你"; }
 .player-seat.is-active { transform: translateY(3px); box-shadow: 0 0 0 3px rgba(181,138,59,.42), 0 12px 24px rgba(73,52,26,.18); }
 .player-seat.is-active::after { content: "行动中"; position: absolute; z-index: 4; left: 50%; bottom: 8px; transform: translateX(-50%); padding: 2px 9px; color: #fff; border-radius: 999px; background: var(--gold); font-size: 12px; font-weight: 800; white-space: nowrap; box-shadow: 0 2px 6px rgba(50,35,20,.18); }
-.cpu-seat.is-active::after { bottom: 206px; }
+.cpu-seat.is-active { transform: none; }
+.cpu-seat.is-active::after { bottom: 212px; }
 .player-seat.target-legal { cursor: pointer; animation: targetPulse 1.25s ease-in-out infinite; }
 .player-seat.target-selected { outline: 4px solid #c6882d; box-shadow: 0 0 0 6px rgba(198,136,45,.2), var(--shadow-card); }
 .player-seat.target-illegal { filter: saturate(.55) brightness(.94); }
@@ -86,24 +87,27 @@
 .resource-pill.energy strong { color: var(--energy); }
 .resource-pill.shield strong { color: var(--shield); }
 .cpu-seat { width: 100%; height: 100%; max-height: 100%; }
-.cpu-seat .seat-main { grid-column: 2; grid-row: 1; min-height: 0; overflow-y: auto; padding-right: 2px; scrollbar-width: thin; }
+.cpu-seat .seat-main { grid-column: 2; grid-row: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding-right: 2px; scrollbar-width: thin; }
 .cpu-seat .seat-portrait-wrap { grid-column: 1; grid-row: 1; }
 .opponent-hand-region { grid-column: 1 / -1; grid-row: 2; min-width: 0; overflow: hidden; padding-top: 5px; border-top: 1px solid color-mix(in srgb, var(--team), transparent 72%); }
-.opponent-hand-strip { min-width: 0; height: 197px; display: flex; align-items: flex-start; gap: 8px; overflow-x: auto; overflow-y: hidden; padding: 1px 2px 5px; scroll-snap-type: x proximity; scrollbar-width: thin; touch-action: pan-x; overscroll-behavior-inline: contain; }
-.opponent-card-slot { --card-accent: var(--gold); position: relative; flex: 0 0 124px; width: 124px; height: 174px; display: grid; grid-template-rows: 27px 70px minmax(0, 1fr); overflow: hidden; padding: 4px; color: var(--text-primary); border: 2px solid color-mix(in srgb, var(--card-accent), #392b20 18%); border-radius: 10px; background: linear-gradient(145deg, #fffdf5, #e8ddc8); box-shadow: 0 4px 10px rgba(38,35,28,.22); scroll-snap-align: start; }
+.opponent-hand-strip { min-width: 0; height: 197px; display: flex; align-items: flex-start; gap: 8px; overflow-x: auto; overflow-y: hidden; padding: 1px 2px 5px; scrollbar-width: none; scroll-snap-type: x proximity; touch-action: pan-x; overscroll-behavior-inline: contain; }
+.opponent-hand-strip::-webkit-scrollbar { display: none; }
+.opponent-card-slot { --card-accent: var(--gold); position: relative; flex: 0 0 132px; width: 132px; height: 185px; display: grid; grid-template-rows: 32px 62px minmax(0, 1fr); overflow: hidden; padding: 6px; color: var(--text-primary); border: 2px solid color-mix(in srgb, var(--card-accent), #392b20 18%); border-radius: 10px; background: linear-gradient(145deg, #fffdf5, #e8ddc8); box-shadow: 0 4px 10px rgba(38,35,28,.22); scroll-snap-align: start; }
+.opponent-hand-strip .hidden-card-back.is-compact { flex-basis: 132px; width: 132px; height: 185px; }
 .opponent-card-slot.is-known::before { content: ""; position: absolute; inset: 2px; pointer-events: none; border: 1px solid color-mix(in srgb, var(--card-accent), #fff 58%); border-radius: 7px; }
-.opponent-card-slot .card-topline { padding: 1px 2px; }
-.opponent-card-slot .card-name { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-.opponent-card-slot .card-category { padding: 1px 3px; font-size: 9px; }
-.opponent-card-slot .card-art { border-radius: 5px 5px 2px 2px; }
-.opponent-card-slot > .card-art { height: 70px; min-height: 70px; max-height: 70px; }
-.opponent-card-slot .card-crest { right: 3px; bottom: 3px; width: 21px; height: 21px; padding: 1px; }
-.opponent-card-slot .card-rules { gap: 1px; padding: 3px; }
-.opponent-card-slot .card-description { font-size: 8px; line-height: 1.16; }
+.opponent-card-slot::after { content: ""; position: absolute; z-index: 1; top: 0; left: 18%; width: 64%; height: 3px; pointer-events: none; border-radius: 0 0 6px 6px; background: var(--card-accent); }
+.opponent-card-slot .card-topline { padding: 2px 3px; }
+.opponent-card-slot .card-name { overflow: hidden; font-size: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.opponent-card-slot .card-category { padding: 2px 4px; font-size: 10px; }
+.opponent-card-slot .card-art { border-radius: 7px 7px 3px 3px; }
+.opponent-card-slot > .card-art { height: 62px; min-height: 62px; max-height: 62px; }
+.opponent-card-slot .card-crest { right: 4px; bottom: 4px; width: 26px; height: 26px; padding: 2px; }
+.opponent-card-slot .card-rules { gap: 2px; padding: 3px 4px; }
+.opponent-card-slot .card-description { font-size: 9.5px; line-height: 1.32; }
 .opponent-card-slot .card-flavor { display: none; }
-.opponent-card-slot .card-rules.is-description-long .card-description { font-size: 7.4px; line-height: 1.1; }
+.opponent-card-slot .card-rules.is-description-long .card-description { font-size: 8.6px; line-height: 1.22; }
 .opponent-card-slot .card-rules.is-description-long .card-flavor { display: none; }
-.opponent-card-slot .card-rules.is-description-very-long .card-description { font-size: 7px; line-height: 1.06; }
+.opponent-card-slot .card-rules.is-description-very-long .card-description { font-size: 7.7px; line-height: 1.18; }
 .opponent-card-slot .card-rules.is-description-very-long .card-flavor { display: none; }
 .range-readout { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
 .range-readout { padding: 3px 6px; border: 1px dashed color-mix(in srgb, var(--team), #fff 55%); border-radius: 6px; background: rgba(255,255,255,.45); }
@@ -132,6 +136,7 @@
 
 .human-seat { height: 100%; grid-template-columns: 104px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); padding: 10px; }
 .player-seat.human-seat { padding-bottom: 32px; }
+.human-seat .seat-main { justify-content: space-between; }
 .human-seat .seat-heading { display: grid; gap: 1px; }
 .human-seat .seat-heading strong { font-size: 20px; }
 .human-seat .seat-heading .turn-state { justify-self: start; }
@@ -153,7 +158,7 @@
   .cpu-seat .equipment-slot.is-empty { grid-template-columns: 29px minmax(0, 1fr); }
   .cpu-seat .equipment-outline, .cpu-seat .equipment-icon { width: 27px; height: 27px; }
   .opponent-hand-strip { height: 192px; padding-bottom: 2px; }
-  .cpu-seat.is-active::after { bottom: 201px; }
+  .cpu-seat.is-active::after { bottom: 207px; }
   .human-seat { grid-template-columns: 86px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 }
 
@@ -163,4 +168,65 @@
   .squad-mode-visual { min-height: 130px; }
   .squad-mode-visual svg { height: 130px; }
   .squad-mode-copy > strong { font-size: 25px; }
+}
+
+@media (max-height: 1080px) {
+  .player-seat { grid-template-columns: 66px minmax(0, 1fr); grid-template-rows: clamp(185px, 21vh, 195px) clamp(153px, 19.7vh, 178px); align-content: start; gap: 4px 6px; padding: 4px; }
+  .cpu-seat { height: auto; align-self: start; }
+  .cpu-seat .seat-main { justify-content: space-between; gap: 3px; overflow: hidden; padding-right: 0; }
+  .cpu-seat .vitals { gap: 2px; }
+  .cpu-seat .resource-pill { min-height: 32px; padding: 3px; }
+  .cpu-seat .range-readout { padding: 2px 4px; }
+  .cpu-seat .equipment-slot { min-height: 31px; grid-template-columns: 27px minmax(0, 1fr) auto; gap: 4px; padding: 2px 4px; }
+  .cpu-seat .equipment-slot.is-empty { grid-template-columns: 27px minmax(0, 1fr); }
+  .cpu-seat .equipment-outline, .cpu-seat .equipment-icon { width: 25px; height: 25px; }
+  .opponent-hand-region { padding-top: 3px; }
+  .opponent-hand-strip { height: clamp(153px, 18.7vh, 176px); gap: 6px; padding: 1px 2px 3px; }
+  .opponent-card-slot,
+  .opponent-hand-strip .hidden-card-back.is-compact { flex-basis: clamp(103px, 12.6vh, 118px); width: clamp(103px, 12.6vh, 118px); height: clamp(144px, 17.64vh, 165px); }
+  .opponent-card-slot { grid-template-rows: clamp(23px, 2.8vh, 26px) clamp(50px, 6.1vh, 57px) minmax(0, 1fr); padding: 4px; }
+  .opponent-card-slot > .card-art { height: clamp(50px, 6.1vh, 57px); min-height: clamp(50px, 6.1vh, 57px); max-height: clamp(50px, 6.1vh, 57px); }
+  .opponent-card-slot .card-name { font-size: clamp(13px, 1.5vh, 14px); }
+  .opponent-card-slot .card-category { padding: 1px 3px; font-size: clamp(8px, 1vh, 9px); }
+  .opponent-card-slot .card-crest { right: 3px; bottom: 3px; width: clamp(22px, 2.6vh, 25px); height: clamp(22px, 2.6vh, 25px); }
+  .opponent-card-slot .card-description { font-size: clamp(8px, 1vh, 9px); line-height: 1.32; }
+  .opponent-card-slot .card-rules.is-description-long .card-description { font-size: clamp(7.5px, .9vh, 8.5px); line-height: 1.22; }
+  .opponent-card-slot .card-rules.is-description-very-long .card-description { font-size: clamp(7px, .82vh, 7.7px); line-height: 1.18; }
+  .cpu-seat.is-active::after { bottom: calc(clamp(155px, 20vh, 183px) + 6px); }
+  .human-seat { grid-template-columns: 78px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); padding: 4px; }
+  .player-seat.human-seat { padding-bottom: 24px; }
+  .human-seat .seat-main { gap: 3px; }
+  .human-seat .seat-heading { grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px; }
+  .human-seat .seat-heading strong { font-size: 18px; }
+  .human-seat .seat-heading small, .human-seat .turn-state { font-size: 11px; }
+  .human-seat .vitals { gap: 2px; }
+  .human-seat .resource-pill { padding: 1px 2px; }
+  .human-seat .range-readout { padding: 2px 4px; }
+  .human-seat .equipment-slot { min-height: 33px; grid-template-columns: 27px minmax(0, 1fr) auto; gap: 4px; padding: 2px 4px; }
+  .human-seat .equipment-slot.is-empty { grid-template-columns: 27px minmax(0, 1fr); }
+  .human-seat .equipment-outline, .human-seat .equipment-icon { width: 25px; height: 25px; }
+}
+
+@media (max-height: 820px) {
+  .player-seat { grid-template-rows: 140px 96px; }
+  .cpu-seat .seat-heading strong { font-size: 15px; }
+  .cpu-seat .seat-heading small, .cpu-seat .turn-state { font-size: 10px; }
+  .cpu-seat .resource-pill { min-height: 0; padding: 1px 2px; }
+  .cpu-seat .life-readout > strong { font-size: 16px; }
+  .cpu-seat .range-readout { padding: 1px 3px; font-size: 11px; }
+  .cpu-seat .equipment-slot { min-height: 29px; padding-block: 1px; }
+  .cpu-seat .equipment-outline, .cpu-seat .equipment-icon { width: 23px; height: 23px; }
+  .opponent-hand-strip { height: 92px; }
+  .opponent-card-slot,
+  .opponent-hand-strip .hidden-card-back.is-compact { flex-basis: 60px; width: 60px; height: 84px; }
+  .opponent-card-slot { grid-template-rows: 14px 29px minmax(0, 1fr); padding: 2px; }
+  .opponent-card-slot > .card-art { height: 29px; min-height: 29px; max-height: 29px; }
+  .opponent-card-slot .card-name { font-size: 8px; }
+  .opponent-card-slot .card-category { padding: 0 2px; font-size: 5.5px; }
+  .opponent-card-slot .card-crest { right: 2px; bottom: 2px; width: 11px; height: 11px; padding: 1px; }
+  .opponent-card-slot .card-rules { gap: 0; padding: 1px 2px; }
+  .opponent-card-slot .card-description { font-size: 5px; line-height: 1.2; }
+  .opponent-card-slot .card-rules.is-description-long .card-description { font-size: 4.8px; line-height: 1.15; }
+  .opponent-card-slot .card-rules.is-description-very-long .card-description { font-size: 4.5px; line-height: 1.1; }
+  .cpu-seat.is-active::after { bottom: 104px; }
 }

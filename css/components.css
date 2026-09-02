@@ -84,6 +84,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .thinking-dots b { width: 5px; height: 5px; border-radius: 50%; background: var(--gold); }
 .action-prompt { color: var(--text-secondary); font-size: 14px; line-height: 1.45; text-align: center; }
 .private-reveal, .response-panel { width: min(440px, calc(100% - 24px)); max-height: min(72vh, 560px); overflow: auto; padding: 16px 18px; border: 1px solid var(--gold); border-radius: 12px; background: var(--surface-raised); box-shadow: var(--shadow-card); }
+.response-panel { width: min(560px, calc(100% - 24px)); }
 .private-reveal { color: #4f3a17; font-weight: 700; text-align: center; }
 .response-title { display: flex; align-items: center; justify-content: space-between; }
 .response-title strong { font: 700 20px/1.2 var(--serif); }
