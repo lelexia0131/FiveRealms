@@ -310,7 +310,7 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 
 ## 角色、卡牌和 UI 资源
 
-八名角色的领域定义位于 `js/domain/definitions/characters/CharacterDefinitions.js`，肖像位于 `assets/characters/`；二十六种卡牌的领域定义位于 `js/domain/definitions/cards/CardDefinitions.js`，牌组数量位于 `RulesetDefinition.js`，插画位于 `assets/cards/`。`art`、`icon`、`accent`、`frameStyle` 和 `flavorText` 由 `js/adapters/ui/*PresentationDefinitions.js` 拥有，只用于展示，不参与规则或 AI 合法性。
+八名角色的领域定义位于 `js/domain/definitions/characters/CharacterDefinitions.js`，肖像位于 `assets/characters/`；二十六种卡牌的领域定义位于 `js/domain/definitions/cards/CardDefinitions.js`，牌组数量位于 `RulesetDefinition.js`，插画位于 `assets/cards/`。`art`、`icon`、`accent` 和 `frameStyle` 由 `js/adapters/ui/*PresentationDefinitions.js` 拥有，只用于展示，不参与规则或 AI 合法性。
 
 所有卡牌 SVG 必须使用统一的 `width="480"`、`height="280"` 和 `viewBox="0 0 480 280"`。新增资源应在该画布内等比缩放并居中构图，禁止依靠非等比拉伸适配。
 

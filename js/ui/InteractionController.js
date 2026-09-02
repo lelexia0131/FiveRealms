@@ -266,8 +266,8 @@ export class InteractionController {
     const handSlots = createHiddenSelectionView(actor, owner, hidden);
     const equipmentSlots = [];
     if (owner.equipment) {
-      const { name, categoryName, description, art, icon, accent, frameStyle, flavorText } = presentCard(owner.equipment);
-      equipmentSlots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name, categoryName, description, art, icon, accent, frameStyle, flavorText });
+      const { name, categoryName, description, art, icon, accent, frameStyle } = presentCard(owner.equipment);
+      equipmentSlots.push({ token:EQUIPMENT_OPTION_TOKEN, known:true, zone:"equipment", name, categoryName, description, art, icon, accent, frameStyle });
     }
     const slots = orderZoneSelectionSlots(equipmentSlots, handSlots);
     const selected = await this.requestHiddenCards(hidden, 1, prompt, {

@@ -54,9 +54,10 @@ $runtimeCssFiles = @(
 $runtimeJsFiles = Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "js") -File -Recurse -Filter "*.js" |
     ForEach-Object { $_.FullName.Substring($ProjectRoot.Length + 1) }
 
-# Runtime card/character art, UI glyphs, and the lightning sound; docs and the unused favicon are excluded.
+# Runtime card/character art, UI glyphs, the launcher icon, and the lightning sound; docs are excluded.
 $runtimeAssetFiles = @(
     "assets/audio/lightning.wav",
+    "assets/ui/five-realms.ico",
     "assets/ui/charge-glyph.svg",
     "assets/ui/recover-glyph.svg",
     "assets/ui/shield-glyph.svg",

@@ -51,7 +51,6 @@ function knownCardView(definition) {
     icon:card.icon,
     accent:card.accent,
     frameStyle:card.frameStyle,
-    flavorText:card.flavorText,
     subtypes:[...card.subtypes]
   });
 }

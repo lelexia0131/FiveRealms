@@ -107,7 +107,7 @@ export function opponentHandStripTemplate(slots = []) {
   const cards = slots.map((slot) => {
     if (!slot.known) return hiddenCardBackTemplate({ compact:true });
     const descriptionClass = cardDescriptionClass(slot.description);
-    return `<span class="opponent-card-slot is-known frame-${escapeHtml(slot.frameStyle)}" style="--card-accent:${escapeHtml(slot.accent)}" tabindex="0" title="${escapeHtml(`${slot.categoryName}：${slot.description}`)}" aria-label="已知手牌：${escapeHtml(slot.name)}，${escapeHtml(slot.categoryName)}，${escapeHtml(slot.description)}"><span class="card-topline"><span class="card-name">${escapeHtml(slot.name)}</span><span class="card-category">${escapeHtml(slot.categoryName)}</span></span><span class="card-art"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><span class="card-crest"><img src="${escapeHtml(slot.icon)}" alt="" aria-hidden="true"></span></span><span class="card-rules ${descriptionClass}"><span class="card-description">${escapeHtml(slot.description)}</span><span class="card-flavor">${escapeHtml(slot.flavorText)}</span></span></span>`;
+    return `<span class="opponent-card-slot is-known frame-${escapeHtml(slot.frameStyle)}" style="--card-accent:${escapeHtml(slot.accent)}" tabindex="0" title="${escapeHtml(`${slot.categoryName}：${slot.description}`)}" aria-label="已知手牌：${escapeHtml(slot.name)}，${escapeHtml(slot.categoryName)}，${escapeHtml(slot.description)}"><span class="card-topline"><span class="card-name">${escapeHtml(slot.name)}</span><span class="card-category">${escapeHtml(slot.categoryName)}</span></span><span class="card-art"><img src="${escapeHtml(slot.art)}" alt="" aria-hidden="true"><span class="card-crest"><img src="${escapeHtml(slot.icon)}" alt="" aria-hidden="true"></span></span><span class="card-rules ${descriptionClass}"><span class="card-description">${escapeHtml(slot.description)}</span></span></span>`;
   }).join("");
   return `<div class="opponent-hand-region"><div class="opponent-hand-strip" aria-label="该角色手牌">${cards}</div></div>`;
 }
@@ -164,7 +164,7 @@ function cardFaceTemplate(card) {
   const descriptionClass = cardDescriptionClass(card.description);
   return `<span class="card-topline"><span class="card-name">${escapeHtml(card.name)}</span><span class="card-category">${escapeHtml(card.categoryName)}</span></span>
     <span class="card-art"><img src="${escapeHtml(card.art)}" alt="" aria-hidden="true" draggable="false"><span class="card-crest"><img src="${escapeHtml(card.icon)}" alt="" aria-hidden="true"></span></span>
-    <span class="card-rules ${descriptionClass}"><span class="card-description">${escapeHtml(card.description)}</span><span class="card-flavor">${escapeHtml(card.flavorText)}</span></span>`;
+    <span class="card-rules ${descriptionClass}"><span class="card-description">${escapeHtml(card.description)}</span></span>`;
 }
 
 export function handCardTemplate(card, options = {}) {

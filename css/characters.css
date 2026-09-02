@@ -101,11 +101,8 @@
 .opponent-card-slot .card-crest { right: 4px; bottom: 4px; width: 26px; height: 26px; padding: 2px; }
 .opponent-card-slot .card-rules { gap: 2px; padding: 3px 4px; }
 .opponent-card-slot .card-description { font-size: 9.5px; line-height: 1.32; }
-.opponent-card-slot .card-flavor { display: none; }
 .opponent-card-slot .card-rules.is-description-long .card-description { font-size: 8.6px; line-height: 1.22; }
-.opponent-card-slot .card-rules.is-description-long .card-flavor { display: none; }
 .opponent-card-slot .card-rules.is-description-very-long .card-description { font-size: 7.7px; line-height: 1.18; }
-.opponent-card-slot .card-rules.is-description-very-long .card-flavor { display: none; }
 .range-readout { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
 .range-readout { padding: 3px 6px; border: 1px dashed color-mix(in srgb, var(--team), #fff 55%); border-radius: 6px; background: rgba(255,255,255,.45); }
 .range-readout.is-status-only { grid-template-columns: minmax(0, 1fr); }

@@ -1085,6 +1085,15 @@ export function registerMatchPerformanceTests(test) {
     assert.equal(viewModel.mvpPlayerId, "p5");
   });
 
+  test("UI·MVP：桌面结算卡整体缩放且窄屏保留滚动兜底", async () => {
+    const css = await readFile(new URL("../css/components.css", import.meta.url), "utf8");
+    assert.match(css, /\.game-over-overlay\s*\{[^}]*overflow:\s*hidden/s);
+    assert.match(css, /@media\s*\(min-width:\s*821px\)\s*\{\s*\.game-over-card\s*\{[^}]*zoom:\s*\.94/s);
+    assert.match(css, /@media\s*\(min-width:\s*821px\)\s+and\s+\(max-height:\s*840px\)\s*\{\s*\.game-over-card\s*\{[^}]*zoom:\s*\.82/s);
+    assert.match(css, /@media\s*\(min-width:\s*821px\)\s+and\s+\(max-height:\s*760px\)\s*\{\s*\.game-over-card\s*\{[^}]*zoom:\s*\.76/s);
+    assert.match(css, /@media\s*\(max-width:\s*820px\)[\s\S]*\.game-over-overlay\s*\{[^}]*overflow:\s*auto/s);
+  });
+
   test("UI·MVP：MatchResult 暴露队友角色与现有真实战斗统计", () => {
     const viewModel = createMatchResultViewModel({
       gameId: "history-final-facts",

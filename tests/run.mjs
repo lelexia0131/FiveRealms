@@ -954,10 +954,10 @@ for (const definition of Object.values(CARD_DEFINITIONS)) test(`卡牌资源：$
       "art",
       "icon",
       "accent",
-      "frameStyle",
-      "flavorText"
+      "frameStyle"
     ]
   ) assert.ok(presentation[field] !== undefined, `${definition.definitionId}.${field}`);
+  assert.equal(Object.hasOwn(presentation, "flavorText"), false, `${definition.definitionId}.flavorText`);
   assert.ok(Array.isArray(definition.subtypes));
   assert.ok(Array.isArray(definition.responseTypes));
   assert.ok(Array.isArray(definition.selectionFlow));
@@ -14005,10 +14005,10 @@ test("隐藏信息：窥隙选择池的已知牌复用正常完整牌面且仍�
       "card-art",
       "card-crest",
       "card-rules",
-      "card-description",
-      "card-flavor"
+      "card-description"
     ]
   ) assert.match(markup, new RegExp(`class="[^"]*${className}`), className);
+  assert.doesNotMatch(markup, /card-flavor/);
   assert.match(markup, new RegExp(selection.tokens[0].token));
   assert.match(markup, /hidden-card-back/);
   assert.match(markup, new RegExp(known.name));
@@ -14084,10 +14084,10 @@ test("隐藏信息：掠夺与破坏共享选择池把公开装备稳定排在�
       "card-art",
       "card-crest",
       "card-rules",
-      "card-description",
-      "card-flavor"
+      "card-description"
     ]
   ) assert.match(markup, new RegExp(className));
+  assert.doesNotMatch(markup, /card-flavor/);
   assert.equal((markup.match(/<img\b/g) ?? []).length, 4);
   const equipmentPresentation = presentCard(equipment);
   assert.match(markup, new RegExp(equipment.name));
@@ -39585,8 +39585,7 @@ test("UI·手牌：已知对手手牌保留中文实体卡层级、删除英文�
   ai.hand.push(card);
   game.rememberPrivateCard(human, ai, card);
   const markup = opponentHandStripTemplate(createOpponentHandView(human, ai)),
-    css = await readFile(projectFile("css/characters.css"), "utf8"),
-    presentation = presentCard(card);
+    css = await readFile(projectFile("css/characters.css"), "utf8");
   for (
     const className of [
       "card-topline",
@@ -39595,14 +39594,13 @@ test("UI·手牌：已知对手手牌保留中文实体卡层级、删除英文�
       "card-art",
       "card-crest",
       "card-rules",
-      "card-description",
-      "card-flavor"
+      "card-description"
     ]
   ) assert.match(markup, new RegExp(className));
+  assert.doesNotMatch(markup, /card-flavor/);
   assert.doesNotMatch(markup, /card-tags|public-pool|draw/);
   assert.match(markup, new RegExp(card.name));
   assert.match(markup, new RegExp(card.description.slice(0, 6)));
-  assert.match(markup, new RegExp(presentation.flavorText.slice(0, 4)));
   assert.match(
     css, /\.opponent-card-slot\s*\{[^}]*flex:\s*0\s+0\s+132px[^}]*width:\s*132px[^}]*height:\s*185px/s
   );
@@ -40542,10 +40540,10 @@ test("UI·互利选择：互利公开牌池也复用正常完整牌面", async (
       "card-art",
       "card-crest",
       "card-rules",
-      "card-description",
-      "card-flavor"
+      "card-description"
     ]
   ) assert.match(element.innerHTML, new RegExp(className));
+  assert.doesNotMatch(element.innerHTML, /card-flavor/);
   assert.equal((element.innerHTML.match(/<img\b/g) ?? []).length, 2);
   assert.match(element.innerHTML, new RegExp(card.description));
   assert.match(element.innerHTML, /data-public-card-id/);
@@ -41879,9 +41877,6 @@ test("UI·布局样式：牌面 CSS 将长描述标记限制在文字区且不�
     /\.hand-card \.card-rules\.is-description-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s
   );
   assert.match(
-    cards, /\.hand-card \.card-rules\.is-description-very-long \.card-flavor\s*\{[^}]*display:\s*none/s
-  );
-  assert.match(
     characters,
     /\.opponent-card-slot \.card-rules\.is-description-very-long \.card-description\s*\{[^}]*font-size:[^}]*line-height:/s
   );
@@ -41889,7 +41884,7 @@ test("UI·布局样式：牌面 CSS 将长描述标记限制在文字区且不�
     css, /\.\w*-?card(?:-slot)?\.is-description-(?:very-)?long\s*\{[^}]*grid-template-rows/s
   );
   assert.match(cards, /overflow-wrap:\s*anywhere/);
-  assert.match(cards, /\.human-hand \.card-flavor\s*\{[^}]*display:\s*none/s);
+  assert.doesNotMatch(css, /card-flavor/);
   assert.doesNotMatch(cards, /(^|\n)\.card-description\s*\{[^}]*display:\s*none/s);
   assert.doesNotMatch(cards, /\.card-description\s*\{[^}]*overflow:\s*hidden/s);
 });
@@ -41965,10 +41960,10 @@ test("UI·布局样式：窥隙结果牌与正常手牌共用完整牌面布局�
       "card-art",
       "card-crest",
       "card-rules",
-      "card-description",
-      "card-flavor"
+      "card-description"
     ]
   ) assert.match(revealed, new RegExp(`class="[^"]*${className}`), className);
+  assert.doesNotMatch(revealed, /card-flavor/);
   assert.equal(face(revealed), face(normal));
   assert.match(revealed, /class="hand-card private-card frame-seal"/);
   assert.doesNotMatch(revealed, /data-card-id|data-disabled|aria-pressed/);
