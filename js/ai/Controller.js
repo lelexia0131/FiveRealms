@@ -44,6 +44,55 @@ import {
   inAttackRange,
   sampleProbabilityWorlds
 } from "./Event/Probability/Probability.js";
+import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js";
+
+const EMERGENCY_EXCLUDED_CARD_IDS = Object.freeze([
+  "mutualBenefit",
+  "symbiosis",
+  "lightning"
+]);
+
+/*
+功能
+判断 canonical card Action 是否让行动者之外的同阵营角色参与结算。
+
+调用方
+Controller.selectRuntimeEmergencyAction。
+
+输入
+canonical Action、当前真实行动者与当前真实玩家集合。
+
+输出
+任一 target 或 selection 角色引用指向存活队友时返回 true。
+
+读取状态
+Action targetIds/selection 与真实 Player id、alive、battleTeam。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+自身目标允许；transfer/leverage 的角色引用由 Generator 保存在 selection，必须与 targetIds 一并检查，
+不得补造 Action 中没有的目标或 selection。
+*/
+function hasEmergencyTeammateParticipant(action, actor, players) {
+  const participantIds = [
+    ...(action.targetIds ?? []),
+    action.selection?.sourceId,
+    action.selection?.receiverId,
+    action.selection?.firstTargetId,
+    action.selection?.secondTargetId
+  ].filter(Boolean);
+  return participantIds.some((participantId) => {
+    const participant = players.find((player) => player.id === participantId) ?? null;
+    return participant?.alive
+      && participant.id !== actor.id
+      && participant.battleTeam === actor.battleTeam;
+  });
+}
 
 export const AI_RUNTIME_POLICY = Object.freeze({
   forceAiRescueHuman:true,
@@ -689,66 +738,140 @@ export class Controller {
 
   /*
   功能
-  从当前真实状态选择一个未失败的 runtime emergency canonical Action。
+  从当前真实状态取得最终恢复分支共享的 canonical actions 与唯一 END。
 
   调用方
-  TurnWorkflow.takeAiPlayPhase 的 Search/Action fault 恢复路径与专项测试。
+  selectRuntimeRecoveryEndAction、selectRuntimeEmergencyAction。
 
   输入
-  当前行动 Player，以及本轮已经绑定或执行失败的 canonical Actions。
+  当前行动 Player。
 
   输出
-  独立于 SearchResult 的冻结 fallback 记录；优先包含 Generator 顺序中的首个未失败 non-END，
-  只有 Generator 当前只返回唯一 canonical END 时才包含 END；候选耗尽时 action 为 null。
+  当前真实 state/player、Generator canonical actions 与唯一 canonical END。
 
   读取状态
-  当前 GameState、Domain Rules 与 Generator canonical Action 集合。
+  当前 GameState 与 Generator canonical Action 集合。
+
+  写入状态
+  无。
+
+  调用函数
+  getActionCandidates。
+
+  边界与不变量
+  每次调用都重新读取真实状态并生成 Action；不得构造 END 或容忍多个 END。
+  */
+  getRuntimeRecoveryCandidates(player) {
+    if (!player || typeof player.id !== "string" || !player.id) {
+      throw new TypeError("runtime recovery 需要合法 Player");
+    }
+    const state = this.getState();
+    const currentPlayer = state.players.find((entry) => entry.id === player.id) ?? null;
+    if (!currentPlayer?.alive || state.phase !== "play" || !this.isSessionValid(state.gameId)) {
+      throw new Error("runtime recovery 的真实行动上下文已失效");
+    }
+    const actions = this.getActionCandidates(currentPlayer);
+    const endActions = actions.filter((action) => action.type === "end");
+    if (endActions.length !== 1) {
+      throw new Error("Generator 未提供唯一 canonical END");
+    }
+    return { state, currentPlayer, actions, endAction:endActions[0] };
+  }
+
+  /*
+  功能
+  在正常搜索失败但无需强制弃牌时选择 Generator 的 canonical END。
+
+  调用方
+  TurnWorkflow.takeAiPlayPhase 的 mandatoryDiscardCount 为零分支与专项测试。
+
+  输入
+  当前行动 Player。
+
+  输出
+  包含 canonical END 的冻结 recovery 记录。
+
+  读取状态
+  getRuntimeRecoveryCandidates 返回的最新真实 canonical actions。
+
+  写入状态
+  lastRuntimeEmergencyFallback 诊断记录；不进入 emergency card 模式。
+
+  调用函数
+  getRuntimeRecoveryCandidates、Object.freeze。
+
+  边界与不变量
+  只返回 Generator 已生成的 END；不得筛选或执行 non-END。
+  */
+  selectRuntimeRecoveryEndAction(player) {
+    const { actions, endAction } = this.getRuntimeRecoveryCandidates(player);
+    const result = Object.freeze({
+      kind:"RUNTIME_RECOVERY_CANONICAL_END",
+      status:"SELECTED_END_NO_MANDATORY_DISCARD",
+      action:endAction,
+      emergencyMode:false,
+      mandatoryDiscardCount:0,
+      candidateCount:actions.length,
+      safeCardCandidateCount:0
+    });
+    this.lastRuntimeEmergencyFallback = result;
+    return result;
+  }
+
+  /*
+  功能
+  在正常搜索失败且 END 会强制弃牌时选择一次受限的 emergency legal Action。
+
+  调用方
+  TurnWorkflow.takeAiPlayPhase 的 mandatoryDiscardCount 大于零分支与专项测试。
+
+  输入
+  当前行动 Player，以及由 TurnWorkflow 真实弃牌规则计算的正 mandatoryDiscardCount。
+
+  输出
+  冻结 emergency 记录；优先返回 Generator 顺序中的首个安全 card，否则返回 canonical END。
+
+  读取状态
+  当前 GameState、Domain card definitions 与 Generator canonical Action 集合。
 
   写入状态
   lastRuntimeEmergencyFallback 诊断记录；不写 Searcher incumbent、stats、RNG 或未来动作队列。
 
   调用函数
-  getActionCandidates、sameAction、Object.freeze。
+  getRuntimeRecoveryCandidates、hasEmergencyTeammateParticipant、Object.freeze。
 
   边界与不变量
-  不评分、不排序、不调用 Evaluator/Pattern/Searcher；每次调用都从当前真实状态重新生成。
-  存在任何合法 non-END 时不得返回 END；排除集合只在当前故障恢复轮次生效。
+  不评分、不调用 Evaluator/Searcher、不选择技能；只消费最新 Generator 已生成的完整 Action。
+  必须排除高风险牌、装备覆盖和队友参与动作；本入口不得用于无强制弃牌的恢复。
   */
-  selectRuntimeEmergencyAction(player, excludedActions = []) {
-    if (!player || typeof player.id !== "string" || !player.id) {
-      throw new TypeError("runtime emergency fallback 需要合法 Player");
+  selectRuntimeEmergencyAction(player, { mandatoryDiscardCount = 0 } = {}) {
+    if (!(Number(mandatoryDiscardCount) > 0)) {
+      throw new TypeError("runtime emergency 只接受正 mandatoryDiscardCount");
     }
-    if (!Array.isArray(excludedActions)) {
-      throw new TypeError("runtime emergency fallback 排除集合必须是 Action 数组");
-    }
-    const state = this.getState();
-    const currentPlayer = state.players.find((entry) => entry.id === player.id) ?? null;
-    if (!currentPlayer?.alive || state.phase !== "play" || !this.isSessionValid(state.gameId)) {
-      throw new Error("runtime emergency fallback 的真实行动上下文已失效");
-    }
-    const actions = this.getActionCandidates(currentPlayer);
-    const nonEndActions = actions.filter((action) => action.type !== "end");
-    const action = nonEndActions.find((candidate) => (
-      !excludedActions.some((failed) => sameAction(candidate, failed))
-    )) ?? null;
-    let status = "SELECTED_NON_END";
-    let selectedAction = action;
-    if (!selectedAction && nonEndActions.length > 0) {
-      status = "NON_END_EXHAUSTED";
-    } else if (!selectedAction) {
-      if (actions.length !== 1 || actions[0]?.type !== "end") {
-        throw new Error("Generator 未提供可恢复的 canonical Action 集合");
+    const { state, currentPlayer, actions, endAction } = this.getRuntimeRecoveryCandidates(player);
+    const hasEquipment = Boolean(
+      currentPlayer.equipment ?? currentPlayer.equipmentDefinitionId
+    );
+    const safeCardActions = actions.filter((action) => {
+      if (action.type !== "card" || EMERGENCY_EXCLUDED_CARD_IDS.includes(action.cardId)) {
+        return false;
       }
-      selectedAction = actions[0];
-      status = "SELECTED_END_ONLY";
-    }
+      const definition = CARD_DEFINITIONS[action.cardId] ?? null;
+      if (!definition || (hasEquipment && definition.category === "equipment")) return false;
+      return !hasEmergencyTeammateParticipant(action, currentPlayer, state.players);
+    });
+    const action = safeCardActions[0] ?? endAction;
+    const status = safeCardActions.length > 0
+      ? "SELECTED_SAFE_CARD"
+      : "SELECTED_END_NO_SAFE_CARD";
     const result = Object.freeze({
-      kind:"RUNTIME_EMERGENCY_LEGAL_FALLBACK",
+      kind:"RUNTIME_EMERGENCY_LEGAL_ACTION",
       status,
-      action:selectedAction,
+      action,
+      emergencyMode:true,
+      mandatoryDiscardCount:Math.max(0, Number(mandatoryDiscardCount) || 0),
       candidateCount:actions.length,
-      nonEndCandidateCount:nonEndActions.length,
-      excludedCount:excludedActions.length
+      safeCardCandidateCount:safeCardActions.length
     });
     this.lastRuntimeEmergencyFallback = result;
     return result;

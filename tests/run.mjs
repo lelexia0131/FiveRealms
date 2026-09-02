@@ -18142,6 +18142,48 @@ test("AI·动作生成：非调律师不破坏队友手牌但保留其他资源�
   ));
 });
 
+test("AI·动作生成：转移排除己方到敌方并保留其它合法方向", () => {
+  const actor = makePlayer("transfer-actor", 0, "dawn", "ai", 7),
+    ally = makePlayer("transfer-ally", 1, "dawn"),
+    enemy = makePlayer("transfer-enemy", 2, "dusk");
+  actor.hand.push(instance("transfer"), instance("block"));
+  ally.hand.push(instance("block"));
+  enemy.hand.push(instance("block"));
+  const { game } = makeGame([actor, ally, enemy]);
+  const actions = game.aiController.actionGenerator.generate(
+    createInitialWorld(actor.id, game.state),
+    actor.id
+  ).filter((action) => action.cardId === "transfer");
+  const hasDirection = (source, receiver) => actions.some((action) => (
+    action.selection.sourceId === source.id && action.selection.receiverId === receiver.id
+  ));
+  assert.ok(!actions.some((action) => {
+    const source = game.state.players.find((player) => player.id === action.selection.sourceId);
+    const receiver = game.state.players.find((player) => player.id === action.selection.receiverId);
+    return source.battleTeam === actor.battleTeam
+      && receiver.battleTeam !== actor.battleTeam;
+  }));
+  assert.equal(hasDirection(actor, enemy), false);
+  assert.equal(hasDirection(ally, enemy), false);
+  assert.equal(hasDirection(enemy, actor), true);
+  assert.equal(hasDirection(actor, ally), true);
+
+  const otherActor = makePlayer("transfer-other-actor", 0, "dawn", "ai", 0),
+    enemyA = makePlayer("transfer-enemy-a", 1, "dusk"),
+    enemyB = makePlayer("transfer-enemy-b", 2, "dusk");
+  otherActor.hand.push(instance("transfer"));
+  enemyA.hand.push(instance("block"));
+  enemyB.hand.push(instance("block"));
+  const { game:otherGame } = makeGame([otherActor, enemyA, enemyB]);
+  const enemyActions = otherGame.aiController.actionGenerator.generate(
+    createInitialWorld(otherActor.id, otherGame.state),
+    otherActor.id
+  ).filter((action) => action.cardId === "transfer");
+  assert.ok(enemyActions.some((action) => (
+    action.selection.sourceId === enemyA.id && action.selection.receiverId === enemyB.id
+  )));
+});
+
 test("AI·动作生成：使用同一距离合法性", () => {
   const ps = [
     makePlayer("a", 0, "dawn"),
@@ -18747,94 +18789,220 @@ test("AI·Domain model 边界：折叠 Model 不回流且 Domain Rule 仍为 aut
 
 /*
 功能
-验证负收益共生不能借 root 调度和不完整覆盖成为正式搜索结果。
+以生产 Generator、Simulator、Evaluator 与 Searcher 记录共生所在完整 sibling 集合的价值账本。
 
 调用方
-AI 搜索 root coverage 回归测试。
+共生负收益故障恢复与正收益选择回归测试。
 
 输入
-无。
+独立测试 Game 与行动者 ID。
 
 输出
-无；断言失败时抛错。
+完整搜索选择、canonical roots，以及按 actionSearchKey 索引的调度、Prior、状态变化和 Final Utility。
 
 读取状态
-生产 Generator、Pattern、Searcher、Simulator、Evaluator 与 Controller acceptance diagnostics。
+当前 GameState、Controller search config，以及 Evaluator 的正式 transition/END opportunity 输出。
 
 写入状态
-只写两个独立测试 Game fixture 的搜索诊断。
+只包装本测试专用 SearchEngine 实例的方法以采集诊断；不改 GameState。
 
 调用函数
-makeBenchmarkGame、runBenchmarkAiDecision、disposeBenchmarkGame。
+createInitialWorld、deriveCurrentCardCounts、createSearchEngine、Searcher.search。
 
 边界与不变量
-NODE 中断可以没有正式 Action，但不能把只完成 1/3 roots 的负值共生当 winner；完整覆盖仍由 Evaluator 选择 END。
+诊断包装只观察生产计算结果；不改变候选、排序、sibling 聚合或 Final Utility。
 */
-async function symbiosisIncompleteRootCoverageRegression() {
-  const buildGame = (nodeBudget) => makeBenchmarkGame({
-    players: [
-      {
-        id: "coverage-symbiosis-actor",
-        team: "dawn",
-        character: "blade-walker",
-        hp: 4,
-        hand: [
-          makeBenchmarkCard("symbiosis", `coverage-symbiosis-${nodeBudget}`),
-          makeBenchmarkCard("assault", `coverage-assault-${nodeBudget}`)
-        ]
-      },
-      { id: "coverage-symbiosis-ally", team: "dawn", character: "oath-warden", hp: 5 },
-      { id: "coverage-symbiosis-enemy", team: "dusk", character: "spirit-medic", hp: 3 },
-      { id: "coverage-symbiosis-enemy-b", team: "dusk", character: "shade-agent", hp: 4 },
-      { id: "coverage-symbiosis-enemy-c", team: "dusk", character: "ember-magus", hp: 4 }
-    ],
-    options: { actorId: "coverage-symbiosis-actor", seed: 20260830, nodeBudget }
-  });
-  const interrupted = buildGame(1);
-  const complete = buildGame(1000);
-  try {
-    const interruptedDecision = await runBenchmarkAiDecision(
-      interrupted,
-      "coverage-symbiosis-actor"
+async function captureSymbiosisSearchLedger(game, actorId) {
+  const actor = game.state.players.find((player) => player.id === actorId);
+  const world = createInitialWorld(
+    actor.id,
+    game.state,
+    deriveCurrentCardCounts(actor, game.state)
+  );
+  const roots = game.aiController.getActionCandidates(actor);
+  const { searcher } = createSearchEngine({
+    world,
+    searchConfig: {
+      ...game.aiController.buildSearchConfig(),
+      depth: 1,
+      nodeBudget: 1000,
+      timeBudgetMs: null,
+      enableRandomness: false,
+      randomnessRange: 0
+    }
+  }, { next: () => 0 });
+  const { evaluator } = searcher;
+  const rows = new Map();
+  const rowFor = (action) => {
+    const key = actionSearchKey(action);
+    if (!rows.has(key)) rows.set(key, { action });
+    return rows.get(key);
+  };
+  const rootSchedulingScore = evaluator.rootSchedulingScore.bind(evaluator);
+  evaluator.rootSchedulingScore = (action, player, state) => {
+    const score = rootSchedulingScore(action, player, state);
+    rowFor(action).schedulingScore = score;
+    return score;
+  };
+  const composeSearchPrior = evaluator.composeSearchPrior.bind(evaluator);
+  evaluator.composeSearchPrior = (input) => {
+    const prior = composeSearchPrior(input);
+    rowFor(input.action).prior = prior;
+    return prior;
+  };
+  const evaluateTransition = evaluator.evaluateTransition.bind(evaluator);
+  evaluator.evaluateTransition = (input) => {
+    const terms = evaluateTransition(input);
+    const beforePlayers = new Map(input.beforeState.players.map((player) => [player.id, player]));
+    let allyHealTotal = 0;
+    let enemyHealTotal = 0;
+    for (const afterPlayer of input.afterState.players) {
+      const healed = Math.max(0, afterPlayer.hp - beforePlayers.get(afterPlayer.id).hp);
+      if (afterPlayer.battleTeam === actor.battleTeam) allyHealTotal += healed;
+      else enemyHealTotal += healed;
+    }
+    Object.assign(rowFor(input.action), {
+      beforeStateValue: evaluator.stateUtility(input.beforeState, actor.id),
+      afterStateValue: evaluator.stateUtility(input.afterState, actor.id),
+      allyHealTotal,
+      enemyHealTotal,
+      transitionTerms: terms
+    });
+    return terms;
+  };
+  const endOpportunityPoints = evaluator.endOpportunityPoints.bind(evaluator);
+  evaluator.endOpportunityPoints = (endTerms, siblingTerms) => {
+    const total = endOpportunityPoints(endTerms, siblingTerms);
+    const inputs = endTerms.endOpportunityInputs;
+    const pf = ENERGY_STATE_WEIGHT * Math.max(
+      0,
+      inputs.energy + inputs.turnEnergyGain - inputs.maxEnergy
     );
-    assert.equal(
-      interrupted.aiController.lastSearchRequest.rootActions[
-        interruptedDecision.stats.firstScheduledRootIndex
-      ].cardId,
-      "symbiosis"
-    );
-    assert.equal("scheduledRootOrder" in interruptedDecision.stats, false);
-    assert.equal(interruptedDecision.stats.completedRootCandidateCount, 1);
-    assert.equal(interruptedDecision.stats.uniqueRootCandidateCount, 3);
-    assert.equal(interruptedDecision.stats.bestValueScore, null);
-    assert.equal(interruptedDecision.stats.stopReason, "NODE");
-    assert.equal(interruptedDecision.action, null);
-    assert.equal(
-      interrupted.aiController.lastSearchResult.status,
-      SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED
-    );
-
-    const completeDecision = await runBenchmarkAiDecision(
-      complete,
-      "coverage-symbiosis-actor"
-    );
-    assert.equal(completeDecision.stats.stopReason, "COMPLETE");
-    assert.equal(
-      completeDecision.stats.completedRootCandidateCount,
-      completeDecision.stats.uniqueRootCandidateCount
-    );
-    assert.equal(completeDecision.stats.candidateFaults.length, 0);
-    assert.equal(completeDecision.action.type, "end");
-  } finally {
-    disposeBenchmarkGame(interrupted);
-    disposeBenchmarkGame(complete);
-  }
+    const pd = Math.max(0, ...siblingTerms
+      .filter((sibling) => sibling.actionType !== "end")
+      .map((sibling) => evaluator.endDiscardOpportunityRelief(
+        endTerms,
+        sibling.transitionTerms
+      )));
+    rowFor(roots.find((action) => action.type === "end")).endOpportunity = {
+      total,
+      pf,
+      ps: total - pf - pd,
+      pd
+    };
+    return total;
+  };
+  const finalizeCandidate = searcher.finalizeCandidate.bind(searcher);
+  searcher.finalizeCandidate = (candidate, siblings) => {
+    const finalized = finalizeCandidate(candidate, siblings);
+    Object.assign(rowFor(candidate.action), {
+      frontierValue: candidate.frontierValue,
+      finalUtility: finalized.transitionValue
+    });
+    return finalized;
+  };
+  const choice = await searcher.search(
+    world.players.find((player) => player.id === actor.id),
+    world,
+    roots,
+    { gameId: world.gameId, rootCandidateCount: roots.length }
+  );
+  return { choice, roots, rows };
 }
 
-test(
-  "AI·搜索：负收益共生在 ROOT 未完整覆盖时不成为正式 winner",
-  symbiosisIncompleteRootCoverageRegression
-);
+test("AI·搜索：负收益共生不因技能机会或故障 fallback 被强迫选择", async () => {
+  const game = makeBenchmarkGame({
+    players: [
+      {
+        id: "negative-symbiosis-actor",
+        team: "dawn",
+        character: "oath-warden",
+        energy: 4,
+        hand: [makeBenchmarkCard("symbiosis", "negative-symbiosis")]
+      },
+      { id: "negative-symbiosis-ally", team: "dawn", character: "oath-warden" },
+      { id: "negative-symbiosis-enemy-a", team: "dusk", character: "spirit-medic", hp: 2 },
+      { id: "negative-symbiosis-enemy-b", team: "dusk", character: "shade-agent", hp: 2 },
+      { id: "negative-symbiosis-enemy-c", team: "dusk", character: "ember-magus", hp: 2 }
+    ],
+    options: { actorId: "negative-symbiosis-actor", seed: 20260901, nodeBudget: 1000 }
+  });
+  try {
+    const ledger = await captureSymbiosisSearchLedger(game, "negative-symbiosis-actor");
+    const symbiosis = [...ledger.rows.values()].find((row) => row.action.cardId === "symbiosis");
+    const end = [...ledger.rows.values()].find((row) => row.action.type === "end");
+    assertClose(symbiosis.beforeStateValue, 12.6);
+    assertClose(symbiosis.afterStateValue, -4.5);
+    assert.equal(symbiosis.allyHealTotal, 0);
+    assert.equal(symbiosis.enemyHealTotal, 3);
+    assertClose(symbiosis.transitionTerms.stateDelta, -17.1);
+    assertClose(symbiosis.transitionTerms.transitionOptionPoints, 0);
+    assertClose(symbiosis.schedulingScore, .75);
+    assertClose(symbiosis.prior.prior, -20);
+    assertClose(symbiosis.frontierValue, 0);
+    assertClose(symbiosis.finalUtility, -3.42);
+    assertClose(end.transitionTerms.baseTransition, 0);
+    assertClose(end.endOpportunity.pf, 1.2);
+    assertClose(end.endOpportunity.ps, 2.625);
+    assertClose(end.endOpportunity.pd, 0);
+    assertClose(end.finalUtility, -.765);
+    assert.equal(ledger.choice.type, "skill");
+    assert.equal(ledger.choice.skillId, "barrier");
+
+    game.aiSearchNodeBudgetOverride = 1;
+    const actor = game.state.players.find((player) => player.id === "negative-symbiosis-actor");
+    const interrupted = await game.aiController.selectAction(actor, { gameId: game.state.gameId });
+    assert.equal(interrupted, null);
+    assert.equal(game.aiController.lastSearchStats.stopReason, "NODE");
+    assert.equal(game.aiController.lastSearchStats.completedRootCandidateCount, 1);
+    assert.equal(game.aiController.lastSearchStats.bestValueScore, null);
+    const recovery = await game.aiController.selectRuntimeEmergencyAction(actor, {
+      mandatoryDiscardCount: 1
+    });
+    assert.equal(recovery.status, "SELECTED_END_NO_SAFE_CARD");
+    assert.equal(recovery.action.type, "end");
+    assert.equal(recovery.safeCardCandidateCount, 0);
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+});
+
+test("AI·搜索：正收益共生仍由完整 Final Utility 正常选中", async () => {
+  const game = makeBenchmarkGame({
+    players: [
+      {
+        id: "positive-symbiosis-actor",
+        team: "dawn",
+        character: "blade-walker",
+        hp: 1,
+        energy: 0,
+        hand: [makeBenchmarkCard("symbiosis", "positive-symbiosis")]
+      },
+      { id: "positive-symbiosis-ally", team: "dawn", character: "oath-warden", hp: 1 },
+      { id: "positive-symbiosis-enemy-a", team: "dusk", character: "spirit-medic" },
+      { id: "positive-symbiosis-enemy-b", team: "dusk", character: "shade-agent" },
+      { id: "positive-symbiosis-enemy-c", team: "dusk", character: "ember-magus" }
+    ],
+    options: { actorId: "positive-symbiosis-actor", seed: 20260901, nodeBudget: 1000 }
+  });
+  try {
+    const ledger = await captureSymbiosisSearchLedger(game, "positive-symbiosis-actor");
+    const symbiosis = [...ledger.rows.values()].find((row) => row.action.cardId === "symbiosis");
+    assertClose(symbiosis.beforeStateValue, -69.9);
+    assertClose(symbiosis.afterStateValue, -47.26);
+    assert.equal(symbiosis.allyHealTotal, 2);
+    assert.equal(symbiosis.enemyHealTotal, 0);
+    assertClose(symbiosis.transitionTerms.stateDelta, 22.64);
+    assertClose(symbiosis.transitionTerms.transitionOptionPoints, 0);
+    assertClose(symbiosis.prior.prior, 15);
+    assertClose(symbiosis.frontierValue, 0);
+    assertClose(symbiosis.finalUtility, 4.528);
+    assert.equal(ledger.choice.type, "card");
+    assert.equal(ledger.choice.cardId, "symbiosis");
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+});
 
 /*
 功能
@@ -19760,7 +19928,7 @@ function testTacticResolutionChance(simulator, state, actor, card, targets, sele
 
 /*
 功能
-运行一次真实 Controller search failure，并验证 runtime emergency fallback 后重新正常搜索。
+运行一次真实 Controller search failure，并验证立即进入 canonical final recovery。
 
 调用方
 hard-watchdog、TIME 与 NODE 无 incumbent 的恢复回归测试。
@@ -19769,19 +19937,19 @@ hard-watchdog、TIME 与 NODE 无 incumbent 的恢复回归测试。
 首次搜索的 stopReason；WATCHDOG 表示 hard-watchdog transport exception。
 
 输出
-独立 Game、行动者、search request stateVersion、acceptance status、诊断状态、玩家日志与 fallback 记录。
+独立 Game、行动者、search request stateVersion、acceptance status、诊断状态、玩家日志与 recovery 记录。
 
 读取状态
 Controller 当前 GameState、Generator root actions、Worker/SearchResult diagnostics 与玩家日志。
 
 写入状态
-真实执行一张聚能，并由第二次正常 Search 返回 strategic END。
+不执行未经完整 sibling 比较的聚能；final recovery 取得 Generator canonical END。
 
 调用函数
 makeGame、Controller.selectAction、takeAiPlayPhase。
 
 边界与不变量
-fallback 必须来自当前 Generator，执行后只通过新的 selectAction/request 继续；不调用弃牌阶段。
+初次失败后不得重跑搜索；本夹具无需强制弃牌，且 takeAiPlayPhase 本身不调用弃牌阶段。
 hard-watchdog 诊断必须保留在 Controller，且不得进入玩家日志。
 */
 async function runRuntimeSearchFailureFallback(stopReason) {
@@ -19792,8 +19960,8 @@ async function runRuntimeSearchFailureFallback(stopReason) {
   const { game, ui } = makeGame([actor, enemy]);
   game.state.phase = "play";
   game.cleanupManager.delay = async () => true;
-  const expectedFirstNonEnd = game.aiController.getActionCandidates(actor)
-    .find((action) => action.type !== "end");
+  const expectedEnd = game.aiController.getActionCandidates(actor)
+    .find((action) => action.type === "end");
   let discardCalls = 0;
   const discardCardFromHand = game.discardCardFromHand.bind(game);
   game.discardCardFromHand = async (...args) => {
@@ -19806,23 +19974,14 @@ async function runRuntimeSearchFailureFallback(stopReason) {
     async search(request) {
       requestVersions.push(request.stateVersion);
       searchCalls += 1;
-      if (searchCalls === 1 && stopReason === "WATCHDOG") {
+      if (stopReason === "WATCHDOG") {
         throw new Error("AI search hard watchdog");
-      }
-      if (searchCalls === 1) {
-        return createWorkerSearchOutcome({
-          request,
-          action: null,
-          stats: { stopReason },
-          searchStopReason: stopReason,
-          rngAfter: request.rng
-        });
       }
       return createWorkerSearchOutcome({
         request,
-        action: request.rootActions.find((action) => action.type === "end"),
-        stats: { stopReason: "COMPLETE" },
-        searchStopReason: "COMPLETE",
+        action: null,
+        stats: { stopReason },
+        searchStopReason: stopReason,
         rngAfter: request.rng
       });
     }
@@ -19849,9 +20008,18 @@ async function runRuntimeSearchFailureFallback(stopReason) {
   const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction?.bind(
     game.aiController
   );
-  game.aiController.selectRuntimeEmergencyAction = (...args) => {
-    const result = selectRuntimeEmergencyAction(...args);
+  game.aiController.selectRuntimeEmergencyAction = async (...args) => {
+    const result = await selectRuntimeEmergencyAction(...args);
     fallbackRecords.push(result);
+    return result;
+  };
+  const endRecoveryRecords = [];
+  const selectRuntimeRecoveryEndAction = game.aiController.selectRuntimeRecoveryEndAction.bind(
+    game.aiController
+  );
+  game.aiController.selectRuntimeRecoveryEndAction = (...args) => {
+    const result = selectRuntimeRecoveryEndAction(...args);
+    endRecoveryRecords.push(result);
     return result;
   };
   await game.takeAiPlayPhase(actor, game.state.gameId);
@@ -19867,29 +20035,28 @@ async function runRuntimeSearchFailureFallback(stopReason) {
     decisionDiagnostics,
     workerOutcomes,
     fallbackRecords,
-    expectedFirstNonEnd
+    endRecoveryRecords,
+    expectedEnd
   };
 }
 
-test("AI·搜索故障恢复：hard-watchdog 只保留内部诊断并执行 Generator fallback", async () => {
+test("AI·搜索故障恢复：hard-watchdog 后单次搜索立即 canonical END", async () => {
   const fixture = await runRuntimeSearchFailureFallback("WATCHDOG");
   try {
-    assert.equal(fixture.searchCalls, 2);
-    assert.deepEqual(fixture.acceptedStatuses, [
-      SEARCH_RESULT_STATUS.WORKER_FAILURE,
-      SEARCH_RESULT_STATUS.ACCEPTED
-    ]);
-    assert.equal(fixture.fallbackRecords.length, 1);
-    assert.equal(fixture.fallbackRecords[0].kind, "RUNTIME_EMERGENCY_LEGAL_FALLBACK");
-    assert.ok(sameAction(fixture.fallbackRecords[0].action, fixture.expectedFirstNonEnd));
-    assert.equal(fixture.fallbackRecords[0].action.cardInstanceId, fixture.charge.id);
-    assert.equal(fixture.actor.statistics.cardsPlayed, 1);
-    assert.ok(fixture.requestVersions[1] > fixture.requestVersions[0]);
+    assert.equal(fixture.searchCalls, 1);
+    assert.deepEqual(fixture.acceptedStatuses, [SEARCH_RESULT_STATUS.WORKER_FAILURE]);
+    assert.equal(fixture.fallbackRecords.length, 0);
+    assert.equal(fixture.endRecoveryRecords.length, 1);
+    assert.equal(fixture.game.aiController.lastSearchResult.action, null);
+    assert.ok(sameAction(fixture.endRecoveryRecords[0].action, fixture.expectedEnd));
+    assert.equal(fixture.actor.statistics.cardsPlayed, 0);
+    assert.ok(fixture.actor.hand.includes(fixture.charge));
+    assert.equal(fixture.requestVersions.length, 1);
     assert.equal(fixture.discardCalls, 0, "fallback 不得直接进入 discard phase");
     assert.equal(fixture.decisionDiagnostics[0].watchdogFired, true);
     assert.equal(fixture.decisionDiagnostics[0].workerRejectionReason, "AI search hard watchdog");
     assert.equal(fixture.workerOutcomes[0].workerError, "AI search hard watchdog");
-    assert.ok(fixture.ui.logs.some((message) => message.includes("使用「聚能」")));
+    assert.ok(!fixture.ui.logs.some((message) => message.includes("使用「聚能」")));
     assert.ok(!fixture.ui.logs.some((message) => message.includes("搜索运行通道故障")));
     assert.ok(!fixture.ui.logs.some((message) => message.includes("hard watchdog")));
     assert.ok(!fixture.ui.logs.some((message) => message.includes("合法应急 Action")));
@@ -19898,17 +20065,21 @@ test("AI·搜索故障恢复：hard-watchdog 只保留内部诊断并执行 Gene
   }
 });
 
-test("AI·搜索故障恢复：TIME/NODE 无 incumbent 时执行 canonical non-END", async () => {
+test("AI·搜索故障恢复：TIME/NODE 无 incumbent 后单次搜索立即 canonical END", async () => {
   for (const stopReason of ["TIME", "NODE"]) {
     const fixture = await runRuntimeSearchFailureFallback(stopReason);
     try {
-      assert.deepEqual(fixture.acceptedStatuses, [
-        SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED,
-        SEARCH_RESULT_STATUS.ACCEPTED
-      ], stopReason);
-      assert.equal(fixture.fallbackRecords[0].action.type, "card", stopReason);
-      assert.equal(fixture.fallbackRecords[0].action.cardId, "charge", stopReason);
-      assert.equal(fixture.actor.statistics.cardsPlayed, 1, stopReason);
+      assert.deepEqual(
+        fixture.acceptedStatuses,
+        [SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED],
+        stopReason
+      );
+      assert.equal(fixture.fallbackRecords.length, 0, stopReason);
+      assert.equal(fixture.endRecoveryRecords.length, 1, stopReason);
+      assert.equal(fixture.game.aiController.lastSearchResult.action, null, stopReason);
+      assert.equal(fixture.endRecoveryRecords[0].action.type, "end", stopReason);
+      assert.equal(fixture.actor.statistics.cardsPlayed, 0, stopReason);
+      assert.ok(fixture.actor.hand.includes(fixture.charge), stopReason);
       assert.equal(fixture.discardCalls, 0, stopReason);
     } finally {
       fixture.game.dispose();
@@ -19916,14 +20087,358 @@ test("AI·搜索故障恢复：TIME/NODE 无 incumbent 时执行 canonical non-E
   }
 });
 
-test("AI·搜索故障恢复：runtime fallback 不进入 Searcher incumbent 或 stats", async () => {
+/*
+功能
+运行一次无可靠 winner 后打出一张安全牌并重新进入正常搜索的大手牌场景。
+
+调用方
+TIME/NODE emergency 单步执行与 Searcher 交还回归测试。
+
+输入
+Searcher stopReason，限定为 TIME 或 NODE。
+
+输出
+搜索/应急/弃牌调用记录、最终手牌与正常 Searcher 是否重新接管。
+
+读取状态
+真实 Controller roots、TurnWorkflow play phase 与 Player statistics。
+
+写入状态
+独立测试 Game；首次搜索返回 null，第二次 decision 的正常搜索返回 canonical END。
+
+调用函数
+makeGame、createWorkerSearchOutcome、takeAiPlayPhase、discardCardFromHand。
+
+边界与不变量
+Emergency 只执行一张 Generator 生成的安全 card；第二次调用必须是正常 selectAction，期间不得弃牌或推进角色。
+*/
+async function runLargeHandEmergencyRecovery(stopReason) {
+  const actor = makePlayer(`emergency-${stopReason}-actor`, 0, "dawn", "ai", 0);
+  const enemy = makePlayer(`emergency-${stopReason}-enemy`, 1, "dusk", "ai", 1);
+  actor.hand.push(...Array.from({ length: 8 }, () => instance("charge")));
+  const { game } = makeGame([actor, enemy]);
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  const requestsContainNonEnd = [];
+  let normalSearcherResumed = false;
+  game.aiController.searchExecutor = {
+    async search(request) {
+      searchCalls += 1;
+      requestsContainNonEnd.push(request.rootActions.some((action) => action.type !== "end"));
+      if (searchCalls === 2) {
+        normalSearcherResumed = actor.statistics.cardsPlayed === 1;
+        const action = request.rootActions.find((candidate) => candidate.type === "end");
+        return createWorkerSearchOutcome({
+          request,
+          action,
+          stats: { stopReason: "COMPLETE", completedRootCandidateCount: request.rootActions.length },
+          searchStopReason: "COMPLETE",
+          rngAfter: request.rng
+        });
+      }
+      return createWorkerSearchOutcome({
+        request,
+        action: null,
+        stats: { stopReason, completedRootCandidateCount: 0, bestValueScore: null },
+        searchStopReason: stopReason,
+        rngAfter: request.rng
+      });
+    }
+  };
+  let discardCalls = 0;
+  const discardCardFromHand = game.discardCardFromHand.bind(game);
+  game.discardCardFromHand = async (...args) => {
+    discardCalls += 1;
+    return discardCardFromHand(...args);
+  };
+  const emergencyRecords = [];
+  const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction.bind(
+    game.aiController
+  );
+  game.aiController.selectRuntimeEmergencyAction = (...args) => {
+    const result = selectRuntimeEmergencyAction(...args);
+    emergencyRecords.push(result);
+    return result;
+  };
+  await game.takeAiPlayPhase(actor, game.state.gameId);
+  return {
+    actor,
+    game,
+    searchCalls,
+    discardCalls,
+    handCount: actor.hand.length,
+    phase: game.state.phase,
+    requestsContainNonEnd,
+    emergencyRecords,
+    normalSearcherResumed,
+    currentPlayerIndex:game.state.currentPlayerIndex
+  };
+}
+
+test("AI·搜索故障恢复：TIME/NODE 首次失败后 emergency 只打一张并交还正常 Searcher", async () => {
+  for (const stopReason of ["TIME", "NODE"]) {
+    const fixture = await runLargeHandEmergencyRecovery(stopReason);
+    try {
+      assert.equal(fixture.searchCalls, 2, stopReason);
+      assert.deepEqual(fixture.requestsContainNonEnd, [true, true], stopReason);
+      assert.equal(fixture.emergencyRecords.length, 1, stopReason);
+      assert.equal(fixture.emergencyRecords[0].status, "SELECTED_SAFE_CARD", stopReason);
+      assert.equal(fixture.emergencyRecords[0].mandatoryDiscardCount, 4, stopReason);
+      assert.equal(fixture.emergencyRecords[0].action.cardId, "charge", stopReason);
+      assert.equal(fixture.actor.statistics.cardsPlayed, 1, stopReason);
+      assert.equal(fixture.discardCalls, 0, stopReason);
+      assert.equal(fixture.handCount, 7, stopReason);
+      assert.equal(fixture.phase, "play", stopReason);
+      assert.equal(fixture.currentPlayerIndex, 0, stopReason);
+      assert.equal(fixture.normalSearcherResumed, true, stopReason);
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·搜索故障恢复：首次搜索失败且无需弃牌时直接 canonical END", async () => {
+  const actor = makePlayer("no-discard-emergency-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("no-discard-emergency-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(...Array.from({ length: actor.hp }, () => instance("charge")));
+  const { game } = makeGame([actor, enemy]);
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  game.aiController.searchExecutor = {
+    async search(request) {
+      searchCalls += 1;
+      return createWorkerSearchOutcome({
+        request,
+        action:null,
+        stats:{ stopReason:"NODE", completedRootCandidateCount:0 },
+        searchStopReason:"NODE",
+        rngAfter:request.rng
+      });
+    }
+  };
+  let emergencyCalls = 0;
+  const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction.bind(
+    game.aiController
+  );
+  game.aiController.selectRuntimeEmergencyAction = (...args) => {
+    emergencyCalls += 1;
+    return selectRuntimeEmergencyAction(...args);
+  };
+  let discardCalls = 0;
+  const discardCardFromHand = game.discardCardFromHand.bind(game);
+  game.discardCardFromHand = async (...args) => {
+    discardCalls += 1;
+    return discardCardFromHand(...args);
+  };
+  try {
+    await game.takeTurn(actor, game.state.gameId);
+    assert.equal(searchCalls, 1);
+    assert.equal(emergencyCalls, 0);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.kind, "RUNTIME_RECOVERY_CANONICAL_END");
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.emergencyMode, false);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.status, "SELECTED_END_NO_MANDATORY_DISCARD");
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.mandatoryDiscardCount, 0);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
+    assert.equal(actor.statistics.cardsPlayed, 0);
+    assert.equal(discardCalls, 0);
+    assert.equal(actor.hand.length, actor.hp);
+    assert.equal(game.state.phase, "turnEnd");
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·搜索故障恢复：会弃牌但无安全 card 时最终 canonical END", async () => {
+  const actor = makePlayer("no-safe-emergency-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("no-safe-emergency-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("symbiosis"), ...Array.from({ length: 7 }, () => instance("block")));
+  const { game } = makeGame([actor, enemy]);
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  game.aiController.searchExecutor = {
+    async search(request) {
+      searchCalls += 1;
+      return createWorkerSearchOutcome({
+        request,
+        action:null,
+        stats:{ stopReason:"TIME", completedRootCandidateCount:0 },
+        searchStopReason:"TIME",
+        rngAfter:request.rng
+      });
+    }
+  };
+  let discardCalls = 0;
+  const discardCardFromHand = game.discardCardFromHand.bind(game);
+  game.discardCardFromHand = async (...args) => {
+    discardCalls += 1;
+    return discardCardFromHand(...args);
+  };
+  try {
+    await game.takeTurn(actor, game.state.gameId);
+    assert.equal(searchCalls, 1);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.kind, "RUNTIME_EMERGENCY_LEGAL_ACTION");
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.emergencyMode, true);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.status, "SELECTED_END_NO_SAFE_CARD");
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.mandatoryDiscardCount, 4);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.safeCardCandidateCount, 0);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
+    assert.equal(actor.statistics.cardsPlayed, 0);
+    assert.equal(discardCalls, 4);
+    assert.equal(actor.hand.length, actor.hp);
+    assert.equal(game.state.phase, "turnEnd");
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·搜索故障恢复：emergency 排除共生互利闪电并选择安全普通牌", () => {
+  const actor = makePlayer("unsafe-cards-emergency-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("unsafe-cards-emergency-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(
+    instance("symbiosis"),
+    instance("mutualBenefit"),
+    instance("lightning"),
+    instance("charge"),
+    ...Array.from({ length: 4 }, () => instance("block"))
+  );
+  const { game } = makeGame([actor, enemy]);
+  try {
+    const roots = game.aiController.getActionCandidates(actor);
+    assert.ok(roots.some((action) => action.cardId === "symbiosis"));
+    assert.ok(roots.some((action) => action.cardId === "mutualBenefit"));
+    assert.ok(roots.some((action) => action.cardId === "lightning"));
+    const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
+      mandatoryDiscardCount:4
+    });
+    assert.equal(emergency.status, "SELECTED_SAFE_CARD");
+    assert.equal(emergency.action.type, "card");
+    assert.equal(emergency.action.cardId, "charge");
+    assert.ok(actor.hand.some((card) => card.id === emergency.action.cardInstanceId));
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·搜索故障恢复：emergency 排除仅以队友为目标的 card action", () => {
+  const actor = makePlayer("teammate-target-emergency-actor", 0, "dawn", "ai", 0);
+  const ally = makePlayer("teammate-target-emergency-ally", 1, "dawn", "ai", 1);
+  const enemy = makePlayer("teammate-target-emergency-enemy", 2, "dusk", "ai", 2);
+  actor.hand.push(instance("plunder"), ...Array.from({ length: 7 }, () => instance("block")));
+  ally.hand.push(instance("charge"));
+  const { game } = makeGame([actor, ally, enemy]);
+  try {
+    const plunderActions = game.aiController.getActionCandidates(actor)
+      .filter((action) => action.cardId === "plunder");
+    assert.ok(plunderActions.length > 0);
+    assert.ok(plunderActions.every((action) => action.targetIds.includes(ally.id)));
+    const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
+      mandatoryDiscardCount:4
+    });
+    assert.equal(emergency.status, "SELECTED_END_NO_SAFE_CARD");
+    assert.equal(emergency.safeCardCandidateCount, 0);
+    assert.equal(emergency.action.type, "end");
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·搜索故障恢复：已有装备时 emergency 不覆盖装备", () => {
+  const actor = makePlayer("equipped-emergency-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("equipped-emergency-enemy", 1, "dusk", "ai", 1);
+  actor.equipment = instance("recycleDevice");
+  actor.hand.push(instance("energyDevice"), ...Array.from({ length: 7 }, () => instance("block")));
+  const { game } = makeGame([actor, enemy]);
+  try {
+    assert.ok(game.aiController.getActionCandidates(actor).some(
+      (action) => action.cardId === "energyDevice"
+    ));
+    const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
+      mandatoryDiscardCount:4
+    });
+    assert.equal(emergency.status, "SELECTED_END_NO_SAFE_CARD");
+    assert.equal(emergency.action.type, "end");
+    assert.equal(actor.equipment.definitionId, "recycleDevice");
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·搜索故障恢复：无装备时 emergency 可选择合法装备牌", () => {
+  const actor = makePlayer("unequipped-emergency-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("unequipped-emergency-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(instance("energyDevice"), ...Array.from({ length: 7 }, () => instance("block")));
+  const { game } = makeGame([actor, enemy]);
+  try {
+    const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
+      mandatoryDiscardCount:4
+    });
+    assert.equal(emergency.status, "SELECTED_SAFE_CARD");
+    assert.equal(emergency.action.type, "card");
+    assert.equal(emergency.action.cardId, "energyDevice");
+    assert.ok(sameAction(
+      emergency.action,
+      game.aiController.getActionCandidates(actor).find(
+        (action) => action.cardId === "energyDevice"
+      )
+    ));
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·搜索故障恢复：可靠 Searcher END 仍正常进入大手牌强制弃牌", async () => {
+  const actor = makePlayer("accepted-end-discard-actor", 0, "dawn", "ai", 0);
+  const enemy = makePlayer("accepted-end-discard-enemy", 1, "dusk", "ai", 1);
+  actor.hand.push(...Array.from({ length: 8 }, () => instance("charge")));
+  const { game } = makeGame([actor, enemy]);
+  game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
+  game.aiController.searchExecutor = {
+    async search(request) {
+      searchCalls += 1;
+      const action = request.rootActions.find((candidate) => candidate.type === "end");
+      return createWorkerSearchOutcome({
+        request,
+        action,
+        stats: {
+          stopReason: "COMPLETE",
+          completedRootCandidateCount: request.rootActions.length,
+          bestSequence: [action]
+        },
+        searchStopReason: "COMPLETE",
+        rngAfter: request.rng
+      });
+    }
+  };
+  let discardCalls = 0;
+  const discardCardFromHand = game.discardCardFromHand.bind(game);
+  game.discardCardFromHand = async (...args) => {
+    discardCalls += 1;
+    return discardCardFromHand(...args);
+  };
+  try {
+    await game.takeTurn(actor, game.state.gameId);
+    assert.equal(searchCalls, 1);
+    assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+    assert.equal(game.aiController.lastSearchResult.action.type, "end");
+    assert.equal(discardCalls, 4);
+    assert.equal(actor.hand.length, actor.hp);
+    assert.equal(game.state.phase, "turnEnd");
+  } finally {
+    game.dispose();
+  }
+});
+
+test("AI·搜索故障恢复：单次 Searcher 失败不制造 incumbent", async () => {
   const actor = makePlayer("fallback-diagnostics-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("fallback-diagnostics-enemy", 1, "dusk", "ai", 1);
   actor.hand.push(instance("charge"));
   const { game } = makeGame([actor, enemy]);
   game.state.phase = "play";
+  let searchCalls = 0;
   game.aiController.searchExecutor = {
     async search(request) {
+      searchCalls += 1;
       return createWorkerSearchOutcome({
         request,
         action: null,
@@ -19935,46 +20450,43 @@ test("AI·搜索故障恢复：runtime fallback 不进入 Searcher incumbent 或
   };
   try {
     assert.equal(await game.aiController.selectAction(actor, { gameId: game.state.gameId }), null);
-    const searchResult = game.aiController.lastSearchResult;
-    const searchStats = game.aiController.lastSearchStats;
-    const fallback = game.aiController.selectRuntimeEmergencyAction(actor, []);
-    assert.equal(fallback.kind, "RUNTIME_EMERGENCY_LEGAL_FALLBACK");
-    assert.equal(fallback.action.type, "card");
-    assert.equal(Object.hasOwn(fallback, "stats"), false);
-    assert.equal(Object.hasOwn(fallback, "incumbent"), false);
-    assert.equal(game.aiController.lastSearchResult, searchResult);
-    assert.equal(game.aiController.lastSearchStats, searchStats);
+    assert.equal(searchCalls, 1);
     assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED);
     assert.equal(game.aiController.lastSearchResult.action, null);
+    assert.equal(game.aiController.lastSearchStats.incumbent ?? null, null);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback, null);
   } finally {
     game.dispose();
   }
 });
 
-test("AI·搜索故障恢复：只有 Generator 只剩 canonical END 时才允许 fallback END", async () => {
+test("AI·搜索故障恢复：Worker fault 后单次搜索按无弃牌 END 收束", async () => {
   const actor = makePlayer("fallback-end-only-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("fallback-end-only-enemy", 1, "dusk", "ai", 1);
-  actor.hand.push(instance("counter"));
+  actor.hand.push(instance("charge"));
   const { game } = makeGame([actor, enemy]);
   game.state.phase = "play";
   game.cleanupManager.delay = async () => true;
+  let searchCalls = 0;
   game.aiController.searchExecutor = {
     search: async () => {
+      searchCalls += 1;
       throw new Error("synthetic Worker failure");
     }
   };
   try {
     await game.takeAiPlayPhase(actor, game.state.gameId);
-    assert.equal(game.aiController.lastRuntimeEmergencyFallback.kind, "RUNTIME_EMERGENCY_LEGAL_FALLBACK");
+    assert.equal(searchCalls, 1);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.status, "SELECTED_END_NO_MANDATORY_DISCARD");
     assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
-    assert.equal(game.aiController.lastRuntimeEmergencyFallback.nonEndCandidateCount, 0);
     assert.equal(actor.statistics.cardsPlayed, 0);
+    assert.equal(actor.hand.length, 1);
   } finally {
     game.dispose();
   }
 });
 
-test("AI·搜索故障恢复：搜索 Action 绑定失败后尝试当前 canonical non-END", async () => {
+test("AI·搜索故障恢复：搜索 Action 绑定失败后立即 final recovery END", async () => {
   const actor = makePlayer("fallback-binding-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("fallback-binding-enemy", 1, "dusk", "ai", 1);
   actor.hand.push(instance("charge"));
@@ -19985,26 +20497,24 @@ test("AI·搜索故障恢复：搜索 Action 绑定失败后尝试当前 canonic
   game.aiController.selectAction = async () => {
     searchCalls += 1;
     game.aiController.lastSearchResult = Object.freeze({ status: SEARCH_RESULT_STATUS.ACCEPTED });
-    return searchCalls === 1
-      ? createAction({ type: "card", actorId: actor.id, cardId: "missing-definition" })
-      : createAction({ type: "end", actorId: actor.id });
+    return createAction({ type: "card", actorId: actor.id, cardId: "missing-definition" });
   };
   try {
     await game.takeAiPlayPhase(actor, game.state.gameId);
-    assert.equal(searchCalls, 2);
-    assert.equal(actor.statistics.cardsPlayed, 1);
-    assert.equal(actor.hand.length, 0);
+    assert.equal(searchCalls, 1);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
+    assert.equal(actor.statistics.cardsPlayed, 0);
+    assert.equal(actor.hand.length, 1);
   } finally {
     game.dispose();
   }
 });
 
-test("AI·搜索故障恢复：fallback 单项实体绑定失败后排除并尝试下一合法 Action", async () => {
+test("AI·搜索故障恢复：Searcher null 不当作 END 且 final recovery 不消费实体卡", async () => {
   const actor = makePlayer("fallback-execute-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("fallback-execute-enemy", 1, "dusk", "ai", 1);
   const charge = instance("charge");
-  const shield = instance("shield");
-  actor.hand.push(charge, shield);
+  actor.hand.push(charge);
   const { game } = makeGame([actor, enemy]);
   game.state.phase = "play";
   game.cleanupManager.delay = async () => true;
@@ -20012,55 +20522,50 @@ test("AI·搜索故障恢复：fallback 单项实体绑定失败后排除并尝�
   game.aiController.selectAction = async () => {
     searchCalls += 1;
     game.aiController.lastSearchResult = Object.freeze({
-      status: searchCalls === 1
-        ? SEARCH_RESULT_STATUS.WORKER_FAILURE
-        : SEARCH_RESULT_STATUS.ACCEPTED
+      status: SEARCH_RESULT_STATUS.WORKER_FAILURE,
+      action: null
     });
-    return searchCalls === 1 ? null : createAction({ type: "end", actorId: actor.id });
+    return null;
   };
-  const fallbackCardIds = [];
+  const fallbackActions = [];
   const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction.bind(
     game.aiController
   );
-  game.aiController.selectRuntimeEmergencyAction = (...args) => {
-    const fallback = selectRuntimeEmergencyAction(...args);
-    fallbackCardIds.push(fallback.action.cardInstanceId);
-    if (fallbackCardIds.length === 1) {
-      const find = actor.hand.find.bind(actor.hand);
-      actor.hand.find = (...findArgs) => {
-        actor.hand.find = find;
-        return null;
-      };
-    }
-    return fallback;
+  game.aiController.selectRuntimeEmergencyAction = async (...args) => {
+    const recovery = await selectRuntimeEmergencyAction(...args);
+    fallbackActions.push(recovery.action);
+    return recovery;
   };
   try {
     await game.takeAiPlayPhase(actor, game.state.gameId);
-    assert.deepEqual(fallbackCardIds, [charge.id, shield.id]);
-    assert.ok(actor.hand.includes(charge), "绑定失败 Action 不得被真实消费");
-    assert.ok(!actor.hand.includes(shield), "下一张合法 Action 必须真实执行");
+    assert.equal(searchCalls, 1);
+    assert.equal(fallbackActions.length, 0);
+    assert.equal(game.aiController.lastSearchResult.action, null);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
+    assert.ok(actor.hand.includes(charge), "fallback END 不得消费实体牌");
   } finally {
     game.dispose();
   }
 });
 
-test("AI·搜索故障恢复：fallback 单项真实执行拒绝后尝试下一合法 Action", async () => {
+test("AI·搜索故障恢复：搜索 Action 真实执行拒绝后立即 final recovery END", async () => {
   const actor = makePlayer("fallback-rejected-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("fallback-rejected-enemy", 1, "dusk", "ai", 1);
   const assault = instance("assault");
-  const charge = instance("charge");
-  actor.hand.push(assault, charge);
+  actor.hand.push(assault);
   const { game } = makeGame([actor, enemy]);
   game.state.phase = "play";
   let searchCalls = 0;
   game.aiController.selectAction = async () => {
     searchCalls += 1;
-    game.aiController.lastSearchResult = Object.freeze({
-      status: searchCalls === 1
-        ? SEARCH_RESULT_STATUS.WORKER_FAILURE
-        : SEARCH_RESULT_STATUS.ACCEPTED
+    game.aiController.lastSearchResult = Object.freeze({ status: SEARCH_RESULT_STATUS.ACCEPTED });
+    return createAction({
+      type: "card",
+      actorId: actor.id,
+      cardId: "assault",
+      cardInstanceId: assault.id,
+      targetIds: [enemy.id]
     });
-    return searchCalls === 1 ? null : createAction({ type: "end", actorId: actor.id });
   };
   let invalidated = false;
   game.cleanupManager.delay = async () => {
@@ -20074,24 +20579,24 @@ test("AI·搜索故障恢复：fallback 单项真实执行拒绝后尝试下一�
   const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction.bind(
     game.aiController
   );
-  game.aiController.selectRuntimeEmergencyAction = (...args) => {
-    const fallback = selectRuntimeEmergencyAction(...args);
-    fallbackActions.push(fallback.action);
-    return fallback;
+  game.aiController.selectRuntimeEmergencyAction = async (...args) => {
+    const recovery = await selectRuntimeEmergencyAction(...args);
+    fallbackActions.push(recovery.action);
+    return recovery;
   };
   try {
     await game.takeAiPlayPhase(actor, game.state.gameId);
-    assert.equal(fallbackActions[0].cardInstanceId, assault.id);
-    assert.equal(fallbackActions[1].cardInstanceId, charge.id);
+    assert.equal(searchCalls, 1);
+    assert.equal(fallbackActions.length, 0);
+    assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
     assert.ok(actor.hand.includes(assault), "真实执行拒绝的 Action 不得消费实体牌");
-    assert.ok(!actor.hand.includes(charge), "重新生成的下一合法 Action 必须真实执行");
-    assert.equal(actor.statistics.cardsPlayed, 1);
+    assert.equal(actor.statistics.cardsPlayed, 0);
   } finally {
     game.dispose();
   }
 });
 
-test("AI·搜索故障恢复：失败 card 整体回滚后可安全执行下一 fallback", async () => {
+test("AI·搜索故障恢复：失败 card 整体回滚后立即 final recovery END", async () => {
   const actor = makePlayer("fallback-card-rollback-actor", 0, "dawn", "ai", 0),
     enemy = makePlayer("fallback-card-rollback-enemy", 1, "dusk", "ai", 1),
     assault = instance("assault"),
@@ -20111,23 +20616,18 @@ test("AI·搜索故障恢复：失败 card 整体回滚后可安全执行下一 
   game.aiController.selectAction = async () => {
     searchCalls += 1;
     game.aiController.lastSearchResult = Object.freeze({
-      status: searchCalls === 1
-        ? SEARCH_RESULT_STATUS.WORKER_FAILURE
-        : SEARCH_RESULT_STATUS.ACCEPTED
+      status:SEARCH_RESULT_STATUS.ACCEPTED
     });
-    return searchCalls === 1 ? null : createAction({ type: "end", actorId: actor.id });
+    return createAction({
+      type:"card", actorId:actor.id, cardId:"assault", cardInstanceId:assault.id,
+      targetIds:[enemy.id]
+    });
   };
-  const fallbacks = [
-    createAction({
-      type: "card", actorId: actor.id, cardId: "assault", cardInstanceId: assault.id,
-      targetIds: [enemy.id]
-    }),
-    createAction({ type: "card", actorId: actor.id, cardId: "charge", cardInstanceId: charge.id })
-  ];
-  game.aiController.selectRuntimeEmergencyAction = () => ({
-    kind: "RUNTIME_EMERGENCY_LEGAL_FALLBACK",
-    action: fallbacks.shift()
-  });
+  let emergencyCalls = 0;
+  game.aiController.selectRuntimeEmergencyAction = () => {
+    emergencyCalls += 1;
+    throw new Error("无强制弃牌时不应进入 emergency");
+  };
   let injected = false;
   game.eventDispatcher.on("afterDamage", "test:throw-fallback-card-after-damage", (event) => {
     if (!injected && event.card === assault) {
@@ -20145,10 +20645,13 @@ test("AI·搜索故障恢复：失败 card 整体回滚后可安全执行下一 
   assert.deepEqual(actor.statuses.exposeWeakness, { stacks: 2 });
   assert.equal(actor.turnFlags.attackUsed, 0);
   assert.equal(actor.statistics.assaultsUsed, 0);
-  assert.equal(actor.energy, 1);
+  assert.equal(actor.energy, 0);
   assertCardOnlyIn(game, assault, `hand:${actor.id}`);
-  assertCardOnlyIn(game, charge, "discard");
-  assert.equal(actor.statistics.cardsPlayed, 1);
+  assertCardOnlyIn(game, charge, `hand:${actor.id}`);
+  assert.equal(actor.statistics.cardsPlayed, 0);
+  assert.equal(searchCalls, 1);
+  assert.equal(emergencyCalls, 0);
+  assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
 });
 
 test("AI·搜索故障恢复：rollback failure 穿过 finally 与 GameLoop 且不 fallback/advance", async () => {
@@ -20217,7 +20720,7 @@ test("AI·搜索故障恢复：普通 finally presentation failure 仍保持可�
   );
 });
 
-test("AI·搜索故障恢复：失败 skill 整体回滚后可安全执行下一 fallback", async () => {
+test("AI·搜索故障恢复：失败 skill 整体回滚后立即 final recovery END", async () => {
   const actor = makePlayer("fallback-skill-rollback-actor", 0, "dawn", "ai", 1),
     ally = makePlayer("fallback-skill-rollback-ally", 1, "dawn"),
     enemy = makePlayer("fallback-skill-rollback-enemy", 2, "dusk"),
@@ -20233,20 +20736,17 @@ test("AI·搜索故障恢复：失败 skill 整体回滚后可安全执行下一
   game.aiController.selectAction = async () => {
     searchCalls += 1;
     game.aiController.lastSearchResult = Object.freeze({
-      status: searchCalls === 1
-        ? SEARCH_RESULT_STATUS.WORKER_FAILURE
-        : SEARCH_RESULT_STATUS.ACCEPTED
+      status:SEARCH_RESULT_STATUS.ACCEPTED
     });
-    return searchCalls === 1 ? null : createAction({ type: "end", actorId: actor.id });
+    return createAction({
+      type:"skill", actorId:actor.id, skillId:"barrier", targetIds:[ally.id]
+    });
   };
-  const fallbacks = [
-    createAction({ type: "skill", actorId: actor.id, skillId: "barrier", targetIds: [ally.id] }),
-    createAction({ type: "card", actorId: actor.id, cardId: "charge", cardInstanceId: charge.id })
-  ];
-  game.aiController.selectRuntimeEmergencyAction = () => ({
-    kind: "RUNTIME_EMERGENCY_LEGAL_FALLBACK",
-    action: fallbacks.shift()
-  });
+  let emergencyCalls = 0;
+  game.aiController.selectRuntimeEmergencyAction = () => {
+    emergencyCalls += 1;
+    throw new Error("无强制弃牌时不应进入 emergency");
+  };
   let injected = false;
   const queueFeedback = ui.queueFeedback;
   ui.queueFeedback = (kind, ...args) => {
@@ -20263,49 +20763,50 @@ test("AI·搜索故障恢复：失败 skill 整体回滚后可安全执行下一
   assert.equal(getActiveSkillUseCount(actor.turnFlags, "barrier"), 0);
   assert.equal(actor.turnFlags.activeSkillsUsed.has("barrier"), false);
   assert.equal(ally.shield, 0);
-  assert.equal(actor.energy, 3);
-  assertCardOnlyIn(game, charge, "discard");
-  assert.equal(actor.statistics.cardsPlayed, 1);
+  assert.equal(actor.energy, 2);
+  assertCardOnlyIn(game, charge, `hand:${actor.id}`);
+  assert.equal(actor.statistics.cardsPlayed, 0);
+  assert.equal(searchCalls, 1);
+  assert.equal(emergencyCalls, 0);
+  assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
 });
 
-test("AI·搜索故障恢复：有界 fallback 全部失败后才 fail-stop", async () => {
+test("AI·搜索故障恢复：emergency 不改写 Searcher 诊断或制造 incumbent", async () => {
   const actor = makePlayer("fallback-exhausted-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("fallback-exhausted-enemy", 1, "dusk", "ai", 1);
-  actor.hand.push(instance("charge"), instance("shield"), instance("harvest"));
+  actor.hand.push(instance("charge"));
   const { game } = makeGame([actor, enemy]);
   game.state.phase = "play";
-  game.cleanupManager.delay = async () => true;
-  game.aiController.selectAction = async () => {
-    game.aiController.lastSearchResult = Object.freeze({
-      status: SEARCH_RESULT_STATUS.WORKER_FAILURE,
-      rejectionReason: "synthetic failure"
-    });
-    return null;
-  };
-  const fallbackCardIds = [];
-  const selectRuntimeEmergencyAction = game.aiController.selectRuntimeEmergencyAction.bind(
-    game.aiController
-  );
-  game.aiController.selectRuntimeEmergencyAction = (...args) => {
-    const fallback = selectRuntimeEmergencyAction(...args);
-    fallbackCardIds.push(fallback.action.cardInstanceId);
-    const find = actor.hand.find.bind(actor.hand);
-    actor.hand.find = (...findArgs) => {
-      actor.hand.find = find;
-      return null;
-    };
-    return fallback;
+  let searchCalls = 0;
+  game.aiController.searchExecutor = {
+    async search(request) {
+      searchCalls += 1;
+      return createWorkerSearchOutcome({
+        request,
+        action: null,
+        stats: { stopReason: "NODE", completedRootCandidateCount: 0 },
+        searchStopReason: "NODE",
+        rngAfter: request.rng
+      });
+    }
   };
   try {
-    await assert.rejects(
-      game.takeAiPlayPhase(actor, game.state.gameId),
-      (error) => error?.code === "AI_ACTION_FAILURE"
-        && error?.stage === "FALLBACK_EXHAUSTED"
-    );
-    assert.equal(fallbackCardIds.length, 3);
-    assert.equal(new Set(fallbackCardIds).size, 3);
-    assert.equal(game.state.phase, "play");
-    assert.equal(actor.statistics.cardsPlayed, 0);
+    assert.equal(await game.aiController.selectAction(actor, {
+      gameId:game.state.gameId
+    }), null);
+    const searchResult = game.aiController.lastSearchResult;
+    const searchRequest = game.aiController.lastSearchRequest;
+    const recovery = game.aiController.selectRuntimeEmergencyAction(actor, {
+      mandatoryDiscardCount:1
+    });
+    assert.equal(recovery.kind, "RUNTIME_EMERGENCY_LEGAL_ACTION");
+    assert.equal(recovery.status, "SELECTED_SAFE_CARD");
+    assert.equal(recovery.action.cardId, "charge");
+    assert.equal(game.aiController.lastSearchResult, searchResult);
+    assert.equal(game.aiController.lastSearchRequest, searchRequest);
+    assert.equal(game.aiController.lastSearchStats.incumbent ?? null, null);
+    assert.equal(Object.hasOwn(recovery, "stats"), false);
+    assert.equal(Object.hasOwn(recovery, "incumbent"), false);
   } finally {
     game.dispose();
   }
@@ -20474,7 +20975,7 @@ test("AI·搜索：真实 Action 后强制重搜且合法旧后续不得自动�
 
 /*
 功能
-验证 Worker/Controller 已接受 non-END 后，真实实体绑定失败会转入当前 Generator fallback。
+验证 Worker/Controller 已接受 non-END 后，真实实体绑定失败会立即进入 final recovery。
 
 调用方
 AI 搜索与真实执行边界回归测试。
@@ -20483,22 +20984,22 @@ AI 搜索与真实执行边界回归测试。
 无；构造合法 Assault 与 Charge，并在 acceptance 后、执行前的 pacing 边界移除 Assault。
 
 输出
-Promise；若未执行当前合法 Charge、污染首次搜索证据或没有重新搜索时抛出断言。
+Promise；若执行了未经完整比较的 Charge、污染首次搜索证据或再次调用 Searcher 时抛出断言。
 
 读取状态
 SearchRequest roots、Controller result、TurnWorkflow pacing 与公开日志。
 
 写入状态
-测试在 pacing callback 中移除待绑定实体牌，fallback 真实提交 Charge。
+测试在 pacing callback 中移除待绑定实体牌，final recovery 取得 canonical END。
 
 调用函数
 makeGame、createWorkerSearchOutcome、AIController.selectAction、takeAiPlayPhase。
 
 边界与不变量
 该夹具只模拟 acceptance 后的实体失效；生产必须保留首次 non-END 搜索证据，
-排除失败 Action 后执行当前 Generator non-END，并在真实 World 更新后重新 Search。
+且不能在缺少完整 sibling ledger 时执行当前 Generator 中未经比较的 non-END。
 */
-async function acceptedNonEndBindingFailureUsesFallback() {
+async function acceptedNonEndBindingFailureUsesFinalRecovery() {
   const actor = makePlayer("binding-failure-actor", 0, "dawn", "ai", 5);
   const enemy = makePlayer("binding-failure-enemy", 1, "dusk", "ai", 1);
   const assault = instance("assault");
@@ -20511,9 +21012,7 @@ async function acceptedNonEndBindingFailureUsesFallback() {
     async search(request) {
       requestVersions.push(request.stateVersion);
       searchCalls += 1;
-      const action = searchCalls === 1
-        ? request.rootActions.find((entry) => entry.cardId === "assault")
-        : request.rootActions.find((entry) => entry.type === "end");
+      const action = request.rootActions.find((entry) => entry.cardId === "assault");
       assert.ok(action);
       return createWorkerSearchOutcome({
         request,
@@ -20550,17 +21049,18 @@ async function acceptedNonEndBindingFailureUsesFallback() {
 
   assert.equal(firstSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
   assert.equal(firstSearchResult.action.cardInstanceId, assault.id);
-  assert.equal(searchCalls, 2);
-  assert.ok(requestVersions[1] > requestVersions[0]);
-  assert.ok(!actor.hand.includes(charge));
-  assert.equal(actor.statistics.cardsPlayed, 1);
+  assert.equal(searchCalls, 1);
+  assert.equal(requestVersions.length, 1);
+  assert.ok(actor.hand.includes(charge));
+  assert.equal(actor.statistics.cardsPlayed, 0);
+  assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
   assert.equal(game.state.phase, "play");
   assert.ok(!ui.logs.some((message) => message.includes("合法应急 Action")));
 }
 
 test(
-  "AI·执行边界：accepted non-END 实体绑定失败后执行当前合法 fallback",
-  acceptedNonEndBindingFailureUsesFallback
+  "AI·执行边界：accepted non-END 实体绑定失败后立即 final recovery END",
+  acceptedNonEndBindingFailureUsesFinalRecovery
 );
 
 
@@ -25536,7 +26036,7 @@ test("AI·转移：不会把仅有装备的角色作为来源", () => {
   );
 });
 
-test("AI·转移：负收益合法动作由 Worker Searcher 选择 end 淘汰", async () => {
+test("AI·转移：己方到敌方候选由 Generator 排除且 Worker Searcher 选择 end", async () => {
   const actor = makePlayer("actor", 0, "dawn"), enemy = makePlayer("enemy", 1, "dusk");
   const use = instance("transfer"), held = instance("block");
   actor.hand.push(use, held);
@@ -25549,15 +26049,7 @@ test("AI·转移：负收益合法动作由 Worker Searcher 选择 end 淘汰", 
     && action.selection?.sourceId === actor.id
     && action.selection?.receiverId === enemy.id
   ));
-  assert.ok(transferAction);
-  assert.equal(
-    game.aiController.evaluator.evaluateTransferAction(
-      transferAction,
-      world.players.find((player) => player.id === actor.id),
-      world
-    ).score,
-    Number.NEGATIVE_INFINITY
-  );
+  assert.equal(transferAction, undefined);
   const engine = createSearchEngine({
     world,
     searchConfig: {
@@ -34531,7 +35023,7 @@ test("AI·转移评分：Generator canonical Action 只由 Evaluator 评分", ()
 
 /*
 功能
-验证四种阵营方向均保留 Domain 合法动作并由 Simulator 执行同一物理转移，同时排除 source self receiver。
+验证 Generator 只排除己方到敌方方向，Evaluator 与 Simulator 仍保留四种 Domain 动作语义。
 
 调用方
 当前测试。
@@ -34543,16 +35035,16 @@ test("AI·转移评分：Generator canonical Action 只由 Evaluator 评分", ()
 无返回值，断言失败时抛错。
 
 读取状态
-独立 Game fixture、canonical World、Generator Action 与 Evaluator preference。
+独立 Game fixture、canonical World、Generator Action、手工 canonical Action 与 Evaluator preference。
 
 写入状态
 Simulator 只写独立克隆 World。
 
 调用函数
-makePlayer、makeGame、createInitialWorld、AIController.getActionCandidates、Simulator.apply。
+makePlayer、makeGame、createInitialWorld、AIController.getActionCandidates、createAction、Simulator.apply。
 
 边界与不变量
-阵营关系只影响 Evaluator preference，不得删除 Domain 合法方向或阻止 resolved physical transfer。
+Generator 只禁止 ally-to-enemy；Evaluator 公式和 Simulator physical transfer 不得随候选策略改变。
 */
 function transferDirectionMatrixPreservesLegalityAndExecution() {
   const cases = [
@@ -34574,17 +35066,33 @@ function transferDirectionMatrixPreservesLegalityAndExecution() {
     const world = createInitialWorld(actor.id, game.state);
     const actions = game.aiController.getActionCandidates(actor, world)
       .filter((action) => action.cardInstanceId === use.id);
-    const action = actions.find((candidate) => (
+    const generatedAction = actions.find((candidate) => (
       candidate.selection?.sourceId === source.id
       && candidate.selection?.receiverId === receiver.id
     ));
-    assert.ok(action, `${entry.name} 应保留 Domain 合法 Action`);
+    const generatorAllowsDirection = entry.name !== "ally-to-enemy";
+    assert.equal(Boolean(generatedAction), generatorAllowsDirection, entry.name);
     assert.equal(
       actions.some((candidate) => (
         candidate.selection?.sourceId === candidate.selection?.receiverId
       )),
       false
     );
+    const action = generatedAction ?? createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"transfer",
+      cardInstanceId:use.id,
+      selection:{
+        sourceId:source.id,
+        receiverId:receiver.id,
+        zone:"hand",
+        selectionKind:"known",
+        cardId:held.id,
+        definitionId:held.definitionId,
+        availableUnknownCount:0
+      }
+    });
     const preference = game.aiController.evaluator.evaluateTransferAction(
       action,
       world.players.find((player) => player.id === actor.id),
@@ -34598,7 +35106,7 @@ function transferDirectionMatrixPreservesLegalityAndExecution() {
 }
 
 test(
-  "AI·转移评分：四种方向 legality 与 physical transition 不受策略偏好污染",
+  "AI·转移评分：Generator 单向过滤且四方向评分与 physical transition 保持原语义",
   transferDirectionMatrixPreservesLegalityAndExecution
 );
 
@@ -34734,7 +35242,7 @@ test("AI·转移评分：对己方来源到敌方接收返回负无穷", () => {
   );
 });
 
-test("AI·转移评分：Generator 保留己方到敌方合法候选但 Evaluator 令其不竞争", () => {
+test("AI·转移评分：Generator 排除己方到敌方并保留己方到己方候选", () => {
   const actor = makePlayer("actor", 0, "dawn"),
     from = makePlayer("from", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
@@ -34744,18 +35252,13 @@ test("AI·转移评分：Generator 保留己方到敌方合法候选但 Evaluato
   from.hand.push(instance("charge"), instance("assault"));
   const { game }
     = makeGame([actor, from, enemy]);
-  const world = createInitialWorld(actor.id, game.state);
   const actions = game.aiController.getActionCandidates(actor).filter((action) => (
     action.cardInstanceId === use.id && action.selection?.sourceId === from.id
   ));
   const enemyAction = actions.find((action) => action.selection.receiverId === enemy.id);
   const allyAction = actions.find((action) => action.selection.receiverId === actor.id);
-  assert.ok(enemyAction);
+  assert.equal(enemyAction, undefined);
   assert.ok(allyAction);
-  assert.equal(
-    TRANSFER_TEST_EVALUATOR.evaluateTransferAction(enemyAction, actor, world).score,
-    Number.NEGATIVE_INFINITY
-  );
   const best = chooseTransferCombinationForTest(
     game,
     actor,
@@ -42977,19 +43480,23 @@ test("生命周期：beforeCardMove 取消出牌时保持手牌且不产生出�
   assert.equal(game.actionLocked, false);
 });
 
-test("生命周期：beforeCardMove 取消唯一 AI non-END 后有界 fail-stop", async () => {
+test("生命周期：beforeCardMove 持续取消后无弃牌损失则 canonical END 并推进", async () => {
   const ai = makePlayer("cancel-loop-ai", 0, "dawn"),
     next = makePlayer("cancel-loop-next", 1, "dusk"),
     card = instance("charge"),
     { game }
       = makeGame([ai, next]);
   ai.hand.push(card);
-  game.aiController.selectAction = async () => createAction({
-    type: "card",
-    actorId: ai.id,
-    cardId: card.definitionId,
-    cardInstanceId: card.id
-  });
+  let selections = 0;
+  game.aiController.selectAction = async () => {
+    selections += 1;
+    return createAction({
+      type: "card",
+      actorId: ai.id,
+      cardId: card.definitionId,
+      cardInstanceId: card.id
+    });
+  };
   game.eventDispatcher.on("beforeCardMove", "test:cancel-loop-card", (event) => {
     if (event.card === card) event.cancelled = true;
   });
@@ -43002,8 +43509,10 @@ test("生命周期：beforeCardMove 取消唯一 AI non-END 后有界 fail-stop"
   });
   game.loopPromise = game.runGameLoop();
   await assert.doesNotReject(game.loopPromise);
-  assert.equal(nextStarted, false);
-  assert.equal(game.state.phase, "play");
+  assert.equal(selections, 1);
+  assert.equal(nextStarted, true);
+  assert.equal(game.state.isGameOver, true);
+  assert.equal(game.aiController.lastRuntimeEmergencyFallback.status, "SELECTED_END_NO_MANDATORY_DISCARD");
   assert.deepEqual(ai.hand, [card]);
   assert.equal(game.state.resolvingCards.length, 0);
   assert.equal(game.actionLocked, false);
@@ -43651,7 +44160,6 @@ test("生命周期：AI 陈旧手牌动作失效且当前只剩 END 时安全收
   await game.takeAiPlayPhase(ai, game.state.gameId);
   assert.equal(selections, 1);
   assert.equal(game.aiController.lastRuntimeEmergencyFallback.action.type, "end");
-  assert.equal(game.aiController.lastRuntimeEmergencyFallback.nonEndCandidateCount, 0);
   assert.equal(game.state.phase, "play");
   assert.equal(game.actionLocked, false);
   assert.equal(game.interactionLocked, false);

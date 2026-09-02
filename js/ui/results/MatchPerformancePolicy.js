@@ -47,16 +47,16 @@ export const MATCH_PERFORMANCE_POLICY = Object.freeze({
       support: 0.6,
       activity: 3.2,
       skill: 1.3,
-      control: 1.0,
-      contribution: 0.7
+      control: 1.2,
+      contribution: 1.0
     }),
     3: Object.freeze({
       firepower: 1.2,
       support: 0.5,
       activity: 2.6,
       skill: 1.2,
-      control: 0.8,
-      contribution: 0.5
+      control: 1.0,
+      contribution: 0.8
     })
   }),
   controlCardIds: Object.freeze(["scout", "transfer", "plunder", "destroy"])

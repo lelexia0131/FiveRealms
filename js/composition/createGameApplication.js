@@ -936,8 +936,11 @@ class MatchApplication {
       choiceContexts: this.choiceContexts,
       createId,
       selectAction: (player, options) => this.aiController.selectAction(player, options),
-      selectRuntimeEmergencyAction: (player, excludedActions) => (
-        this.aiController.selectRuntimeEmergencyAction(player, excludedActions)
+      selectRuntimeRecoveryEndAction: (player) => (
+        this.aiController.selectRuntimeRecoveryEndAction(player)
+      ),
+      selectRuntimeEmergencyAction: (player, options) => (
+        this.aiController.selectRuntimeEmergencyAction(player, options)
       ),
       playCard: (...args) => this.actionWorkflow.playCard(...args),
       useActiveSkill: (...args) => this.actionWorkflow.useActiveSkill(...args),

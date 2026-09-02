@@ -890,6 +890,7 @@ export class Generator {
   边界与不变量
   Generator 只判断 possible/impossible，不计算联合概率、次数槽或执行世界；
   非调律师不得生成破坏队友手牌的 Action，敌方手牌、队友装备与调律师例外保持可生成；
+  所有 AI 不得生成己方来源向敌方接收者转移手牌的 Action，其它 Domain 合法方向保持可生成；
   返回后 Searcher/Simulator 不得补 target、selection 或重新创建另一种 Action。
   */
   createCompleteAction(
@@ -909,6 +910,13 @@ export class Generator {
       && actor.characterId !== "resonance-tuner"
       && target?.battleTeam === actor.battleTeam
       && selection?.zone === "hand") return null;
+    // AI 不搜索把己方手牌送给敌方的转移分支；真人合法性仍由 Domain Rules 独立决定。
+    if (definition.definitionId === "transfer") {
+      const source = state.players.find((player) => player.id === selection?.sourceId) ?? null;
+      const receiver = state.players.find((player) => player.id === selection?.receiverId) ?? null;
+      if (source?.battleTeam === actor.battleTeam
+        && receiver?.battleTeam !== actor.battleTeam) return null;
+    }
     if (!this.isActionConditionPossible(
       state, actor, type, definition, targets, selection
     ) || !this.isSelectionPossible(state, selection, targetIds)) return null;

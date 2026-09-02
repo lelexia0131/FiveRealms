@@ -265,9 +265,9 @@ export function registerMatchPerformanceTests(test) {
     }));
     assert.deepEqual(
       MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
-      [3.2, 0.6, 0.7, 1.0, 1.3, 2.0]
+      [3.2, 0.6, 1.0, 1.2, 1.3, 2.0]
     );
-    assert.deepEqual([result.scores.contribution, result.scores.skill], [100, 100]);
+    assert.deepEqual([result.scores.contribution, result.scores.skill], [70, 100]);
   });
 
   test("UI·MVP：三人队六维标准按行动至火力顺序使用新上限", () => {
@@ -280,9 +280,9 @@ export function registerMatchPerformanceTests(test) {
     }));
     assert.deepEqual(
       MATCH_PERFORMANCE_RADAR_AXIS_ORDER.map((key) => thresholds[key]),
-      [2.6, 0.5, 0.5, 0.8, 1.2, 1.2]
+      [2.6, 0.5, 0.8, 1.0, 1.2, 1.2]
     );
-    assert.deepEqual([result.scores.contribution, result.scores.skill], [100, 100]);
+    assert.deepEqual([result.scores.contribution, result.scores.skill], [62.5, 100]);
   });
 
   test("UI·MVP：二人队火力按实际敌伤与真实击杀得到87.5分", async () => {
@@ -1006,7 +1006,7 @@ export function registerMatchPerformanceTests(test) {
     );
   });
 
-  test("UI·MVP：十五回合600基础分按二人队1v3与三人队1v2得到918和1224", () => {
+  test("UI·MVP：十五回合按新控制贡献阈值得到对应基础分与最终分", () => {
     const twoPlayerResult = calculatePerformance(rawPlayer({
       initialTeamSize: 2,
       effectiveRounds: 15,
@@ -1040,12 +1040,12 @@ export function registerMatchPerformanceTests(test) {
     assert.deepEqual(
       [twoPlayerResult.baseScore, twoPlayerResult.roundMultiplier,
         twoPlayerResult.victoryMultiplier, twoPlayerResult.finalScore],
-      [600, 1.02, 1.50, 918]
+      [553.3333333333334, 1.02, 1.50, 846.6000000000001]
     );
     assert.deepEqual(
       [threePlayerResult.baseScore, threePlayerResult.roundMultiplier,
         threePlayerResult.victoryMultiplier, threePlayerResult.finalScore],
-      [600, 1.02, 2.00, 1224]
+      [542.5, 1.02, 2.00, 1106.7]
     );
   });
 
