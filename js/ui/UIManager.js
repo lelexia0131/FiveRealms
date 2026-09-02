@@ -25,14 +25,14 @@ import { HistoryArchiveView } from "./history/HistoryArchiveView.js";
 
 const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
-    eyebrow: "双锋 · 角色征召",
+    eyebrow: "晨星 · 角色征召",
     title: "二人小队征召",
     copy: "选择你的角色 · 你将拥有 1 名队友",
     preview: "二人小队",
     detail: "1 名队友 · 对抗 3 名敌人"
   }),
   [TEAM_ASSIGNMENT_MODE.THREE]: Object.freeze({
-    eyebrow: "协阵 · 角色征召",
+    eyebrow: "暮影 · 角色征召",
     title: "三人大队征召",
     copy: "选择你的角色 · 你将拥有 2 名队友",
     preview: "三人大队",
@@ -203,7 +203,7 @@ export class UIManager {
   constructor({ historyStatsManager = null } = {}) {
     this.elements = Object.fromEntries([
       "start-screen", "history-archive-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "rules-button",
-      "squad-mode-grid", "back-to-start-button", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
+      "squad-mode-grid", "back-to-start-button", "back-to-squad-button", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
       "public-pool-view", "judgment-view", "dying-view", "duel-view",
@@ -484,6 +484,7 @@ export class UIManager {
     this.elements.start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onStart?.(); });
     this.elements.history_button?.addEventListener("click", () => { this.playSound("select"); void this.showHistoryArchive(); });
     this.elements.back_to_start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToStart?.(); });
+    this.elements.back_to_squad_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToSquadSelection?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.squad_mode_grid.addEventListener("click", (event) => this.handleSquadModeClick(event));
@@ -716,13 +717,13 @@ export class UIManager {
   页面屏幕元素与 SoundManager。
 
   写入状态
-  选择选编队 BGM、清理旧交互/日志并仅显示编队方式屏幕。
+  选择选编队 BGM、清理旧交互/日志/选角 DOM 并仅显示编队方式屏幕。
 
   调用函数
   SoundManager.playSquadSelectionMusic、cancelPendingInteractions、resetCurrentCard、clearLog。
 
   边界与不变量
-  只展示选择入口，不保存模式或解析阵营规模。
+  只展示选择入口，不保存模式或解析阵营规模；隐藏的候选与编队预览不得残留上一轮内容。
   */
   showSquadSelection() {
     this.sound.playSquadSelectionMusic();
@@ -735,6 +736,8 @@ export class UIManager {
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.remove("is-hidden");
     this.elements.game_over_overlay.classList.add("is-hidden");
+    this.elements.team_preview.innerHTML = "";
+    this.elements.candidate_grid.innerHTML = "";
   }
 
   /*

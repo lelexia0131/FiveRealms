@@ -38437,16 +38437,21 @@ test("UI·编队方式：独立界面提供三张原生按钮卡与专属 SVG", 
   assert.match(layoutCss, /@media\s*\(max-width:\s*760px\)[\s\S]*?\.squad-mode-grid\s*\{[^}]*grid-template-columns:\s*1fr/s);
 });
 
-test("UI·编队方式：开始、重新征召与下一局统一回到模式选择", async () => {
-  const [main, index] = await Promise.all([
+test("UI·编队方式：各征召入口与选角返回统一进入全新模式选择", async () => {
+  const [main, index, manager] = await Promise.all([
     readFile(projectFile("js/main.js"), "utf8"),
-    readFile(projectFile("index.html"), "utf8")
+    readFile(projectFile("index.html"), "utf8"),
+    readFile(projectFile("js/ui/UIManager.js"), "utf8")
   ]);
   assert.match(main, /onStart:\s*startRecruitment/);
   assert.match(main, /onRestart:\s*startRecruitment/);
+  assert.match(main, /onBackToSquadSelection:\s*startRecruitment/);
   assert.match(main, /onSelectTeamAssignmentMode\(teamAssignmentMode\)/);
   assert.match(main, /function startRecruitment\(\)[\s\S]*?ui\.showSquadSelection\(\)/);
   assert.match(index, /id="restart-button"[\s\S]*id="play-again-button"/);
+  assert.match(index, /class="selection-status">\s*<button id="back-to-squad-button"[^>]*>\s*← 返回\s*<\/button>\s*<div id="team-preview"/);
+  assert.match(manager, /back_to_squad_button\.addEventListener\("click", \(\) => \{ this\.playSound\("select"\); this\.callbacks\.onBackToSquadSelection\?\.\(\); \}\)/);
+  assert.match(manager, /showSquadSelection\(\)[\s\S]*?team_preview\.innerHTML = "";[\s\S]*?candidate_grid\.innerHTML = "";/);
 });
 
 test("UI·编队方式：角色选择页显示 two、three 与 random 的征召上下文", () => {
@@ -38477,14 +38482,19 @@ test("UI·编队方式：角色选择页显示 two、three 与 random 的征召�
     clearLog() { },
     elements
   };
+  elements.team_preview.innerHTML = "旧编队";
+  elements.candidate_grid.innerHTML = "旧候选";
   UIManager.prototype.showSquadSelection.call(context);
   assert.equal(elements.squad_selection_screen.classList.contains("is-hidden"), false);
-  for (const [mode, title, copy] of [
-    ["two", "二人小队征召", "你将拥有 1 名队友"],
-    ["three", "三人大队征召", "你将拥有 2 名队友"],
-    ["random", "随机征召", "阵营规模将在本局随机决定"]
+  assert.equal(elements.team_preview.innerHTML, "");
+  assert.equal(elements.candidate_grid.innerHTML, "");
+  for (const [mode, eyebrow, title, copy] of [
+    ["two", "晨星 · 角色征召", "二人小队征召", "你将拥有 1 名队友"],
+    ["three", "暮影 · 角色征召", "三人大队征召", "你将拥有 2 名队友"],
+    ["random", "命运 · 角色征召", "随机征召", "阵营规模将在本局随机决定"]
   ]) {
     UIManager.prototype.showSelection.call(context, [], mode);
+    assert.equal(elements.selection_eyebrow.textContent, eyebrow);
     assert.equal(elements.selection_title.textContent, title);
     assert.match(elements.selection_copy.textContent, new RegExp(copy));
     assert.match(elements.team_preview.innerHTML, new RegExp(title.replace("征召", "")));
@@ -38791,11 +38801,15 @@ test("UI·玩家面板：角色候选卡统一将主动技能显示在被动技�
 });
 
 test("UI·玩家面板：角色候选简介保留两行占位且技能与按钮结构保持稳定", async () => {
-  const css = await readFile(projectFile("css/characters.css"), "utf8"),
-    descriptionRule = css.match(/\.character-description\s*\{([^}]*)\}/)?.[1] ?? "";
-  assert.match(descriptionRule, /min-height:\s*3\.3em/);
-  assert.match(descriptionRule, /font-size:\s*14px/);
-  assert.match(descriptionRule, /line-height:\s*1\.65/);
+  const [css, layoutCss] = await Promise.all([
+    readFile(projectFile("css/characters.css"), "utf8"),
+    readFile(projectFile("css/layout.css"), "utf8")
+  ]),
+    descriptionRule = css.match(/\.character-description\s*\{([^}]*)\}/)?.[1] ?? "",
+    portraitRule = css.match(/\.candidate-portrait\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.match(descriptionRule, /min-height:\s*3em/);
+  assert.match(descriptionRule, /font-size:\s*13px/);
+  assert.match(descriptionRule, /line-height:\s*1\.5/);
   assert.doesNotMatch(descriptionRule, /(?:^|[;\s])height:\s*\d+px/);
   for (const [index, character] of CHARACTER_DEFINITIONS.entries()) {
     const markup = candidateCardTemplate(character, index),
@@ -38806,7 +38820,14 @@ test("UI·玩家面板：角色候选简介保留两行占位且技能与按钮�
   }
   assert.match(css, /\.candidate-select\s*\{[^}]*margin-top:\s*auto/s);
   assert.match(css, /\.candidate-skills\s*\{[^}]*display:\s*grid/s);
-  assert.match(css, /\.candidate-skills\s*\{[^}]*max-height:\s*132px;[^}]*overflow:\s*auto/s);
+  assert.match(css, /\.candidate-skills\s*\{[^}]*max-height:\s*clamp\(132px,\s*15vh,\s*164px\)/s);
+  assert.match(css, /\.candidate-skills\s*\{[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.candidate-art\s*\{[^}]*aspect-ratio:\s*3\s*\/\s*4/s);
+  assert.match(portraitRule, /width:\s*100%/);
+  assert.match(portraitRule, /height:\s*100%/);
+  assert.match(portraitRule, /object-fit:\s*cover/);
+  assert.doesNotMatch(css, /\.candidate-card:hover\s+\.candidate-portrait/);
+  assert.match(layoutCss, /@media\s*\(min-width:\s*1100px\)\s*and\s*\(max-height:\s*1100px\)[\s\S]*?\.selection-header,\s*\.candidate-grid\s*\{[^}]*max-width:\s*1460px/s);
 });
 
 test("UI·玩家面板：动态距离：UI 距离文案可在阵亡后从2更新为1", () => {
@@ -42469,7 +42490,7 @@ UIManager.bindEvents、SoundManager.unlock、UIManager.playSound。
 */
 async function uiAudioLifecycleRegression() {
   const elements = Object.fromEntries([
-    "start_button", "back_to_start_button", "restart_button", "play_again_button", "squad_mode_grid", "candidate_grid", "game_screen",
+    "start_button", "back_to_start_button", "back_to_squad_button", "restart_button", "play_again_button", "squad_mode_grid", "candidate_grid", "game_screen",
     "human_hand", "cpu_grid", "human_panel", "skill_button", "end_play_button", "discard_confirm_button",
     "cancel_interaction_button", "response_panel", "log_toggle_button", "log_list", "skill_details_overlay"
   ].map((key) => [key, makeInteractiveElement()]));

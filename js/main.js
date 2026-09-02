@@ -112,6 +112,7 @@ ui.setCallbacks({
   onStart: startRecruitment,
   onRestart: startRecruitment,
   onBackToStart: returnToStart,
+  onBackToSquadSelection: startRecruitment,
   /*
   功能
   锁定本次编队方式并进入角色选择界面。

@@ -13,9 +13,9 @@ body:has(.squad-selection-screen:not(.is-hidden)), body:has(.history-archive-scr
 .squad-selection-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; max-width: 1280px; margin: 0 auto clamp(24px, 4vh, 42px); }
 .squad-mode-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(14px, 2vw, 28px); max-width: 1280px; margin: 0 auto; }
 .squad-back-button { display: block; margin: 24px auto 0; }
-.selection-screen { height: 100vh; overflow: auto; padding: clamp(30px, 5vh, 60px) clamp(32px, 5vw, 86px); }
-.selection-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; max-width: 1540px; margin: 0 auto 26px; }
-.candidate-grid { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: clamp(16px, 1.6vw, 26px); max-width: 1540px; margin: 0 auto; }
+.selection-screen { height: 100vh; overflow-y: auto; padding: clamp(16px, 2.5vh, 28px) clamp(32px, 5vw, 86px); }
+.selection-header { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 1540px; margin: 0 auto clamp(12px, 1.8vh, 18px); }
+.candidate-grid { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: clamp(12px, 1.3vw, 20px); max-width: 1540px; margin: 0 auto; }
 
 .game-screen { display: flex; flex-direction: column; height: 100vh; min-height: 720px; overflow: hidden; padding: 10px; }
 .status-bar { flex: 0 0 70px; display: grid; grid-template-columns: minmax(160px, .68fr) minmax(650px, 2.5fr) auto; align-items: center; gap: 16px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 15px 15px 8px 8px; background: rgba(255, 253, 247, .94); box-shadow: var(--shadow-soft); }
@@ -71,6 +71,16 @@ body:has(.squad-selection-screen:not(.is-hidden)), body:has(.history-archive-scr
   .squad-selection-screen { padding: 26px 18px 34px; }
   .squad-selection-header { align-items: start; flex-direction: column; margin-bottom: 22px; }
   .squad-mode-grid { grid-template-columns: 1fr; max-width: 520px; }
+}
+
+@media (min-width: 1100px) and (max-height: 1100px) {
+  .selection-screen { padding-block: 16px; }
+  .selection-header, .candidate-grid { max-width: 1460px; }
+  .selection-header { margin-bottom: 12px; }
+}
+
+@media (min-width: 1100px) and (max-height: 960px) {
+  .selection-header, .candidate-grid { max-width: 1300px; }
 }
 
 @media (max-height: 1080px) {

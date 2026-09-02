@@ -52,10 +52,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .ai-speed-control button { min-width: 31px; min-height: 30px; padding: 3px 5px; }
 }
 
-.selection-header h2 { margin-top: 4px; font: 700 clamp(30px, 3vw, 44px)/1.15 var(--serif); }
-.selection-copy { margin-top: 6px; color: var(--text-secondary); font-size: 14px; }
-.selection-status { display: flex; align-items: center; gap: 10px; }
-.team-preview { display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 2px 12px; min-width: 260px; padding: 10px 14px; border-left: 2px solid var(--gold); background: color-mix(in srgb, var(--surface-raised), transparent 22%); }
+.selection-header h2 { margin-top: 2px; font: 700 clamp(28px, 2.3vw, 36px)/1.12 var(--serif); }
+.selection-copy { margin-top: 3px; color: var(--text-secondary); font-size: 13px; }
+.selection-status { display: flex; align-items: center; gap: 8px; }
+.selection-back-button { min-height: 36px; padding: 7px 12px; border-radius: 8px; font-size: 13px; white-space: nowrap; }
+.team-preview { display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 1px 10px; min-width: 250px; padding: 7px 11px; border-left: 2px solid var(--gold); background: color-mix(in srgb, var(--surface-raised), transparent 22%); }
 .team-preview span { color: var(--text-secondary); font-size: 13px; }
 .team-preview strong { font-size: 17px; }
 .team-preview small { grid-column: 1 / -1; color: var(--text-muted); font-size: 12px; }
