@@ -247,7 +247,7 @@ export function registerHistoryAchievementTests(test) {
     assert.doesNotMatch(markup, /data-achievement-id="first_blood"/);
     assert.match(view.renderMatchUnlockList([]), /本局没有新的征途铭刻/);
     const achievementCss = readFileSync(new URL("../css/achievements.css", import.meta.url), "utf8");
-    assert.match(achievementCss, /\.match-achievement-list\s*\{[^}]*max-height:\s*164px;[^}]*overflow-y:\s*auto/s);
+    assert.match(achievementCss, /\.match-achievement-list\s*\{[^}]*max-height:\s*264px;[^}]*overflow-y:\s*auto/s);
   });
 
   test("UI·征途成就：Toast 与 MVP 行继承五类 tier class", () => {

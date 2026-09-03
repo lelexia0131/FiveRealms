@@ -119,7 +119,7 @@
 /* Match Achievement List */
 .match-achievement-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
 .match-achievement-section h4 { margin: 0 0 8px; color: var(--text-primary); font: 700 15px/1.2 var(--serif); letter-spacing: 0; }
-.match-achievement-list { max-height: 164px; overflow-y: auto; display: grid; gap: 6px; padding-right: 3px; overscroll-behavior: contain; }
+.match-achievement-list { max-height: 264px; overflow-y: auto; display: grid; gap: 6px; padding-right: 3px; overscroll-behavior: contain; }
 .match-achievement-row { position: relative; isolation: isolate; overflow: hidden; display: grid; grid-template-columns: 42px minmax(0, 1fr) 75px; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 4px 7px 4px 4px; color: var(--achievement-tier-color); border: 1px solid var(--achievement-tier-border); border-radius: 3px; background: color-mix(in srgb, var(--achievement-tier-surface), #fff 82%); box-shadow: inset 3px 0 var(--achievement-tier-color), inset 0 0 15px var(--achievement-tier-soft); text-align: left; cursor: pointer; }
 .match-achievement-row:hover, .match-achievement-row:focus-visible { outline: none; border-color: var(--achievement-tier-color); box-shadow: inset 3px 0 var(--achievement-tier-color), 0 0 12px var(--achievement-tier-glow); }
 .match-achievement-art { overflow: hidden; width: 40px; height: 40px; border: 1px solid var(--achievement-tier-border); background: var(--achievement-tier-surface); }
