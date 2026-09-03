@@ -19,6 +19,7 @@ HistoryStatsManager 查询接口与公开角色展示素材。
 */
 import { CHARACTER_PRESENTATION } from "../../adapters/ui/CharacterPresentationDefinitions.js";
 import { escapeHtml } from "../templates.js";
+import { AchievementView } from "./achievements/AchievementView.js";
 
 /*
 功能
@@ -265,6 +266,7 @@ export class HistoryArchiveView {
     this.root = root;
     this.historyStatsManager = historyStatsManager;
     this.onBack = onBack;
+    this.achievementView = new AchievementView(root);
     this.root?.addEventListener("click", (event) => this.handleClick(event));
   }
 
@@ -328,7 +330,7 @@ export class HistoryArchiveView {
   边界与不变量
   历史 DOM 保留到下次刷新覆盖，返回动作不触碰数据。
   */
-  hide() {}
+  hide() { this.achievementView.closeDetail(false); }
 
   /*
   功能
@@ -455,6 +457,7 @@ export class HistoryArchiveView {
         glyph: "⛨"
       }
     ];
+    const achievementSection = this.achievementView.renderSection(archive.achievements.cards);
     this.root.innerHTML = `<div class="history-archive-shell">
       <header class="history-archive-header">
         <button class="ghost-button history-back-button" type="button" data-history-back>← 返回主界面</button>
@@ -472,6 +475,8 @@ export class HistoryArchiveView {
           <article><i>Ⅴ</i><span>最长战斗</span><strong>${archive.summary.highestRounds}<small>回合</small></strong></article>
         </div>
       </section>
+
+      ${achievementSection}
 
       <section class="history-section" aria-labelledby="history-travelers-title">
         <div class="history-section-heading"><small>TRAVELER ARCHIVES</small><h2 id="history-travelers-title">旅者档案</h2><span>八域来客的每一次被选择，都在此留下墨痕</span></div>

@@ -289,7 +289,13 @@ export function registerHistoryStatsTests(test) {
       const archive = await manager.initialize();
       const persisted = JSON.parse(await readFile(fixture.filePath, "utf8"));
       assert.equal(archive.version, 1);
-      assert.deepEqual(persisted, {
+      assert.deepEqual({ ...persisted, achievements: {
+        companions: persisted.achievements.companions,
+        highestSingleMatchDamage: persisted.achievements.highestSingleMatchDamage,
+        highestSingleMatchKills: persisted.achievements.highestSingleMatchKills,
+        highestSingleMatchSupport: persisted.achievements.highestSingleMatchSupport,
+        highestSingleMatchDamageTaken: persisted.achievements.highestSingleMatchDamageTaken
+      } }, {
         version: 1,
         summary: {
           totalMatches: 0, wins: 0, losses: 0, mvpCount: 0,
@@ -481,7 +487,13 @@ export function registerHistoryStatsTests(test) {
       assert.equal(archive.records[0].support, null);
       assert.equal(archive.records[0].damageTaken, null);
       assert.equal(archive.records[0].teammateCharacterIds, null);
-      assert.deepEqual(archive.achievements, {
+      assert.deepEqual({
+        mostFrequentCompanion: archive.achievements.mostFrequentCompanion,
+        highestSingleMatchDamage: archive.achievements.highestSingleMatchDamage,
+        highestSingleMatchKills: archive.achievements.highestSingleMatchKills,
+        highestSingleMatchSupport: archive.achievements.highestSingleMatchSupport,
+        highestSingleMatchDamageTaken: archive.achievements.highestSingleMatchDamageTaken
+      }, {
         mostFrequentCompanion: null,
         highestSingleMatchDamage: null,
         highestSingleMatchKills: null,
@@ -526,7 +538,13 @@ export function registerHistoryStatsTests(test) {
         totals: { enemyKills: 4 }
       }), "human");
       archive = await manager.getArchiveData();
-      assert.deepEqual(archive.achievements, {
+      assert.deepEqual({
+        mostFrequentCompanion: archive.achievements.mostFrequentCompanion,
+        highestSingleMatchDamage: archive.achievements.highestSingleMatchDamage,
+        highestSingleMatchKills: archive.achievements.highestSingleMatchKills,
+        highestSingleMatchSupport: archive.achievements.highestSingleMatchSupport,
+        highestSingleMatchDamageTaken: archive.achievements.highestSingleMatchDamageTaken
+      }, {
         mostFrequentCompanion: {
           characterId: "spirit-medic", characterName: "灵医", matches: 2
         },

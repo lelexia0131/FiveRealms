@@ -642,7 +642,7 @@ export function createActionWorkflow(dependencies) {
   createActionTransaction、recordActiveSkillUse、skillRuntime、getSkillTargets、publishFact。
 
   边界与不变量
-  技能规则由 skill runtime 决定，transition 只提交；支付与给牌事实只在 transaction commit 后发布，回滚不得污染 MVP tracker。
+  技能规则由 skill runtime 决定，transition 只提交；使用、支付与给牌事实只在 transaction commit 后发布，回滚不得污染旁路统计。
   */
   async function useActiveSkill(source, skillId, targets = []) {
     const state = runtime.getState();
@@ -706,6 +706,15 @@ export function createActionWorkflow(dependencies) {
           error
         );
       }
+    }
+    try {
+      await runtime.publishFact("activeSkillUsed", { source, skill });
+    } catch (error) {
+      runtime.diagnostics.reportWorkflowError(
+        "Action",
+        `${source.name}的主动技能使用事实发布失败`,
+        error
+      );
     }
     if (actualEnergyPaid > 0) {
       try {

@@ -18,6 +18,13 @@ main 的对局结束回调与 HistoryArchiveView。
 不得读取 GameState、MatchPerformanceTracker 或 AI；View 不得绕过本模块访问文件接口。
 */
 import { CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js";
+import {
+  buildAchievementViewModels,
+  createEmptyAchievementData,
+  normalizeAchievementData,
+  recordAchievementUnlock
+} from "./achievements/AchievementStore.js";
+import { evaluateMatchAchievements } from "./achievements/AchievementTracker.js";
 
 const HISTORY_VERSION = 1;
 const HISTORY_ENDPOINT = "/api/history";
@@ -70,6 +77,7 @@ export function createEmptyHistoryData() {
     characters: {},
     teams: {},
     achievements: {
+      ...createEmptyAchievementData(),
       companions: {},
       highestSingleMatchDamage: null,
       highestSingleMatchKills: null,
@@ -249,6 +257,10 @@ function normalizeHistoryData(source) {
   const achievementSource = source.achievements && typeof source.achievements === "object"
     ? source.achievements
     : {};
+  const normalizedAchievements = normalizeAchievementData(achievementSource);
+  empty.achievements.schemaVersion = normalizedAchievements.schemaVersion;
+  empty.achievements.records = normalizedAchievements.records;
+  empty.achievements.streaks = normalizedAchievements.streaks;
   const companionSource = achievementSource.companions && typeof achievementSource.companions === "object"
     ? achievementSource.companions
     : null;
@@ -546,6 +558,11 @@ function buildArchiveData(data) {
     characters: Object.freeze(characters.map((entry) => Object.freeze(entry))),
     teams: Object.freeze(teams.map((entry) => Object.freeze(entry))),
     achievements: Object.freeze({
+      cards: buildAchievementViewModels({ records: data.achievements.records }),
+      streaks: Object.freeze({
+        duo: Object.freeze({ ...data.achievements.streaks.duo }),
+        trio: Object.freeze({ ...data.achievements.streaks.trio })
+      }),
       mostFrequentCompanion: mostFrequentCompanion ? Object.freeze(mostFrequentCompanion) : null,
       highestSingleMatchDamage: data.achievements.highestSingleMatchDamage,
       highestSingleMatchKills: data.achievements.highestSingleMatchKills,
@@ -747,6 +764,11 @@ export class HistoryStatsManager {
     const teammateCharacterIds = Array.isArray(player.teammateCharacterIds)
       ? player.teammateCharacterIds.filter((characterId) => typeof characterId === "string" && characterId)
       : [];
+    const unlockedAt = this.now().toISOString();
+    const achievementResult = evaluateMatchAchievements(matchResult, humanPlayerId, next.achievements.streaks);
+    for (const achievementId of achievementResult.unlocked) {
+      recordAchievementUnlock(next.achievements.records, achievementId, achievementResult.scope, unlockedAt);
+    }
     next.summary.totalMatches += 1;
     next.summary.wins += player.won ? 1 : 0;
     next.summary.losses += player.won ? 0 : 1;
@@ -795,7 +817,7 @@ export class HistoryStatsManager {
     }
 
     next.records.unshift({
-      timestamp: this.now().toISOString(),
+      timestamp: unlockedAt,
       characterId: player.characterId,
       characterName: player.characterName,
       teamId: player.teamId,

@@ -203,6 +203,7 @@ import {
 import { configureAllAiRoster } from "./headless_match_setup.mjs";
 import { registerMatchPerformanceTests } from "./match_performance_test.mjs";
 import { registerHistoryStatsTests } from "./history_stats_test.mjs";
+import { registerHistoryAchievementTests } from "./history_achievements_test.mjs";
 import {
   CARD_AI_VALUES, ROLE_CARD_VALUE_DELTAS, cardPlayerValueTerms,
   getBaseCardAiValue, getRoleCardAiValue,
@@ -38541,6 +38542,7 @@ test("私人情报异步边界：PrivateRevealView.hide settle pending show Prom
 
 registerMatchPerformanceTests(test);
 registerHistoryStatsTests(test);
+registerHistoryAchievementTests(test);
 
 // ---- 开始界面与入局说明 ----
 
