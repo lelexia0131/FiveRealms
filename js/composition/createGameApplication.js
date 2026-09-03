@@ -561,6 +561,7 @@ class MatchApplication {
       payCardsFromHandAtomically:(...args) => this.resourceWorkflow.payCardsFromHandAtomically(...args),
       setCurrentCard:(...args) => this.ui.setCurrentCard?.(...args),
       log:(message, kind = "normal") => this.log(message, kind),
+      emitCardCommitted:(payload) => this.eventDispatcher.emit("cardCommitted", payload),
       emitCardUsed:(payload) => this.eventDispatcher.emit("cardUsed", payload),
       getForceAiRescueHuman:() => this.forceAiRescueHuman ?? AI_RUNTIME_POLICY.forceAiRescueHuman,
       isAiDyingRescueGuaranteedImpossible:async (rescuer, target) => (

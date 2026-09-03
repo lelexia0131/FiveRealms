@@ -1,6 +1,6 @@
 /*
 模块职责
-拥有「回收站」card trigger registration：cardUsed 事件接收、Domain predicate query、usage commit、draw orchestration 与 presentation；不拥有完整 Trigger engine。
+拥有「回收站」card trigger registration：cardCommitted 事件接收、Domain predicate query、usage commit、draw orchestration 与 presentation；不拥有完整 Trigger engine。
 
 上游
 composition root。
@@ -56,7 +56,7 @@ export function createRecycleDeviceTrigger(dependencies) {
 
   /*
   功能
-  注册 cardUsed 回收站监听器。
+  注册 cardCommitted 回收站监听器。
 
   调用方
   match application.registerGlobalRules bridge。
@@ -80,7 +80,7 @@ export function createRecycleDeviceTrigger(dependencies) {
   key 固定为 global:recycleDevice。
   */
   function register() {
-    runtime.onEvent("cardUsed", "global:recycleDevice", async (event) => {
+    runtime.onEvent("cardCommitted", "global:recycleDevice", async (event) => {
       const owner = event.source;
       const state = runtime.getState();
       const gameId = state.gameId;

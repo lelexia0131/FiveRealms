@@ -451,7 +451,8 @@ export function createActionWorkflow(dependencies) {
   createActionTransaction、cardRuntime.prepareCardAction/preparePostCounterEffectIntent/resolveCardAction、moveHandToResolving、emitEvent、responseWorkflow、finishResolvingToDiscard、isCardCommittedToDiscard、isCardCommittedToEquipment、diagnostics.recordCardPlayed。
 
   边界与不变量
-  公开声明在反制前完成；具体效果资源只能在完整反制链后准备。authoritative pipeline 与 owner/lock 收束成功后立即 commit；其后的 refresh、prompt 与 human-play-end 失败只记录，不能回滚已提交 Action；nested rollback failure 不得被父 cleanup 覆盖。
+  公开声明在反制前完成；全部取消钩子通过后发布一次 cardCommitted，再开启反制窗口；
+  具体效果资源只能在完整反制链后准备。authoritative pipeline 与 owner/lock 收束成功后立即 commit；其后的 refresh、prompt 与 human-play-end 失败只记录，不能回滚已提交 Action；nested rollback failure 不得被父 cleanup 覆盖。
   */
   async function playCard(source, card, requestedTargets = [], selection = null, options = {}) {
     const state = runtime.getState();
@@ -506,6 +507,17 @@ export function createActionWorkflow(dependencies) {
       if (!runtime.isSessionValid(gameId)) return false;
       targets = resolveEvent.targets;
       cancelledBeforeResolve ||= resolveEvent.cancelled;
+      if (!cancelledBeforeResolve) {
+        await runtime.emitEvent("cardCommitted", {
+          type: "cardCommitted",
+          source,
+          card,
+          targets,
+          resolutionId,
+          usageContext: options.usageContext ?? "action"
+        });
+        if (!runtime.isSessionValid(gameId)) return false;
+      }
       const counterResult = !cancelledBeforeResolve && card.counterScope !== "target"
         ? await runtime.responseWorkflow.askForCounter(source, card, targets, {
           publicTransferContext: preparedTransfer?.publicContext ?? null,

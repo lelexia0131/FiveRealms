@@ -111,6 +111,7 @@ export function createResponseWorkflow(dependencies) {
     payCardsFromHandAtomically,
     setCurrentCard,
     log,
+    emitCardCommitted,
     emitCardUsed,
     getForceAiRescueHuman,
     isAiDyingRescueGuaranteedImpossible,
@@ -123,6 +124,7 @@ export function createResponseWorkflow(dependencies) {
     now
   } = dependencies;
   if (!choiceCoordinator || !getState || !isSessionValid || !payCardsFromHandAtomically
+    || !emitCardCommitted || !emitCardUsed
     || !getResponseTimeoutMs || !createId || !now) {
     throw new TypeError("ResponseWorkflow 缺少必要 collaborator");
   }
@@ -391,7 +393,7 @@ export function createResponseWorkflow(dependencies) {
   askForCounter 与 askForStatusCounter。
 
   输入
-  responder、counterCard、relatedPlayers 与 resolved。
+  responder、counterCard、relatedPlayers、resolved 与该次反制的 resolutionId。
 
   输出
   Promise<event emission>。
@@ -408,7 +410,13 @@ export function createResponseWorkflow(dependencies) {
   边界与不变量
   每张已支付反制只发布一次；被后续反制时仍是 cardUsed，但 effectiveTargets 为空且 resolved=false。
   */
-  async function emitCounterUse(responder, counterCard, relatedPlayers = [], resolved = true) {
+  async function emitCounterUse(
+    responder,
+    counterCard,
+    relatedPlayers = [],
+    resolved = true,
+    resolutionId = runtime.createId("counter-resolution")
+  ) {
     const seen = new Set();
     const targets = [];
     for (const related of relatedPlayers) {
@@ -425,9 +433,55 @@ export function createResponseWorkflow(dependencies) {
       effectiveTargets:resolved ? targets : [],
       cancelled:!resolved,
       resolved,
-      resolutionId:runtime.createId("counter-resolution"),
+      resolutionId,
       usageContext:"response"
     });
+  }
+
+  /*
+  功能
+  在反制牌完成原子支付后、递归反制窗口开启前发布正式使用事件。
+
+  调用方
+  askForCounter 与 askForStatusCounter。
+
+  输入
+  responder、counterCard 与当前反制相关玩家。
+
+  输出
+  Promise<本次反制的 resolutionId>。
+
+  读取状态
+  runtime state.players。
+
+  写入状态
+  经 runtime.emitCardCommitted 发布事件。
+
+  调用函数
+  runtime.emitCardCommitted、runtime.createId。
+
+  边界与不变量
+  每张已支付反制只发布一次；事件必须先于该反制牌自己的嵌套 response window。
+  */
+  async function emitCounterCommit(responder, counterCard, relatedPlayers = []) {
+    const seen = new Set();
+    const targets = [];
+    for (const related of relatedPlayers) {
+      const player = runtime.getState().players.find((candidate) => candidate.id === related?.id);
+      if (!player?.alive || seen.has(player.id)) continue;
+      seen.add(player.id);
+      targets.push(player);
+    }
+    const resolutionId = runtime.createId("counter-resolution");
+    await runtime.emitCardCommitted({
+      type: "cardCommitted",
+      source: responder,
+      card: counterCard,
+      targets,
+      resolutionId,
+      usageContext: "response"
+    });
+    return resolutionId;
   }
 
   /*
@@ -450,10 +504,10 @@ export function createResponseWorkflow(dependencies) {
   经支付 transition。
 
   调用函数
-  isCounterEligible、seatOrderFrom、requestCardResponse。
+  isCounterEligible、seatOrderFrom、requestCardResponse、emitCounterCommit、emitCounterUse。
 
   边界与不变量
-  反制资格由 Domain Rule 决定；嵌套链 workflow 保留。
+  反制资格由 Domain Rule 决定；反制完成支付后先发布一次 cardCommitted，再进入嵌套链。
   */
   async function askForCounter(source, card, targets, chainContext = {}) {
     const gameId = runtime.getState().gameId;
@@ -507,6 +561,9 @@ export function createResponseWorkflow(dependencies) {
       if (isCancelledResponse(response) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       const [counterCard] = response.cards ?? [];
       if (response.status !== RESPONSE_STATUS.USED || !counterCard) continue;
+      const relatedPlayers = [source, ...(chainContext.relatedTargets ?? targets)];
+      const counterResolutionId = await emitCounterCommit(responder, counterCard, relatedPlayers);
+      if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       const cancelledTarget = chainContext.targetScoped
         ? `对${targets[0]?.name ?? responder.name}的效果`
         : "的效果";
@@ -521,8 +578,9 @@ export function createResponseWorkflow(dependencies) {
       await emitCounterUse(
         responder,
         counterCard,
-        [source, ...(chainContext.relatedTargets ?? targets)],
-        counterWasCountered.status !== RESPONSE_STATUS.USED
+        relatedPlayers,
+        counterWasCountered.status !== RESPONSE_STATUS.USED,
+        counterResolutionId
       );
       if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       if (counterWasCountered.status === RESPONSE_STATUS.USED) {
@@ -553,10 +611,11 @@ export function createResponseWorkflow(dependencies) {
   经 requestCardResponse/payCardsFromHandAtomically 支付反制牌。
 
   调用函数
-  createRuleStateView、getStatusCounterResponderOrder、requestCardResponse、askForCounter、emitCounterUse。
+  createRuleStateView、getStatusCounterResponderOrder、requestCardResponse、askForCounter、emitCounterCommit、emitCounterUse。
 
   边界与不变量
-  响应者顺序由 Domain Rule 决定；状态持有者最先，其余存活玩家顺时针。
+  响应者顺序由 Domain Rule 决定；状态持有者最先，其余存活玩家顺时针；
+  反制完成支付后先发布一次 cardCommitted，再进入嵌套链。
   */
   async function askForStatusCounter(holder, context = {}) {
     const gameId = runtime.getState().gameId;
@@ -596,6 +655,8 @@ export function createResponseWorkflow(dependencies) {
       if (isCancelledResponse(response) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       const [counterCard] = response.cards ?? [];
       if (response.status !== RESPONSE_STATUS.USED || !counterCard) continue;
+      const counterResolutionId = await emitCounterCommit(responder, counterCard, [holder]);
+      if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       runtime.log(`${responder.name}对${holder.name}的「${statusName}」使用了「反制」。`, "important");
       const counterWasCountered = await askForCounter(responder, counterCard, [holder], { targetCard:null, statusCounterChain:true });
       if (isCancelledResponse(counterWasCountered) || !runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
@@ -603,7 +664,8 @@ export function createResponseWorkflow(dependencies) {
         responder,
         counterCard,
         [holder],
-        counterWasCountered.status !== RESPONSE_STATUS.USED
+        counterWasCountered.status !== RESPONSE_STATUS.USED,
+        counterResolutionId
       );
       if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED);
       if (counterWasCountered.status === RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.DECLINED);

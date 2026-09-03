@@ -4582,6 +4582,7 @@ async function frArch7ApplicationWorkflow() {
       payCardsFromHandAtomically: async (responder, cards, reason) => { payments.push({ responder, cards, reason }); return { status: "used", cards }; },
       setCurrentCard: () => { },
       log: () => { },
+      emitCardCommitted: async () => { },
       emitCardUsed: async () => { },
       getForceAiRescueHuman: () => false,
       setThinking: () => { },
@@ -4624,6 +4625,7 @@ async function frArch7ApplicationWorkflow() {
     payCardsFromHandAtomically: async () => ({ status: "used", cards: [] }),
     setCurrentCard: () => { },
     log: () => { },
+    emitCardCommitted: async () => { },
     emitCardUsed: async () => { },
     getForceAiRescueHuman: () => false,
     setThinking: () => { },
@@ -6225,7 +6227,7 @@ function installFrArchTrace(game) {
 makePlayer、makeGame、instance、installFrArchTrace、Game.playCard。
 
 边界与不变量
-trace 序列必须与迁移前逐项一致。
+  trace 序列必须包含反制窗口前的 canonical cardCommitted 边界，其余顺序保持不变。
 */
 async function frArchAssaultEventTrace() {
   const actor = makePlayer("fr-trace-actor", 0, "dawn", "ai", 0);
@@ -6241,6 +6243,7 @@ async function frArchAssaultEventTrace() {
     "beforeCardUse",
     "targetSelected",
     "beforeCardResolve",
+    "cardCommitted",
     "beforeDamage",
     "beforeHpDamage",
     "afterDamage",
@@ -9576,6 +9579,135 @@ test("充能桩：只给回合能量额外+1", () => {
 
 // ---- 回收站 ----
 
+test("回收站：正式打出后在反制窗口前立即摸牌且只触发一次", async () => {
+  const source = makePlayer("recycle-immediate-source", 0, "dawn", "human"),
+    responder = makePlayer("recycle-immediate-responder", 1, "dusk", "human"),
+    tactic = instance("exposeWeakness"),
+    availableCounter = instance("counter"),
+    drawn = instance("charge");
+  let responseSnapshot = null;
+  const { game } = makeGame([source, responder], {
+    response: (request) => {
+      if (request.cardId === tactic.id) {
+        responseSnapshot = {
+          uses: source.turnFlags.recycleDeviceUses,
+          handIds: source.hand.map((card) => card.id)
+        };
+      }
+      return false;
+    }
+  });
+  source.equipment = instance("recycleDevice");
+  source.hand.push(tactic);
+  responder.hand.push(availableCounter);
+  game.state.deck.cards.push(drawn);
+  let committedCount = 0;
+  game.eventDispatcher.on("cardCommitted", "test:recycle-immediate-commit", (event) => {
+    if (event.card === tactic) committedCount += 1;
+  });
+  assert.equal(await game.playCard(source, tactic, []), true);
+  assert.deepEqual(responseSnapshot, { uses: 1, handIds: [drawn.id] });
+  assert.equal(source.turnFlags.recycleDeviceUses, 1);
+  assert.deepEqual(source.hand, [drawn]);
+  assert.equal(committedCount, 1);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message.includes("的「回收站」触发")).length,
+    1
+  );
+});
+
+test("回收站：原战术被敌人反制后已完成的摸牌不回滚", async () => {
+  const source = makePlayer("recycle-countered-source", 0, "dawn", "human"),
+    responder = makePlayer("recycle-countered-responder", 1, "dusk", "human"),
+    tactic = instance("exposeWeakness"),
+    counter = instance("counter"),
+    drawn = instance("charge"),
+    { game } = makeGame([source, responder], {
+      response: (request) => request.cardId === tactic.id
+    });
+  source.equipment = instance("recycleDevice");
+  source.hand.push(tactic);
+  responder.hand.push(counter);
+  game.state.deck.cards.push(drawn);
+  assert.equal(await game.playCard(source, tactic, []), true);
+  assert.equal(source.turnFlags.recycleDeviceUses, 1);
+  assert.deepEqual(source.hand, [drawn]);
+  assert.equal(source.statuses.exposeWeakness, undefined);
+  assert.ok(game.state.deck.discardPile.includes(tactic));
+  assert.ok(game.state.deck.discardPile.includes(counter));
+});
+
+test("回收站：即时摸到的反制可在同一条多层反制链使用", async () => {
+  const source = makePlayer("recycle-chain-source", 0, "dawn", "human"),
+    responder = makePlayer("recycle-chain-responder", 1, "dusk", "human"),
+    tactic = instance("exposeWeakness"),
+    firstCounter = instance("counter"),
+    drawnCounter = instance("counter"),
+    secondRecycleDraw = instance("block");
+  const responseTrace = [];
+  const { game } = makeGame([source, responder], {
+    response: (request) => {
+      responseTrace.push({
+        targetPlayerId: request.targetPlayerId,
+        cardId: request.cardId,
+        legalCardIds: [...request.legalCardIds]
+      });
+      if (request.targetPlayerId === responder.id && request.cardId === tactic.id) {
+        assert.deepEqual(source.hand, [drawnCounter]);
+        return true;
+      }
+      if (request.targetPlayerId === source.id && request.cardId === firstCounter.id) {
+        assert.ok(request.legalCardIds.includes(drawnCounter.id));
+        return true;
+      }
+      return false;
+    }
+  });
+  source.equipment = instance("recycleDevice");
+  source.hand.push(tactic);
+  responder.hand.push(firstCounter);
+  game.state.deck.cards.push(secondRecycleDraw, drawnCounter);
+  const committedCardIds = [];
+  game.eventDispatcher.on("cardCommitted", "test:recycle-chain-commits", (event) => {
+    committedCardIds.push(event.card.id);
+  });
+  assert.equal(await game.playCard(source, tactic, []), true);
+  assert.deepEqual(responseTrace.map((entry) => entry.targetPlayerId), [responder.id, source.id]);
+  assert.deepEqual(committedCardIds, [tactic.id, firstCounter.id, drawnCounter.id]);
+  assert.equal(source.turnFlags.recycleDeviceUses, 2);
+  assert.equal(source.hand.includes(drawnCounter), false);
+  assert.ok(source.hand.includes(secondRecycleDraw));
+  assert.ok(game.state.deck.discardPile.includes(firstCounter));
+  assert.ok(game.state.deck.discardPile.includes(drawnCounter));
+  assert.equal(source.statuses.exposeWeakness.stacks, 1);
+});
+
+test("回收站：正式 commit 前取消或非法的战术不触发", async () => {
+  const source = makePlayer("recycle-precommit-source", 0, "dawn", "human"),
+    ally = makePlayer("recycle-precommit-ally", 1, "dawn", "human"),
+    enemy = makePlayer("recycle-precommit-enemy", 2, "dusk", "human"),
+    illegalAssault = instance("assault"),
+    cancelledTactic = instance("exposeWeakness"),
+    drawn = instance("charge"),
+    { game } = makeGame([source, ally, enemy]);
+  source.equipment = instance("recycleDevice");
+  source.hand.push(illegalAssault, cancelledTactic);
+  game.state.deck.cards.push(drawn);
+  let committedCount = 0;
+  game.eventDispatcher.on("cardCommitted", "test:recycle-precommit-count", () => {
+    committedCount += 1;
+  });
+  assert.equal(await game.playCard(source, illegalAssault, [ally]), false);
+  game.eventDispatcher.on("beforeCardResolve", "test:recycle-precommit-cancel", (event) => {
+    if (event.card === cancelledTactic) event.cancelled = true;
+  });
+  assert.equal(await game.playCard(source, cancelledTactic, []), true);
+  assert.equal(source.turnFlags.recycleDeviceUses, 0);
+  assert.equal(committedCount, 0);
+  assert.ok(source.hand.includes(illegalAssault));
+  assert.ok(game.state.deck.cards.includes(drawn));
+});
+
 test("回收站：每回合前两张战术各摸1且被反制也触发", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
@@ -9731,6 +9863,8 @@ async function frArch10RecycleDeviceTrigger() {
   assert.match(compositionSource, /application\.recycleDeviceTrigger\.register\(\)/);
   const triggerSource = await readFile(projectFile("js/application/trigger/RecycleDeviceTrigger.js"), "utf8");
   assert.match(triggerSource, /canTriggerRecycleDevice/);
+  assert.match(triggerSource, /onEvent\("cardCommitted"/);
+  assert.doesNotMatch(triggerSource, /onEvent\("cardUsed"/);
 }
 
 test("回收站触发：predicate 在 Domain，trigger 在 Application", frArch10RecycleDeviceTrigger);
@@ -27265,6 +27399,140 @@ test("AI·回收站：反制响应使用战术后按同一 global-turn 额度补
   const responder = next.players.find((player) => player.id === "responder");
   assert.equal(responder.recycleDeviceUses, 1);
   assert.equal(responder.handCount, 1);
+});
+
+test("AI·回收站：Game 与 Simulator 在同一 response boundary 已更新反制可用性", async () => {
+  const realSource = makePlayer("recycle-parity-source", 0, "dawn", "human"),
+    realResponder = makePlayer("recycle-parity-responder", 1, "dusk", "human"),
+    realTactic = instance("exposeWeakness"),
+    realResponderCounter = instance("counter"),
+    realDrawnCounter = instance("counter");
+  let realBoundary = null;
+  const { game } = makeGame([realSource, realResponder], {
+    response: (request) => {
+      if (request.cardId === realTactic.id) {
+        realBoundary = {
+          handCount: realSource.hand.length,
+          counterAvailability: realSource.hand.some((card) => card.definitionId === "counter") ? 1 : 0,
+          recycleDeviceUses: realSource.turnFlags.recycleDeviceUses
+        };
+      }
+      return false;
+    }
+  });
+  realSource.equipment = instance("recycleDevice");
+  realSource.hand.push(realTactic);
+  realResponder.hand.push(realResponderCounter);
+  game.state.deck.cards.push(realDrawnCounter);
+  assert.equal(await game.playCard(realSource, realTactic, []), true);
+
+  const simulatedState = {
+    remainingCardCounts: { counter: 1 },
+    players: [
+      {
+        id: realSource.id,
+        seatIndex: 0,
+        battleTeam: "dawn",
+        alive: true,
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        handCount: 1,
+        hand: [{ id: "simulated-tactic", definitionId: "exposeWeakness" }],
+        equipmentDefinitionId: "recycleDevice",
+        equipmentRetentionProbability: 1,
+        recycleDeviceUses: 0,
+        exposeWeaknessStacks: 0
+      },
+      {
+        id: realResponder.id,
+        seatIndex: 1,
+        battleTeam: "dusk",
+        alive: true,
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        handCount: 1,
+        hand: [{ id: "simulated-responder-counter", definitionId: "counter" }]
+      }
+    ]
+  };
+  let simulatedBoundary = null;
+  const simulated = new Simulator(simulatedState, {
+    decideCounter: (world) => {
+      const actor = world.players.find((player) => player.id === realSource.id);
+      simulatedBoundary = {
+        handCount: actor.handCount,
+        counterAvailability: queryPlayerHandProbability(
+          world.probabilityState,
+          actor,
+          "counter"
+        ).probability,
+        recycleDeviceUses: actor.recycleDeviceUses
+      };
+      return false;
+    }
+  }).apply(
+    simulatedState,
+    {
+      type: "card",
+      card: { ...CARD_DEFINITIONS.exposeWeakness, id: "simulated-tactic" },
+      targets: []
+    },
+    realSource.id
+  );
+  assert.deepEqual(simulatedBoundary, realBoundary);
+  const simulatedSource = simulated.players.find((player) => player.id === realSource.id);
+  assert.equal(simulatedSource.handCount, 1);
+  assert.equal(
+    queryPlayerHandProbability(simulated.probabilityState, simulatedSource, "counter").probability,
+    1
+  );
+});
+
+test("AI·回收站：commit 后 root 效果重放不会重复触发", () => {
+  const state = {
+    remainingCardCounts: { counter: 1 },
+    players: [
+      {
+        id: "recycle-replay-source",
+        seatIndex: 0,
+        battleTeam: "dawn",
+        alive: true,
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        handCount: 1,
+        equipmentDefinitionId: "recycleDevice",
+        equipmentRetentionProbability: 1,
+        recycleDeviceUses: 1,
+        exposeWeaknessStacks: 0
+      },
+      {
+        id: "recycle-replay-target",
+        seatIndex: 1,
+        battleTeam: "dusk",
+        alive: true,
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        handCount: 0
+      }
+    ]
+  };
+  const simulator = new Simulator(state);
+  const rootAction = createAction({
+    type: "card",
+    actorId: "recycle-replay-source",
+    cardId: "exposeWeakness",
+    cardInstanceId: "already-committed-tactic",
+    targetIds: []
+  });
+  const { resolvedWorld } = simulator.buildRootFlipWorlds(state, rootAction, 1);
+  const source = resolvedWorld.players.find((player) => player.id === "recycle-replay-source");
+  assert.equal(source.recycleDeviceUses, 1);
+  assert.equal(source.handCount, 1);
+  assert.equal(queryPlayerHandProbability(resolvedWorld.probabilityState, source, "counter").probability, 1);
 });
 
 test("AI·回收站：模拟换装把新实例次数重置为0", () => {
