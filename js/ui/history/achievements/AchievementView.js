@@ -250,8 +250,8 @@ export class AchievementView {
   }
 
   /*
-  功能
-  生成征途成就独立板块 HTML 并保存本次安全 ViewModel。
+功能
+生成征途成就独立板块 HTML、总体进度条并保存本次安全 ViewModel。
 
   调用方
   HistoryArchiveView.render。
@@ -259,8 +259,8 @@ export class AchievementView {
   输入
   已按稳定顺序排列的成就 ViewModel 数组。
 
-  输出
-  总体纹章与五列卡阵 HTML。
+输出
+总体进度条与五列卡阵 HTML。
 
   读取状态
   每项 status。
@@ -276,11 +276,30 @@ export class AchievementView {
   */
   renderSection(items) {
     this.items = Array.isArray(items) ? items : [];
-    const journeySegments = this.items.map((item) => `<i class="${item.status === "COMPLETE" ? "is-lit" : item.status === "PARTIAL" ? "is-partial" : ""}"></i>`).join("");
+    const completeCount = this.items.filter((item) => item.status === "COMPLETE").length;
+    const partialCount = this.items.filter((item) => item.status === "PARTIAL").length;
+    const hasProgress = completeCount > 0 || partialCount > 0;
+    const journeyState = this.items.length > 0 && completeCount === this.items.length
+      ? "is-complete"
+      : hasProgress ? "is-active" : "is-quiet";
+    const journeyLabel = journeyState === "is-complete"
+      ? "总体成就铭刻进度：全部点亮"
+      : journeyState === "is-active" ? "总体成就铭刻进度：部分点亮" : "总体成就铭刻进度：尚未点亮";
+    const journeySegments = this.items.map((item) => {
+      const segmentState = item.status === "COMPLETE" ? " is-lit" : item.status === "PARTIAL" ? " is-partial" : "";
+      return `<i class="journey-progress-segment${segmentState}"></i>`;
+    }).join("");
+    const journeyStateLabel = journeyState === "is-complete"
+      ? "完整铭刻"
+      : journeyState === "is-active" ? "部分铭刻" : "尚未铭刻";
     return `<section class="history-section history-achievements" aria-labelledby="history-achievements-title">
       <div class="achievement-heading">
-        <div class="history-section-heading"><small>JOURNEY INSIGNIA</small><h2 id="history-achievements-title">征途成就</h2><span>每一道亮起的铭痕，都来自一场真实终局</span></div>
-        <div class="achievement-journey-sigil" aria-label="总体成就铭刻进度">${journeySegments}</div>
+        <div class="history-section-heading"><small>JOURNEY INSIGNIA</small><h2 id="history-achievements-title">征途成就</h2><span>每一道亮起的铭痕，都来自一场真实终局</span>
+          <div class="achievement-journey-progress ${journeyState}" role="img" aria-label="${journeyLabel}">
+            <div class="journey-progress-header"><small>铭刻进度</small><span>${journeyStateLabel}</span></div>
+            <div class="journey-progress-track" aria-hidden="true">${journeySegments}</div>
+          </div>
+        </div>
       </div>
       <div class="achievement-grid">${this.items.map(renderAchievementCard).join("")}</div>
     </section>`;

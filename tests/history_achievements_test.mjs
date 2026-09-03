@@ -13,6 +13,7 @@ import { evaluateMatchAchievements } from "../js/ui/history/achievements/Achieve
 import { HistoryStatsManager } from "../js/ui/history/HistoryStatsManager.js";
 import { MatchPerformanceTracker } from "../js/ui/results/MatchPerformanceTracker.js";
 import { HistoryArchiveView } from "../js/ui/history/HistoryArchiveView.js";
+import { AchievementView } from "../js/ui/history/achievements/AchievementView.js";
 
 /*
 功能
@@ -159,6 +160,9 @@ export function registerHistoryAchievementTests(test) {
       root.innerHTML.indexOf('<section class="history-section" aria-labelledby="history-travelers-title">')
     );
     assert.equal((achievementMarkup.match(/class="achievement-card /g) ?? []).length, 22);
+    assert.equal((achievementMarkup.match(/journey-progress-segment/g) ?? []).length, 22);
+    assert.match(achievementMarkup, /每一道亮起的铭痕，都来自一场真实终局[\s\S]*?achievement-journey-progress/);
+    assert.doesNotMatch(achievementMarkup, /achievement-journey-sigil|journey-crest-mark/);
     assert.equal((achievementMarkup.match(/is-hidden-locked/g) ?? []).length, 6);
     assert.equal((achievementMarkup.match(/achievement-card is-hidden-tier is-hidden-locked/g) ?? []).length, 3);
     assert.doesNotMatch(achievementMarkup, /assets\/(cards|characters)\//);
@@ -170,9 +174,69 @@ export function registerHistoryAchievementTests(test) {
     assert.match(achievementMarkup, /data-achievement-id="last_stand_duo"[\s\S]*?<i class="crest-wing crest-duo"><\/i>[\s\S]*?<i class="crest-wing crest-trio is-placeholder"><\/i>[\s\S]*?<\/button>/);
     assert.match(achievementMarkup, /data-achievement-id="last_stand_trio"[\s\S]*?<i class="crest-wing crest-duo is-placeholder"><\/i>[\s\S]*?<i class="crest-wing crest-trio"><\/i>[\s\S]*?<\/button>/);
     const achievementCss = readFileSync(new URL("../css/achievements.css", import.meta.url), "utf8");
-    assert.match(achievementCss, /\.achievement-card\.is-common\s*\{[^}]*color:\s*#f0f2ee;[^}]*border-color:\s*rgba\(232,\s*236,\s*230,\s*\.78\)/s);
-    assert.match(achievementCss, /\.achievement-card\.is-common::before\s*\{[^}]*border-color:\s*rgba\(236,\s*240,\s*236,\s*\.62\)/s);
-    assert.match(achievementCss, /\.achievement-card\.is-common\.is-complete\s*\{[^}]*rgba\(230,\s*236,\s*232,\s*\.24\)/s);
+    assert.match(achievementCss, /\.achievement-card\.is-common, \.achievement-modal\.is-common\s*\{[^}]*--achievement-tier-color:\s*#f0f2ee;[^}]*--achievement-tier-border:\s*rgba\(232,\s*236,\s*230,\s*\.78\)/s);
+    assert.match(achievementCss, /\.achievement-card\.is-rare, \.achievement-modal\.is-rare\s*\{[^}]*--achievement-tier-color:\s*#67beb3/);
+    assert.match(achievementCss, /\.achievement-card\.is-epic, \.achievement-modal\.is-epic\s*\{[^}]*--achievement-tier-color:\s*#d97991/);
+    assert.match(achievementCss, /\.achievement-card\.is-legendary, \.achievement-modal\.is-legendary\s*\{[^}]*--achievement-tier-color:\s*#efc96e/);
+    assert.match(achievementCss, /\.achievement-card\.is-hidden-tier, \.achievement-modal\.is-hidden-tier\s*\{[^}]*--achievement-tier-color:\s*#aaa0d7/);
+    assert.match(achievementCss, /\.achievement-modal\s*\{[^}]*border:\s*1px solid var\(--achievement-tier-border\)[^}]*background:\s*var\(--achievement-tier-surface\)/s);
+    assert.match(achievementCss, /\.achievement-modal-art > span:not\(\.achievement-crest\)/);
+    assert.match(achievementCss, /\.achievement-card\.is-partial\s*\{[^}]*0 0 20px var\(--achievement-tier-glow\)/s);
+    assert.match(achievementCss, /\.journey-progress-track\s*\{[^}]*repeat\(22, minmax\(0, 1fr\)\)/s);
+    assert.match(achievementCss, /\.achievement-card\.is-partial, \.achievement-modal\.is-partial\s*\{[^}]*--achievement-art-brightness:\s*\.84/s);
+    assert.match(achievementCss, /\.achievement-card\.is-complete, \.achievement-modal\.is-complete\s*\{[^}]*--achievement-art-brightness:\s*1\.08/s);
+    assert.match(achievementCss, /\.achievement-card > img\s*\{[^}]*filter: saturate\(var\(--achievement-art-saturation\)\) brightness\(var\(--achievement-art-brightness\)\)/s);
+    assert.match(achievementCss, /\.achievement-modal-art > img\s*\{[^}]*filter: saturate\(var\(--achievement-art-saturation\)\) brightness\(var\(--achievement-art-brightness\)\)/s);
+    assert.match(achievementCss, /\.achievement-card\.is-complete\s*\{[^}]*0 0 42px var\(--achievement-tier-glow\)/s);
+  });
+
+  test("UI·征途成就：标题长度有层次且无人倒下使用战旗插画", () => {
+    const titles = ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title);
+    const lengths = new Set(titles.map((title) => [...title].length));
+    assert.equal(new Set(titles).size, 22);
+    assert.ok(lengths.size >= 3);
+    assert.ok(titles.every((title) => !/[。！？]$/.test(title)));
+    const flawless = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "flawless_victory");
+    const mvp = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "mvp_streak_ten");
+    const ironWall = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "iron_wall_epic");
+    assert.equal(flawless.title, "无人倒下");
+    assert.equal(mvp.title, "冠冕长明");
+    assert.equal(ironWall.title, "千锤百炼");
+    assert.match(readFileSync(new URL("../assets/achievements/iron_wall_epic.svg", import.meta.url), "utf8"), /id="(?:anvil|hammer)"/);
+    const artwork = readFileSync(new URL("../assets/achievements/flawless_victory.svg", import.meta.url), "utf8");
+    assert.match(artwork, /flag|circle|stroke-dasharray/);
+    assert.doesNotMatch(artwork, /crown|皇冠|王冠|冠冕/);
+  });
+
+  test("UI·征途成就：单翼铭刻会点亮对应卡片并让详情继承 tier 主题", () => {
+    const records = {
+      first_victory: { duo: { unlockedAt: "2026-09-03T00:00:00.000Z" } },
+      storm_scribe: { duo: { unlockedAt: "2026-09-03T00:00:00.000Z" } }
+    };
+    const items = buildAchievementViewModels({ records });
+    const partial = items.find((item) => item.id === "first_victory");
+    assert.equal(partial.status, "PARTIAL");
+    const root = {
+      innerHTML: "",
+      ownerDocument: { addEventListener() {} },
+      addEventListener() {},
+      querySelector(selector) {
+        if (selector === "[data-achievement-overlay]") return null;
+        return { focus() {} };
+      },
+      insertAdjacentHTML(_position, html) { this.innerHTML += html; }
+    };
+    const view = new AchievementView(root);
+    view.items = items;
+    const sectionMarkup = view.renderSection(items);
+    assert.match(sectionMarkup, /class="achievement-card is-common is-partial"[\s\S]*?data-achievement-id="first_victory"/);
+    assert.match(sectionMarkup, /journey-progress-segment is-partial/);
+    view.openDetail(partial.id);
+    assert.match(root.innerHTML, /achievement-modal is-common is-partial/);
+    root.innerHTML = "";
+    view.openDetail("storm_scribe");
+    assert.match(root.innerHTML, /achievement-modal is-hidden-tier is-partial/);
+    assert.doesNotMatch(root.innerHTML, /未铭刻的征途/);
   });
 
   test("UI·征途成就：复杂条件消费真实终局事实", () => {

@@ -351,6 +351,7 @@ body.rulebook-open { overflow: hidden; }
 .callout-four { left: 24px; bottom: 82px; }
 .callout-five { left: calc(50% + 110px); top: 50%; flex-direction: row-reverse; transform: translateY(-50%); }
 .callout-six { right: 25px; bottom: 62px; color: var(--text-primary); flex-direction: row-reverse; filter: none; }
+.callout-one, .callout-three, .callout-four, .callout-five { color: var(--text-primary); filter: none; }
 
 .rulebook-flow { display: grid; grid-template-columns: repeat(7, minmax(92px, 1fr)); align-items: center; gap: 24px; margin: 40px 0 22px; }
 .flow-node { position: relative; min-height: 150px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 14px 8px; border: 1px solid #c4ae88; border-radius: 50% 50% 46% 54%; background: rgba(255,253,247,.72); box-shadow: var(--shadow-soft); text-align: center; }

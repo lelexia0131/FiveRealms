@@ -33,9 +33,9 @@ const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   }),
   [TEAM_ASSIGNMENT_MODE.THREE]: Object.freeze({
     eyebrow: "暮影 · 角色征召",
-    title: "三人大队征召",
+    title: "三人小队征召",
     copy: "选择你的角色 · 你将拥有 2 名队友",
-    preview: "三人大队",
+    preview: "三人小队",
     detail: "2 名队友 · 对抗 2 名敌人"
   }),
   [TEAM_ASSIGNMENT_MODE.RANDOM]: Object.freeze({

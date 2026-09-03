@@ -4027,7 +4027,7 @@ test("Match setup：二人小队在角色确认后生成真人 2 人阵营", asy
   await game.loopPromise;
 });
 
-test("Match setup：三人大队在角色确认后生成真人 3 人阵营", async () => {
+test("Match setup：三人小队在角色确认后生成真人 3 人阵营", async () => {
   const game = createGameApplication(makeUi(), () => 0.25);
   game.simulationMode = true;
   game.runGameLoop = async () => { };
@@ -38568,8 +38568,9 @@ test("UI·入局说明：二十三页目录覆盖完整新手路径且页面 ID 
   ]) assert.match(content, new RegExp(required));
 });
 
-test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩家视角", () => {
+test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩家视角", async () => {
   const pages = Object.fromEntries(buildRulebookPages().map((page) => [page.id, page.html]));
+  const rulebookCss = await readFile(projectFile("css/rulebook.css"), "utf8");
   assert.doesNotMatch(pages.cover, /rulebook-cover-emblem|rulebook-cover-legend|阵营对抗|回合战斗|26 张正式卡|8 名角色/);
   assert.match(
     pages.cover,
@@ -38615,6 +38616,7 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(pages["horizontal-card-view"], /公共牌池/);
   assert.match(pages["example-one"], /<h2>从摸牌到一次格挡。<\/h2>/);
   assert.doesNotMatch(pages["example-one"], /漫画实战：/);
+  assert.match(rulebookCss, /\.callout-one, \.callout-three, \.callout-four, \.callout-five\s*\{[^}]*color:\s*var\(--text-primary\)[^}]*filter:\s*none;/s);
 });
 
 test("UI·入局说明：二十六张正式卡均以真实定义与素材逐张图解", () => {
@@ -38836,7 +38838,7 @@ test("UI·编队方式：角色选择页显示 two、three 与 random 的征召�
   assert.equal(elements.candidate_grid.innerHTML, "");
   for (const [mode, eyebrow, title, copy] of [
     ["two", "晨星 · 角色征召", "二人小队征召", "你将拥有 1 名队友"],
-    ["three", "暮影 · 角色征召", "三人大队征召", "你将拥有 2 名队友"],
+    ["three", "暮影 · 角色征召", "三人小队征召", "你将拥有 2 名队友"],
     ["random", "命运 · 角色征召", "随机征召", "阵营规模将在本局随机决定"]
   ]) {
     UIManager.prototype.showSelection.call(context, [], mode);
