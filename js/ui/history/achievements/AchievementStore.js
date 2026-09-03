@@ -19,7 +19,7 @@ HistoryStatsManager 与 AchievementView。
 */
 import { ACHIEVEMENT_DEFINITIONS, sortAchievements } from "./AchievementRegistry.js";
 
-export const ACHIEVEMENT_SCHEMA_VERSION = 1;
+export const ACHIEVEMENT_SCHEMA_VERSION = 2;
 
 /*
 功能
@@ -44,20 +44,65 @@ ACHIEVEMENT_SCHEMA_VERSION。
 无。
 
 边界与不变量
-streaks 按二人/三人分开；长期完成局数与败方 MVP streak 使用独立字段，records 只保存首次解锁时间。
+长期完成局数独立保存；全部 streak 按二人/三人分桶，records 只保存首次解锁时间。
 */
 export function createEmptyAchievementData() {
   return {
     schemaVersion: ACHIEVEMENT_SCHEMA_VERSION,
     records: {},
     completedMatches: 0,
-    lostMvpStreak: 0,
-    maxLostMvpStreak: 0,
     streaks: {
-      duo: { win: 0, maxWin: 0, mvp: 0, maxMvp: 0 },
-      trio: { win: 0, maxWin: 0, mvp: 0, maxMvp: 0 }
+      duo: { win: 0, maxWin: 0, mvp: 0, maxMvp: 0, lostMvp: 0, maxLostMvp: 0 },
+      trio: { win: 0, maxWin: 0, mvp: 0, maxMvp: 0, lostMvp: 0, maxLostMvp: 0 }
     }
   };
+}
+
+/*
+功能
+从旧档案保留的最近终局记录重建按模式分桶的败方 MVP 连续值。
+
+调用方
+normalizeAchievementData 的 schema v1 迁移分支。
+
+输入
+按最新到最旧排列且已规范化的 recent records。
+
+输出
+duo/trio 各自当前与最近记录范围内最高的败方 MVP 连续值。
+
+读取状态
+record.teammateCharacterIds、won 与 isMvp。
+
+写入状态
+无。
+
+调用函数
+Array.reverse、Math.max。
+
+边界与不变量
+另一模式的对局不打断当前模式；无法确认模式的旧记录会同时截断两个桶，避免迁移产生虚假连续次数。
+*/
+function rebuildLegacyLostMvpStreaks(records) {
+  const rebuilt = {
+    duo: { lostMvp: 0, maxLostMvp: 0 },
+    trio: { lostMvp: 0, maxLostMvp: 0 }
+  };
+  for (const record of [...records].reverse()) {
+    const teammateCount = Array.isArray(record.teammateCharacterIds)
+      ? record.teammateCharacterIds.length
+      : null;
+    const scope = teammateCount === 1 ? "duo" : teammateCount === 2 ? "trio" : null;
+    if (!scope) {
+      rebuilt.duo.lostMvp = 0;
+      rebuilt.trio.lostMvp = 0;
+      continue;
+    }
+    const target = rebuilt[scope];
+    target.lostMvp = record.won === false && record.isMvp === true ? target.lostMvp + 1 : 0;
+    target.maxLostMvp = Math.max(target.maxLostMvp, target.lostMvp);
+  }
+  return rebuilt;
 }
 
 /*
@@ -68,27 +113,27 @@ export function createEmptyAchievementData() {
 HistoryStatsManager.normalizeHistoryData。
 
 输入
-未知 achievements 值。
+未知 achievements 值与已规范化的最近终局记录。
 
 输出
-包含 schemaVersion、records、长期累计字段与 streaks 的安全对象。
+包含当前 schemaVersion、records、长期累计字段与 streaks 的安全对象。
 
 读取状态
-旧成就对象与当前 schema。
+旧成就对象、最近终局记录与当前 schema。
 
 写入状态
 无。
 
 调用函数
-createEmptyAchievementData、Number、Object.entries。
+createEmptyAchievementData、rebuildLegacyLostMvpStreaks、Number、Object.entries。
 
 边界与不变量
-旧 companions/highestSingleMatch* 字段由调用方保留；非法时间戳被丢弃。
+schema v1 的全局败方 MVP 值只按可证明的最近终局事实迁移；非法时间戳被丢弃。
 */
-export function normalizeAchievementData(source) {
+export function normalizeAchievementData(source, recentRecords = []) {
   const empty = createEmptyAchievementData();
   if (!source || typeof source !== "object" || Array.isArray(source)) return empty;
-  const schemaVersion = Number(source.schemaVersion) || ACHIEVEMENT_SCHEMA_VERSION;
+  const schemaVersion = Number(source.schemaVersion) || 1;
   if (schemaVersion > ACHIEVEMENT_SCHEMA_VERSION) {
     throw new Error(`成就档案版本 ${schemaVersion} 高于当前支持版本 ${ACHIEVEMENT_SCHEMA_VERSION}`);
   }
@@ -103,11 +148,10 @@ export function normalizeAchievementData(source) {
     }
     if (Object.keys(record).length) empty.records[achievementId] = record;
   }
-  for (const key of ["completedMatches", "lostMvpStreak", "maxLostMvpStreak"]) {
-    const value = Number(source[key]);
-    if (Number.isFinite(value) && value >= 0) empty[key] = Math.floor(value);
+  const completedMatches = Number(source.completedMatches);
+  if (Number.isFinite(completedMatches) && completedMatches >= 0) {
+    empty.completedMatches = Math.floor(completedMatches);
   }
-  empty.maxLostMvpStreak = Math.max(empty.maxLostMvpStreak, empty.lostMvpStreak);
   for (const scope of ["duo", "trio"]) {
     const stored = source.streaks?.[scope] ?? {};
     const streak = empty.streaks[scope];
@@ -117,6 +161,11 @@ export function normalizeAchievementData(source) {
     }
     streak.maxWin = Math.max(streak.maxWin, streak.win);
     streak.maxMvp = Math.max(streak.maxMvp, streak.mvp);
+    streak.maxLostMvp = Math.max(streak.maxLostMvp, streak.lostMvp);
+  }
+  if (schemaVersion < 2) {
+    const rebuilt = rebuildLegacyLostMvpStreaks(recentRecords);
+    for (const scope of ["duo", "trio"]) Object.assign(empty.streaks[scope], rebuilt[scope]);
   }
   return empty;
 }

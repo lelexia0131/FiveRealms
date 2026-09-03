@@ -128,6 +128,9 @@ $emptyHistoryJson = @'
   "achievements": {
     "schemaVersion": 1,
     "records": {},
+    "completedMatches": 0,
+    "lostMvpStreak": 0,
+    "maxLostMvpStreak": 0,
     "streaks": {
       "duo": {
         "win": 0,

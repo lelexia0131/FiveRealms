@@ -93,7 +93,7 @@ function result(overrides = {}) {
     achievementFacts: {
       activeSkillUses: 3, rescueCount: 3, maxTurnDamage: 3, maxTurnKills: 2,
       maxHandCount: 16, equipmentUses: 10, lightningCasts: 2, lightningHits: 2,
-      teammateDeaths: 0, clutchEnemyCounts: [2, 3]
+      teammateDeaths: 0, maxAliveRound: 0, clutchEnemyCounts: [2, 3]
     },
     ...overrides
   };
@@ -123,7 +123,7 @@ createEmptyAchievementData、evaluateMatchAchievements。
 evaluateMatchAchievements。
 
 边界与不变量
-不经过日志、DOM 或历史扫描；finalRound 与 scores 直接作为冻结 MatchResult 事实提供。
+不经过日志、DOM 或历史扫描；最高存活轮次与 scores 直接作为冻结 MatchResult 事实提供。
 */
 function evaluateAchievementForTest(id, playerOverrides = {}, factOverrides = {}, persistentFacts = {}, streakOverrides = {}) {
   const base = result().players[0];
@@ -135,6 +135,7 @@ function evaluateAchievementForTest(id, playerOverrides = {}, factOverrides = {}
   const streaks = createEmptyAchievementData().streaks;
   streaks.duo.win = streakOverrides.win ?? 0;
   streaks.duo.mvp = streakOverrides.mvp ?? 0;
+  streaks.duo.lostMvp = streakOverrides.lostMvp ?? 0;
   return evaluateMatchAchievements(
     { gameId: "achievement-boundary", finalRound: playerOverrides.finalRound ?? 0, players: [player] },
     "human",
@@ -508,8 +509,8 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(evaluateAchievementForTest("ace", { initialTeamSize: 3, totals: { enemyKills: 3 } }), false);
     assert.equal(evaluateAchievementForTest("defeated_mvp", { won: false, isMvp: true }), true);
     assert.equal(evaluateAchievementForTest("defeated_mvp", { won: true, isMvp: true }), false);
-    assert.equal(evaluateAchievementForTest("defeated_mvp_streak", {}, {}, { lostMvpStreak: 1 }), false);
-    assert.equal(evaluateAchievementForTest("defeated_mvp_streak", {}, {}, { lostMvpStreak: 2 }), true);
+    assert.equal(evaluateAchievementForTest("defeated_mvp_streak", {}, {}, {}, { lostMvp: 0 }), false);
+    assert.equal(evaluateAchievementForTest("defeated_mvp_streak", { won: false, isMvp: true }, {}, {}, { lostMvp: 1 }), true);
 
     assert.equal(evaluateAchievementForTest("lightning_conductor", {}, { lightningDamageTakenHits: 1 }), false);
     assert.equal(evaluateAchievementForTest("lightning_conductor", {}, { lightningDamageTakenHits: 2 }), true);
@@ -518,12 +519,10 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(evaluateAchievementForTest("energy_twenty_five", { totals: { skillEnergySpent: 24 } }), false);
     assert.equal(evaluateAchievementForTest("energy_twenty_five", { totals: { skillEnergySpent: 25 } }), true);
 
-    assert.equal(evaluateAchievementForTest("survivor_thirteen", { aliveAtEnd: true, finalRound: 12 }), false);
-    assert.equal(evaluateAchievementForTest("survivor_thirteen", { aliveAtEnd: true, finalRound: 13 }), true);
-    assert.equal(evaluateAchievementForTest("survivor_thirteen", { aliveAtEnd: false, finalRound: 13 }), false);
-    assert.equal(evaluateAchievementForTest("battle_over_eighteen", { aliveAtEnd: true, finalRound: 18 }), false);
-    assert.equal(evaluateAchievementForTest("battle_over_eighteen", { aliveAtEnd: true, finalRound: 19 }), true);
-    assert.equal(evaluateAchievementForTest("battle_over_eighteen", { aliveAtEnd: false, finalRound: 19 }), false);
+    assert.equal(evaluateAchievementForTest("survivor_thirteen", { aliveAtEnd: false }, { maxAliveRound: 12 }), false);
+    assert.equal(evaluateAchievementForTest("survivor_thirteen", { aliveAtEnd: false }, { maxAliveRound: 13 }), true);
+    assert.equal(evaluateAchievementForTest("battle_over_eighteen", { aliveAtEnd: false }, { maxAliveRound: 18 }), false);
+    assert.equal(evaluateAchievementForTest("battle_over_eighteen", { aliveAtEnd: false }, { maxAliveRound: 19 }), true);
 
     assert.equal(evaluateAchievementForTest("score_over_thousand", { finalScore: 1000 }), false);
     assert.equal(evaluateAchievementForTest("score_over_thousand", { finalScore: 1000.01 }), true);
@@ -536,7 +535,7 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(evaluateAchievementForTest("all_rounder", { scores: allScores }), true);
   });
 
-  test("UI·征途成就：长期完成局数与败方 MVP streak 可迁移并正确清零", async () => {
+  test("UI·征途成就：长期完成局数与败方 MVP streak 按模式隔离", async () => {
     const storage = memoryStorage();
     const manager = new HistoryStatsManager({ storage, now: () => new Date("2026-09-03T00:00:00.000Z") });
     const ordinaryLoss = result({
@@ -550,36 +549,100 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(tenth.achievements.completedMatches, 10);
     assert.ok(tenth.newlyUnlockedAchievements.some(({ achievementId }) => achievementId === "matches_ten"));
 
-    const streakStorage = memoryStorage();
-    const streakManager = new HistoryStatsManager({ storage: streakStorage, now: () => new Date("2026-09-03T00:00:00.000Z") });
     const defeatedMvp = result({
       won: false, isMvp: true, finalScore: 0,
       totals: { enemyHpDamage: 0, enemyKills: 0 },
       combatStats: { totalDamage: 0, damageTaken: 0, support: 0 },
       achievementFacts: {}
     });
-    await streakManager.recordMatchResult(defeatedMvp, "human");
-    const second = await streakManager.recordMatchResult(defeatedMvp, "human");
-    assert.ok(second.newlyUnlockedAchievements.some(({ achievementId }) => achievementId === "defeated_mvp_streak"));
-    assert.equal(second.achievements.lostMvpStreak, 2);
-    const reset = await streakManager.recordMatchResult({ ...defeatedMvp, players: [{ ...defeatedMvp.players[0], won: true }] }, "human");
-    assert.equal(reset.achievements.lostMvpStreak, 0);
-    const afterReset = await streakManager.recordMatchResult(defeatedMvp, "human");
-    assert.equal(afterReset.newlyUnlockedAchievements.some(({ achievementId }) => achievementId === "defeated_mvp_streak"), false);
+    const trioDefeatedMvp = result({
+      ...defeatedMvp.players[0],
+      initialTeamSize: 3,
+      teammateCharacterIds: ["oath-warden", "spirit-medic"]
+    });
 
+    const mixedManager = new HistoryStatsManager({ storage: memoryStorage(), now: () => new Date("2026-09-03T00:00:00.000Z") });
+    await mixedManager.recordMatchResult(defeatedMvp, "human");
+    const mixedSecond = await mixedManager.recordMatchResult(trioDefeatedMvp, "human");
+    assert.equal(mixedSecond.newlyUnlockedAchievements.some(({ achievementId }) => achievementId === "defeated_mvp_streak"), false);
+    assert.deepEqual(mixedSecond.achievements.streaks.duo, {
+      win: 0, maxWin: 0, mvp: 1, maxMvp: 1, lostMvp: 1, maxLostMvp: 1
+    });
+    assert.deepEqual(mixedSecond.achievements.streaks.trio, {
+      win: 0, maxWin: 0, mvp: 1, maxMvp: 1, lostMvp: 1, maxLostMvp: 1
+    });
+    const afterOrdinaryDuoLoss = await mixedManager.recordMatchResult(result({
+      won: false, isMvp: false, finalScore: 0,
+      totals: { enemyHpDamage: 0, enemyKills: 0 },
+      combatStats: { totalDamage: 0, damageTaken: 0, support: 0 },
+      achievementFacts: {}
+    }), "human");
+    assert.equal(afterOrdinaryDuoLoss.achievements.streaks.duo.lostMvp, 0);
+    assert.equal(afterOrdinaryDuoLoss.achievements.streaks.trio.lostMvp, 1);
+
+    const duoManager = new HistoryStatsManager({ storage: memoryStorage(), now: () => new Date("2026-09-03T00:00:00.000Z") });
+    await duoManager.recordMatchResult(defeatedMvp, "human");
+    const duoSecond = await duoManager.recordMatchResult(defeatedMvp, "human");
+    assert.ok(duoSecond.newlyUnlockedAchievements.some(({ achievementId, teamScope }) => (
+      achievementId === "defeated_mvp_streak" && teamScope === "duo"
+    )));
+
+    const trioManager = new HistoryStatsManager({ storage: memoryStorage(), now: () => new Date("2026-09-03T00:00:00.000Z") });
+    await trioManager.recordMatchResult(defeatedMvp, "human");
+    await trioManager.recordMatchResult(trioDefeatedMvp, "human");
+    const duoWin = result({ ...defeatedMvp.players[0], won: true, isMvp: true });
+    const afterDuoReset = await trioManager.recordMatchResult(duoWin, "human");
+    assert.equal(afterDuoReset.achievements.streaks.duo.lostMvp, 0);
+    assert.equal(afterDuoReset.achievements.streaks.trio.lostMvp, 1);
+    const trioSecond = await trioManager.recordMatchResult(trioDefeatedMvp, "human");
+    assert.ok(trioSecond.newlyUnlockedAchievements.some(({ achievementId, teamScope }) => (
+      achievementId === "defeated_mvp_streak" && teamScope === "trio"
+    )));
+  });
+
+  test("UI·征途成就：旧全局败方 MVP streak 按最近终局事实安全迁移", async () => {
+    let persisted = null;
     const legacyManager = new HistoryStatsManager({
-      storage: { async read() { return { version: 1, summary: { totalMatches: 7 } }; }, async write() {} }
+      storage: {
+        async read() {
+          return {
+            version: 1,
+            summary: { totalMatches: 7 },
+            achievements: { schemaVersion: 1, lostMvpStreak: 2, maxLostMvpStreak: 2 },
+            records: [
+              { teammateCharacterIds: ["oath-warden", "spirit-medic"], won: false, isMvp: true },
+              { teammateCharacterIds: ["oath-warden"], won: false, isMvp: true }
+            ]
+          };
+        },
+        async write(json) { persisted = JSON.parse(json); }
+      }
     });
     const migrated = await legacyManager.initialize();
     assert.equal(migrated.achievements.completedMatches, 7);
-    assert.equal(migrated.achievements.lostMvpStreak, 0);
+    assert.equal(migrated.achievements.streaks.duo.lostMvp, 1);
+    assert.equal(migrated.achievements.streaks.trio.lostMvp, 1);
+    assert.equal(migrated.achievements.streaks.duo.maxLostMvp, 1);
+    assert.equal(migrated.achievements.streaks.trio.maxLostMvp, 1);
+    assert.equal(Object.hasOwn(migrated.achievements, "lostMvpStreak"), false);
+    const continued = await legacyManager.recordMatchResult(result({
+      won: false, isMvp: true, finalScore: 0,
+      totals: { enemyHpDamage: 0, enemyKills: 0 },
+      combatStats: { totalDamage: 0, damageTaken: 0, support: 0 },
+      achievementFacts: {}
+    }), "human");
+    assert.ok(continued.newlyUnlockedAchievements.some(({ achievementId, teamScope }) => (
+      achievementId === "defeated_mvp_streak" && teamScope === "duo"
+    )));
+    assert.equal(persisted.achievements.schemaVersion, 2);
+    assert.equal(Object.hasOwn(persisted.achievements, "lostMvpStreak"), false);
   });
 
   test("UI·征途成就：tracker 输出单回合、救援、装备与闪电事实", async () => {
     const actor = { id: "actor", name: "actor", seatIndex: 0, battleTeam: "dawn", alive: true, shield: 0, hand: [], character: { id: "blade-walker", name: "actor" } };
     const ally = { id: "ally", name: "ally", seatIndex: 1, battleTeam: "dawn", alive: true, shield: 0, hand: [], character: { id: "oath-warden", name: "ally" } };
     const enemy = { id: "enemy", name: "enemy", seatIndex: 2, battleTeam: "dusk", alive: true, shield: 0, hand: [], character: { id: "ember-magus", name: "enemy" } };
-    const state = { gameId: "tracker-achievements", players: [actor, ally, enemy], phase: "play", currentPlayerIndex: 0, winnerTeam: "dawn" };
+    const state = { gameId: "tracker-achievements", players: [actor, ally, enemy], phase: "play", currentPlayerIndex: 0, currentRound: 1, winnerTeam: "dawn" };
     const dispatcher = new EventDispatcher(() => true);
     const tracker = new MatchPerformanceTracker({ eventDispatcher: dispatcher, getState: () => state }).start();
     tracker.initializeRoster();
@@ -595,7 +658,16 @@ export function registerHistoryAchievementTests(test) {
     await dispatcher.emit("judgmentRevealed", { attacker: enemy, defender: actor, card: { category: "tactic" } });
     await dispatcher.emit("afterCardMove", { to: "hand", player: actor });
     await dispatcher.emit("skillEnergyPaid", { source: actor, actualAmount: 2 });
-    const facts = tracker.finalizeMatch().players[0].achievementFacts;
+    for (let round = 1; round <= 19; round += 1) {
+      state.currentRound = round;
+      await dispatcher.emit("roundStart", { round });
+    }
+    actor.alive = false;
+    state.currentRound = 20;
+    await dispatcher.emit("playerDead", { source: enemy, target: actor });
+    await dispatcher.emit("roundStart", { round: 20 });
+    const playerResult = tracker.finalizeMatch().players[0];
+    const facts = playerResult.achievementFacts;
     assert.equal(facts.activeSkillUses, 1);
     assert.equal(facts.rescueCount, 1);
     assert.equal(facts.maxTurnDamage, 3);
@@ -606,6 +678,8 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(facts.selfLightningHit, true);
     assert.equal(facts.radarTacticJudgments, 1);
     assert.equal(facts.cardsGained, 1);
+    assert.equal(facts.maxAliveRound, 19);
+    assert.equal(playerResult.aliveAtEnd, false);
     assert.equal(tracker.finalizeMatch().players[0].totals.skillEnergySpent, 2);
   });
 }

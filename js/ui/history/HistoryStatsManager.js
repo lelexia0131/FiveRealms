@@ -202,7 +202,7 @@ HistoryStatsManager.loadData。
 无。
 
 调用函数
-createEmptyHistoryData、nonNegativeNumber、calculateWinRate。
+createEmptyHistoryData、normalizeAchievementData、nonNegativeNumber、calculateWinRate。
 
 边界与不变量
 高于当前版本的数据拒绝读取；缺失字段补默认值，未知角色键原样保留以免丢档。
@@ -258,15 +258,13 @@ function normalizeHistoryData(source) {
   const achievementSource = source.achievements && typeof source.achievements === "object"
     ? source.achievements
     : {};
-  const normalizedAchievements = normalizeAchievementData(achievementSource);
+  const normalizedAchievements = normalizeAchievementData(achievementSource, normalizedRecords);
   empty.achievements.schemaVersion = normalizedAchievements.schemaVersion;
   empty.achievements.records = normalizedAchievements.records;
   empty.achievements.streaks = normalizedAchievements.streaks;
   empty.achievements.completedMatches = Object.hasOwn(achievementSource, "completedMatches")
     ? normalizedAchievements.completedMatches
     : empty.summary.totalMatches;
-  empty.achievements.lostMvpStreak = normalizedAchievements.lostMvpStreak;
-  empty.achievements.maxLostMvpStreak = normalizedAchievements.maxLostMvpStreak;
   const companionSource = achievementSource.companions && typeof achievementSource.companions === "object"
     ? achievementSource.companions
     : null;
@@ -617,8 +615,6 @@ function buildArchiveData(data) {
         trio: Object.freeze({ ...data.achievements.streaks.trio })
       }),
       completedMatches: data.achievements.completedMatches,
-      lostMvpStreak: data.achievements.lostMvpStreak,
-      maxLostMvpStreak: data.achievements.maxLostMvpStreak,
       mostFrequentCompanion: mostFrequentCompanion ? Object.freeze(mostFrequentCompanion) : null,
       highestSingleMatchDamage: data.achievements.highestSingleMatchDamage,
       highestSingleMatchKills: data.achievements.highestSingleMatchKills,
@@ -799,10 +795,10 @@ export class HistoryStatsManager {
   当前历史快照、最终 MatchResult 与注入时钟。
 
   写入状态
-  summary、真人角色、真人阵营、同行/传奇累计、最近 records、history_data.json 与成功后的内存档案；返回值临时携带本局新增成就。
+  summary、真人角色、真人阵营、分模式成就连续记录、同行/传奇累计、最近 records、history_data.json 与成功后的内存档案；返回值临时携带本局新增成就。
 
   调用函数
-  initialize、normalizeHistoryData、recordAchievementUnlock、calculateWinRate、optionalNonNegativeNumber、storage.write、buildArchiveData。
+  initialize、normalizeHistoryData、evaluateMatchAchievements、recordAchievementUnlock、calculateWinRate、optionalNonNegativeNumber、storage.write、buildArchiveData。
 
   边界与不变量
   只接受存在于最终结果中的真人；不重算评分、胜负、MVP、队友身份或战斗统计；
@@ -823,17 +819,12 @@ export class HistoryStatsManager {
       : [];
     const unlockedAt = this.now().toISOString();
     const completedMatches = next.achievements.completedMatches + 1;
-    const lostMvpStreak = player.won || !player.isMvp
-      ? 0
-      : next.achievements.lostMvpStreak + 1;
     next.achievements.completedMatches = completedMatches;
-    next.achievements.lostMvpStreak = lostMvpStreak;
-    next.achievements.maxLostMvpStreak = Math.max(next.achievements.maxLostMvpStreak, lostMvpStreak);
     const achievementResult = evaluateMatchAchievements(
       matchResult,
       humanPlayerId,
       next.achievements.streaks,
-      { completedMatches, lostMvpStreak }
+      { completedMatches }
     );
     const newlyUnlockedAchievements = [];
     for (const achievementId of achievementResult.unlocked) {

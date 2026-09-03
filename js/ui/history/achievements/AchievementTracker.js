@@ -1,6 +1,6 @@
 /*
 模块职责
-消费冻结 MatchResult 的结构化事实，更新模式化连胜并返回本场应写入的成就。
+消费冻结 MatchResult 的结构化事实，更新模式化连续记录并返回本场应写入的成就。
 
 上游
 MatchPerformanceTracker/MatchResultViewModel 与 HistoryStatsManager。
@@ -80,7 +80,7 @@ function factsFor(player) {
 
 /*
 功能
-更新当前队伍规模的胜利与 MVP 连胜。
+更新当前队伍规模的胜利、MVP 与败方 MVP 连续记录。
 
 调用方
 evaluateMatchAchievements。
@@ -101,15 +101,19 @@ player.won、player.isMvp、initialTeamSize。
 Math.max。
 
 边界与不变量
-失败或非 MVP 立即清零；二人/三人记录互不混合。
+各类中断只清零当前模式对应记录；二人/三人记录互不混合。
 */
 export function updateAchievementStreaks(streaks, player) {
   const scope = modeScope(player);
-  const target = streaks[scope] ?? (streaks[scope] = { win: 0, maxWin: 0, mvp: 0, maxMvp: 0 });
+  const target = streaks[scope] ?? (streaks[scope] = {
+    win: 0, maxWin: 0, mvp: 0, maxMvp: 0, lostMvp: 0, maxLostMvp: 0
+  });
   target.win = player?.won ? target.win + 1 : 0;
   target.mvp = player?.isMvp ? target.mvp + 1 : 0;
+  target.lostMvp = player?.won === false && player?.isMvp === true ? target.lostMvp + 1 : 0;
   target.maxWin = Math.max(target.maxWin, target.win);
   target.maxMvp = Math.max(target.maxMvp, target.mvp);
+  target.maxLostMvp = Math.max(target.maxLostMvp, target.lostMvp);
   return { scope, streak: target };
 }
 
@@ -121,13 +125,13 @@ export function updateAchievementStreaks(streaks, player) {
 evaluateMatchAchievements。
 
 输入
-成就定义、玩家最终结果与对应模式连胜快照。
+成就定义、玩家最终结果、对应模式连续记录与长期累计事实。
 
 输出
 满足条件时返回 true。
 
 读取状态
-definition.id、player canonical 结果、achievementFacts、streak。
+definition.id、player canonical 结果、achievementFacts、streak 与 persistentFacts。
 
 写入状态
 无。
@@ -138,7 +142,7 @@ factsFor、Array.includes、Number。
 边界与不变量
 只消费已存在的真实伤害、击杀、救援、装备、闪电、MVP 与残局事实；不重算 MVP 或分数。
 */
-function meets(definition, player, streak, matchResult, persistentFacts) {
+function meets(definition, player, streak, persistentFacts) {
   const facts = factsFor(player);
   switch (definition.id) {
     case "first_victory": return Boolean(player?.won);
@@ -174,17 +178,15 @@ function meets(definition, player, streak, matchResult, persistentFacts) {
     case "lightning_conductor": return (facts.lightningDamageTakenHits ?? 0) >= 2;
     case "radar_tactician": return (facts.radarTacticJudgments ?? 0) >= 5;
     case "energy_twenty_five": return (player?.totals?.skillEnergySpent ?? 0) >= 25;
-    case "survivor_thirteen": return Boolean(player?.aliveAtEnd)
-      && Number(matchResult?.finalRound ?? player?.effectiveRounds ?? 0) > 12;
+    case "survivor_thirteen": return Number(facts.maxAliveRound ?? 0) > 12;
     case "last_stand_trio": return Boolean(player?.won) && facts.clutchEnemyCounts?.includes?.(2);
     case "score_over_thousand": return Number(player?.finalScore) > 1000;
     case "mvp_streak_ten": return streak.mvp >= 10;
-    case "defeated_mvp_streak": return (persistentFacts?.lostMvpStreak ?? 0) >= 2;
+    case "defeated_mvp_streak": return streak.lostMvp >= 2;
     case "serious_punch": return (facts.maxSingleAttackDamage ?? 0) >= 5;
     case "damage_taken_twelve": return (player?.combatStats?.damageTaken ?? 0) >= 12;
     case "card_creator": return (facts.cardsGained ?? 0) > 100;
-    case "battle_over_eighteen": return Boolean(player?.aliveAtEnd)
-      && Number(matchResult?.finalRound ?? player?.effectiveRounds ?? 0) > 18;
+    case "battle_over_eighteen": return Number(facts.maxAliveRound ?? 0) > 18;
     case "storm_scribe": return (facts.lightningCasts ?? 0) >= 2 && (facts.lightningHits ?? 0) >= 2;
     case "overflowing_grimoire": return (facts.maxHandCount ?? 0) > 15;
     case "armory_keeper": return (facts.equipmentUses ?? 0) >= 10;
@@ -226,7 +228,7 @@ export function evaluateMatchAchievements(matchResult, humanPlayerId, streaks, p
   const unlocked = ACHIEVEMENT_DEFINITIONS.filter((definition) => {
     if (definition.teamScope === "duo" && scope !== "duo") return false;
     if (definition.teamScope === "trio" && scope !== "trio") return false;
-    return meets(definition, player, streak, matchResult, persistentFacts);
+    return meets(definition, player, streak, persistentFacts);
   }).map((definition) => definition.id);
   return { scope, unlocked, player };
 }

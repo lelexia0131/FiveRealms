@@ -60,7 +60,7 @@ createPlayerRecord。
 Set。
 
 边界与不变量
-集合只在 tracker 内可变，冻结快照输出数组；初始手牌作为本局首批获牌计数，其他字段均来自结构化事实。
+集合只在 tracker 内可变，冻结快照输出数组；初始手牌作为本局首批获牌计数，最高存活轮次只由 roundStart 推进。
 */
 function createAchievementFacts(initialHandCount) {
   return {
@@ -80,6 +80,7 @@ function createAchievementFacts(initialHandCount) {
     damageResolutionId: null,
     damageResolutionTotal: 0,
     teammateDeaths: 0,
+    maxAliveRound: 0,
     clutchEnemyCounts: new Set(),
     turnDamage: 0,
     turnKills: 0
@@ -254,7 +255,7 @@ export class MatchPerformanceTracker {
     if (this.started) return this;
     const handlers = {
       gameStart: () => this.initializeRoster(),
-      roundStart: () => this.handleRoundStart(),
+      roundStart: (event) => this.handleRoundStart(event),
       turnStart: (event) => this.handleTurnStart(event),
       turnEnd: (event) => this.handleTurnEnd(event),
       judgmentRevealed: (event) => this.handleJudgmentRevealed(event),
@@ -638,22 +639,22 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  为本轮开始时仍存活的正式参与者增加一个有效回合。
+  为本轮开始时仍存活的正式参与者增加有效回合并记录最高存活轮次。
 
   调用方
   roundStart listener。
 
   输入
-  无。
+  含当前结构化 round 的 roundStart 事件。
 
   输出
   无返回值。
 
   读取状态
-  authoritative players.alive。
+  authoritative players.alive、event.round 与 MatchState.currentRound。
 
   写入状态
-  records.effectiveRounds。
+  records.effectiveRounds 与 achievementFacts.maxAliveRound。
 
   调用函数
   recordFor。
@@ -662,10 +663,15 @@ export class MatchPerformanceTracker {
   阵亡者之后的轮次不再增加；比赛结束所在轮已在轮开始时计入存活玩家；
   直接装配 roster 的 headless/test runtime 若未发布 gameStart，则在首个 roundStart 建立同一开局快照。
   */
-  handleRoundStart() {
+  handleRoundStart(event = {}) {
     if (!this.records.size) this.initializeRoster();
-    for (const player of this.getState().players) {
-      if (player.alive) this.recordFor(player).effectiveRounds += 1;
+    const state = this.getState();
+    const round = Math.max(0, Number(event.round ?? state.currentRound) || 0);
+    for (const player of state.players) {
+      if (!player.alive) continue;
+      const record = this.recordFor(player);
+      record.effectiveRounds += 1;
+      record.achievementFacts.maxAliveRound = Math.max(record.achievementFacts.maxAliveRound, round);
     }
   }
 
