@@ -210,7 +210,7 @@ export class UIManager {
       "skill-button", "end-play-button", "discard-confirm-button", "cancel-interaction-button",
       "log-panel", "battle-layout", "log-toggle-button", "ai-speed-control",
       "log-list", "log-count", "skill-details-overlay", "game-over-overlay", "game-over-title", "game-over-copy",
-      "match-mvp-result", "play-again-button", "rulebook-overlay"
+      "match-mvp-result", "achievement-toast-region", "play-again-button", "rulebook-overlay"
     ].map((id) => [id.replaceAll("-", "_"), document.getElementById(id)]));
     this.callbacks = {};
     this.sound = new SoundManager();
@@ -233,16 +233,25 @@ export class UIManager {
     this.horizontalCardDragState = null;
     this.horizontalCardDragSuppressClick = false;
     this.horizontalCardScrollGameId = null;
+    this.newlyUnlockedAchievements = Object.freeze([]);
     this.animationController = new AnimationController((feedback) => this.playFeedbackSound(feedback));
     this.interactionController = new InteractionController(this);
     this.publicPoolView = new PublicPoolView(this.elements.public_pool_view, () => this.playSound("select"));
     this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
     this.judgmentView = new JudgmentView(this.elements.judgment_view);
-    this.matchMvpResultView = new MatchMvpResultView(this.elements.match_mvp_result);
     this.historyArchiveView = new HistoryArchiveView(
       this.elements.history_archive_screen,
       historyStatsManager,
-      () => this.hideHistoryArchive()
+      () => this.hideHistoryArchive(),
+      {
+        modalRoot: document.body,
+        toastRoot: this.elements.achievement_toast_region,
+        onToastShown: () => this.playSound("achievementUnlock")
+      }
+    );
+    this.matchMvpResultView = new MatchMvpResultView(
+      this.elements.match_mvp_result,
+      (achievementId, trigger) => this.historyArchiveView.achievementView.openDetail(achievementId, trigger)
     );
     this.rulebookView = new RulebookView(
       this.elements.rulebook_overlay,
@@ -298,19 +307,23 @@ export class UIManager {
   旧 game 绑定。
 
   写入状态
-  必要时取消旧交互并更新 this.game。
+  必要时取消旧交互、清空本局成就会话并更新 this.game。
 
   调用函数
-  cancelPendingInteractions。
+  cancelPendingInteractions、MatchMvpResultView.reset、AchievementView.resetUnlockQueue。
 
   边界与不变量
-  普通 render 不得改变绑定；更换实例前必须收束旧局 Promise。
+  普通 render 不得改变绑定；更换实例前必须收束旧局 Promise；每个新 Match 从空 unlock session 开始。
   */
   attachGame(game) {
     const changed = this.game !== game;
     if (this.game && changed) this.cancelPendingInteractions();
     this.game = game ?? null;
-    if (changed) this.matchMvpResultView?.reset();
+    if (changed) {
+      this.newlyUnlockedAchievements = Object.freeze([]);
+      this.matchMvpResultView?.reset();
+      this.historyArchiveView?.achievementView?.resetUnlockQueue();
+    }
     return this.game;
   }
 
@@ -3017,34 +3030,75 @@ export class UIManager {
 
   /*
   功能
-  将 immutable MatchResultViewModel 交给独立 MVP 结果 View 一次性渲染。
+  用 Store 成功写入结果建立本局 unlock session，并把同一批记录送入 Toast 队列。
+
+  调用方
+  main 的 recordHistoryMatchResult callback。
+
+  输入
+  只含 achievementId、teamScope、unlockedAt 的新增记录，以及保存后的安全成就 ViewModel。
+
+  输出
+  冻结的本局新增记录数组。
+
+  读取状态
+  HistoryStatsManager 返回的新增记录与安全 ViewModel。
+
+  写入状态
+  newlyUnlockedAchievements、AchievementView items 与 Toast 队列。
+
+  调用函数
+  AchievementView.setItems、AchievementView.enqueueUnlocks、Object.freeze。
+
+  边界与不变量
+  不检查 criteria 或扫描 History；session 只保留 achievementId、teamScope、unlockedAt，永久写入失败时调用方不会进入本方法。
+  */
+  presentMatchAchievementUnlocks(unlocks, achievementItems) {
+    this.newlyUnlockedAchievements = Object.freeze(
+      (Array.isArray(unlocks) ? unlocks : []).map((unlock) => Object.freeze({
+        achievementId: unlock.achievementId,
+        teamScope: unlock.teamScope,
+        unlockedAt: unlock.unlockedAt
+      }))
+    );
+    this.historyArchiveView.achievementView.setItems(achievementItems);
+    this.historyArchiveView.achievementView.enqueueUnlocks(this.newlyUnlockedAchievements);
+    return this.newlyUnlockedAchievements;
+  }
+
+  /*
+  功能
+  将 immutable MatchResultViewModel 和已完成的本局成就会话交给独立 MVP 结果 View 一次性渲染。
 
   调用方
   MatchPerformanceSidecar 的 gameOver listener。
 
   输入
-  已完成评分和排序的 MatchResultViewModel，以及当前绑定对局的参与者元数据。
+  已完成评分和排序的 MatchResultViewModel，以及当前绑定对局的参与者元数据与本局新增成就。
 
   输出
   无返回值。
 
   读取状态
-  matchMvpResultView 与当前对局玩家的 controllerType/id。
+  matchMvpResultView、AchievementView、newlyUnlockedAchievements 与当前对局玩家的 controllerType/id。
 
   写入状态
   MVP 结果区域 DOM 与默认选择。
 
   调用函数
-  Array.find、MatchMvpResultView.render。
+  Array.find、AchievementView.renderMatchUnlockList、MatchMvpResultView.render。
 
   边界与不变量
-  本人 ID 只作为展示上下文传给 View；不写入 MVP 结果，不修改游戏状态，也不重新评分或排序。
+  本人 ID 只作为展示上下文传给 View；成就列表只读 Store 产生的本局 session；不修改游戏状态，也不重新评分、排序或检查 criteria。
   */
   showMatchPerformance(viewModel) {
     const humanPlayerId = this.game?.state?.players?.find(
       (player) => player.controllerType === "human"
     )?.id ?? null;
-    this.matchMvpResultView.render(viewModel, humanPlayerId);
+    const achievementMarkup = this.historyArchiveView.achievementView.renderMatchUnlockList(
+      this.newlyUnlockedAchievements
+    );
+    this.matchMvpResultView.render(viewModel, humanPlayerId, achievementMarkup);
   }
 
   /*

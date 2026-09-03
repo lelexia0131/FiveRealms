@@ -12,6 +12,7 @@ import {
 import { evaluateMatchAchievements } from "../js/ui/history/achievements/AchievementTracker.js";
 import { HistoryStatsManager } from "../js/ui/history/HistoryStatsManager.js";
 import { MatchPerformanceTracker } from "../js/ui/results/MatchPerformanceTracker.js";
+import { MatchMvpResultView } from "../js/ui/results/MatchMvpResultView.js";
 import { HistoryArchiveView } from "../js/ui/history/HistoryArchiveView.js";
 import { AchievementView } from "../js/ui/history/achievements/AchievementView.js";
 
@@ -100,26 +101,88 @@ function result(overrides = {}) {
 }
 
 export function registerHistoryAchievementTests(test) {
-  test("UI·征途成就：首次解锁时间持久化且重复达成不覆盖", async () => {
+  test("UI·征途成就：首次 duo 解锁提示一次且重复达成不再提示", async () => {
     const storage = memoryStorage();
     let index = 0;
     const dates = ["2026-09-03T05:32:14.183Z", "2026-09-04T05:32:14.183Z"];
     const manager = new HistoryStatsManager({ storage, now: () => new Date(dates[index++]) });
-    await manager.recordMatchResult(result(), "human");
-    await manager.recordMatchResult(result({ gameId: "achievement-match-2" }), "human");
-    const record = storage.readObject().achievements.records.first_victory.duo;
+    const first = await manager.recordMatchResult(result({
+      won: false,
+      isMvp: false,
+      finalScore: 0,
+      totals: { enemyHpDamage: 0, enemyKills: 1 },
+      combatStats: { totalDamage: 0, damageTaken: 0, support: 0 },
+      achievementFacts: {}
+    }), "human");
+    const toastRoot = { innerHTML: "", addEventListener() {} };
+    const view = new AchievementView({
+      ownerDocument: { addEventListener() {} },
+      addEventListener() {}
+    }, { toastRoot });
+    view.setItems(first.achievements.cards);
+    view.enqueueUnlocks(first.newlyUnlockedAchievements);
+    assert.deepEqual(first.newlyUnlockedAchievements, [{
+      achievementId: "first_blood",
+      teamScope: "duo",
+      unlockedAt: dates[0]
+    }]);
+    assert.equal((toastRoot.innerHTML.match(/achievement-unlock-toast/g) ?? []).length, 1);
+    assert.match(toastRoot.innerHTML, /data-achievement-id="first_blood"/);
+    view.resetUnlockQueue();
+
+    const repeated = await manager.recordMatchResult(result({
+      won: false,
+      isMvp: false,
+      finalScore: 0,
+      totals: { enemyHpDamage: 0, enemyKills: 1 },
+      combatStats: { totalDamage: 0, damageTaken: 0, support: 0 },
+      achievementFacts: {}
+    }), "human");
+    view.setItems(repeated.achievements.cards);
+    view.enqueueUnlocks(repeated.newlyUnlockedAchievements);
+    assert.deepEqual(repeated.newlyUnlockedAchievements, []);
+    assert.equal(toastRoot.innerHTML, "");
+    const record = storage.readObject().achievements.records.first_blood.duo;
     assert.equal(record.unlockedAt, dates[0]);
   });
 
-  test("UI·征途成就：二人和三人进度由部分铭刻变为完整铭刻", async () => {
+  test("UI·征途成就：已有 duo 后首次 trio 只新增一条提示并变为完整铭刻", async () => {
     const storage = memoryStorage();
     const manager = new HistoryStatsManager({ storage, now: () => new Date("2026-09-03T00:00:00.000Z") });
-    await manager.recordMatchResult(result(), "human");
+    const facts = {
+      won: false,
+      isMvp: false,
+      finalScore: 0,
+      totals: { enemyHpDamage: 0, enemyKills: 1 },
+      combatStats: { totalDamage: 0, damageTaken: 0, support: 0 },
+      achievementFacts: {}
+    };
+    await manager.recordMatchResult(result(facts), "human");
     let cards = (await manager.getArchiveData()).achievements.cards;
-    assert.equal(cards.find((card) => card.id === "first_victory").status, "PARTIAL");
-    await manager.recordMatchResult(result({ initialTeamSize: 3, teammateCharacterIds: ["oath-warden", "spirit-medic"] }), "human");
-    cards = (await manager.getArchiveData()).achievements.cards;
-    assert.equal(cards.find((card) => card.id === "first_victory").status, "COMPLETE");
+    assert.equal(cards.find((card) => card.id === "first_blood").status, "PARTIAL");
+    const trio = await manager.recordMatchResult(result({
+      ...facts,
+      initialTeamSize: 3,
+      teammateCharacterIds: ["oath-warden", "spirit-medic"]
+    }), "human");
+    cards = trio.achievements.cards;
+    assert.deepEqual(trio.newlyUnlockedAchievements.map(({ achievementId, teamScope }) => ({ achievementId, teamScope })), [{
+      achievementId: "first_blood",
+      teamScope: "trio"
+    }]);
+    assert.equal(cards.find((card) => card.id === "first_blood").status, "COMPLETE");
+    assert.deepEqual(Object.keys(storage.readObject().achievements.records.first_blood).sort(), ["duo", "trio"]);
+
+    const toastRoot = { innerHTML: "", addEventListener() {} };
+    const view = new AchievementView({
+      ownerDocument: { addEventListener() {} },
+      addEventListener() {}
+    }, { toastRoot });
+    view.setItems(cards);
+    view.enqueueUnlocks(trio.newlyUnlockedAchievements);
+    assert.equal((toastRoot.innerHTML.match(/achievement-unlock-toast/g) ?? []).length, 1);
+    assert.match(toastRoot.innerHTML, /achievement-unlock-toast is-common is-complete/);
+    view.resetUnlockQueue();
   });
 
   test("UI·征途成就：专属队伍成就完成后不会显示为半完成", () => {
@@ -129,6 +192,117 @@ export function registerHistoryAchievementTests(test) {
     } });
     assert.equal(cards.find((card) => card.id === "last_stand_duo").status, "COMPLETE");
     assert.equal(cards.find((card) => card.id === "last_stand_trio").status, "COMPLETE");
+  });
+
+  test("UI·征途成就：同一 Match 多项解锁按 Store 顺序单条播放并逐条触发音效", () => {
+    const timestamp = "2026-09-03T00:00:00.000Z";
+    const shown = [];
+    const items = buildAchievementViewModels({ records: {
+      first_blood: { duo: { unlockedAt: timestamp } },
+      rescue_beacon: { duo: { unlockedAt: timestamp } }
+    } });
+    const toastRoot = { innerHTML: "", addEventListener() {} };
+    const view = new AchievementView({
+      ownerDocument: { addEventListener() {} },
+      addEventListener() {}
+    }, { toastRoot, onToastShown: (unlock) => shown.push(unlock.achievementId) });
+    view.setItems(items);
+    view.enqueueUnlocks([
+      { achievementId: "first_blood", teamScope: "duo", unlockedAt: timestamp },
+      { achievementId: "rescue_beacon", teamScope: "duo", unlockedAt: timestamp }
+    ]);
+    assert.equal(view.currentToast.item.id, "first_blood");
+    assert.equal(view.toastQueue.length, 1);
+    assert.equal((toastRoot.innerHTML.match(/achievement-unlock-toast/g) ?? []).length, 1);
+    assert.doesNotMatch(toastRoot.innerHTML, /data-achievement-id="rescue_beacon"/);
+    assert.deepEqual(shown, ["first_blood"]);
+    view.finishCurrentToast();
+    assert.equal(view.currentToast.item.id, "rescue_beacon");
+    assert.equal(view.toastQueue.length, 0);
+    assert.equal((toastRoot.innerHTML.match(/achievement-unlock-toast/g) ?? []).length, 1);
+    assert.deepEqual(shown, ["first_blood", "rescue_beacon"]);
+    view.resetUnlockQueue();
+  });
+
+  test("UI·征途成就：Toast 展示回调接入现有 Achievement 命名音效", () => {
+    const managerSource = readFileSync(new URL("../js/ui/UIManager.js", import.meta.url), "utf8");
+    assert.match(managerSource, /onToastShown:\s*\(\)\s*=>\s*this\.playSound\("achievementUnlock"\)/);
+  });
+
+  test("UI·征途成就：MVP 列表只渲染本局新增记录并保留滚动空状态", async () => {
+    const timestamp = "2026-09-03T00:00:00.000Z";
+    const items = buildAchievementViewModels({ records: {
+      first_blood: { duo: { unlockedAt: timestamp } },
+      rescue_beacon: { duo: { unlockedAt: timestamp } }
+    } });
+    const view = new AchievementView({
+      ownerDocument: { addEventListener() {} },
+      addEventListener() {}
+    });
+    view.setItems(items);
+    const markup = view.renderMatchUnlockList([
+      { achievementId: "rescue_beacon", teamScope: "duo", unlockedAt: timestamp }
+    ]);
+    assert.match(markup, /data-achievement-id="rescue_beacon"/);
+    assert.doesNotMatch(markup, /data-achievement-id="first_blood"/);
+    assert.match(view.renderMatchUnlockList([]), /本局没有新的征途铭刻/);
+    const achievementCss = readFileSync(new URL("../css/achievements.css", import.meta.url), "utf8");
+    assert.match(achievementCss, /\.match-achievement-list\s*\{[^}]*max-height:\s*164px;[^}]*overflow-y:\s*auto/s);
+  });
+
+  test("UI·征途成就：Toast 与 MVP 行继承五类 tier class", () => {
+    const timestamp = "2026-09-03T00:00:00.000Z";
+    const tierIds = [
+      ["first_blood", "common"],
+      ["double_blood", "rare"],
+      ["executioner_turn", "epic"],
+      ["score_over_thousand", "legendary"],
+      ["storm_scribe", "hidden-tier"]
+    ];
+    const records = Object.fromEntries(tierIds.map(([achievementId]) => [achievementId, {
+      duo: { unlockedAt: timestamp }
+    }]));
+    const unlocks = tierIds.map(([achievementId]) => ({ achievementId, teamScope: "duo", unlockedAt: timestamp }));
+    const toastRoot = { innerHTML: "", addEventListener() {} };
+    const view = new AchievementView({
+      ownerDocument: { addEventListener() {} },
+      addEventListener() {}
+    }, { toastRoot });
+    view.setItems(buildAchievementViewModels({ records }));
+    const rows = view.renderMatchUnlockList(unlocks);
+    for (const [achievementId, tierClass] of tierIds) {
+      assert.match(rows, new RegExp(`match-achievement-row is-${tierClass}[^>]*data-achievement-id="${achievementId}"`));
+      view.resetUnlockQueue();
+      view.enqueueUnlocks([{ achievementId, teamScope: "duo", unlockedAt: timestamp }]);
+      assert.match(toastRoot.innerHTML, new RegExp(`achievement-unlock-toast is-${tierClass}`));
+    }
+    view.resetUnlockQueue();
+  });
+
+  test("UI·征途成就：Toast 与 MVP 行调用同一个现有详情弹窗入口", () => {
+    const calls = [];
+    const view = new AchievementView({
+      ownerDocument: { addEventListener() {} },
+      addEventListener() {}
+    });
+    view.openDetail = (achievementId, trigger) => calls.push([achievementId, trigger]);
+    const toastTrigger = { dataset: { achievementId: "first_blood" } };
+    view.handleToastClick({ target: { closest: () => toastTrigger } });
+
+    const resultView = new MatchMvpResultView({ addEventListener() {} },
+      (achievementId, trigger) => view.openDetail(achievementId, trigger));
+    const rowTrigger = { dataset: { achievementId: "rescue_beacon" } };
+    resultView.handleClick({
+      target: {
+        closest(selector) {
+          return selector.startsWith(".match-achievement-row") ? rowTrigger : null;
+        }
+      }
+    });
+    assert.deepEqual(calls, [
+      ["first_blood", toastTrigger],
+      ["rescue_beacon", rowTrigger]
+    ]);
   });
 
   test("UI·征途成就：未解锁隐藏成就 ViewModel 不包含真实条件", () => {
@@ -174,11 +348,11 @@ export function registerHistoryAchievementTests(test) {
     assert.match(achievementMarkup, /data-achievement-id="last_stand_duo"[\s\S]*?<i class="crest-wing crest-duo"><\/i>[\s\S]*?<i class="crest-wing crest-trio is-placeholder"><\/i>[\s\S]*?<\/button>/);
     assert.match(achievementMarkup, /data-achievement-id="last_stand_trio"[\s\S]*?<i class="crest-wing crest-duo is-placeholder"><\/i>[\s\S]*?<i class="crest-wing crest-trio"><\/i>[\s\S]*?<\/button>/);
     const achievementCss = readFileSync(new URL("../css/achievements.css", import.meta.url), "utf8");
-    assert.match(achievementCss, /\.achievement-card\.is-common, \.achievement-modal\.is-common\s*\{[^}]*--achievement-tier-color:\s*#f0f2ee;[^}]*--achievement-tier-border:\s*rgba\(232,\s*236,\s*230,\s*\.78\)/s);
-    assert.match(achievementCss, /\.achievement-card\.is-rare, \.achievement-modal\.is-rare\s*\{[^}]*--achievement-tier-color:\s*#67beb3/);
-    assert.match(achievementCss, /\.achievement-card\.is-epic, \.achievement-modal\.is-epic\s*\{[^}]*--achievement-tier-color:\s*#d97991/);
-    assert.match(achievementCss, /\.achievement-card\.is-legendary, \.achievement-modal\.is-legendary\s*\{[^}]*--achievement-tier-color:\s*#efc96e/);
-    assert.match(achievementCss, /\.achievement-card\.is-hidden-tier, \.achievement-modal\.is-hidden-tier\s*\{[^}]*--achievement-tier-color:\s*#aaa0d7/);
+    assert.match(achievementCss, /\.achievement-card\.is-common, \.achievement-modal\.is-common, \.achievement-unlock-toast\.is-common, \.match-achievement-row\.is-common\s*\{[^}]*--achievement-tier-color:\s*#f0f2ee;[^}]*--achievement-tier-border:\s*rgba\(232,\s*236,\s*230,\s*\.78\)/s);
+    assert.match(achievementCss, /\.achievement-card\.is-rare, \.achievement-modal\.is-rare, \.achievement-unlock-toast\.is-rare, \.match-achievement-row\.is-rare\s*\{[^}]*--achievement-tier-color:\s*#67beb3/);
+    assert.match(achievementCss, /\.achievement-card\.is-epic, \.achievement-modal\.is-epic, \.achievement-unlock-toast\.is-epic, \.match-achievement-row\.is-epic\s*\{[^}]*--achievement-tier-color:\s*#d97991/);
+    assert.match(achievementCss, /\.achievement-card\.is-legendary, \.achievement-modal\.is-legendary, \.achievement-unlock-toast\.is-legendary, \.match-achievement-row\.is-legendary\s*\{[^}]*--achievement-tier-color:\s*#efc96e/);
+    assert.match(achievementCss, /\.achievement-card\.is-hidden-tier, \.achievement-modal\.is-hidden-tier, \.achievement-unlock-toast\.is-hidden-tier, \.match-achievement-row\.is-hidden-tier\s*\{[^}]*--achievement-tier-color:\s*#aaa0d7/);
     assert.match(achievementCss, /\.achievement-modal\s*\{[^}]*border:\s*1px solid var\(--achievement-tier-border\)[^}]*background:\s*var\(--achievement-tier-surface\)/s);
     assert.match(achievementCss, /\.achievement-modal-art > span:not\(\.achievement-crest\)/);
     assert.match(achievementCss, /\.achievement-card\.is-partial\s*\{[^}]*0 0 20px var\(--achievement-tier-glow\)/s);

@@ -1464,6 +1464,39 @@ export class SoundManager {
 
   /*
   功能
+  合成轻触起音与上行和声组成的成就铭刻提示音。
+
+  调用方
+  SoundManager.play 的 achievementUnlock 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建一段 softNoise 与四个错峰 tone 音效节点。
+
+  调用函数
+  softNoise、tone。
+
+  边界与不变量
+  每条 Toast 开始显示时播放一次；总时长短于 Toast 停留时间，不与下一条队列提示叠音。
+  */
+  sound_achievementUnlock(time) {
+    this.softNoise(time, 0.05, 0.045, 900, 0.005);
+    this.tone(60, time, 0.42, "triangle", 0.11);
+    this.tone(67, time + 0.08, 0.55, "sine", 0.125);
+    this.tone(72, time + 0.17, 0.72, "triangle", 0.11);
+    this.tone(79, time + 0.27, 0.85, "sine", 0.07);
+  }
+
+  /*
+  功能
   合成噪声与下滑音组成的弃牌音效。
 
   调用方

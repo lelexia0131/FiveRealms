@@ -1,23 +1,25 @@
 /*
 模块职责
-渲染历史档案馆征途成就卡阵、总体纹章与唯一详情弹窗。
+渲染征途成就卡阵、解锁提示、终局列表与唯一详情弹窗。
 
 上游
-HistoryArchiveView。
+HistoryArchiveView 与 UIManager。
 
 下游
-档案页 DOM 与 AchievementStore 提供的安全 ViewModel。
+档案页、对局提示、终局 DOM 与 AchievementStore 提供的安全 ViewModel。
 
 状态边界
-只保存当前安全 ViewModel 和弹窗触发按钮，不读写 History 或 GameState。
+只保存当前安全 ViewModel、Toast 队列和弹窗触发按钮，不读写 History 或 GameState。
 
 信息边界
 只能展示 ViewModel 已包含字段；未解锁隐藏成就无法从本模块取得真实条件。
 
 架构约束
-卡片正面不显示文字；所有卡片共享事件委托和一个详情弹窗。
+卡片正面不显示文字；档案卡、Toast 与终局行始终打开同一个详情弹窗。
 */
 import { escapeHtml } from "../../templates.js";
+
+const ACHIEVEMENT_TOAST_DURATION_MS = 4800;
 
 /*
 功能
@@ -185,6 +187,72 @@ function renderAchievementCard(item) {
 
 /*
 功能
+渲染一条本局新解锁成就的紧凑终局行。
+
+调用方
+AchievementView.renderMatchUnlockList。
+
+输入
+已解锁的安全成就 ViewModel。
+
+输出
+带 tier class、插画和既有进度纹章的按钮 HTML。
+
+读取状态
+item 的标题、插画、tier、status 与 unlocked。
+
+写入状态
+无。
+
+调用函数
+renderProgressCrest、tierClass、statusClass、escapeHtml。
+
+边界与不变量
+不显示 tier 文本或 criteria；点击意图只通过 data-achievement-id 暴露。
+*/
+function renderMatchUnlockRow(item) {
+  return `<button class="match-achievement-row is-${escapeHtml(tierClass(item.tier))} is-${escapeHtml(statusClass(item.status))}" type="button" data-achievement-id="${escapeHtml(item.id)}" aria-label="查看成就：${escapeHtml(item.title)}">
+    <span class="match-achievement-art"><img src="${escapeHtml(item.artwork)}" alt="" aria-hidden="true"></span>
+    <strong>${escapeHtml(item.title)}</strong>
+    ${renderProgressCrest(item)}
+  </button>`;
+}
+
+/*
+功能
+渲染当前队首条解锁记录的非阻塞 Toast。
+
+调用方
+AchievementView.showNextToast。
+
+输入
+已解锁的安全成就 ViewModel。
+
+输出
+带 tier class、插画、标题和既有进度纹章的按钮 HTML。
+
+读取状态
+item 的标题、插画、tier、status 与 unlocked。
+
+写入状态
+无。
+
+调用函数
+renderProgressCrest、tierClass、statusClass、escapeHtml。
+
+边界与不变量
+不渲染 criteria 或 description；同一时刻只由调用方挂载一条。
+*/
+function renderUnlockToast(item) {
+  return `<button class="achievement-unlock-toast is-${escapeHtml(tierClass(item.tier))} is-${escapeHtml(statusClass(item.status))}" type="button" data-achievement-id="${escapeHtml(item.id)}" aria-label="查看新解锁成就：${escapeHtml(item.title)}">
+    <img src="${escapeHtml(item.artwork)}" alt="" aria-hidden="true">
+    <span class="achievement-unlock-copy"><small>征途铭刻</small><strong>${escapeHtml(item.title)}</strong></span>
+    ${renderProgressCrest(item)}
+  </button>`;
+}
+
+/*
+功能
 渲染详情中的单个队伍首次铭刻状态。
 
 调用方
@@ -217,36 +285,78 @@ function renderScopeStatus(label, timestamp, unlocked) {
 export class AchievementView {
   /*
   功能
-  创建征途成就 View 并安装页面级交互。
+  创建征途成就 View 并安装档案、Toast 与唯一详情弹窗交互。
 
   调用方
   HistoryArchiveView constructor。
 
   输入
-  历史档案页根节点。
+  历史档案页根节点，以及可选的全局弹窗、Toast 容器和逐条展示 callback。
 
   输出
   AchievementView 实例。
 
   读取状态
-  root.ownerDocument。
+  root.ownerDocument 与 options 中的 modalRoot/toastRoot。
 
   写入状态
-  items、lastTrigger 与 click/keydown listener。
+  items、Toast 队列、lastTrigger、onToastShown 与 click/keydown/animation listener。
 
   调用函数
-  handleClick、handleKeydown。
+  handleClick、handleToastClick、handleToastAnimationEnd、handleKeydown。
 
   边界与不变量
-  全部卡片只共用一个 root listener；Escape 只在成就弹窗存在时生效。
+  全部档案卡只共用一个 root listener；Toast 容器只挂一个 listener；所有入口共用 modalRoot 中的一份弹窗；
+  展示 callback 只在一条 Toast 真正挂载时调用一次。
   */
-  constructor(root) {
+  constructor(root, { modalRoot = root, toastRoot = null, onToastShown = null } = {}) {
     this.root = root;
+    this.modalRoot = modalRoot;
+    this.toastRoot = toastRoot;
+    this.onToastShown = typeof onToastShown === "function" ? onToastShown : null;
     this.items = [];
     this.lastTrigger = null;
+    this.toastQueue = [];
+    this.currentToast = null;
+    this.toastTimer = null;
     this.document = root?.ownerDocument ?? globalThis.document;
     this.root?.addEventListener("click", (event) => this.handleClick(event));
+    if (this.modalRoot && this.modalRoot !== this.root) {
+      this.modalRoot.addEventListener?.("click", (event) => this.handleModalClick(event));
+    }
+    this.toastRoot?.addEventListener?.("click", (event) => this.handleToastClick(event));
+    this.toastRoot?.addEventListener?.("animationend", (event) => this.handleToastAnimationEnd(event));
     this.document?.addEventListener?.("keydown", (event) => this.handleKeydown(event));
+  }
+
+  /*
+  功能
+  保存 Store 投影的最新安全成就 ViewModel。
+
+  调用方
+  renderSection 与 UIManager.presentMatchAchievementUnlocks。
+
+  输入
+  安全成就 ViewModel 数组。
+
+  输出
+  规范化后的当前 items。
+
+  读取状态
+  无。
+
+  写入状态
+  this.items。
+
+  调用函数
+  Array.isArray。
+
+  边界与不变量
+  不复制或补全隐藏字段；非数组输入清为空集合。
+  */
+  setItems(items) {
+    this.items = Array.isArray(items) ? items : [];
+    return this.items;
   }
 
   /*
@@ -275,7 +385,7 @@ export class AchievementView {
   不按 tier 添加可见分组或标题；总体纹章片段不会泄漏隐藏条件。
   */
   renderSection(items) {
-    this.items = Array.isArray(items) ? items : [];
+    this.setItems(items);
     const completeCount = this.items.filter((item) => item.status === "COMPLETE").length;
     const partialCount = this.items.filter((item) => item.status === "PARTIAL").length;
     const hasProgress = completeCount > 0 || partialCount > 0;
@@ -303,6 +413,174 @@ export class AchievementView {
       </div>
       <div class="achievement-grid">${this.items.map(renderAchievementCard).join("")}</div>
     </section>`;
+  }
+
+  /*
+  功能
+  只按本局 Store 新增记录渲染 MVP 左栏成就列表。
+
+  调用方
+  UIManager.showMatchPerformance。
+
+  输入
+  仅含 achievementId、teamScope、unlockedAt 的本局运行时记录。
+
+  输出
+  紧凑成就行 HTML，或克制空状态 HTML。
+
+  读取状态
+  this.items 中的最新 Store ViewModel。
+
+  写入状态
+  无。
+
+  调用函数
+  renderMatchUnlockRow、Array.find/map/filter。
+
+  边界与不变量
+  不扫描 History 或重算 criteria；输出顺序与首次新增记录顺序一致。
+  */
+  renderMatchUnlockList(unlocks) {
+    const rows = (Array.isArray(unlocks) ? unlocks : []).map((unlock) => (
+      this.items.find((item) => item.id === unlock?.achievementId) ?? null
+    )).filter(Boolean).map(renderMatchUnlockRow).join("");
+    return rows || '<div class="match-achievement-empty">本局没有新的征途铭刻</div>';
+  }
+
+  /*
+  功能
+  把 Store 本次真正新增的记录依序加入单条 Toast 队列。
+
+  调用方
+  UIManager.presentMatchAchievementUnlocks。
+
+  输入
+  仅含 achievementId、teamScope、unlockedAt 的本局运行时记录。
+
+  输出
+  无返回值。
+
+  读取状态
+  this.items 与当前 Toast 生命周期。
+
+  写入状态
+  toastQueue、currentToast 与 Toast DOM。
+
+  调用函数
+  Array.find、showNextToast。
+
+  边界与不变量
+  不检查 criteria 或 History；没有对应安全 ViewModel 的记录不会进入展示队列。
+  */
+  enqueueUnlocks(unlocks) {
+    for (const unlock of Array.isArray(unlocks) ? unlocks : []) {
+      const item = this.items.find((entry) => entry.id === unlock?.achievementId);
+      if (item) this.toastQueue.push({ unlock, item });
+    }
+    this.showNextToast();
+  }
+
+  /*
+  功能
+  在没有活跃 Toast 时展示队首记录并启动约 4.8 秒生命周期。
+
+  调用方
+  enqueueUnlocks 与 finishCurrentToast。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  toastRoot、toastQueue 与 currentToast。
+
+  写入状态
+  currentToast、toastRoot.innerHTML 与 toastTimer。
+
+  调用函数
+  renderUnlockToast、onToastShown、setTimeout。
+
+  边界与不变量
+  活跃 Toast 存在时绝不挂载第二条；每条提示只在挂载后触发一次展示回调；timer 只作为 animationend 的安全兜底。
+  */
+  showNextToast() {
+    if (!this.toastRoot || this.currentToast || !this.toastQueue.length) return;
+    this.currentToast = this.toastQueue.shift();
+    this.toastRoot.innerHTML = renderUnlockToast(this.currentToast.item);
+    this.onToastShown?.(this.currentToast.unlock, this.currentToast.item);
+    this.toastTimer = globalThis.setTimeout?.(
+      () => this.finishCurrentToast(),
+      ACHIEVEMENT_TOAST_DURATION_MS
+    ) ?? null;
+  }
+
+  /*
+  功能
+  结束当前 Toast 并立即衔接队列下一条。
+
+  调用方
+  Toast animationend、生命周期兜底与新局清理测试。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  toastTimer、toastRoot 与 toastQueue。
+
+  写入状态
+  清空当前 Toast DOM/状态并推进下一条。
+
+  调用函数
+  clearTimeout、showNextToast。
+
+  边界与不变量
+  animationend 与 timer 重复到达时安全；下一条只在当前 DOM 清空后挂载。
+  */
+  finishCurrentToast() {
+    if (!this.currentToast) return;
+    if (this.toastTimer !== null) globalThis.clearTimeout?.(this.toastTimer);
+    this.toastTimer = null;
+    this.currentToast = null;
+    if (this.toastRoot) this.toastRoot.innerHTML = "";
+    this.showNextToast();
+  }
+
+  /*
+  功能
+  在新 Match 开始时清空 Toast 队列和活跃提示。
+
+  调用方
+  UIManager.attachGame。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  toastTimer 与 toastRoot。
+
+  写入状态
+  toastQueue、currentToast、toastTimer 与 Toast DOM。
+
+  调用函数
+  clearTimeout。
+
+  边界与不变量
+  只清理运行时展示，不修改永久 records 或当前安全 ViewModel。
+  */
+  resetUnlockQueue() {
+    if (this.toastTimer !== null) globalThis.clearTimeout?.(this.toastTimer);
+    this.toastQueue = [];
+    this.currentToast = null;
+    this.toastTimer = null;
+    if (this.toastRoot) this.toastRoot.innerHTML = "";
   }
 
   /*
@@ -342,6 +620,95 @@ export class AchievementView {
 
   /*
   功能
+  在详情弹窗挂载于档案页之外时处理关闭按钮和遮罩点击。
+
+  调用方
+  modalRoot click listener。
+
+  输入
+  浏览器 click event。
+
+  输出
+  无返回值。
+
+  读取状态
+  data-achievement-close 与 data-achievement-overlay。
+
+  写入状态
+  由 closeDetail 删除唯一弹窗并恢复焦点。
+
+  调用函数
+  Element.closest/matches、closeDetail。
+
+  边界与不变量
+  弹窗正文点击不关闭；该 listener 不处理档案卡、Toast 或 MVP 行打开意图。
+  */
+  handleModalClick(event) {
+    const closeButton = event.target?.closest?.("button[data-achievement-close]");
+    if (closeButton || event.target?.matches?.("[data-achievement-overlay]")) this.closeDetail();
+  }
+
+  /*
+  功能
+  把 Toast 点击转交给现有唯一成就详情弹窗。
+
+  调用方
+  toastRoot click listener。
+
+  输入
+  浏览器 click event。
+
+  输出
+  无返回值。
+
+  读取状态
+  data-achievement-id。
+
+  写入状态
+  由 openDetail 写入唯一弹窗和焦点。
+
+  调用函数
+  Element.closest、openDetail。
+
+  边界与不变量
+  不消费或暂停 Toast 队列；无成就按钮时保持 no-op。
+  */
+  handleToastClick(event) {
+    const toast = event.target?.closest?.("[data-achievement-id]");
+    if (toast) this.openDetail(toast.dataset.achievementId, toast);
+  }
+
+  /*
+  功能
+  在当前 Toast CSS 动画结束时推进队列。
+
+  调用方
+  toastRoot animationend listener。
+
+  输入
+  浏览器 AnimationEvent。
+
+  输出
+  无返回值。
+
+  读取状态
+  event.target class。
+
+  写入状态
+  由 finishCurrentToast 清空当前项并推进队列。
+
+  调用函数
+  Element.matches、finishCurrentToast。
+
+  边界与不变量
+  只响应 Toast 自身动画，子元素或其他动画不得提前出队。
+  */
+  handleToastAnimationEnd(event) {
+    if (event.target?.matches?.(".achievement-unlock-toast")) this.finishCurrentToast();
+  }
+
+  /*
+  功能
   允许 Escape 关闭当前成就详情。
 
   调用方
@@ -366,7 +733,7 @@ export class AchievementView {
   没有打开详情时不拦截页面按键。
   */
   handleKeydown(event) {
-    if (event.key === "Escape" && this.root?.querySelector?.("[data-achievement-overlay]")) this.closeDetail();
+    if (event.key === "Escape" && this.modalRoot?.querySelector?.("[data-achievement-overlay]")) this.closeDetail();
   }
 
   /*
@@ -386,7 +753,7 @@ export class AchievementView {
   this.items 中的安全 ViewModel。
 
   写入状态
-  root 末尾详情 DOM、lastTrigger 与关闭按钮焦点。
+  modalRoot 末尾详情 DOM、lastTrigger 与关闭按钮焦点。
 
   调用函数
   renderProgressCrest、renderScopeStatus、escapeHtml。
@@ -406,14 +773,14 @@ export class AchievementView {
       ${item.teamScope !== "duo" ? renderScopeStatus("三人小队", item.unlockedAt?.trio, item.unlocked.trio) : ""}
     </div>`;
     const criteria = hiddenLocked ? "" : `<div class="achievement-criteria"><small>铭刻条件</small><p>${escapeHtml(item.criteria)}</p></div>`;
-    this.root.insertAdjacentHTML("beforeend", `<div class="achievement-modal-overlay" data-achievement-overlay role="dialog" aria-modal="true" aria-labelledby="achievement-detail-title">
+    this.modalRoot?.insertAdjacentHTML?.("beforeend", `<div class="achievement-modal-overlay" data-achievement-overlay role="dialog" aria-modal="true" aria-labelledby="achievement-detail-title">
       <article class="achievement-modal is-${escapeHtml(tierClass(item.tier))} is-${escapeHtml(statusClass(item.status))}">
         <button class="achievement-modal-close" type="button" data-achievement-close aria-label="关闭成就详情" title="关闭">×</button>
         <div class="achievement-modal-art"><img src="${escapeHtml(item.artwork)}" alt="" aria-hidden="true"><span aria-hidden="true"></span>${renderProgressCrest(item, true)}</div>
         <div class="achievement-modal-copy"><small>JOURNEY RECORD</small><h3 id="achievement-detail-title">${escapeHtml(item.title)}</h3><p>${escapeHtml(item.description)}</p>${hiddenNote}${criteria}${scopes}</div>
       </article>
     </div>`);
-    this.root.querySelector?.("[data-achievement-close]")?.focus?.();
+    this.modalRoot?.querySelector?.("[data-achievement-close]")?.focus?.();
   }
 
   /*
@@ -442,7 +809,7 @@ export class AchievementView {
   重复关闭安全；页面退出时不强制恢复已隐藏卡片焦点。
   */
   closeDetail(restoreFocus = true) {
-    this.root?.querySelector?.("[data-achievement-overlay]")?.remove?.();
+    this.modalRoot?.querySelector?.("[data-achievement-overlay]")?.remove?.();
     const trigger = this.lastTrigger;
     this.lastTrigger = null;
     if (restoreFocus) trigger?.focus?.();

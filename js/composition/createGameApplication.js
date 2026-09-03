@@ -399,26 +399,27 @@ MatchPerformanceSidecar 的 onResult callback。
 当前 MatchApplication 与冻结 MatchResultViewModel。
 
 输出
-外部 onMatchResult callback 的返回值；未配置时为 undefined。
+长期结果观察者与 UI 展示完成后的 Promise。
 
 读取状态
 当前 UI session、公开玩家 controllerType/id 与 onMatchResult callback。
 
 写入状态
-MVP 结果 DOM；长期历史写入由注入 callback 自行拥有。
+先由注入 callback 完成长期历史与本局成就会话，再写 MVP 结果 DOM。
 
 调用函数
-UI.showMatchPerformance、Array.find、onMatchResult。
+Array.find、onMatchResult、UI.showMatchPerformance。
 
 边界与不变量
-只分发最终结果，不重算胜负/评分/MVP；同一 sidecar gameOver listener 只调用一次。
+只分发最终结果，不重算胜负/评分/MVP；成就写入完成前不得渲染 MVP；
+长期保存失败由 callback 自行降级，同一 sidecar gameOver listener 只调用一次。
 */
-function deliverMatchResult(application, viewModel) {
-  application.ui.showMatchPerformance?.(viewModel);
+async function deliverMatchResult(application, viewModel) {
   const humanPlayerId = application.state.players.find(
     (player) => player.controllerType === "human"
   )?.id ?? null;
-  return application.onMatchResult?.(viewModel, humanPlayerId);
+  await application.onMatchResult?.(viewModel, humanPlayerId);
+  application.ui.showMatchPerformance?.(viewModel);
 }
 
 class MatchApplication {

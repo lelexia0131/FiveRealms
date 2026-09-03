@@ -43,7 +43,7 @@ export class MatchMvpResultView {
   UIManager constructor。
 
   输入
-  MVP 结果根元素。
+  MVP 结果根元素与共享 AchievementDetailModal 打开 callback。
 
   输出
   已绑定单一 click listener 的 View 实例。
@@ -52,18 +52,19 @@ export class MatchMvpResultView {
   无。
 
   写入状态
-  root、viewModel 与 selectedPlayerId。
+  root、viewModel、selectedPlayerId 与 onAchievementClick。
 
   调用函数
   Element.addEventListener。
 
   边界与不变量
-  根元素缺失的测试/headless 环境保持 no-op；监听器只绑定一次。
+  根元素缺失的测试/headless 环境保持 no-op；监听器只绑定一次；本 View 不创建成就详情弹窗。
   */
-  constructor(root) {
+  constructor(root, onAchievementClick = null) {
     this.root = root ?? null;
     this.viewModel = null;
     this.selectedPlayerId = null;
+    this.onAchievementClick = typeof onAchievementClick === "function" ? onAchievementClick : null;
     this.handleClick = this.handleClick.bind(this);
     this.root?.addEventListener?.("click", this.handleClick);
   }
@@ -107,7 +108,7 @@ export class MatchMvpResultView {
   UIManager.showMatchPerformance。
 
   输入
-  immutable MatchResultViewModel 与仅用于展示的真人玩家 ID。
+  immutable MatchResultViewModel、仅用于展示的真人玩家 ID，以及 AchievementView 生成的本局成就标记。
 
   输出
   无返回值。
@@ -122,9 +123,9 @@ export class MatchMvpResultView {
   escapeHtml、formatNumber、renderSelection。
 
   边界与不变量
-  排名只使用已派生结果，不在 DOM 层重新评分或排序；真人身份与队伍图案只影响展示；重复名称不生成第二行 DOM。
+  排名只使用已派生结果，不在 DOM 层重新评分或排序；本局成就标记不由此 View 推断；真人身份与队伍图案只影响展示。
   */
-  render(viewModel, humanPlayerId = null) {
+  render(viewModel, humanPlayerId = null, matchAchievementMarkup = '<div class="match-achievement-empty">本局没有新的征途铭刻</div>') {
     if (!this.root || !viewModel?.players?.length) return;
     this.viewModel = viewModel;
     this.selectedPlayerId = viewModel.defaultSelectedPlayerId;
@@ -144,7 +145,12 @@ export class MatchMvpResultView {
       <b class="match-mvp-hero-score">${formatNumber(mvp.finalScore, 1)}</b>
     </header>
     <div class="match-mvp-layout">
-      <section class="match-mvp-ranking" aria-label="全场表现排名"><h3>全场表现排名</h3>${rows}</section>
+      <section class="match-mvp-ranking" aria-label="全场表现排名"><h3>全场表现排名</h3>${rows}
+        <section class="match-achievement-section" aria-labelledby="match-achievement-title">
+          <h4 id="match-achievement-title">本局解锁成就</h4>
+          <div class="match-achievement-list">${matchAchievementMarkup}</div>
+        </section>
+      </section>
       <section class="match-mvp-detail" data-match-performance-detail aria-live="polite"></section>
     </div>`;
     this.renderSelection();
@@ -152,7 +158,7 @@ export class MatchMvpResultView {
 
   /*
   功能
-  响应排名按钮点击并切换当前玩家详情。
+  响应排名按钮或本局成就行点击，并切换玩家详情或打开共享成就详情。
 
   调用方
   root click listener。
@@ -164,18 +170,23 @@ export class MatchMvpResultView {
   无返回值。
 
   读取状态
-  viewModel 与点击目标 data attribute。
+  viewModel、点击目标 data attribute 与 onAchievementClick。
 
   写入状态
-  selectedPlayerId 与选中详情 DOM。
+  玩家行写 selectedPlayerId 与详情 DOM；成就行只调用共享详情 callback。
 
   调用函数
-  Element.closest、renderSelection。
+  Element.closest、onAchievementClick、renderSelection。
 
   边界与不变量
-  只能选择当前 immutable ViewModel 中的玩家；不重新计算比赛统计。
+  只能选择当前 immutable ViewModel 中的玩家；成就点击不创建第二套弹窗；不重新计算比赛统计或成就条件。
   */
   handleClick(event) {
+    const achievementButton = event.target?.closest?.(".match-achievement-row[data-achievement-id]");
+    if (achievementButton?.dataset?.achievementId) {
+      this.onAchievementClick?.(achievementButton.dataset.achievementId, achievementButton);
+      return;
+    }
     const button = event.target?.closest?.("[data-match-performance-player-id]");
     const playerId = button?.dataset?.matchPerformancePlayerId;
     if (!playerId || !this.viewModel?.players.some((player) => player.playerId === playerId)) return;

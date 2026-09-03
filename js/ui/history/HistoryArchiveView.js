@@ -245,7 +245,7 @@ export class HistoryArchiveView {
   UIManager constructor。
 
   输入
-  页面根元素、HistoryStatsManager 与返回 callback。
+  页面根元素、HistoryStatsManager、返回 callback，以及共享详情弹窗和 Toast 容器。
 
   输出
   HistoryArchiveView 实例。
@@ -254,19 +254,19 @@ export class HistoryArchiveView {
   无。
 
   写入状态
-  保存依赖并注册根节点 click listener。
+  保存依赖、创建唯一 AchievementView 并注册根节点 click listener。
 
   调用函数
-  handleClick。
+  AchievementView、handleClick。
 
   边界与不变量
-  View 只能通过 Manager 查询数据；返回首页与页内滚动必须保持不同意图。
+  View 只能通过 Manager 查询数据；返回首页与页内滚动必须保持不同意图；对局入口复用同一个 AchievementView 详情弹窗。
   */
-  constructor(root, historyStatsManager, onBack) {
+  constructor(root, historyStatsManager, onBack, achievementViewOptions = {}) {
     this.root = root;
     this.historyStatsManager = historyStatsManager;
     this.onBack = onBack;
-    this.achievementView = new AchievementView(root);
+    this.achievementView = new AchievementView(root, achievementViewOptions);
     this.root?.addEventListener("click", (event) => this.handleClick(event));
   }
 

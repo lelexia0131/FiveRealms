@@ -42657,7 +42657,7 @@ test("UI·音频控制：初始化与调整同步 BGM 和音效音量", uiAudioV
 
 test("音频：合成声音覆盖通用反馈、雷达成功与准备阶段卡牌选择且 lightning 改为采样播放", async () => {
   const sound = new SoundManager();
-  for (const name of ["draw", "select", "cardSelect", "playCard", "hit", "skill", "discard", "heal", "shield", "radarSuccess"]) {
+  for (const name of ["draw", "select", "cardSelect", "playCard", "hit", "skill", "achievementUnlock", "discard", "heal", "shield", "radarSuccess"]) {
     assert.equal(typeof sound[`sound_${name}`], "function", name);
   }
   assert.equal(sound.sound_lightning, undefined, "lightning 不应再使用合成方法");
@@ -43454,7 +43454,7 @@ test("音频：全部 SFX 只走 sfxGain 且不触碰 musicGain", async () => {
       sound.musicTimer?.unref?.();
       const timer = sound.musicTimer;
       const sources = sound.musicSources.size;
-      for (const name of ["select", "cardSelect", "draw", "playCard", "hit", "skill", "discard", "heal", "shield", "radarSuccess", "lightning"]) {
+      for (const name of ["select", "cardSelect", "draw", "playCard", "hit", "skill", "achievementUnlock", "discard", "heal", "shield", "radarSuccess", "lightning"]) {
         const before = sound.musicGain.gain.calls.length;
         assert.equal(await sound.play(name, { force: true }), true, name);
         assert.equal(sound.musicGain.gain.calls.length, before, `${name} 不得触碰 musicGain`);

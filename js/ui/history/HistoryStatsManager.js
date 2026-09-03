@@ -737,19 +737,20 @@ export class HistoryStatsManager {
   已完成评分/MVP 排名的 MatchResult 与真人 playerId。
 
   输出
-  保存完成后的冻结历史查询对象。
+  保存完成后的冻结历史查询对象，并附带本次真正新增的运行时成就记录。
 
   读取状态
   当前历史快照、最终 MatchResult 与注入时钟。
 
   写入状态
-  summary、真人角色、真人阵营、同行/传奇累计、最近 records、history_data.json 与成功后的内存档案。
+  summary、真人角色、真人阵营、同行/传奇累计、最近 records、history_data.json 与成功后的内存档案；返回值临时携带本局新增成就。
 
   调用函数
-  initialize、normalizeHistoryData、calculateWinRate、optionalNonNegativeNumber、storage.write、buildArchiveData。
+  initialize、normalizeHistoryData、recordAchievementUnlock、calculateWinRate、optionalNonNegativeNumber、storage.write、buildArchiveData。
 
   边界与不变量
-  只接受存在于最终结果中的真人；不重算评分、胜负、MVP、队友身份或战斗统计；文件写入成功前不得让查询看到未持久化记录。
+  只接受存在于最终结果中的真人；不重算评分、胜负、MVP、队友身份或战斗统计；
+  只有 achievementId + teamScope 首次写入且整个文件保存成功，返回值才暴露本局新增记录。
   */
   async recordMatchResult(matchResult, humanPlayerId) {
     if (!this.data) await this.initialize();
@@ -766,8 +767,15 @@ export class HistoryStatsManager {
       : [];
     const unlockedAt = this.now().toISOString();
     const achievementResult = evaluateMatchAchievements(matchResult, humanPlayerId, next.achievements.streaks);
+    const newlyUnlockedAchievements = [];
     for (const achievementId of achievementResult.unlocked) {
-      recordAchievementUnlock(next.achievements.records, achievementId, achievementResult.scope, unlockedAt);
+      if (recordAchievementUnlock(next.achievements.records, achievementId, achievementResult.scope, unlockedAt)) {
+        newlyUnlockedAchievements.push(Object.freeze({
+          achievementId,
+          teamScope: achievementResult.scope,
+          unlockedAt
+        }));
+      }
     }
     next.summary.totalMatches += 1;
     next.summary.wins += player.won ? 1 : 0;
@@ -834,6 +842,9 @@ export class HistoryStatsManager {
     next.records.length = Math.min(next.records.length, RECENT_RECORD_LIMIT);
     await this.storage.write(`${JSON.stringify(next, null, 2)}\n`);
     this.data = next;
-    return buildArchiveData(this.data);
+    return Object.freeze({
+      ...buildArchiveData(this.data),
+      newlyUnlockedAchievements: Object.freeze(newlyUnlockedAchievements)
+    });
   }
 }
