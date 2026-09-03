@@ -2,6 +2,7 @@ import { CARD_PRESENTATION } from "../adapters/ui/CardPresentationDefinitions.js
 
 /** 闪电采样约 3.2 秒；视觉在 3 秒自然收束，避免声音尾部结束后仍残留强光。 */
 export const LIGHTNING_HIT_DURATION_MS = 3000;
+export const RADAR_SUCCESS_DURATION_MS = 760;
 
 const DAMAGE_FEEDBACK_DURATION_MS = 360;
 const RESOLUTION_VFX_DURATION_MS = 800;
@@ -53,6 +54,8 @@ export class AnimationController {
     this.pending = [];
     this.activeLightning = new Map();
     this.lightningSerial = 0;
+    this.activeRadarSuccess = new Map();
+    this.radarSuccessSerial = 0;
     this.activeDamageFeedback = new Map();
     this.damageFeedbackSerial = 0;
     this.activeResolutionEffects = new Set();
@@ -328,6 +331,209 @@ export class AnimationController {
     entry.panel?.style?.removeProperty?.("--lightning-hit-duration");
     entry.overlay?.remove?.();
     this.activeLightning.delete(playerId);
+  }
+
+  /*
+  功能
+  为指定人物面板启动一次雷达战术判定成功扫描。
+
+  调用方
+  UIManager.playRadarSuccess。
+
+  输入
+  公开玩家 ID 与可选文档根节点。
+
+  输出
+  成功创建 overlay 时返回 true，否则返回 false。
+
+  读取状态
+  activeRadarSuccess、radarSuccessSerial 与当前时间。
+
+  写入状态
+  替换该玩家的 activeRadarSuccess 条目并登记清理 timer。
+
+  调用函数
+  removeRadarSuccess、attachRadarSuccess、setTimeout。
+
+  边界与不变量
+  同一玩家连续命中先清除旧实例；扫描只属于 DOM 展示，不改变判定或结算状态。
+  */
+  startRadarSuccess(playerId, root = globalThis.document) {
+    if (!playerId || !root) return false;
+    this.removeRadarSuccess(playerId);
+    const token = ++this.radarSuccessSerial;
+    const entry = {
+      token,
+      expiresAt: Date.now() + RADAR_SUCCESS_DURATION_MS,
+      overlay: null,
+      stopFollowing: null,
+      timer: setTimeout(
+        () => this.removeRadarSuccess(playerId, token),
+        RADAR_SUCCESS_DURATION_MS
+      )
+    };
+    entry.timer?.unref?.();
+    this.activeRadarSuccess.set(playerId, entry);
+    this.attachRadarSuccess(playerId, entry, root);
+    return Boolean(entry.overlay);
+  }
+
+  /*
+  功能
+  把仍有效的雷达成功扫描挂载到当前人物面板。
+
+  调用方
+  startRadarSuccess 与 flush 的重挂载路径。
+
+  输入
+  玩家 ID、activeRadarSuccess 条目与文档根节点。
+
+  输出
+  无返回值。
+
+  读取状态
+  条目到期时间、当前 DOM 面板矩形与窗口滚动位置。
+
+  写入状态
+  扫描 overlay、定位变量以及条目的跟随清理函数。
+
+  调用函数
+  playerPanel、DOM 创建与事件监听 API。
+
+  边界与不变量
+  render 替换人物面板时只续接剩余时长；overlay 不参与布局且不接收指针事件。
+  */
+  attachRadarSuccess(playerId, entry, root) {
+    const panel = this.playerPanel(root, playerId);
+    if (!panel) return;
+    const remaining = Math.max(1, entry.expiresAt - Date.now());
+    entry.stopFollowing?.();
+    entry.stopFollowing = null;
+    entry.overlay?.remove?.();
+    const doc = root.ownerDocument ?? root;
+    const overlay = doc.createElement("span");
+    overlay.className = "radar-success-vfx-overlay";
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.style.setProperty("--radar-success-duration", `${remaining}ms`);
+
+    const scan = doc.createElement("i");
+    scan.className = "radar-success-scan";
+    scan.setAttribute("aria-hidden", "true");
+    const pulse = doc.createElement("i");
+    pulse.className = "radar-success-pulse";
+    pulse.setAttribute("aria-hidden", "true");
+    const particles = doc.createElement("span");
+    particles.className = "radar-success-particles";
+    particles.setAttribute("aria-hidden", "true");
+    const particlePositions = [
+      [20, 34, 0], [34, 18, 70], [49, 28, 120], [66, 20, 35],
+      [78, 39, 170], [62, 48, 90], [31, 53, 210], [45, 66, 145],
+      [72, 70, 250], [18, 66, 185], [53, 82, 280], [84, 60, 110]
+    ];
+    for (const [left, top, delay] of particlePositions) {
+      const particle = doc.createElement("i");
+      particle.className = "radar-success-particle";
+      particle.style.setProperty("--radar-particle-left", `${left}%`);
+      particle.style.setProperty("--radar-particle-top", `${top}%`);
+      particle.style.setProperty("--radar-particle-delay", `${delay}ms`);
+      particles.append(particle);
+    }
+    overlay.append(scan);
+    overlay.append(pulse);
+    overlay.append(particles);
+
+    const rect = panel.getBoundingClientRect?.();
+    if (rect && doc.body) {
+      const overflow = 10;
+      overlay.style.setProperty("--radar-success-left", `${rect.left - overflow}px`);
+      overlay.style.setProperty("--radar-success-top", `${rect.top - overflow}px`);
+      overlay.style.setProperty("--radar-success-width", `${rect.width + overflow * 2}px`);
+      overlay.style.setProperty("--radar-success-height", `${rect.height + overflow * 2}px`);
+      /*
+      功能
+      让雷达成功 overlay 跟随人物面板的当前可视矩形。
+
+      调用方
+      attachRadarSuccess 注册的 resize/scroll listener。
+
+      输入
+      无；闭包捕获 panel、overlay 与 overflow。
+
+      输出
+      无返回值。
+
+      读取状态
+      panel.getBoundingClientRect。
+
+      写入状态
+      overlay 的定位 CSS 变量。
+
+      调用函数
+      getBoundingClientRect、style.setProperty。
+
+      边界与不变量
+      只更新展示坐标，不改变页面布局或对局状态。
+      */
+      const position = () => {
+        const current = panel.getBoundingClientRect();
+        overlay.style.setProperty("--radar-success-left", `${current.left - overflow}px`);
+        overlay.style.setProperty("--radar-success-top", `${current.top - overflow}px`);
+        overlay.style.setProperty("--radar-success-width", `${current.width + overflow * 2}px`);
+        overlay.style.setProperty("--radar-success-height", `${current.height + overflow * 2}px`);
+      };
+      const view = doc.defaultView;
+      view?.addEventListener?.("resize", position);
+      view?.addEventListener?.("scroll", position, true);
+      entry.stopFollowing = () => {
+        view?.removeEventListener?.("resize", position);
+        view?.removeEventListener?.("scroll", position, true);
+      };
+      doc.body.append(overlay);
+    } else {
+      overlay.classList.add("is-panel-local");
+      panel.append(overlay);
+    }
+    overlay.addEventListener("animationend", (event) => {
+      if (event.target === overlay && event.animationName === "radarSuccessLifetime") {
+        this.removeRadarSuccess(playerId, entry.token);
+      }
+    });
+    entry.panel = panel;
+    entry.overlay = overlay;
+  }
+
+  /*
+  功能
+  清除指定玩家当前或指定 token 的雷达成功扫描。
+
+  调用方
+  startRadarSuccess、到期 timer、animationend 与 clear。
+
+  输入
+  玩家 ID 与可选生命周期 token。
+
+  输出
+  无返回值。
+
+  读取状态
+  activeRadarSuccess 中对应条目。
+
+  写入状态
+  移除 timer、监听器、overlay 与 Map 条目。
+
+  调用函数
+  clearTimeout、Element.remove 与 Map.delete。
+
+  边界与不变量
+  token 不匹配时不得清除更新后的扫描实例；重复清理保持幂等。
+  */
+  removeRadarSuccess(playerId, token = null) {
+    const entry = this.activeRadarSuccess.get(playerId);
+    if (!entry || (token !== null && entry.token !== token)) return;
+    clearTimeout(entry.timer);
+    entry.stopFollowing?.();
+    entry.overlay?.remove?.();
+    this.activeRadarSuccess.delete(playerId);
   }
 
   /*
@@ -644,6 +850,12 @@ export class AnimationController {
         this.attachLightning(playerId, entry, root);
       }
     }
+    for (const [playerId, entry] of this.activeRadarSuccess) {
+      if (entry.expiresAt <= Date.now()) this.removeRadarSuccess(playerId, entry.token);
+      else if (!entry.overlay?.isConnected || !entry.panel?.isConnected) {
+        this.attachRadarSuccess(playerId, entry, root);
+      }
+    }
   }
 
   /*
@@ -676,5 +888,6 @@ export class AnimationController {
     for (const playerId of [...this.activeDamageFeedback.keys()]) this.removeDamageFeedback(playerId);
     for (const entry of [...this.activeResolutionEffects]) entry.cleanup?.();
     for (const playerId of [...this.activeLightning.keys()]) this.removeLightning(playerId);
+    for (const playerId of [...this.activeRadarSuccess.keys()]) this.removeRadarSuccess(playerId);
   }
 }

@@ -158,7 +158,7 @@ import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManag
 import { MatchLogAdapter } from "../js/adapters/ui/MatchLogAdapter.js";
 import { RulebookView, buildRulebookPages, getRulebookCardView } from "../js/ui/RulebookView.js";
 import { PrivateRevealView } from "../js/ui/PrivateRevealView.js";
-import { AnimationController, LIGHTNING_HIT_DURATION_MS } from "../js/ui/animationController.js";
+import { AnimationController, LIGHTNING_HIT_DURATION_MS, RADAR_SUCCESS_DURATION_MS } from "../js/ui/animationController.js";
 import { JudgmentView } from "../js/ui/JudgmentView.js";
 import {
   CARD_CATEGORY_DISPLAY_ORDER,
@@ -5024,6 +5024,7 @@ function frArch8PortsMinimalSurface() {
     showJudgment: (...args) => presentationCalls.push(["judgment", ...args]),
     hideJudgment: () => presentationCalls.push(["hide-judgment"]),
     showCurrentEffect: (...args) => presentationCalls.push(["effect", ...args]),
+    showRadarSuccess: (...args) => presentationCalls.push(["radar-success", ...args]),
     showLightningHit: (...args) => presentationCalls.push(["lightning", ...args]),
     showCurrentAction: (...args) => presentationCalls.push(["action", ...args]),
     playActionCue: (...args) => presentationCalls.push(["cue", ...args]),
@@ -5041,10 +5042,12 @@ function frArch8PortsMinimalSurface() {
   });
   presentation.showDamageFeedback("p1", 1, "assault", "normal");
   presentation.showMitigationFeedback("p1", 1, "guardianAid");
+  presentation.showRadarSuccess("p1");
   presentation.refresh();
-  assert.deepEqual(presentationCalls.slice(0, 3), [
+  assert.deepEqual(presentationCalls.slice(0, 4), [
     ["damage", "p1", 1, "assault", "normal"],
     ["mitigation", "p1", 1, "guardianAid"],
+    ["radar-success", "p1"],
     ["refresh"]
   ]);
   assert.throws(() => createPresentationPort({ log() { } }), /showDamageFeedback/);
@@ -5277,6 +5280,66 @@ async function frArch8JudgmentWorkflowDefenseTrace() {
 }
 
 test("判定轨迹：draw→show/log→reveal→destination→handVersion→restore", frArch8JudgmentWorkflowDefenseTrace);
+
+/*
+功能
+验证雷达成功反馈只由最终 tactical 判定结果触发一次。
+
+调用方
+当前雷达 Presentation 回归测试。
+
+输入
+一次 tactical 与一次 basic 的真实防御判定 workflow。
+
+输出
+无返回值；断言失败时抛出异常。
+
+读取状态
+fake defender、判定牌与 workflow presentation trace。
+
+写入状态
+fake 判定牌去向与 feedback trace。
+
+调用函数
+createJudgmentWorkflow、judgeDefense。
+
+边界与不变量
+只有 Domain outcome.category === "tactic" 才可触发 Radar Success；非 tactical 不得触发。
+*/
+async function frRadarSuccessPresentationSemantics() {
+  const defender = { id: "radar-defender", name: "雷达守方", alive: true, equipment: { definitionId: "defenseDevice" }, hand: [], handVersion: 0, battleTeam: "dawn" };
+  const attacker = { id: "radar-attacker", name: "雷达攻方", alive: true };
+  const state = { gameId: "radar-vfx", isGameOver: false, phase: "play", stateVersion: 0, players: [defender, attacker] };
+  const cards = [
+    { id: "radar-tactic", name: "战术判定", category: "tactic", art: "art" },
+    { id: "radar-basic", name: "基础判定", category: "basic", art: "art" }
+  ];
+  const radarSuccess = [];
+  const workflow = createJudgmentWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    emitEvent: async () => { },
+    drawJudgmentCard: () => cards.shift(),
+    syncDeckAliases: () => { },
+    moveJudgmentToDiscard: () => { },
+    moveJudgmentToHand: (card) => defender.hand.push(card),
+    observeJudgmentCard: () => { },
+    presentation: {
+      log: () => { }, showJudgment: () => { }, hideJudgment: () => { }, showCurrentEffect: () => { },
+      showRadarSuccess: (playerId) => radarSuccess.push(playerId), showLightningHit: () => { },
+      showDamageFeedback: () => { }, showShieldFeedback: () => { }, showHealFeedback: () => { },
+      showDying: () => { }, hideDying: () => { }, refresh: () => { }
+    },
+    setCurrentJudgmentProjection: () => { }
+  });
+  const tactical = await workflow.judgeDefense(attacker, defender, {});
+  const basic = await workflow.judgeDefense(attacker, defender, {});
+  assert.equal(tactical.category, "tactic");
+  assert.equal(basic.category, "basic");
+  assert.deepEqual(radarSuccess, [defender.id]);
+}
+
+test("UI·雷达反馈：仅最终战术牌判定触发一次成功语义", frRadarSuccessPresentationSemantics);
 
 /*
 功能
@@ -41933,6 +41996,76 @@ test("UI·闪电反馈：样式包含外扩锯齿主弧、分叉、火花且不�
   assert.match(source, /@keyframes lightningPanelShock/);
 });
 
+test("UI·雷达反馈：绿色扫描 overlay 单实例且动画结束后清理", () => {
+  const makeElement = (className = "") => {
+    const children = [];
+    const listeners = new Map();
+    const styleValues = new Map();
+    const element = {
+      className,
+      classList: {
+        add: (...names) => names.forEach((name) => { element.className += `${element.className ? " " : ""}${name}`; }),
+        remove: (...names) => names.forEach((name) => { element.className = element.className.split(" ").filter((value) => !names.includes(value)).join(" "); }),
+        contains: (name) => element.className.split(" ").includes(name)
+      },
+      children,
+      isConnected: true,
+      owner: null,
+      style: {
+        setProperty: (name, value) => styleValues.set(name, value),
+        getPropertyValue: (name) => styleValues.get(name),
+        removeProperty: (name) => styleValues.delete(name)
+      },
+      setAttribute(name, value) { this[name] = value; },
+      addEventListener(type, handler) { listeners.set(type, handler); },
+      append(child) { child.owner = this; children.push(child); },
+      remove() {
+        this.isConnected = false;
+        if (this.owner) this.owner.children.splice(this.owner.children.indexOf(this), 1);
+      },
+      listeners
+    };
+    return element;
+  };
+  const panel = makeElement("player-seat");
+  panel.getBoundingClientRect = () => ({ left: 80, top: 120, width: 260, height: 160 });
+  const body = makeElement("body");
+  const doc = {
+    ownerDocument: null,
+    body,
+    createElement: () => makeElement(),
+    querySelector: (selector) => selector.includes("radar-player") ? panel : null,
+    defaultView: {
+      addEventListener: () => { },
+      removeEventListener: () => { }
+    }
+  };
+  const controller = new AnimationController();
+  assert.equal(controller.startRadarSuccess("radar-player", doc), true);
+  assert.equal(body.children.length, 1);
+  const first = body.children[0];
+  assert.equal(first.className, "radar-success-vfx-overlay");
+  assert.equal(first.children.length, 3);
+  assert.equal(first.children[0].className, "radar-success-scan");
+  assert.equal(first.children[1].className, "radar-success-pulse");
+  assert.equal(first.children[2].className, "radar-success-particles");
+  assert.equal(first.children[2].children.length, 12);
+  assert.equal(first["aria-hidden"], "true");
+  assert.equal(first.style.getPropertyValue("--radar-success-left"), "70px");
+  assert.equal(first.style.getPropertyValue("--radar-success-duration"), `${RADAR_SUCCESS_DURATION_MS}ms`);
+  controller.startRadarSuccess("radar-player", doc);
+  assert.equal(first.isConnected, false, "连续判定必须清理旧扫描实例");
+  assert.equal(body.children.length, 1);
+  const second = body.children[0];
+  second.listeners.get("animationend")({ target: second, animationName: "radarSuccessLifetime" });
+  assert.equal(body.children.length, 0);
+  assert.equal(controller.activeRadarSuccess.size, 0);
+  controller.startRadarSuccess("radar-player", doc);
+  controller.clear();
+  assert.equal(body.children.length, 0);
+  assert.equal(controller.activeRadarSuccess.size, 0);
+});
+
 /*
 功能
 验证结算 VFX 样式包含全部授权效果且 overlay 不拦截操作。
@@ -41982,6 +42115,16 @@ async function frVfxCssContract() {
   assert.match(source, /\.resolution-vfx-overlay\.is-guardian-aid\s*\{[^}]*resolutionVfxLifetime/);
   assert.match(source, /\.resolution-vfx-overlay\.is-guardian-aid::before\s*\{[^}]*guardianAidBarrier \.68s/);
   assert.match(source, /\.resolution-vfx-overlay\.is-guardian-aid::after\s*\{[^}]*guardianAidRipple \.68s/);
+  assert.match(source, /\.radar-success-vfx-overlay\s*\{[^}]*pointer-events:\s*none/);
+  assert.match(source, /\.radar-success-vfx-overlay::after\s*\{[^}]*border-top-color:/);
+  assert.match(source, /\.radar-success-particles\s*\{[^}]*repeating-radial-gradient/);
+  assert.match(source, /\.radar-success-particles::before\s*\{[^}]*repeating-linear-gradient/);
+  assert.match(source, /\.radar-success-particles::after\s*\{[^}]*conic-gradient/);
+  assert.match(source, /\.radar-success-particle\s*\{[^}]*box-shadow:/);
+  assert.match(source, /@keyframes radarSuccessSweep/);
+  assert.match(source, /@keyframes radarSuccessMatrixSweep/);
+  assert.match(source, /@keyframes radarSuccessPulse/);
+  assert.match(source, /@keyframes radarSuccessParticleFlicker/);
   const huntDurationMs = Number(controllerSource.match(/const HUNT_HIT_DURATION_MS = (\d+);/)?.[1]);
   const burningFieldDurationMs = Number(
     controllerSource.match(/const BURNING_FIELD_HIT_DURATION_MS = (\d+);/)?.[1]

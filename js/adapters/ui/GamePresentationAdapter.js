@@ -98,6 +98,7 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
       if (!card) return;
       ui.setCurrentCard?.(card, label, holderName);
     },
+    showRadarSuccess: (playerId) => ui.playRadarSuccess?.(playerId),
     showLightningHit: (playerId) => ui.playLightningHit?.(playerId),
     showCurrentAction: ({ cardId, skillName, sourceLabel, targetLabel, displayTargets }) => {
       const card = cardId ? getCardById(cardId) : null;

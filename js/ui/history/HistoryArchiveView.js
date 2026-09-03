@@ -438,9 +438,8 @@ export class HistoryArchiveView {
         glyph: "⚔"
       },
       {
-        label: "单局最高击杀",
-        value: archive.achievements.highestSingleMatchKills === null
-          ? "尚待落笔" : String(archive.achievements.highestSingleMatchKills),
+        label: "最多连胜场数",
+        value: String(archive.summary.maxWinStreak),
         glyph: "✹"
       },
       {

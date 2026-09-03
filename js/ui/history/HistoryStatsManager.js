@@ -63,7 +63,9 @@ export function createEmptyHistoryData() {
       highestScore: 0,
       highestRounds: 0,
       totalScore: 0,
-      totalRounds: 0
+      totalRounds: 0,
+      currentWinStreak: 0,
+      maxWinStreak: 0
     },
     characters: {},
     teams: {},
@@ -205,6 +207,7 @@ function normalizeHistoryData(source) {
   for (const key of Object.keys(empty.summary)) {
     empty.summary[key] = nonNegativeNumber(summarySource[key], key !== "highestScore" && key !== "totalScore");
   }
+  empty.summary.currentWinStreak = Math.min(empty.summary.currentWinStreak, empty.summary.maxWinStreak);
   for (const [characterId, value] of Object.entries(source.characters ?? {})) {
     if (!value || typeof value !== "object") continue;
     const matches = nonNegativeNumber(value.matches, true);
@@ -752,6 +755,12 @@ export class HistoryStatsManager {
     next.summary.highestRounds = Math.max(next.summary.highestRounds, rounds);
     next.summary.totalScore += score;
     next.summary.totalRounds += rounds;
+    if (player.won) {
+      next.summary.currentWinStreak += 1;
+      next.summary.maxWinStreak = Math.max(next.summary.maxWinStreak, next.summary.currentWinStreak);
+    } else {
+      next.summary.currentWinStreak = 0;
+    }
 
     const character = next.characters[player.characterId] ?? {
       matches: 0, wins: 0, winRate: 0, mvpCount: 0, highestScore: 0, totalScore: 0

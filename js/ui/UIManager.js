@@ -2701,6 +2701,35 @@ export class UIManager {
 
   /*
   功能
+  启动雷达战术判定成功的绿色扫描反馈。
+
+  调用方
+  GamePresentationAdapter.showRadarSuccess。
+
+  输入
+  被判定玩家的公开 ID。
+
+  输出
+  无返回值。
+
+  读取状态
+  animationController 与当前文档。
+
+  写入状态
+  创建或替换该玩家的雷达成功 overlay。
+
+  调用函数
+  AnimationController.startRadarSuccess。
+
+  边界与不变量
+  UI 只负责展示已经由 Application 判定 workflow 确认的成功语义，不解析牌名或日志。
+  */
+  playRadarSuccess(playerId) {
+    this.animationController.startRadarSuccess(playerId, globalThis.document);
+  }
+
+  /*
+  功能
   选择或停止当前阵营 BGM。
 
   调用方
