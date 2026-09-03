@@ -431,8 +431,7 @@
 
 @keyframes positiveVfxLifetime {
 
-  from,
-  to {
+  from,to {
     opacity: 1;
   }
 }
@@ -989,9 +988,9 @@
   animation: guardianAidRipple .68s ease-out forwards;
 }
 
-.resolution-vfx-overlay:is(.is-heal, .is-shield, .is-energy) {
+.resolution-vfx-overlay:is(.is-heal,.is-shield,.is-energy) {
   --positive-vfx-top: 52%;
-  --positive-vfx-size: min(64%, 168px);
+  --positive-vfx-size: min(64%,168px);
   --positive-glyph-scale: 1;
   animation-name: positiveVfxLifetime;
 }
@@ -1018,8 +1017,8 @@
   top: var(--positive-vfx-top);
   width: var(--positive-vfx-size);
   aspect-ratio: 1;
-  will-change: transform, opacity;
-  animation: positiveVfxExpand .9s cubic-bezier(.16, .75, .28, 1) forwards;
+  will-change: transform,opacity;
+  animation: positiveVfxExpand .9s cubic-bezier(.16,.75,.28,1) forwards;
 }
 
 .positive-vfx-visual::before {
