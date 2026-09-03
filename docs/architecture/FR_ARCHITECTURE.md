@@ -116,6 +116,14 @@ UI / Audio / Diagnostics / AI adapters
 | AI integration and Worker transport | `js/adapters/ai/**` |
 | AI policy, probability, simulation, search and value | `js/ai/**` |
 
+### Match Performance, History and Achievement sidecar
+
+终局 sidecar 链路为 `Match Performance → Achievement evaluation → Achievement Store / History persistence → Achievement ViewModel → History / Toast / MVP 本局成就展示`。Achievement 不参与 Gameplay 判定，也不进入 AI、Search 或 Simulation。
+
+`HistoryStatsManager` 是长期档案入口；`AchievementStore` 管理成就持久化记录与 ViewModel；`AchievementTracker` 只根据最终真实 Match facts 判定。Achievement Presentation 位于 UI/History sidecar；现有 `js/ui/history/**` 物理目录不代表需要迁移或重构。
+
+浏览器开发环境默认使用 `/api/history`。桌面封装应通过注入 `new HistoryStatsManager({ storage })` 的 storage adapter，把历史文件写入可写 user-data 目录，不得依赖 `app.asar` 或安装目录可写；当前架构不引入 Electron runtime。
+
 ## 5. Definitions and Configuration
 
 Definitions are split by ownership instead of being reassembled into a mixed config object:

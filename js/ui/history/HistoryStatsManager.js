@@ -28,6 +28,7 @@ import { evaluateMatchAchievements } from "./achievements/AchievementTracker.js"
 
 const HISTORY_VERSION = 1;
 const HISTORY_ENDPOINT = "/api/history";
+const HISTORY_HTTP_TIMEOUT_MS = 5000;
 const RECENT_RECORD_LIMIT = 10;
 const TEAM_DEFINITIONS = Object.freeze([
   Object.freeze({ id: "dawn", name: "晨星" }),
@@ -295,6 +296,48 @@ function normalizeHistoryData(source) {
 
 /*
 功能
+在有限时间内完成一次默认 History HTTP 请求及其可选 JSON 读取。
+
+调用方
+createHttpHistoryStorage 的 read、create 与 write。
+
+输入
+fetch 实现、同源端点、请求选项，以及是否读取成功响应的 JSON body。
+
+输出
+包含 Response 与可选 data 的对象；请求、读取或超时失败时抛错。
+
+读取状态
+HISTORY_HTTP_TIMEOUT_MS。
+
+写入状态
+只创建并清理本次请求的 AbortController 与 timeout。
+
+调用函数
+fetch、AbortController、Response.json、setTimeout、clearTimeout。
+
+边界与不变量
+timeout 只约束默认 HTTP adapter；非 timeout 错误保持原异常，计时器始终清理。
+*/
+async function requestHistoryEndpoint(fetchImpl, endpoint, options, readJson = false) {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), HISTORY_HTTP_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(endpoint, { ...options, signal: controller.signal });
+    const data = readJson && response.ok ? await response.json() : null;
+    return { response, data };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`历史档案请求超时（${HISTORY_HTTP_TIMEOUT_MS}ms）`, { cause: error });
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
+}
+
+/*
+功能
 创建浏览器环境下固定端点的历史文件读写适配器。
 
 调用方
@@ -304,7 +347,7 @@ HistoryStatsManager constructor 默认路径。
 fetch 实现与同源历史端点。
 
 输出
-具有 read/write 方法的存储适配器。
+具有 read/create/write 方法的存储适配器。
 
 读取状态
 同源 /api/history 响应。
@@ -313,10 +356,10 @@ fetch 实现与同源历史端点。
 通过 PUT 覆盖根目录 history_data.json。
 
 调用函数
-fetch、Response.json。
+requestHistoryEndpoint。
 
 边界与不变量
-404 表示尚无档案并交给 Manager 初始化；其他非成功响应必须抛错。
+404 表示尚无档案并交给 Manager 初始化；其他非成功响应必须抛错；三个操作均为有限等待。
 */
 function createHttpHistoryStorage(fetchImpl, endpoint) {
   return {
@@ -340,16 +383,21 @@ function createHttpHistoryStorage(fetchImpl, endpoint) {
     无。
 
     调用函数
-    fetch、Response.json。
+    requestHistoryEndpoint。
 
     边界与不变量
-    只有 HTTP 404 代表未初始化；其他失败不得伪装成空档。
+    只有 HTTP 404 代表未初始化；其他失败不得伪装成空档；请求与 JSON 读取均受统一 timeout 约束。
     */
     async read() {
-      const response = await fetchImpl(endpoint, { method: "GET", cache: "no-store" });
+      const { response, data } = await requestHistoryEndpoint(
+        fetchImpl,
+        endpoint,
+        { method: "GET", cache: "no-store" },
+        true
+      );
       if (response.status === 404) return null;
       if (!response.ok) throw new Error(`读取历史档案失败：HTTP ${response.status}`);
-      return response.json();
+      return data;
     },
     /*
     功能
@@ -371,13 +419,13 @@ function createHttpHistoryStorage(fetchImpl, endpoint) {
     仅在缺档时创建根目录 history_data.json。
 
     调用函数
-    fetch。
+    requestHistoryEndpoint。
 
     边界与不变量
-    If-None-Match 条件必须由 server 在写锁内判断，绝不以空档覆盖已存在档案。
+    If-None-Match 条件必须由 server 在写锁内判断，绝不以空档覆盖已存在档案；请求受统一 timeout 约束。
     */
     async create(json) {
-      const response = await fetchImpl(endpoint, {
+      const { response } = await requestHistoryEndpoint(fetchImpl, endpoint, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json; charset=utf-8",
@@ -409,13 +457,13 @@ function createHttpHistoryStorage(fetchImpl, endpoint) {
     同源服务映射的根目录 history_data.json。
 
     调用函数
-    fetch。
+    requestHistoryEndpoint。
 
     边界与不变量
-    只使用固定 endpoint，不接受调用方提供文件路径。
+    只使用固定 endpoint，不接受调用方提供文件路径；请求受统一 timeout 约束。
     */
     async write(json) {
-      const response = await fetchImpl(endpoint, {
+      const { response } = await requestHistoryEndpoint(fetchImpl, endpoint, {
         method: "PUT",
         headers: { "Content-Type": "application/json; charset=utf-8" },
         body: json

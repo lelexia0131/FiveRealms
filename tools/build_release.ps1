@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 
 # The script lives under tools; the project root is its parent directory.
 $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$ReleaseRoot = Join-Path -Path $ProjectRoot -ChildPath "FiveRealms1.0.0"
+$ReleaseRoot = Join-Path -Path $ProjectRoot -ChildPath "FiveRealms1.1.0"
 
 if ([IO.Path]::GetFullPath($ReleaseRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) -eq
     $ProjectRoot.TrimEnd([IO.Path]::DirectorySeparatorChar)) {
@@ -47,12 +47,18 @@ $runtimeCssFiles = @(
     "css/components.css",
     "css/rulebook.css",
     "css/history.css",
+    "css/achievements.css",
     "css/animations.css"
 )
 
 # The complete ES module graph and Worker entry points live under js; copy JavaScript files only.
 $runtimeJsFiles = Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "js") -File -Recurse -Filter "*.js" |
-    ForEach-Object { $_.FullName.Substring($ProjectRoot.Length + 1) }
+ForEach-Object { $_.FullName.Substring($ProjectRoot.Length + 1) }
+
+# Achievement artwork is a runtime-owned directory so new SVGs are included without whitelist edits.
+$runtimeAchievementAssetFiles = Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "assets/achievements") -File -Filter "*.svg" |
+Sort-Object FullName |
+ForEach-Object { $_.FullName.Substring($ProjectRoot.Length + 1) }
 
 # Runtime card/character art, UI glyphs, the launcher icon, and the lightning sound; docs are excluded.
 $runtimeAssetFiles = @(
@@ -97,7 +103,7 @@ $runtimeAssetFiles = @(
     "assets/cards/transfer.svg"
 )
 
-foreach ($file in $runtimeRootFiles + $runtimeCssFiles + $runtimeJsFiles + $runtimeAssetFiles) {
+foreach ($file in $runtimeRootFiles + $runtimeCssFiles + $runtimeJsFiles + $runtimeAssetFiles + $runtimeAchievementAssetFiles) {
     Copy-WhitelistedFile -RelativePath $file
 }
 
@@ -113,11 +119,29 @@ $emptyHistoryJson = @'
     "highestScore": 0,
     "highestRounds": 0,
     "totalScore": 0,
-    "totalRounds": 0
+    "totalRounds": 0,
+    "currentWinStreak": 0,
+    "maxWinStreak": 0
   },
   "characters": {},
   "teams": {},
   "achievements": {
+    "schemaVersion": 1,
+    "records": {},
+    "streaks": {
+      "duo": {
+        "win": 0,
+        "maxWin": 0,
+        "mvp": 0,
+        "maxMvp": 0
+      },
+      "trio": {
+        "win": 0,
+        "maxWin": 0,
+        "mvp": 0,
+        "maxMvp": 0
+      }
+    },
     "companions": {},
     "highestSingleMatchDamage": null,
     "highestSingleMatchKills": null,
