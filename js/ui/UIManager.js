@@ -2713,18 +2713,19 @@ export class UIManager {
   无返回值。
 
   读取状态
-  animationController 与当前文档。
+  sound、animationController 与当前文档。
 
   写入状态
-  创建或替换该玩家的雷达成功 overlay。
+  通过 SoundManager 创建一次成功音效，并创建或替换该玩家的雷达成功 overlay。
 
   调用函数
-  AnimationController.startRadarSuccess。
+  playSound、AnimationController.startRadarSuccess。
 
   边界与不变量
   UI 只负责展示已经由 Application 判定 workflow 确认的成功语义，不解析牌名或日志。
   */
   playRadarSuccess(playerId) {
+    this.playSound("radarSuccess");
     this.animationController.startRadarSuccess(playerId, globalThis.document);
   }
 

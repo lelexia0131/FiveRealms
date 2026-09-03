@@ -5314,7 +5314,23 @@ async function frRadarSuccessPresentationSemantics() {
     { id: "radar-tactic", name: "战术判定", category: "tactic", art: "art" },
     { id: "radar-basic", name: "基础判定", category: "basic", art: "art" }
   ];
-  const radarSuccess = [];
+  const radarSuccess = [], radarSounds = [], radarVfx = [];
+  const radarUi = {
+    playSound: (name) => radarSounds.push(name),
+    animationController: { startRadarSuccess: (playerId, root) => radarVfx.push([playerId, root]) },
+    render: () => { }
+  };
+  radarUi.playRadarSuccess = (playerId) => {
+    radarSuccess.push(playerId);
+    UIManager.prototype.playRadarSuccess.call(radarUi, playerId);
+  };
+  const presentation = createGamePresentationAdapter({
+    log: () => { },
+    getPlayerById: (playerId) => state.players.find((player) => player.id === playerId) ?? null,
+    getCardById: () => null,
+    ui: radarUi,
+    renderTarget: {}
+  });
   const workflow = createJudgmentWorkflow({
     getState: () => state,
     isSessionValid: () => true,
@@ -5324,12 +5340,7 @@ async function frRadarSuccessPresentationSemantics() {
     moveJudgmentToDiscard: () => { },
     moveJudgmentToHand: (card) => defender.hand.push(card),
     observeJudgmentCard: () => { },
-    presentation: {
-      log: () => { }, showJudgment: () => { }, hideJudgment: () => { }, showCurrentEffect: () => { },
-      showRadarSuccess: (playerId) => radarSuccess.push(playerId), showLightningHit: () => { },
-      showDamageFeedback: () => { }, showShieldFeedback: () => { }, showHealFeedback: () => { },
-      showDying: () => { }, hideDying: () => { }, refresh: () => { }
-    },
+    presentation,
     setCurrentJudgmentProjection: () => { }
   });
   const tactical = await workflow.judgeDefense(attacker, defender, {});
@@ -5337,6 +5348,8 @@ async function frRadarSuccessPresentationSemantics() {
   assert.equal(tactical.category, "tactic");
   assert.equal(basic.category, "basic");
   assert.deepEqual(radarSuccess, [defender.id]);
+  assert.deepEqual(radarSounds, ["radarSuccess"]);
+  assert.deepEqual(radarVfx.map(([playerId]) => playerId), [defender.id]);
 }
 
 test("UI·雷达反馈：仅最终战术牌判定触发一次成功语义", frRadarSuccessPresentationSemantics);
@@ -42638,9 +42651,9 @@ test("UI·音频控制：初始化与调整同步 BGM 和音效音量", uiAudioV
 
 // ---------- 音频与 BGM ----------
 
-test("音频：合成声音覆盖通用反馈与准备阶段卡牌选择且 lightning 改为采样播放", async () => {
+test("音频：合成声音覆盖通用反馈、雷达成功与准备阶段卡牌选择且 lightning 改为采样播放", async () => {
   const sound = new SoundManager();
-  for (const name of ["draw", "select", "cardSelect", "playCard", "hit", "skill", "discard", "heal", "shield"]) {
+  for (const name of ["draw", "select", "cardSelect", "playCard", "hit", "skill", "discard", "heal", "shield", "radarSuccess"]) {
     assert.equal(typeof sound[`sound_${name}`], "function", name);
   }
   assert.equal(sound.sound_lightning, undefined, "lightning 不应再使用合成方法");
@@ -43437,7 +43450,7 @@ test("音频：全部 SFX 只走 sfxGain 且不触碰 musicGain", async () => {
       sound.musicTimer?.unref?.();
       const timer = sound.musicTimer;
       const sources = sound.musicSources.size;
-      for (const name of ["select", "cardSelect", "draw", "playCard", "hit", "skill", "discard", "heal", "shield", "lightning"]) {
+      for (const name of ["select", "cardSelect", "draw", "playCard", "hit", "skill", "discard", "heal", "shield", "radarSuccess", "lightning"]) {
         const before = sound.musicGain.gain.calls.length;
         assert.equal(await sound.play(name, { force: true }), true, name);
         assert.equal(sound.musicGain.gain.calls.length, before, `${name} 不得触碰 musicGain`);
