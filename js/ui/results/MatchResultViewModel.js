@@ -74,6 +74,7 @@ export function createMatchResultViewModel(snapshot) {
   })));
   return Object.freeze({
     gameId: snapshot.gameId,
+    finalRound: snapshot.finalRound ?? null,
     players,
     mvpPlayerId: players[0]?.playerId ?? null,
     defaultSelectedPlayerId: players[0]?.playerId ?? null

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js";
 import {
   ACHIEVEMENT_DEFINITIONS,
@@ -98,6 +98,49 @@ function result(overrides = {}) {
     ...overrides
   };
   return { gameId: "achievement-match", players: [player] };
+}
+
+/*
+功能
+用结构化终局事实评估单项成就。
+
+调用方
+新增成就边界测试。
+
+输入
+成就 ID、玩家字段覆盖、achievementFacts 覆盖、持久化事实与连胜前置值。
+
+输出
+该成就在本次评估中是否满足。
+
+读取状态
+createEmptyAchievementData、evaluateMatchAchievements。
+
+写入状态
+仅写入测试专用的 streak 快照。
+
+调用函数
+evaluateMatchAchievements。
+
+边界与不变量
+不经过日志、DOM 或历史扫描；finalRound 与 scores 直接作为冻结 MatchResult 事实提供。
+*/
+function evaluateAchievementForTest(id, playerOverrides = {}, factOverrides = {}, persistentFacts = {}, streakOverrides = {}) {
+  const base = result().players[0];
+  const player = {
+    ...base,
+    ...playerOverrides,
+    achievementFacts: { ...base.achievementFacts, ...factOverrides }
+  };
+  const streaks = createEmptyAchievementData().streaks;
+  streaks.duo.win = streakOverrides.win ?? 0;
+  streaks.duo.mvp = streakOverrides.mvp ?? 0;
+  return evaluateMatchAchievements(
+    { gameId: "achievement-boundary", finalRound: playerOverrides.finalRound ?? 0, players: [player] },
+    "human",
+    streaks,
+    persistentFacts
+  ).unlocked.includes(id);
 }
 
 export function registerHistoryAchievementTests(test) {
@@ -320,10 +363,10 @@ export function registerHistoryAchievementTests(test) {
       { id: "h", tier: "hidden", order: 1 }
     ];
     assert.deepEqual(sortAchievements(source).map((entry) => entry.id), ["a", "b", "z", "h"]);
-    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 22);
+    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 39);
   });
 
-  test("UI·征途成就：档案页渲染全部二十二张卡并保留隐藏卡面", async () => {
+  test("UI·征途成就：档案页渲染全部三十九张卡并保留隐藏卡面", async () => {
     const storage = memoryStorage();
     const manager = new HistoryStatsManager({ storage });
     const root = { innerHTML: "", addEventListener() {} };
@@ -333,12 +376,12 @@ export function registerHistoryAchievementTests(test) {
       root.innerHTML.indexOf('<section class="history-section history-achievements"'),
       root.innerHTML.indexOf('<section class="history-section" aria-labelledby="history-travelers-title">')
     );
-    assert.equal((achievementMarkup.match(/class="achievement-card /g) ?? []).length, 22);
-    assert.equal((achievementMarkup.match(/journey-progress-segment/g) ?? []).length, 22);
+    assert.equal((achievementMarkup.match(/class="achievement-card /g) ?? []).length, 39);
+    assert.equal((achievementMarkup.match(/journey-progress-segment/g) ?? []).length, 39);
     assert.match(achievementMarkup, /每一道亮起的铭痕，都来自一场真实终局[\s\S]*?achievement-journey-progress/);
     assert.doesNotMatch(achievementMarkup, /achievement-journey-sigil|journey-crest-mark/);
-    assert.equal((achievementMarkup.match(/is-hidden-locked/g) ?? []).length, 6);
-    assert.equal((achievementMarkup.match(/achievement-card is-hidden-tier is-hidden-locked/g) ?? []).length, 3);
+    assert.equal((achievementMarkup.match(/is-hidden-locked/g) ?? []).length, 8);
+    assert.equal((achievementMarkup.match(/achievement-card is-hidden-tier is-hidden-locked/g) ?? []).length, 4);
     assert.doesNotMatch(achievementMarkup, /assets\/(cards|characters)\//);
     assert.match(achievementMarkup, /assets\/achievements\/storm_scribe\.svg/);
     assert.match(achievementMarkup, /assets\/achievements\/overflowing_grimoire\.svg/);
@@ -356,7 +399,7 @@ export function registerHistoryAchievementTests(test) {
     assert.match(achievementCss, /\.achievement-modal\s*\{[^}]*border:\s*1px solid var\(--achievement-tier-border\)[^}]*background:\s*var\(--achievement-tier-surface\)/s);
     assert.match(achievementCss, /\.achievement-modal-art > span:not\(\.achievement-crest\)/);
     assert.match(achievementCss, /\.achievement-card\.is-partial\s*\{[^}]*0 0 20px var\(--achievement-tier-glow\)/s);
-    assert.match(achievementCss, /\.journey-progress-track\s*\{[^}]*repeat\(22, minmax\(0, 1fr\)\)/s);
+    assert.match(achievementCss, /\.journey-progress-track\s*\{[^}]*repeat\(39, minmax\(0, 1fr\)\)/s);
     assert.match(achievementCss, /\.achievement-card\.is-partial, \.achievement-modal\.is-partial\s*\{[^}]*--achievement-art-brightness:\s*\.84/s);
     assert.match(achievementCss, /\.achievement-card\.is-complete, \.achievement-modal\.is-complete\s*\{[^}]*--achievement-art-brightness:\s*1\.08/s);
     assert.match(achievementCss, /\.achievement-card > img\s*\{[^}]*filter: saturate\(var\(--achievement-art-saturation\)\) brightness\(var\(--achievement-art-brightness\)\)/s);
@@ -367,7 +410,7 @@ export function registerHistoryAchievementTests(test) {
   test("UI·征途成就：标题长度有层次且无人倒下使用战旗插画", () => {
     const titles = ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title);
     const lengths = new Set(titles.map((title) => [...title].length));
-    assert.equal(new Set(titles).size, 22);
+    assert.equal(new Set(titles).size, 39);
     assert.ok(lengths.size >= 3);
     assert.ok(titles.every((title) => !/[。！？]$/.test(title)));
     const flawless = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "flawless_victory");
@@ -428,6 +471,110 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(evaluated.includes("last_stand_trio"), false);
   });
 
+  test("UI·征途成就：三十九项定义、ID、艺术资源与模式范围完整", () => {
+    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 39);
+    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id)).size, 39);
+    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title)).size, 39);
+    for (const definition of ACHIEVEMENT_DEFINITIONS) {
+      assert.match(definition.id, /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
+      assert.ok(existsSync(new URL(`../${definition.artwork.slice(2)}`, import.meta.url)), definition.id);
+      assert.match(readFileSync(new URL(`../${definition.artwork.slice(2)}`, import.meta.url), "utf8"), /^\s*<svg\b/);
+    }
+    assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "storm_scribe").title, "雷神");
+    assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "ace").teamScope, "duo");
+    assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "last_stand_trio").teamScope, "trio");
+    assert.deepEqual(sortAchievements(ACHIEVEMENT_DEFINITIONS).map((definition) => definition.id), ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id));
+  });
+
+  test("UI·征途成就：新增判定严格遵守阈值、存活与真实来源", () => {
+    assert.equal(evaluateAchievementForTest("mvp_spotlight", { isMvp: true }), true);
+    assert.equal(evaluateAchievementForTest("mvp_spotlight", { isMvp: false }), false);
+    assert.equal(evaluateAchievementForTest("matches_ten", {}, {}, { completedMatches: 9 }), false);
+    assert.equal(evaluateAchievementForTest("matches_ten", {}, {}, { completedMatches: 10 }), true);
+
+    assert.equal(evaluateAchievementForTest("full_health", { aliveAtEnd: true, finalHp: 4, finalMaxHp: 4 }), true);
+    assert.equal(evaluateAchievementForTest("full_health", { aliveAtEnd: true, finalHp: 3, finalMaxHp: 4 }), false);
+    assert.equal(evaluateAchievementForTest("full_health", { aliveAtEnd: false, finalHp: 4, finalMaxHp: 4 }), false);
+
+    assert.equal(evaluateAchievementForTest("self_lightning", {}, { selfLightningHit: true }), true);
+    assert.equal(evaluateAchievementForTest("self_lightning", {}, { selfLightningHit: false, lightningDamageTakenHits: 1 }), false);
+    assert.equal(evaluateAchievementForTest("single_punch", {}, { maxSingleAttackDamage: 2 }), false);
+    assert.equal(evaluateAchievementForTest("single_punch", {}, { maxSingleAttackDamage: 3 }), true);
+    assert.equal(evaluateAchievementForTest("serious_punch", {}, { maxSingleAttackDamage: 4 }), false);
+    assert.equal(evaluateAchievementForTest("serious_punch", {}, { maxSingleAttackDamage: 5 }), true);
+
+    assert.equal(evaluateAchievementForTest("ace", { initialTeamSize: 2, totals: { enemyKills: 2 } }), false);
+    assert.equal(evaluateAchievementForTest("ace", { initialTeamSize: 2, totals: { enemyKills: 3 } }), true);
+    assert.equal(evaluateAchievementForTest("ace", { initialTeamSize: 3, totals: { enemyKills: 3 } }), false);
+    assert.equal(evaluateAchievementForTest("defeated_mvp", { won: false, isMvp: true }), true);
+    assert.equal(evaluateAchievementForTest("defeated_mvp", { won: true, isMvp: true }), false);
+    assert.equal(evaluateAchievementForTest("defeated_mvp_streak", {}, {}, { lostMvpStreak: 1 }), false);
+    assert.equal(evaluateAchievementForTest("defeated_mvp_streak", {}, {}, { lostMvpStreak: 2 }), true);
+
+    assert.equal(evaluateAchievementForTest("lightning_conductor", {}, { lightningDamageTakenHits: 1 }), false);
+    assert.equal(evaluateAchievementForTest("lightning_conductor", {}, { lightningDamageTakenHits: 2 }), true);
+    assert.equal(evaluateAchievementForTest("radar_tactician", {}, { radarTacticJudgments: 4 }), false);
+    assert.equal(evaluateAchievementForTest("radar_tactician", {}, { radarTacticJudgments: 5 }), true);
+    assert.equal(evaluateAchievementForTest("energy_twenty_five", { totals: { skillEnergySpent: 24 } }), false);
+    assert.equal(evaluateAchievementForTest("energy_twenty_five", { totals: { skillEnergySpent: 25 } }), true);
+
+    assert.equal(evaluateAchievementForTest("survivor_thirteen", { aliveAtEnd: true, finalRound: 12 }), false);
+    assert.equal(evaluateAchievementForTest("survivor_thirteen", { aliveAtEnd: true, finalRound: 13 }), true);
+    assert.equal(evaluateAchievementForTest("survivor_thirteen", { aliveAtEnd: false, finalRound: 13 }), false);
+    assert.equal(evaluateAchievementForTest("battle_over_eighteen", { aliveAtEnd: true, finalRound: 18 }), false);
+    assert.equal(evaluateAchievementForTest("battle_over_eighteen", { aliveAtEnd: true, finalRound: 19 }), true);
+    assert.equal(evaluateAchievementForTest("battle_over_eighteen", { aliveAtEnd: false, finalRound: 19 }), false);
+
+    assert.equal(evaluateAchievementForTest("score_over_thousand", { finalScore: 1000 }), false);
+    assert.equal(evaluateAchievementForTest("score_over_thousand", { finalScore: 1000.01 }), true);
+    assert.equal(evaluateAchievementForTest("damage_taken_twelve", { combatStats: { damageTaken: 11 } }), false);
+    assert.equal(evaluateAchievementForTest("damage_taken_twelve", { combatStats: { damageTaken: 12 } }), true);
+    assert.equal(evaluateAchievementForTest("card_creator", {}, { cardsGained: 100 }), false);
+    assert.equal(evaluateAchievementForTest("card_creator", {}, { cardsGained: 101 }), true);
+    const allScores = { activity: 101, support: 101, contribution: 101, control: 101, skill: 101, firepower: 101 };
+    assert.equal(evaluateAchievementForTest("all_rounder", { scores: { ...allScores, support: 100 } }), false);
+    assert.equal(evaluateAchievementForTest("all_rounder", { scores: allScores }), true);
+  });
+
+  test("UI·征途成就：长期完成局数与败方 MVP streak 可迁移并正确清零", async () => {
+    const storage = memoryStorage();
+    const manager = new HistoryStatsManager({ storage, now: () => new Date("2026-09-03T00:00:00.000Z") });
+    const ordinaryLoss = result({
+      won: false, isMvp: false, finalScore: 0,
+      totals: { enemyHpDamage: 0, enemyKills: 0 },
+      combatStats: { totalDamage: 0, damageTaken: 0, support: 0 },
+      achievementFacts: {}
+    });
+    let tenth = null;
+    for (let index = 0; index < 10; index += 1) tenth = await manager.recordMatchResult(ordinaryLoss, "human");
+    assert.equal(tenth.achievements.completedMatches, 10);
+    assert.ok(tenth.newlyUnlockedAchievements.some(({ achievementId }) => achievementId === "matches_ten"));
+
+    const streakStorage = memoryStorage();
+    const streakManager = new HistoryStatsManager({ storage: streakStorage, now: () => new Date("2026-09-03T00:00:00.000Z") });
+    const defeatedMvp = result({
+      won: false, isMvp: true, finalScore: 0,
+      totals: { enemyHpDamage: 0, enemyKills: 0 },
+      combatStats: { totalDamage: 0, damageTaken: 0, support: 0 },
+      achievementFacts: {}
+    });
+    await streakManager.recordMatchResult(defeatedMvp, "human");
+    const second = await streakManager.recordMatchResult(defeatedMvp, "human");
+    assert.ok(second.newlyUnlockedAchievements.some(({ achievementId }) => achievementId === "defeated_mvp_streak"));
+    assert.equal(second.achievements.lostMvpStreak, 2);
+    const reset = await streakManager.recordMatchResult({ ...defeatedMvp, players: [{ ...defeatedMvp.players[0], won: true }] }, "human");
+    assert.equal(reset.achievements.lostMvpStreak, 0);
+    const afterReset = await streakManager.recordMatchResult(defeatedMvp, "human");
+    assert.equal(afterReset.newlyUnlockedAchievements.some(({ achievementId }) => achievementId === "defeated_mvp_streak"), false);
+
+    const legacyManager = new HistoryStatsManager({
+      storage: { async read() { return { version: 1, summary: { totalMatches: 7 } }; }, async write() {} }
+    });
+    const migrated = await legacyManager.initialize();
+    assert.equal(migrated.achievements.completedMatches, 7);
+    assert.equal(migrated.achievements.lostMvpStreak, 0);
+  });
+
   test("UI·征途成就：tracker 输出单回合、救援、装备与闪电事实", async () => {
     const actor = { id: "actor", name: "actor", seatIndex: 0, battleTeam: "dawn", alive: true, shield: 0, hand: [], character: { id: "blade-walker", name: "actor" } };
     const ally = { id: "ally", name: "ally", seatIndex: 1, battleTeam: "dawn", alive: true, shield: 0, hand: [], character: { id: "oath-warden", name: "ally" } };
@@ -438,15 +585,27 @@ export function registerHistoryAchievementTests(test) {
     tracker.initializeRoster();
     await dispatcher.emit("turnStart", { player: actor });
     await dispatcher.emit("activeSkillUsed", { source: actor });
-    await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 3, shieldAbsorbed: 0 });
+    await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 1, shieldAbsorbed: 0, resolutionId: "attack-1" });
+    await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 2, shieldAbsorbed: 0, resolutionId: "attack-1" });
     await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
     await dispatcher.emit("cardUsed", { source: actor, card: { definitionId: "lightning", category: "tactic" }, resolved: true });
     await dispatcher.emit("afterDamage", { source: null, target: enemy, actualAmount: 3, shieldAbsorbed: 0, damageType: "lightning", metadata: { originPlayerId: actor.id } });
+    await dispatcher.emit("afterDamage", { source: null, target: actor, actualAmount: 1, shieldAbsorbed: 0, damageType: "lightning", metadata: { originPlayerId: actor.id } });
+    await dispatcher.emit("afterDamage", { source: null, target: actor, actualAmount: 1, shieldAbsorbed: 0, damageType: "lightning", metadata: { originPlayerId: enemy.id } });
+    await dispatcher.emit("judgmentRevealed", { attacker: enemy, defender: actor, card: { category: "tactic" } });
+    await dispatcher.emit("afterCardMove", { to: "hand", player: actor });
+    await dispatcher.emit("skillEnergyPaid", { source: actor, actualAmount: 2 });
     const facts = tracker.finalizeMatch().players[0].achievementFacts;
     assert.equal(facts.activeSkillUses, 1);
     assert.equal(facts.rescueCount, 1);
     assert.equal(facts.maxTurnDamage, 3);
     assert.equal(facts.lightningCasts, 1);
     assert.equal(facts.lightningHits, 1);
+    assert.equal(facts.maxSingleAttackDamage, 3);
+    assert.equal(facts.lightningDamageTakenHits, 2);
+    assert.equal(facts.selfLightningHit, true);
+    assert.equal(facts.radarTacticJudgments, 1);
+    assert.equal(facts.cardsGained, 1);
+    assert.equal(tracker.finalizeMatch().players[0].totals.skillEnergySpent, 2);
   });
 }

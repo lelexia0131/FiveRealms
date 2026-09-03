@@ -138,13 +138,23 @@ factsFor、Array.includes、Number。
 边界与不变量
 只消费已存在的真实伤害、击杀、救援、装备、闪电、MVP 与残局事实；不重算 MVP 或分数。
 */
-function meets(definition, player, streak) {
+function meets(definition, player, streak, matchResult, persistentFacts) {
   const facts = factsFor(player);
   switch (definition.id) {
     case "first_victory": return Boolean(player?.won);
     case "skill_trinity": return (facts.activeSkillUses ?? 0) >= 3;
     case "first_blood": return (player?.totals?.enemyKills ?? 0) >= 1;
     case "rescue_beacon": return (facts.rescueCount ?? 0) >= 1;
+    case "mvp_spotlight": return Boolean(player?.isMvp);
+    case "matches_ten": return (persistentFacts?.completedMatches ?? 0) >= 10;
+    case "full_health": {
+      const finalHp = player?.finalHp ?? player?.hp;
+      const finalMaxHp = player?.finalMaxHp ?? player?.maxHp;
+      return Boolean(player?.aliveAtEnd)
+        && Number.isFinite(Number(finalHp))
+        && Number.isFinite(Number(finalMaxHp))
+        && Number(finalHp) === Number(finalMaxHp);
+    }
     case "win_streak_three": return streak.win >= 3;
     case "double_blood": return (player?.totals?.enemyKills ?? 0) >= 2;
     case "rescue_chain": return (facts.rescueCount ?? 0) >= 2;
@@ -153,16 +163,33 @@ function meets(definition, player, streak) {
     case "war_of_attrition": return (player?.combatStats?.damageTaken ?? 0) >= 5;
     case "flawless_victory": return Boolean(player?.won) && Number.isFinite(facts.teammateDeaths) && facts.teammateDeaths === 0;
     case "last_stand_duo": return Boolean(player?.won) && facts.clutchEnemyCounts?.includes?.(2);
+    case "self_lightning": return Boolean(facts.selfLightningHit);
+    case "single_punch": return (facts.maxSingleAttackDamage ?? 0) >= 3;
     case "last_stand_duo_three": return Boolean(player?.won) && facts.clutchEnemyCounts?.includes?.(3);
     case "executioner_turn": return (facts.maxTurnKills ?? 0) >= 2;
     case "iron_wall_epic": return (player?.combatStats?.damageTaken ?? 0) >= 8;
     case "rescue_master": return (facts.rescueCount ?? 0) >= 3;
+    case "ace": return (player?.totals?.enemyKills ?? 0) >= 3;
+    case "defeated_mvp": return player?.won === false && player?.isMvp === true;
+    case "lightning_conductor": return (facts.lightningDamageTakenHits ?? 0) >= 2;
+    case "radar_tactician": return (facts.radarTacticJudgments ?? 0) >= 5;
+    case "energy_twenty_five": return (player?.totals?.skillEnergySpent ?? 0) >= 25;
+    case "survivor_thirteen": return Boolean(player?.aliveAtEnd)
+      && Number(matchResult?.finalRound ?? player?.effectiveRounds ?? 0) > 12;
     case "last_stand_trio": return Boolean(player?.won) && facts.clutchEnemyCounts?.includes?.(2);
     case "score_over_thousand": return Number(player?.finalScore) > 1000;
     case "mvp_streak_ten": return streak.mvp >= 10;
+    case "defeated_mvp_streak": return (persistentFacts?.lostMvpStreak ?? 0) >= 2;
+    case "serious_punch": return (facts.maxSingleAttackDamage ?? 0) >= 5;
+    case "damage_taken_twelve": return (player?.combatStats?.damageTaken ?? 0) >= 12;
+    case "card_creator": return (facts.cardsGained ?? 0) > 100;
+    case "battle_over_eighteen": return Boolean(player?.aliveAtEnd)
+      && Number(matchResult?.finalRound ?? player?.effectiveRounds ?? 0) > 18;
     case "storm_scribe": return (facts.lightningCasts ?? 0) >= 2 && (facts.lightningHits ?? 0) >= 2;
     case "overflowing_grimoire": return (facts.maxHandCount ?? 0) > 15;
     case "armory_keeper": return (facts.equipmentUses ?? 0) >= 10;
+    case "all_rounder": return ["activity", "support", "contribution", "control", "skill", "firepower"]
+      .every((dimension) => Number(player?.scores?.[dimension]) > 100);
     default: return false;
   }
 }
@@ -175,7 +202,7 @@ function meets(definition, player, streak) {
 HistoryStatsManager.recordMatchResult。
 
 输入
-冻结 MatchResult、真人 ID 与可变 streak 快照。
+冻结 MatchResult、真人 ID、可变 streak 快照与长期累计事实。
 
 输出
 满足条件的成就定义及其队伍 scope。
@@ -184,7 +211,7 @@ HistoryStatsManager.recordMatchResult。
 MatchResult.players、ACHIEVEMENT_DEFINITIONS。
 
 写入状态
-streaks 当前模式桶。
+streaks 当前模式桶；长期累计值仅由调用方提供，不在此持久化。
 
 调用函数
 updateAchievementStreaks、meets。
@@ -192,14 +219,14 @@ updateAchievementStreaks、meets。
 边界与不变量
 只评估真人最终行；teamScope 不匹配时不会错误解锁另一模式。
 */
-export function evaluateMatchAchievements(matchResult, humanPlayerId, streaks) {
+export function evaluateMatchAchievements(matchResult, humanPlayerId, streaks, persistentFacts = {}) {
   const player = matchResult?.players?.find((entry) => entry.playerId === humanPlayerId);
   if (!player) return { scope: "duo", unlocked: [], player: null };
   const { scope, streak } = updateAchievementStreaks(streaks, player);
   const unlocked = ACHIEVEMENT_DEFINITIONS.filter((definition) => {
     if (definition.teamScope === "duo" && scope !== "duo") return false;
     if (definition.teamScope === "trio" && scope !== "trio") return false;
-    return meets(definition, player, streak);
+    return meets(definition, player, streak, matchResult, persistentFacts);
   }).map((definition) => definition.id);
   return { scope, unlocked, player };
 }

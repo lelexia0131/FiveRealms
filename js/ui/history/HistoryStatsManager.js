@@ -262,6 +262,11 @@ function normalizeHistoryData(source) {
   empty.achievements.schemaVersion = normalizedAchievements.schemaVersion;
   empty.achievements.records = normalizedAchievements.records;
   empty.achievements.streaks = normalizedAchievements.streaks;
+  empty.achievements.completedMatches = Object.hasOwn(achievementSource, "completedMatches")
+    ? normalizedAchievements.completedMatches
+    : empty.summary.totalMatches;
+  empty.achievements.lostMvpStreak = normalizedAchievements.lostMvpStreak;
+  empty.achievements.maxLostMvpStreak = normalizedAchievements.maxLostMvpStreak;
   const companionSource = achievementSource.companions && typeof achievementSource.companions === "object"
     ? achievementSource.companions
     : null;
@@ -611,6 +616,9 @@ function buildArchiveData(data) {
         duo: Object.freeze({ ...data.achievements.streaks.duo }),
         trio: Object.freeze({ ...data.achievements.streaks.trio })
       }),
+      completedMatches: data.achievements.completedMatches,
+      lostMvpStreak: data.achievements.lostMvpStreak,
+      maxLostMvpStreak: data.achievements.maxLostMvpStreak,
       mostFrequentCompanion: mostFrequentCompanion ? Object.freeze(mostFrequentCompanion) : null,
       highestSingleMatchDamage: data.achievements.highestSingleMatchDamage,
       highestSingleMatchKills: data.achievements.highestSingleMatchKills,
@@ -814,7 +822,19 @@ export class HistoryStatsManager {
       ? player.teammateCharacterIds.filter((characterId) => typeof characterId === "string" && characterId)
       : [];
     const unlockedAt = this.now().toISOString();
-    const achievementResult = evaluateMatchAchievements(matchResult, humanPlayerId, next.achievements.streaks);
+    const completedMatches = next.achievements.completedMatches + 1;
+    const lostMvpStreak = player.won || !player.isMvp
+      ? 0
+      : next.achievements.lostMvpStreak + 1;
+    next.achievements.completedMatches = completedMatches;
+    next.achievements.lostMvpStreak = lostMvpStreak;
+    next.achievements.maxLostMvpStreak = Math.max(next.achievements.maxLostMvpStreak, lostMvpStreak);
+    const achievementResult = evaluateMatchAchievements(
+      matchResult,
+      humanPlayerId,
+      next.achievements.streaks,
+      { completedMatches, lostMvpStreak }
+    );
     const newlyUnlockedAchievements = [];
     for (const achievementId of achievementResult.unlocked) {
       if (recordAchievementUnlock(next.achievements.records, achievementId, achievementResult.scope, unlockedAt)) {

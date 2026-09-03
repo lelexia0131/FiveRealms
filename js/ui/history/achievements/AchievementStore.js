@@ -44,12 +44,15 @@ ACHIEVEMENT_SCHEMA_VERSION。
 无。
 
 边界与不变量
-streaks 按二人/三人分开，records 只保存首次解锁时间。
+streaks 按二人/三人分开；长期完成局数与败方 MVP streak 使用独立字段，records 只保存首次解锁时间。
 */
 export function createEmptyAchievementData() {
   return {
     schemaVersion: ACHIEVEMENT_SCHEMA_VERSION,
     records: {},
+    completedMatches: 0,
+    lostMvpStreak: 0,
+    maxLostMvpStreak: 0,
     streaks: {
       duo: { win: 0, maxWin: 0, mvp: 0, maxMvp: 0 },
       trio: { win: 0, maxWin: 0, mvp: 0, maxMvp: 0 }
@@ -68,7 +71,7 @@ HistoryStatsManager.normalizeHistoryData。
 未知 achievements 值。
 
 输出
-包含 schemaVersion、records、streaks 的安全对象。
+包含 schemaVersion、records、长期累计字段与 streaks 的安全对象。
 
 读取状态
 旧成就对象与当前 schema。
@@ -100,6 +103,11 @@ export function normalizeAchievementData(source) {
     }
     if (Object.keys(record).length) empty.records[achievementId] = record;
   }
+  for (const key of ["completedMatches", "lostMvpStreak", "maxLostMvpStreak"]) {
+    const value = Number(source[key]);
+    if (Number.isFinite(value) && value >= 0) empty[key] = Math.floor(value);
+  }
+  empty.maxLostMvpStreak = Math.max(empty.maxLostMvpStreak, empty.lostMvpStreak);
   for (const scope of ["duo", "trio"]) {
     const stored = source.streaks?.[scope] ?? {};
     const streak = empty.streaks[scope];
