@@ -1482,7 +1482,7 @@ $$
 \Delta_E
 $$
 
-在同一当前 World 上仅将用于该技能结算的能量改为：
+在同一当前 World 上仅把用于该技能结算的能量设置为：
 
 $$
 E_{next}=\min(E+1,E_{max})
@@ -1998,7 +1998,47 @@ $$
 
 ## 25.2 Dynamic Counter 的 STAY / RESPOND 边际修正
 
-定义当前 root 在 `STAY` 世界中使响应者失去一张 Counter 的概率：
+资源类 root 的 Counter window 先于 resource selection。定义 Counter chain 后的
+canonical future selection outcomes：
+
+$$
+\mathcal S=\{s\}
+$$
+
+对应权重为 $q_s$，且：
+
+$$
+\sum_s q_s=1
+$$
+
+确定性 selection policy 使用：
+
+$$
+s^*=\arg\max_s U(s),\qquad q_{s^*}=1
+$$
+
+每个 outcome 的 root flip gain 为 $G_s$，Counter 损失概率为 $p_C(s)$，自身 Counter
+保留重叠为 $O_C(s)$。聚合量为：
+
+$$
+\boxed{G=\sum_s q_sG_s}
+$$
+
+$$
+\boxed{p_C=\sum_s q_sp_C(s)}
+$$
+
+$$
+\boxed{O_C=\sum_s q_sO_C(s)}
+$$
+
+Counter opportunity cost 基线为：
+
+$$
+\boxed{C_0=2.8}
+$$
+
+当前 root 在 `STAY` 世界中使响应者失去一张 Counter 的概率为：
 
 $$
 p_C=P(Counter\ lost\ by\ current\ root\ in\ STAY)
@@ -2031,24 +2071,25 @@ $$
 即：
 
 $$
-G-O_C>C_0(1-p_C)
+\boxed{Counter\iff G-O_C>C_0(1-p_C)}
 $$
 
-当 Plunder 在响应者的 $c$ 张 Counter 与 $x$ 张其它手牌中均匀选择一张时：
+future selection 为 hand 时，响应者手牌中的 Counter 数量为 $c$，其它手牌数量为 $x$：
 
 $$
-p_C=\frac{c}{c+x}
+\boxed{p_C(hand)=\frac{c}{c+x}}
 $$
 
-所以：
+future selection 为 equipment 时：
 
 $$
-C_{effective}=C_0\frac{x}{c+x}
+\boxed{p_C(equipment)=0}
 $$
 
-生产实现不把该特殊比例硬编码为所有 Plunder 的概率模型：确定 selection 使用实体
-availability，匿名 selection 使用 canonical Probability slot query，尚未揭晓但响应者可见的
-整手牌选择使用 canonical Counter count expectation 与当前 hand count。
+equipment 的保护价值包含在 $G_s$；equipment 不进入 hand 分母。
+
+已知 hand identity 使用实体 availability，匿名 hand identity 使用 canonical Probability slot
+query，响应者完整已知的 hand 使用 Counter count expectation 与当前 hand count。
 
 ## 25.3 Global Benefit Counter
 
@@ -2080,7 +2121,7 @@ $$
 
 # 26. Block willingness
 
-不是连续评分，而是硬布尔合同。
+采用硬布尔合同。
 
 先要求：
 
@@ -2480,7 +2521,7 @@ $$
 G-O_C>C_0(1-p_C)
 $$
 
-其中非资源 root 的 $p_C=0$、$O_C=0$，因此保持原来的 $Gain>2.8$。
+其中非资源 root 的 $p_C=0$、$O_C=0$，因此退化为 $Gain>2.8$。
 
 # 34. Seal Counter
 

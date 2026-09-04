@@ -1666,6 +1666,155 @@ export class Controller {
 
   /*
   功能
+  投影资源类 root 在 Counter chain 后的 canonical selection，并准备响应者价值 terms。
+
+  调用方
+  buildResponseDecisionContext 的普通 Counter 分支。
+
+  输入
+  当前 GameState、响应者视角 World/player、root card/source/targets、Counter depth 与 Transfer 公开声明。
+
+  输出
+  `{ futureSelectionOutcomes, futureCounterTerms }`；没有合法未来选择时两个字段均为空。
+
+  读取状态
+  root actor 合法视角 World、Generator selection candidates、Simulator root Worlds 与 Evaluator comparison。
+
+  写入状态
+  只推进 cooperative yield；所有 World 都是独立投影或 clone，不写 GameState。
+
+  调用函数
+  createInitialWorld、Generator future-selection methods、Simulator.buildRootFlipWorlds、
+  Evaluator.chooseFutureResourceSelectionOutcome/futureSelectionCounterTerms、yieldControl。
+
+  边界与不变量
+  actor 视角只决定未来 selection policy winner，响应者视角只计算 Gain/pC/overlap；
+  Counter 前传入的 selection、zone 与 cardId 均不进入本投影，确定策略只返回 weight=1。
+  */
+  async buildFutureResourceCounterProjection({
+    state,
+    responseWorld,
+    responder,
+    rootCard,
+    rootSourceId,
+    rootTargetIds,
+    counterDepth,
+    publicTransferContext
+  }) {
+    const empty = Object.freeze({
+      futureSelectionOutcomes:null,
+      futureCounterTerms:null
+    });
+    const rootSource = state.players.find(
+      (player) => player.id === rootSourceId && player.alive
+    ) ?? null;
+    if (!rootSource) return empty;
+    const selectionWorld = createInitialWorld(
+      rootSource.id,
+      state,
+      deriveCurrentCardCounts(rootSource, state)
+    );
+    const selectionActor = selectionWorld.players.find(
+      (player) => player.id === rootSource.id
+    ) ?? null;
+    const selections = this.actionGenerator.getFutureRootSelections(
+      selectionWorld,
+      rootCard,
+      rootTargetIds,
+      { publicTransferContext }
+    );
+    if (!selectionActor || !selections.length) return empty;
+    const simulator = this.simulatorFactory();
+    const actorOutcomes = [];
+    for (const selection of selections) {
+      const action = this.actionGenerator.createRootResolutionAction(
+        selectionWorld,
+        rootCard,
+        rootSourceId,
+        rootTargetIds,
+        { futureSelection:selection }
+      );
+      if (!action) continue;
+      const rootWorlds = simulator.buildRootFlipWorlds(selectionWorld, action, counterDepth);
+      if (!rootWorlds) continue;
+      if (!(await this.yieldControl(state.gameId))) return null;
+      actorOutcomes.push({
+        action,
+        rootWorlds:{
+          ...rootWorlds,
+          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(rootWorlds.baseWorld),
+          resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
+            rootWorlds.resolvedWorld
+          )
+        }
+      });
+    }
+    const selected = this.evaluator.chooseFutureResourceSelectionOutcome(
+      selectionWorld,
+      selectionActor,
+      actorOutcomes
+    );
+    if (!selected) return empty;
+    const projectedSelection = this.actionGenerator.projectFutureRootSelection(
+      responseWorld,
+      rootCard,
+      rootTargetIds,
+      selected.action.selection,
+      { publicTransferContext }
+    );
+    const responseAction = this.actionGenerator.createRootResolutionAction(
+      responseWorld,
+      rootCard,
+      rootSourceId,
+      rootTargetIds,
+      { futureSelection:projectedSelection }
+    );
+    if (!responseAction) return empty;
+    const projectedWorlds = responseAction.selection?.zone === "hand"
+      ? null
+      : simulator.buildRootFlipWorlds(
+          responseWorld,
+          responseAction,
+          counterDepth
+        );
+    if (!(await this.yieldControl(state.gameId))) return null;
+    const rootWorlds = projectedWorlds
+      ? {
+          ...projectedWorlds,
+          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(projectedWorlds.baseWorld),
+          resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
+            projectedWorlds.resolvedWorld
+          )
+        }
+      : null;
+    const futureSelectionOutcomes = Object.freeze([Object.freeze({
+      weight:1,
+      selection:responseAction.selection,
+      rootWorlds,
+      resolvesAtStay:(counterDepth % 2) === 0
+    })]);
+    const responderView = responseWorld.players.find(
+      (player) => player.id === responder.id
+    ) ?? null;
+    const sourceView = responseWorld.players.find(
+      (player) => player.id === rootSourceId
+    ) ?? null;
+    const targetViews = rootTargetIds.map((targetId) => (
+      responseWorld.players.find((player) => player.id === targetId)
+    )).filter(Boolean);
+    const futureCounterTerms = this.evaluator.futureSelectionCounterTerms(
+      responseWorld,
+      responderView,
+      sourceView,
+      rootCard,
+      targetViews,
+      futureSelectionOutcomes
+    );
+    return Object.freeze({ futureSelectionOutcomes, futureCounterTerms });
+  }
+
+  /*
+  功能
   把真实响应参数转换成 Evaluator 使用的 plain DecisionContext。
 
   调用方
@@ -1713,18 +1862,7 @@ export class Controller {
       publicTransferContext:rawContext.publicTransferContext
         ? Object.freeze({
             fromPlayerId:rawContext.publicTransferContext.fromPlayerId ?? null,
-            receiverPlayerId:rawContext.publicTransferContext.receiverPlayerId ?? null,
-            zone:rawContext.publicTransferContext.zone ?? "hand"
-          })
-        : null,
-      publicSelectionContext:rawContext.publicSelectionContext
-        ? Object.freeze({
-            ownerPlayerId:rawContext.publicSelectionContext.ownerPlayerId ?? null,
-            zone:rawContext.publicSelectionContext.zone ?? null,
-            selectedCount:Math.max(
-              0,
-              Math.floor(Number(rawContext.publicSelectionContext.selectedCount) || 0)
-            )
+            receiverPlayerId:rawContext.publicTransferContext.receiverPlayerId ?? null
           })
         : null,
       card:rawCard ? Object.freeze({
@@ -1778,7 +1916,8 @@ export class Controller {
       lightningCounterWorlds:null,
       sealCounterTerms:null,
       rootFlipWorlds:null,
-      counterSelection:null
+      futureSelectionOutcomes:null,
+      futureCounterTerms:null
     };
     if (!(await this.yieldControl(state.gameId))) return null;
     if (type === "leverageAssault") {
@@ -1842,20 +1981,32 @@ export class Controller {
         ?? rawContext.rootSource?.id
         ?? rawContext.source?.id
         ?? null;
-      const rootAction = this.actionGenerator.createRootResolutionAction(
-        world,
-        rootCard,
-        rootSourceId,
-        Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
-        {
-          selection:rawContext.selection ?? null,
-          responseViewerId:responder.id,
-          publicTransferContext:publicContext.publicTransferContext,
-          publicSelectionContext:publicContext.publicSelectionContext
-        }
-      );
-      if (rootAction) {
-        decision.counterSelection = rootAction.selection;
+      const rootTargetIds = Array.isArray(rawContext.rootTargetIds)
+        ? rawContext.rootTargetIds
+        : [];
+      if (["plunder", "destroy", "transfer"].includes(rootCard?.definitionId)) {
+        const projection = await this.buildFutureResourceCounterProjection({
+          state,
+          responseWorld:world,
+          responder,
+          rootCard,
+          rootSourceId,
+          rootTargetIds,
+          counterDepth:rawContext.counterDepth ?? 0,
+          publicTransferContext:publicContext.publicTransferContext
+        });
+        if (!projection) return null;
+        decision.futureSelectionOutcomes = projection.futureSelectionOutcomes;
+        decision.futureCounterTerms = projection.futureCounterTerms;
+      } else {
+        const rootAction = this.actionGenerator.createRootResolutionAction(
+          world,
+          rootCard,
+          rootSourceId,
+          rootTargetIds,
+          { selection:rawContext.selection ?? null }
+        );
+        if (!rootAction) return decision;
         const simulator = this.simulatorFactory();
         const worlds = simulator.buildRootFlipWorlds(
           world,

@@ -52,16 +52,16 @@ import { actionSearchKey, createAction } from "./Action.js";
 
 /*
 功能
-从响应者合法可见的单一身份、匿名容量或尚未揭晓的均匀手牌选择构造 root 反事实 selection。
+把未来一次手牌资源选择投影为当前观察者可合法表示的 canonical selection。
 
 调用方
-Generator.createRootResolutionAction 的 Transfer/Plunder/Destroy runtime binding。
+Controller 的 post-Counter future-selection projection。
 
 输入
 canonical World player。
 
 输出
-known、unknown 或带 uniform-hand 标记的 hand selection；无玩家时返回 null。
+known、unknown 或带 uniform-hand 标记的 hand selection；无玩家或空手牌时返回 null。
 
 读取状态
 viewer 自己的 hand、合法 knownCards、公开 handCount 与 canonical availability。
@@ -73,10 +73,10 @@ viewer 自己的 hand、合法 knownCards、公开 handCount 与 canonical avail
 cardAvailability。
 
 边界与不变量
-只有唯一可推导身份才返回 known；多张仅对响应者可见的手牌保持 uniform-hand，
-其余一律保持 anonymous，不读取未知实体定义。
+只有唯一可推导身份才返回 known；观察者完整知道的多张手牌保持 uniform-hand，
+其余一律保持 anonymous，不读取未暴露的实体定义。
 */
-function inferPublicHandSelection(player) {
+export function projectFutureHandSelection(player) {
   if (!player) return null;
   const knownById = new Map();
   for (const entry of [
@@ -90,6 +90,7 @@ function inferPublicHandSelection(player) {
   }
   const known = [...knownById.values()];
   const handCount = Math.max(0, Number(player.handCount) || 0);
+  if (handCount <= PROBABILITY_EPSILON) return null;
   if (known.length === 1 && handCount <= 1) {
     return {
       zone:"hand",
@@ -154,19 +155,128 @@ export function deduplicateSearchEquivalentActions(actions) {
 export class Generator {
   /*
   功能
-  把已经通过真实规则入口的 root 战术投影为响应反事实直接消费的 canonical Action。
+  枚举资源类 root 在 Counter chain 后可产生的全部合法 canonical selection。
+
+  调用方
+  Controller 的 runtime future-selection orchestration。
+
+  输入
+  root actor 视角 World、root 卡牌、公开目标 ID 与 Transfer 公开来源/接收者声明。
+
+  输出
+  Plunder/Destroy 的合法 hand/equipment selections，或 Transfer 固定来源/接收者下的合法 hand selections。
+
+  读取状态
+  World 当前资源、合法记忆、Probability anonymous slots 与公开 Transfer declaration。
+
+  写入状态
+  无。
+
+  调用函数
+  getResourceSelections、getHandSelections。
+
+  边界与不变量
+  只枚举合法候选，不比较价值；Transfer 的来源与接收者来自反制前公开声明，
+  zone 与 card identity 只作为 Counter 后的未来候选产生。
+  */
+  getFutureRootSelections(state, rootCard, rootTargetIds, options = {}) {
+    const definitionId = rootCard?.definitionId ?? null;
+    if (["plunder", "destroy"].includes(definitionId)) {
+      const ownerId = rootTargetIds?.[0] ?? null;
+      const owner = state?.players?.find((player) => player.id === ownerId && player.alive) ?? null;
+      return owner ? this.getResourceSelections(state, owner) : [];
+    }
+    if (definitionId === "transfer") {
+      const context = options.publicTransferContext ?? null;
+      const source = state?.players?.find(
+        (player) => player.id === context?.fromPlayerId && player.alive
+      ) ?? null;
+      const receiver = state?.players?.find(
+        (player) => player.id === context?.receiverPlayerId && player.alive
+      ) ?? null;
+      if (!source || !receiver || source.id === receiver.id) return [];
+      return this.getHandSelections(state, source).map((selection) => ({
+        ...selection,
+        sourceId:source.id,
+        receiverId:receiver.id,
+        zone:"hand"
+      }));
+    }
+    return [];
+  }
+
+  /*
+  功能
+  把 actor 视角选出的未来资源区域投影到响应者视角的合法 selection 表示。
+
+  调用方
+  Controller 的 runtime future-selection orchestration。
+
+  输入
+  响应者视角 World、root 卡牌、目标 ID、actor 视角选中 selection 与 Transfer 公开声明。
+
+  输出
+  可供 Counter gain/probability 查询使用的 canonical future selection；无法投影时返回 null。
+
+  读取状态
+  响应者视角的目标手牌摘要、合法身份、公开装备与 Transfer 来源/接收者。
+
+  写入状态
+  无。
+
+  调用函数
+  projectFutureHandSelection。
+
+  边界与不变量
+  只保留 actor 已选中的资源区域；hand identity 在响应者完整可见时使用 uniform-hand，
+  equipment 使用公开定义；不得沿用 Counter 前传入的 cardId 或 zone。
+  */
+  projectFutureRootSelection(state, rootCard, rootTargetIds, selected, options = {}) {
+    const definitionId = rootCard?.definitionId ?? null;
+    const sourceId = definitionId === "transfer"
+      ? options.publicTransferContext?.fromPlayerId ?? null
+      : rootTargetIds?.[0] ?? null;
+    const source = state?.players?.find((player) => player.id === sourceId && player.alive) ?? null;
+    if (!source || !selected?.zone) return null;
+    if (selected.zone === "equipment") {
+      if (!["plunder", "destroy"].includes(definitionId) || !source.equipmentDefinitionId) return null;
+      return {
+        zone:"equipment",
+        selectionKind:"equipment",
+        cardId:null,
+        definitionId:source.equipmentDefinitionId,
+        availableUnknownCount:0
+      };
+    }
+    if (selected.zone !== "hand") return null;
+    const handSelection = projectFutureHandSelection(source);
+    if (!handSelection) return null;
+    if (definitionId !== "transfer") return handSelection;
+    const receiverId = options.publicTransferContext?.receiverPlayerId ?? null;
+    if (!state.players.some((player) => player.id === receiverId && player.alive)) return null;
+    return {
+      ...handSelection,
+      sourceId:source.id,
+      receiverId,
+      zone:"hand"
+    };
+  }
+
+  /*
+  功能
+  把已经通过真实规则入口的 root 战术与显式 future selection 投影为 canonical Action。
 
   调用方
   Controller 真实响应边界的 dynamic root flip 查询。
 
   输入
-当前 World、root 卡牌公开身份、来源 ID、原始目标 ID、响应者 ID 与公开选择上下文。
+  当前 World、root 卡牌公开身份、来源 ID、原始目标 ID 与显式 future selection。
 
   输出
-  target 与 selection 完整的 card Action；输入无效时返回 null。
+  target 与 selection 完整的 card Action；资源类 root 缺少 future selection 或输入无效时返回 null。
 
   读取状态
-  World 当前存活玩家、root 卡牌公开定义与公开选择上下文。
+  World 当前存活玩家、root 卡牌公开定义与 future selection。
 
   写入状态
   无。
@@ -176,7 +286,8 @@ export class Generator {
 
   边界与不变量
   该 root 已由真实 ActionWorkflow 完成合法性校验且卡牌成本已经沉没；这里只创建一次
-  配对反事实所需的同一动作语义，不重新枚举 legality，也不读取转移的隐藏牌身份；
+  配对反事实所需的同一动作语义，不重新枚举 legality；Plunder/Destroy/Transfer 只接受
+  Counter 后投影得到的 future selection，不读取或沿用 Counter 前的 zone/cardId；
   Counter 响应支付本身不是可独立重放的 root effect。
   */
   createRootResolutionAction(state, rootCard, rootSourceId, rootTargetIds, options = {}) {
@@ -188,51 +299,11 @@ export class Generator {
     ));
     let selection = options.selection ?? null;
     if (rootCard.definitionId === "transfer") {
-      const planned = selection;
-      if (planned?.sourceId && planned?.receiverId) {
-        selection = {
-          sourceId:planned.sourceId,
-          receiverId:planned.receiverId,
-          zone:planned.zone ?? "hand",
-          selectionKind:planned.selectionKind ?? null,
-          cardId:planned.cardId ?? null,
-          definitionId:planned.definitionId ?? null
-        };
-      } else {
-        const context = options.publicTransferContext ?? null;
-        if (!context?.fromPlayerId || !context?.receiverPlayerId) return null;
-        const source = state.players.find((player) => player.id === context.fromPlayerId) ?? null;
-        const handSelection = inferPublicHandSelection(source);
-        if (!handSelection) return null;
-        selection = {
-          ...handSelection,
-          sourceId:context.fromPlayerId,
-          receiverId:context.receiverPlayerId,
-          zone:context.zone ?? "hand"
-        };
-      }
+      selection = options.futureSelection ?? null;
+      if (!selection?.sourceId || !selection?.receiverId || selection.zone !== "hand") return null;
     } else if (["plunder", "destroy"].includes(rootCard.definitionId)) {
-      const context = options.publicSelectionContext ?? null;
-      const ownerId = context?.ownerPlayerId ?? targetIds[0] ?? null;
-      const owner = state.players.find((player) => player.id === ownerId) ?? null;
-      if (!selection && context?.zone === "equipment" && owner?.equipmentDefinitionId) {
-        selection = {
-          zone:"equipment",
-          selectionKind:"equipment",
-          cardId:null,
-          definitionId:owner.equipmentDefinitionId,
-          availableUnknownCount:0
-        };
-      } else if (!selection && (
-        context?.zone === "hand"
-        || (!context
-          && owner?.id === options.responseViewerId
-          && Number(owner?.handCount ?? 0) > 0
-          && !owner?.equipmentDefinitionId)
-      )) {
-        selection = inferPublicHandSelection(owner);
-      }
-      if (!selection) return null;
+      selection = options.futureSelection ?? null;
+      if (!selection?.zone || !["hand", "equipment"].includes(selection.zone)) return null;
     } else if (rootCard.definitionId === "leverage") {
       selection = {
         firstTargetId:targetIds[0] ?? null,

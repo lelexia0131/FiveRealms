@@ -16314,7 +16314,7 @@ test("AI·响应一致性：Counter planning 与 runtime 共享全体受益合�
 
 /*
 功能
-比较同一 canonical root selection 在 planning 与 runtime Counter 路径的最终意愿。
+比较 canonical future selection 在 planning 与 runtime Counter 路径的最终意愿。
 
 调用方
 四个 AI·响应一致性 Counter 直接合同测试。
@@ -16326,7 +16326,7 @@ root 卡牌定义 ID。
 无；两条路径不一致或未响应时抛出断言。
 
 读取状态
-独立 Game fixture、canonical World、root selection 与 Controller DecisionContext。
+独立 Game fixture、canonical World、future selection 与 Controller DecisionContext。
 
 写入状态
 仅写测试 fixture 的合法私有记忆。
@@ -16335,7 +16335,7 @@ root 卡牌定义 ID。
 buildResponseDecisionContext、Evaluator.decidePlanningCounter/shouldRespond。
 
 边界与不变量
-Counter/Plunder/Destroy/Transfer 都必须进入同一 gain→willingness primitive；selection 身份只来自 canonical Action 或合法记忆。
+Counter/Plunder/Destroy/Transfer 都必须进入同一 gain→willingness primitive；资源 selection 只来自 post-Counter future projection。
 */
 async function assertCounterPlanningRuntimeParity(definitionId) {
   const responder = makePlayer(`counter-parity-responder-${definitionId}`, 0, "dawn", "ai", 0);
@@ -16349,7 +16349,6 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
   responder.hand.push(responseCard);
   let rootTargetIds = [];
   let selection = null;
-  let publicSelectionContext = null;
   let publicTransferContext = null;
   if (definitionId === "plunder") {
     owner.hand.push(selectedCard);
@@ -16361,7 +16360,6 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
       definitionId: selectedCard.definitionId,
       availableUnknownCount: 0
     };
-    publicSelectionContext = { ownerPlayerId: owner.id, zone: "hand", selectedCount: 1 };
   } else if (definitionId === "destroy") {
     owner.equipment = instance("battleDevice");
     rootTargetIds = [owner.id];
@@ -16372,7 +16370,6 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
       definitionId: owner.equipment.definitionId,
       availableUnknownCount: 0
     };
-    publicSelectionContext = { ownerPlayerId: owner.id, zone: "equipment", selectedCount: 1 };
   } else if (definitionId === "transfer") {
     owner.hand.push(selectedCard);
     selection = {
@@ -16386,8 +16383,7 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
     };
     publicTransferContext = {
       fromPlayerId: owner.id,
-      receiverPlayerId: source.id,
-      zone: "hand"
+      receiverPlayerId: source.id
     };
   } else {
     rootTargetIds = [responder.id];
@@ -16404,8 +16400,6 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
         card: rootCard,
         rootCard,
         rootTargetIds,
-        selection,
-        publicSelectionContext,
         publicTransferContext
       },
       [responseCard]
@@ -16415,13 +16409,14 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
     const targets = rootTargetIds.map((targetId) => (
       decision.world.players.find((player) => player.id === targetId)
     )).filter(Boolean);
+    const futureSelection = decision.futureSelectionOutcomes?.[0]?.selection ?? selection;
     const planning = game.aiController.evaluator.decidePlanningCounter(
       decision.world,
       responderWorld,
       sourceWorld,
       rootCard,
       targets,
-      selection
+      futureSelection
     );
     const runtime = game.aiController.evaluator.shouldRespond(decision);
     const planningGain = planningDynamicCounterGain(
@@ -16430,20 +16425,20 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
       sourceWorld,
       rootCard,
       targets,
-      selection
+      futureSelection
     );
-    const runtimeGain = decision.rootFlipWorlds
+    const runtimeGain = decision.futureCounterTerms?.gain ?? (decision.rootFlipWorlds
       ? game.aiController.evaluator.dynamicRootFlipGain(
         decision.rootFlipWorlds,
         responder.id,
         decision.rootFlipWorlds.baseLightningOutcomeSets,
         decision.rootFlipWorlds.resolvedLightningOutcomeSets
       )
-      : null;
+      : null);
     assert.equal(
       planning,
       runtime,
-      JSON.stringify({ definitionId, planningGain, runtimeGain, selection: decision.counterSelection })
+      JSON.stringify({ definitionId, planningGain, runtimeGain, futureSelection })
     );
     if (definitionId === "counter") assert.equal(runtime, true, definitionId);
   } finally {
@@ -30098,19 +30093,19 @@ const counterProbabilityOf = (player) => (
 AI 响应模型·反制中的 Plunder、Destroy 与 Transfer overlap 回归测试。
 
 输入
-响应者手牌定义数组、root 定义，以及 Transfer 的可选接收方阵营。
+响应者手牌/装备、root 定义、Transfer 接收方阵营与可选 root source 角色。
 
 输出
-Game、DecisionContext、World 玩家、root targets、planning gain 与 overlap terms。
+Game、DecisionContext、World 玩家、root targets、future selection 与聚合 Counter terms。
 
 读取状态
-测试 Game fixture 经 Controller 生成的 canonical World、selection 与 ProbabilityState。
+测试 Game fixture 经 Controller 生成的 canonical World、future selection 与 ProbabilityState。
 
 写入状态
-只写独立测试玩家手牌。
+只写独立测试玩家手牌与装备。
 
 调用函数
-makeGame、buildResponseDecisionContext、planningDynamicCounterGain、counterRootOverlapTerms。
+makeGame、buildResponseDecisionContext。
 
 边界与不变量
 响应者固定为 blade-walker，使 Counter 身份差量为零；所有概率仍由生产 World/Probability query 得出，
@@ -30119,10 +30114,18 @@ helper 不复制 Counter 概率、成本或意愿公式。
 async function buildCounterRootOverlapFixture({
   handDefinitionIds,
   rootDefinitionId,
-  transferReceiverTeam = "dusk"
+  transferReceiverTeam = "dusk",
+  equipmentDefinitionId = null,
+  rootSourceGeneralIndex = 1
 }) {
   const responder = makePlayer("counter-overlap-responder", 0, "dawn", "ai", 0);
-  const source = makePlayer("counter-overlap-source", 1, "dusk", "ai", 1);
+  const source = makePlayer(
+    "counter-overlap-source",
+    1,
+    "dusk",
+    "ai",
+    rootSourceGeneralIndex
+  );
   const receiver = makePlayer(
     "counter-overlap-receiver",
     2,
@@ -30138,6 +30141,7 @@ async function buildCounterRootOverlapFixture({
     3
   );
   responder.hand.push(...handDefinitionIds.map((definitionId) => instance(definitionId)));
+  responder.equipment = equipmentDefinitionId ? instance(equipmentDefinitionId) : null;
   const counterCards = responder.hand.filter((card) => card.definitionId === "counter");
   const rootCard = instance(rootDefinitionId);
   const rootTargetIds = ["plunder", "destroy"].includes(rootDefinitionId)
@@ -30146,8 +30150,7 @@ async function buildCounterRootOverlapFixture({
   const publicTransferContext = rootDefinitionId === "transfer"
     ? {
         fromPlayerId:responder.id,
-        receiverPlayerId:receiver.id,
-        zone:"hand"
+        receiverPlayerId:receiver.id
       }
     : null;
   const { game } = makeGame([responder, source, receiver, filler]);
@@ -30169,30 +30172,8 @@ async function buildCounterRootOverlapFixture({
   const targets = rootTargetIds.map((targetId) => (
     decision.world.players.find((player) => player.id === targetId)
   )).filter(Boolean);
-  const gain = planningDynamicCounterGain(
-    decision.world,
-    responderWorld,
-    sourceWorld,
-    rootCard,
-    targets,
-    decision.counterSelection
-  );
-  const overlapTerms = counterRootOverlapTerms(
-    decision.world,
-    responderWorld,
-    rootCard,
-    targets,
-    decision.counterSelection,
-    { resolvesAtStay:true }
-  );
-  const runtimeGain = decision.rootFlipWorlds
-    ? game.aiController.evaluator.dynamicRootFlipGain(
-        decision.rootFlipWorlds,
-        responder.id,
-        decision.rootFlipWorlds.baseLightningOutcomeSets,
-        decision.rootFlipWorlds.resolvedLightningOutcomeSets
-      )
-    : gain;
+  const futureSelection = decision.futureSelectionOutcomes?.[0]?.selection ?? null;
+  const futureCounterTerms = decision.futureCounterTerms ?? null;
   return {
     game,
     decision,
@@ -30200,9 +30181,8 @@ async function buildCounterRootOverlapFixture({
     sourceWorld,
     rootCard,
     targets,
-    gain,
-    runtimeGain,
-    overlapTerms
+    futureSelection,
+    futureCounterTerms
   };
 }
 
@@ -30244,11 +30224,11 @@ test("AI·反制：counter opportunity cost 只计一次", async () => {
   );
 });
 
-test("AI·反制：Plunder 按 Counter 边际损失概率同步修正 gain 与 cost", async () => {
+test("AI·反制：Plunder hand future selection 按 c 除以 c 加 x 聚合", async () => {
   const cases = [
     { counters:1, others:0, probability:1, responds:true },
     { counters:1, others:1, probability:1 / 2, responds:true },
-    { counters:1, others:2, probability:1 / 3, responds:false },
+    { counters:1, others:2, probability:1 / 3, responds:true },
     { counters:2, others:0, probability:1, responds:true },
     { counters:2, others:1, probability:2 / 3, responds:true },
     { counters:2, others:2, probability:1 / 2, responds:true },
@@ -30263,18 +30243,12 @@ test("AI·反制：Plunder 按 Counter 边际损失概率同步修正 gain 与 c
       rootDefinitionId:"plunder"
     });
     try {
-      const { counterLossProbability, selfCounterGainOverlap } = fixture.overlapTerms;
+      const { counterLossProbability, selfCounterGainOverlap, gain }
+        = fixture.futureCounterTerms;
       const effectiveCost = counterOpportunityCost() * (1 - counterLossProbability);
-      const effectiveGain = fixture.gain - selfCounterGainOverlap;
-      assert.ok(
-        Math.abs(counterLossProbability - entry.probability) < 1e-9,
-        JSON.stringify({
-          entry,
-          context:fixture.decision.context,
-          selection:fixture.decision.counterSelection,
-          overlap:fixture.overlapTerms
-        })
-      );
+      const effectiveGain = gain - selfCounterGainOverlap;
+      assert.equal(fixture.futureSelection?.zone, "hand");
+      assert.ok(Math.abs(counterLossProbability - entry.probability) < 1e-9);
       assert.ok(Math.abs(effectiveCost - 2.8 * (1 - entry.probability)) < 1e-9);
       assert.ok(Math.abs(selfCounterGainOverlap - 1.1 * entry.probability) < 1e-9);
       assert.equal(effectiveGain > effectiveCost, entry.responds);
@@ -30288,22 +30262,59 @@ test("AI·反制：Plunder 按 Counter 边际损失概率同步修正 gain 与 c
   }
 });
 
+test("AI·反制：Plunder future equipment 的 pC 为零且高价值装备仍受保护", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter"],
+    equipmentDefinitionId:"barrierDevice",
+    rootSourceGeneralIndex:2,
+    rootDefinitionId:"plunder"
+  });
+  try {
+    assert.equal(fixture.futureSelection?.zone, "equipment");
+    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 0);
+    assert.ok(fixture.futureCounterTerms.gain > counterOpportunityCost());
+    assert.equal(fixture.game.aiController.evaluator.shouldRespond(fixture.decision), true);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·反制：hand 与 equipment 未预填 selection 时仍投影 canonical future selection", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter", "assault"],
+    equipmentDefinitionId:"defenseDevice",
+    rootDefinitionId:"plunder"
+  });
+  try {
+    assert.equal(fixture.decision.counterSelection, undefined);
+    assert.equal(fixture.decision.context.publicSelectionContext, undefined);
+    assert.equal(fixture.futureSelection?.zone, "hand");
+    assert.equal(fixture.futureSelection?.cardId ?? null, null);
+    assert.equal(fixture.futureCounterTerms?.selectionOutcomes?.[0]?.weight, 1);
+    assert.ok(Math.abs(fixture.futureCounterTerms.counterLossProbability - 1 / 2) < 1e-9);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
 test("AI·反制：Destroy 命中唯一 Counter 时重叠归零且严格比较拒绝响应", async () => {
   const fixture = await buildCounterRootOverlapFixture({
     handDefinitionIds:["counter"],
     rootDefinitionId:"destroy"
   });
   try {
-    assert.equal(fixture.overlapTerms.counterLossProbability, 1);
-    assert.ok(Math.abs(fixture.gain - fixture.overlapTerms.selfCounterGainOverlap) < 1e-9);
-    assert.equal(counterOpportunityCost() * (1 - fixture.overlapTerms.counterLossProbability), 0);
+    assert.equal(fixture.futureCounterTerms.counterLossProbability, 1);
+    assert.ok(Math.abs(
+      fixture.futureCounterTerms.gain - fixture.futureCounterTerms.selfCounterGainOverlap
+    ) < 1e-9);
+    assert.equal(counterOpportunityCost() * (1 - fixture.futureCounterTerms.counterLossProbability), 0);
     assert.equal(fixture.game.aiController.evaluator.shouldRespond(fixture.decision), false);
   } finally {
     fixture.game.dispose();
   }
 });
 
-test("AI·反制：Transfer 消除自身 Counter 重叠但保留接收方阵营价值", async () => {
+test("AI·反制：Transfer future selection 对 enemy 与 ally 分别保留阵营价值", async () => {
   const toEnemy = await buildCounterRootOverlapFixture({
     handDefinitionIds:["counter"],
     rootDefinitionId:"transfer",
@@ -30315,24 +30326,11 @@ test("AI·反制：Transfer 消除自身 Counter 重叠但保留接收方阵营�
     transferReceiverTeam:"dawn"
   });
   try {
-    assert.equal(
-      toEnemy.overlapTerms.counterLossProbability,
-      1,
-      JSON.stringify({ selection:toEnemy.decision.counterSelection, gain:toEnemy.gain })
-    );
-    assert.equal(toAlly.overlapTerms.counterLossProbability, 1);
-    assert.ok(toEnemy.gain - toEnemy.overlapTerms.selfCounterGainOverlap > 0);
-    assert.ok(toAlly.gain - toAlly.overlapTerms.selfCounterGainOverlap < 0);
-    assert.equal(
-      toEnemy.game.aiController.evaluator.shouldRespond(toEnemy.decision),
-      true,
-      JSON.stringify({
-        planningGain:toEnemy.gain,
-        runtimeGain:toEnemy.runtimeGain,
-        overlap:toEnemy.overlapTerms,
-        selection:toEnemy.decision.counterSelection
-      })
-    );
+    assert.equal(toEnemy.futureCounterTerms.counterLossProbability, 1);
+    assert.equal(toAlly.futureCounterTerms.counterLossProbability, 1);
+    assert.ok(toEnemy.futureCounterTerms.gain - toEnemy.futureCounterTerms.selfCounterGainOverlap > 0);
+    assert.ok(toAlly.futureCounterTerms.gain - toAlly.futureCounterTerms.selfCounterGainOverlap < 0);
+    assert.equal(toEnemy.game.aiController.evaluator.shouldRespond(toEnemy.decision), true);
     assert.equal(toAlly.game.aiController.evaluator.shouldRespond(toAlly.decision), false);
   } finally {
     toEnemy.game.dispose();
@@ -30346,14 +30344,22 @@ test("AI·反制：普通 root 无 Counter overlap 时保持原严格成本比�
     rootDefinitionId:"harvest"
   });
   try {
-    assert.deepEqual(fixture.overlapTerms, {
-      counterLossProbability:0,
-      selfCounterGainOverlap:0
-    });
-    assert.equal(
-      fixture.game.aiController.evaluator.shouldRespond(fixture.decision),
-      fixture.runtimeGain > counterOpportunityCost()
-    );
+    assert.equal(fixture.futureCounterTerms, null);
+    const gain = fixture.decision.rootFlipWorlds
+      ? fixture.game.aiController.evaluator.dynamicRootFlipGain(
+          fixture.decision.rootFlipWorlds,
+          fixture.responderWorld.id,
+          fixture.decision.rootFlipWorlds.baseLightningOutcomeSets,
+          fixture.decision.rootFlipWorlds.resolvedLightningOutcomeSets
+        )
+      : planningDynamicCounterGain(
+          fixture.decision.world,
+          fixture.responderWorld,
+          fixture.sourceWorld,
+          fixture.rootCard,
+          fixture.targets
+        );
+    assert.equal(fixture.game.aiController.evaluator.shouldRespond(fixture.decision), gain > 2.8);
   } finally {
     fixture.game.dispose();
   }

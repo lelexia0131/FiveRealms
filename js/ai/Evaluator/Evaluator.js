@@ -980,6 +980,53 @@ function selectedResourceStateValue(player, selection, viewerId) {
 
 /*
 功能
+计算完整已知手牌中随机选中一张时，指定资源持有者的期望 State Value。
+
+调用方
+planningDynamicCounterGain 的 uniform-hand Plunder/Destroy/Transfer 分支。
+
+输入
+selection 来源玩家、价值落点玩家与当前 viewer ID。
+
+输出
+按实体 availability 和当前 handCount 加权的单张资源 State Value。
+
+读取状态
+来源玩家完整自有 hand、每张 availability 与价值落点玩家的角色事实。
+
+写入状态
+无。
+
+调用函数
+selectedResourceStateValue、cardAvailability。
+
+边界与不变量
+只用于 viewer 已完整知道来源手牌身份的 uniform-hand；分母只含手牌，装备不进入随机池；
+缺少完整实体质量时保留匿名单张 hand value。
+*/
+function uniformHandResourceStateValue(source, valueOwner, viewerId) {
+  const handCount = Math.max(0, Number(source?.handCount) || 0);
+  if (handCount <= PROBABILITY_EPSILON || !Array.isArray(source?.hand)) return 0;
+  const weighted = source.hand.reduce((sum, card) => (
+    sum + cardAvailability(card) * selectedResourceStateValue(valueOwner, {
+      zone:"hand",
+      selectionKind:"known",
+      definitionId:card.definitionId
+    }, viewerId)
+  ), 0);
+  const knownMass = source.hand.reduce((sum, card) => sum + cardAvailability(card), 0);
+  if (knownMass + PROBABILITY_EPSILON < handCount) {
+    return selectedResourceStateValue(valueOwner, {
+      zone:"hand",
+      selectionKind:"unknown",
+      definitionId:null
+    }, viewerId);
+  }
+  return weighted / handCount;
+}
+
+/*
+功能
 计算当前 root 在 STAY 世界中与响应者 Counter 支付重叠的概率和值。
 
 调用方
@@ -1054,7 +1101,7 @@ export function counterRootOverlapTerms(
   if (counterLossProbability <= PROBABILITY_EPSILON) return noOverlap;
   const overlapSelection = {
     zone:"hand",
-    definitionId:selection.selectionKind === "known" ? "counter" : null
+    definitionId:"counter"
   };
   const selfCounterGainOverlap = selectedResourceStateValue(
     source,
@@ -1071,13 +1118,70 @@ export function counterRootOverlapTerms(
 
 /*
 功能
+按 future selection 权重聚合 Counter 的 Gain、Counter 损失概率与自身保留重叠。
+
+调用方
+Evaluator.futureSelectionCounterTerms。
+
+输入
+每个 selection outcome 的 weight、gain、counterLossProbability 与 selfCounterGainOverlap。
+
+输出
+冻结的聚合 terms，并保留逐 outcome 的 plain diagnostic facts；无有效 outcome 时返回 null。
+
+读取状态
+无；只读输入数值与 selection plain data。
+
+写入状态
+无。
+
+调用函数
+clampProbability。
+
+边界与不变量
+weight 必须构成总质量一；确定 selection 使用唯一 weight=1，禁止为多个候选平均分配权重；
+所有聚合严格按加权和计算，Counter 比较仍由 dynamicCounterWillingness 执行。
+*/
+function aggregateFutureCounterTerms(outcomes) {
+  const entries = (outcomes ?? []).filter((outcome) => (
+    Number.isFinite(Number(outcome?.weight))
+    && Number(outcome.weight) >= 0
+    && Number.isFinite(Number(outcome.gain))
+    && Number.isFinite(Number(outcome.counterLossProbability))
+    && Number.isFinite(Number(outcome.selfCounterGainOverlap))
+  ));
+  const totalWeight = entries.reduce((sum, outcome) => sum + Number(outcome.weight), 0);
+  if (Math.abs(totalWeight - 1) > PROBABILITY_EPSILON) return null;
+  const selectionOutcomes = entries.map((outcome) => Object.freeze({
+    weight:Number(outcome.weight),
+    selection:outcome.selection ?? null,
+    gain:Number(outcome.gain),
+    counterLossProbability:clampProbability(outcome.counterLossProbability),
+    selfCounterGainOverlap:Number(outcome.selfCounterGainOverlap)
+  }));
+  return Object.freeze({
+    gain:selectionOutcomes.reduce((sum, outcome) => sum + outcome.weight * outcome.gain, 0),
+    counterLossProbability:clampProbability(selectionOutcomes.reduce(
+      (sum, outcome) => sum + outcome.weight * outcome.counterLossProbability,
+      0
+    )),
+    selfCounterGainOverlap:selectionOutcomes.reduce(
+      (sum, outcome) => sum + outcome.weight * outcome.selfCounterGainOverlap,
+      0
+    ),
+    selectionOutcomes:Object.freeze(selectionOutcomes)
+  });
+}
+
+/*
+功能
 用与真实响应相同的价值单位估算规划世界中取消一张 root 战术的收益。
 
 调用方
 planningCounterDecision 与直接价值测试。
 
 输入
-只读 World、响应者、施放者、root 卡牌、目标和可选资源选择。
+只读 World、响应者、施放者、root 卡牌、目标和可选 future resource selection。
 
 输出
 以现有 HP_VALUE、手牌、能量和状态尺度表示的非规格化收益。
@@ -1199,6 +1303,10 @@ export function planningDynamicCounterGain(
     case "plunder": {
       if (!target?.alive || !hasResource(target)) return 0;
       if (selection?.zone) {
+        if (selection.selectionMode === "uniform-hand") {
+          return uniformHandResourceStateValue(target, target, responder.id)
+            + uniformHandResourceStateValue(target, actor, responder.id);
+        }
         const selected = {
           ...selection,
           definitionId:selection.definitionId
@@ -1215,6 +1323,9 @@ export function planningDynamicCounterGain(
     case "destroy": {
       if (!target?.alive || !hasResource(target)) return 0;
       if (selection?.zone) {
+        if (selection.selectionMode === "uniform-hand") {
+          return uniformHandResourceStateValue(target, target, responder.id);
+        }
         return selectedResourceStateValue(target, {
           ...selection,
           definitionId:selection.definitionId
@@ -1227,8 +1338,12 @@ export function planningDynamicCounterGain(
     case "transfer": {
       const from = state.players.find((player) => player.id === selection?.sourceId) ?? null;
       const receiver = state.players.find((player) => player.id === selection?.receiverId) ?? null;
-      const fromValue = selectedResourceStateValue(from, selection, responder.id);
-      const receiverValue = selectedResourceStateValue(receiver, selection, responder.id);
+      const fromValue = selection?.selectionMode === "uniform-hand"
+        ? uniformHandResourceStateValue(from, from, responder.id)
+        : selectedResourceStateValue(from, selection, responder.id);
+      const receiverValue = selection?.selectionMode === "uniform-hand"
+        ? uniformHandResourceStateValue(from, receiver, responder.id)
+        : selectedResourceStateValue(receiver, selection, responder.id);
       return (from?.battleTeam === team ? fromValue : -fromValue)
         + (receiver?.battleTeam === team ? -receiverValue : receiverValue);
     }
@@ -1274,7 +1389,7 @@ export function planningCounterDecision(
   actor,
   card,
   targets,
-  selection,
+  futureSelection,
   { assessGlobalBenefit:assessGlobalBenefitQuery, simulatingRootResolution = false, dynamicCounterGain }
 ) {
   const globalDecision = globalBenefitCounterDecision(
@@ -1294,13 +1409,13 @@ export function planningCounterDecision(
     state.probabilityState, responder, "counter"
   ).probability > 0;
   if (!hasCounter) return false;
-  const gain = dynamicCounterGain(state, responder, actor, card, targets, selection);
+  const gain = dynamicCounterGain(state, responder, actor, card, targets, futureSelection);
   const overlapTerms = counterRootOverlapTerms(
     state,
     responder,
     card,
     targets,
-    selection,
+    futureSelection,
     { resolvesAtStay:true }
   );
   return dynamicCounterWillingness(gain, overlapTerms);
@@ -3066,6 +3181,132 @@ export class Evaluator {
 
   /*
   功能
+  按现有资源 selection comparator 从已物化候选中选择唯一 future root outcome。
+
+  调用方
+  Controller 的 runtime future-selection orchestration。
+
+  输入
+  root actor 视角 World、actor 与 Simulator 已构造的 candidate root Worlds。
+
+  输出
+  当前确定性 selection policy 选中的原 outcome；没有完整候选时返回 null。
+
+  读取状态
+  每个 outcome 的 canonical Action、base/resolved Worlds 与 lightning outcome sets。
+
+  写入状态
+  无。
+
+  调用函数
+  transitionDelta、resourceSelectionPreference、compareCandidates。
+
+  边界与不变量
+  Plunder/Destroy 复用 contextual/static comparator，Transfer 复用 evaluateTransferAction；
+  同分保持 Generator 枚举顺序，确定策略只产生一个 weight=1 的后续结果。
+  */
+  chooseFutureResourceSelectionOutcome(state, actor, outcomes) {
+    let best = null;
+    for (const outcome of outcomes ?? []) {
+      const rootWorlds = outcome?.rootWorlds ?? null;
+      if (!outcome?.action || !rootWorlds?.baseWorld || !rootWorlds?.resolvedWorld) continue;
+      const candidate = {
+        action:outcome.action,
+        valueScore:this.transitionDelta(
+          rootWorlds.baseWorld,
+          rootWorlds.resolvedWorld,
+          actor.id,
+          rootWorlds.baseLightningOutcomeSets ?? [],
+          rootWorlds.resolvedLightningOutcomeSets ?? []
+        ),
+        comparisonTerms:this.resourceSelectionPreference(
+          outcome.action,
+          actor,
+          rootWorlds.baseWorld,
+          rootWorlds.resolvedWorld
+        )
+      };
+      if (!best || this.compareCandidates(candidate, best.candidate, actor, state) > 0) {
+        best = { outcome, candidate };
+      }
+    }
+    return best?.outcome ?? null;
+  }
+
+  /*
+  功能
+  计算 projected future selection outcomes 对当前 Counter 的加权 Gain、pC 与 overlap。
+
+  调用方
+  Controller.buildResponseDecisionContext。
+
+  输入
+  响应者视角 World/player、root actor/card/targets，以及 Simulator 可选配对 Worlds 的 plain outcomes。
+
+  输出
+  aggregateFutureCounterTerms 的冻结聚合结果；没有有效 future outcome 时返回 null。
+
+  读取状态
+  canonical future selection、ProbabilityState、预物化 root Worlds 与 StateValue。
+
+  写入状态
+  无。
+
+  调用函数
+  dynamicRootFlipGain、planningDynamicCounterGain、counterRootOverlapTerms、aggregateFutureCounterTerms。
+
+  边界与不变量
+  Simulator 只提供确定 selection 可物化的 Worlds；uniform-hand 使用现有 planning Gain 与
+  Probability selection query；每个 q_s 同时加权 G_s、pC(s) 与 OC(s)。
+  */
+  futureSelectionCounterTerms(state, responder, actor, card, targets, outcomes) {
+    const selectionTerms = [];
+    for (const outcome of outcomes ?? []) {
+      const weight = Number(outcome?.weight);
+      const selection = outcome?.selection ?? outcome?.action?.selection ?? null;
+      const rootWorlds = outcome?.rootWorlds ?? null;
+      const resolvesAtStay = rootWorlds?.resolvesAtStay
+        ?? Boolean(outcome?.resolvesAtStay);
+      const planningGain = planningDynamicCounterGain(
+        state,
+        responder,
+        actor,
+        card,
+        targets,
+        selection
+      );
+      const gain = rootWorlds
+        ? this.dynamicRootFlipGain(
+            rootWorlds,
+            responder.id,
+            rootWorlds.baseLightningOutcomeSets ?? [],
+            rootWorlds.resolvedLightningOutcomeSets ?? []
+          )
+        : (resolvesAtStay ? planningGain : -planningGain);
+      const overlapTerms = counterRootOverlapTerms(
+        state,
+        responder,
+        card,
+        targets,
+        selection,
+        {
+          resolvesAtStay,
+          baseWorld:rootWorlds?.baseWorld ?? null,
+          resolvedWorld:rootWorlds?.resolvedWorld ?? null
+        }
+      );
+      selectionTerms.push({
+        weight,
+        selection,
+        gain,
+        ...overlapTerms
+      });
+    }
+    return aggregateFutureCounterTerms(selectionTerms);
+  }
+
+  /*
+  功能
   为搜索模拟提供一次确定的战术反制意愿。
 
   调用方
@@ -3569,7 +3810,7 @@ export class Evaluator {
       lightningCounterWorlds,
       sealCounterTerms,
       rootFlipWorlds,
-      counterSelection = null
+      futureCounterTerms = null
     } = decision;
     const target = context.target ?? responder;
     if (type === "dyingRescue") {
@@ -3640,7 +3881,7 @@ export class Evaluator {
       const rootTargets = (context.rootTargetIds ?? []).map((targetId) => (
         world.players.find((player) => player.id === targetId)
       )).filter(Boolean);
-      const gain = rootFlipWorlds
+      const gain = futureCounterTerms?.gain ?? (rootFlipWorlds
         ? this.dynamicRootFlipGain(
             rootFlipWorlds,
             responder.id,
@@ -3653,14 +3894,14 @@ export class Evaluator {
             context.rootSource ?? context.source,
             { definitionId:rootId },
             rootTargets,
-            counterSelection
-          );
-      const overlapTerms = counterRootOverlapTerms(
+            null
+          ));
+      const overlapTerms = futureCounterTerms ?? counterRootOverlapTerms(
         world,
         responder,
         { definitionId:rootId },
         rootTargets,
-        counterSelection,
+        null,
         {
           resolvesAtStay:rootFlipWorlds?.resolvesAtStay
             ?? (((context.counterDepth ?? 0) % 2) === 0),
