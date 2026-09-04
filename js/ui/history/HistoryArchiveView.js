@@ -254,10 +254,10 @@ export class HistoryArchiveView {
   无。
 
   写入状态
-  保存依赖、创建唯一 AchievementView 并注册根节点 click listener。
+  保存依赖、创建唯一 AchievementView，并注册根节点 click/scroll listener。
 
   调用函数
-  AchievementView、handleClick。
+  AchievementView、handleClick、classList.add/remove。
 
   边界与不变量
   View 只能通过 Manager 查询数据；返回首页与页内滚动必须保持不同意图；对局入口复用同一个 AchievementView 详情弹窗。
@@ -266,8 +266,17 @@ export class HistoryArchiveView {
     this.root = root;
     this.historyStatsManager = historyStatsManager;
     this.onBack = onBack;
+    this.scrollHoverRestoreTimer = null;
     this.achievementView = new AchievementView(root, achievementViewOptions);
     this.root?.addEventListener("click", (event) => this.handleClick(event));
+    this.root?.addEventListener("scroll", () => {
+      clearTimeout(this.scrollHoverRestoreTimer);
+      this.root.classList.add("is-scrolling");
+      this.scrollHoverRestoreTimer = setTimeout(() => {
+        this.root.classList.remove("is-scrolling");
+        this.scrollHoverRestoreTimer = null;
+      }, 100);
+    }, { passive:true });
   }
 
   /*
@@ -322,15 +331,20 @@ export class HistoryArchiveView {
   无。
 
   写入状态
-  无。
+  关闭详情并清除滚动期间的 hover 抑制状态。
 
   调用函数
-  无。
+  AchievementView.closeDetail、classList.remove。
 
   边界与不变量
   历史 DOM 保留到下次刷新覆盖，返回动作不触碰数据。
   */
-  hide() { this.achievementView.closeDetail(false); }
+  hide() {
+    this.achievementView.closeDetail(false);
+    clearTimeout(this.scrollHoverRestoreTimer);
+    this.scrollHoverRestoreTimer = null;
+    this.root?.classList?.remove("is-scrolling");
+  }
 
   /*
   功能
