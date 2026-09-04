@@ -722,9 +722,14 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     assert.equal(evaluateAchievementForTest("damage_taken_twelve", { combatStats: { damageTaken: 12 } }), true);
     assert.equal(evaluateAchievementForTest("card_creator", {}, { cardsGained: 100 }), false);
     assert.equal(evaluateAchievementForTest("card_creator", {}, { cardsGained: 101 }), true);
-    const allScores = { activity: 101, support: 101, contribution: 101, control: 101, skill: 101, firepower: 101 };
-    assert.equal(evaluateAchievementForTest("all_rounder", { scores: { ...allScores, support: 100 } }), false);
+    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 12 }), false);
+    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 13 }), true);
+    const allScores = { activity: 100, support: 100, contribution: 100, control: 100, skill: 100, firepower: 100 };
     assert.equal(evaluateAchievementForTest("all_rounder", { scores: allScores }), true);
+    assert.equal(evaluateAchievementForTest("all_rounder", { scores: { ...allScores, support: 99 } }), false);
+    assert.equal(evaluateAchievementForTest("all_rounder", {
+      scores: Object.fromEntries(Object.keys(allScores).map((dimension) => [dimension, 101]))
+    }), true);
 
     const lowerFirepower = [{ playerId: "ai-1", raw: { firepower: 4 }, scores: { firepower: 999 } }];
     const higherFirepower = [{ playerId: "ai-1", raw: { firepower: 6 } }];

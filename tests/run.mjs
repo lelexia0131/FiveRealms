@@ -14353,7 +14353,7 @@ test("UI·转移：合法已知突袭排在四槽手牌池的未知牌之前", a
     receiver = makePlayer("transfer-pool-receiver", 2, "dawn"),
     transfer = instance("transfer"),
     unknownA = { ...instance("block"), name: "不可泄露甲" },
-    unknownB = { ...instance("counter"), name: "不可泄露乙" },
+    unknownB = { ...instance("charge"), name: "不可泄露乙" },
     knownAssault = instance("assault"),
     unknownC = { ...instance("recover"), name: "不可泄露丙" },
     { game, ui } = makeGame([actor, from, receiver]);
