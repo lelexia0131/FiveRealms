@@ -762,7 +762,7 @@ export function createResponseWorkflow(dependencies) {
 
   /*
   功能
-  请求强制打出一张突袭作为响应。
+  请求强制打出一张突袭作为响应，并在原子支付成功后发布正式提交事实。
 
   调用方
   ResponseWorkflow 决斗/借势窗口。
@@ -777,13 +777,13 @@ export function createResponseWorkflow(dependencies) {
   responder 存活、手牌实体、Application session 与响应策略。
 
   写入状态
-  pendingResponses、UI 思考与经支付 transition 的手牌。
+  pendingResponses、UI 思考、经支付 transition 的手牌与 cardCommitted 事实。
 
   调用函数
-  isResponderEligible、isCardResponseImpossibleFromPublicInfo、waitForDecision、finishRequest、payCardsFromHandAtomically。
+  isResponderEligible、isCardResponseImpossibleFromPublicInfo、waitForDecision、finishRequest、payCardsFromHandAtomically、emitCardCommitted、createId。
 
   边界与不变量
-  响应类型与资格由 Domain Rule 决定；玩家公开/已知信息已证明无突袭时直接结束，否则真人没有合法突袭时不创建窗口，AI 仍保留 timing boundary。
+  响应类型与资格由 Domain Rule 决定；只有原子支付成功才发布一次 committed 事实，取消、非法和未支付响应均不发布。
   */
   async function requestAssaultDiscard(responder, reason, context = {}) {
     const gameId = runtime.getState().gameId;
@@ -818,6 +818,15 @@ export function createResponseWorkflow(dependencies) {
       return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
     }
     if (payment.status !== RESPONSE_STATUS.USED) return responseResult(RESPONSE_STATUS.INVALID, { card:null });
+    await runtime.emitCardCommitted({
+      type: "cardCommitted",
+      source: responder,
+      card: cardToUse,
+      targets: context.source ? [context.source] : [],
+      resolutionId: runtime.createId("assault-response-resolution"),
+      usageContext: "response"
+    });
+    if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
     if (context.card?.definitionId === "duel") {
       runtime.log(`${responder.name}在决斗中打出了「突袭」。`, "important");
     } else if (context.card?.definitionId === "provoke") {

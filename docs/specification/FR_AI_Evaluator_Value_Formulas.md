@@ -1993,13 +1993,7 @@ $$
 ## 25.1 Counter opportunity cost
 
 $$
-\boxed{ C_0=BaseValue(counter)\times0.35 =8\times0.35 =2.8 }
-$$
-
-原响应公式为：
-
-$$
-\boxed{Counter\iff G>C_0}
+ C_0=BaseValue(counter)\times0.35 =8\times0.35 =2.8 
 $$
 
 ## 25.2 Dynamic Counter 的 STAY / RESPOND 边际修正
@@ -2013,31 +2007,31 @@ $$
 Counter payment 的真实边际机会成本为：
 
 $$
-\boxed{C_{effective}=C_0(1-p_C)}
+C_{effective}=C_0(1-p_C)
 $$
 
-定义旧 Gain 中因 root 被取消而产生的“响应者自己保住该 Counter”重叠收益：
+定义因 root 被取消而产生的“响应者自己保住该 Counter”重叠收益：
 
 $$
 O_C=\text{Gain 中与 Counter payment 重叠的自身 Counter 保留价值}
 $$
 
-有效收益为：
+则有效收益为：
 
 $$
-\boxed{G_{effective}=G-O_C}
+G_{effective}=G-O_C
 $$
 
-最终仍使用严格大于：
+最终使用严格大于：
 
 $$
-\boxed{Counter\iff G_{effective}>C_{effective}}
+Counter\iff G_{effective}>C_{effective}
 $$
 
 即：
 
 $$
-\boxed{G-O_C>C_0(1-p_C)}
+G-O_C>C_0(1-p_C)
 $$
 
 当 Plunder 在响应者的 $c$ 张 Counter 与 $x$ 张其它手牌中均匀选择一张时：
@@ -2049,18 +2043,12 @@ $$
 所以：
 
 $$
-\boxed{C_{effective}=C_0\frac{x}{c+x}}
+C_{effective}=C_0\frac{x}{c+x}
 $$
 
 生产实现不把该特殊比例硬编码为所有 Plunder 的概率模型：确定 selection 使用实体
 availability，匿名 selection 使用 canonical Probability slot query，尚未揭晓但响应者可见的
 整手牌选择使用 canonical Counter count expectation 与当前 hand count。
-
-这不是新的 Counter Value，也不是新的 State Value，而是 Counter 响应局部机会成本中的
-STAY / RESPOND overlap correction。`CardValue` 继续拥有静态牌值，`StateValue` 继续评价
-World 存量，`Transition Option` / resource transaction 继续只补物理状态未表达的资源身份交易；
-本修正只从响应 willingness 的旧 Gain 中移除自身 Counter 保留重叠，不把任何一项再次写入
-Final Utility。
 
 ## 25.3 Global Benefit Counter
 

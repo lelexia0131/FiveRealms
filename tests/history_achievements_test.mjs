@@ -86,13 +86,15 @@ function result(overrides = {}) {
     initialTeamSize: 2,
     teammateCharacterIds: ["oath-warden"],
     won: true,
+    aliveAtEnd: true,
     isMvp: true,
     finalScore: 1001,
     effectiveRounds: 4,
     totals: { enemyHpDamage: 12, enemyKills: 2 },
     combatStats: { totalDamage: 12, damageTaken: 8, support: 0 },
     achievementFacts: {
-      activeSkillUses: 3, activeAssaultUses: 0, rescueCount: 3, maxTurnDamage: 3, maxTurnKills: 2,
+      activeSkillUses: 3, activeAssaultUses: 0, committedAssaultUses: 0,
+      rescueCount: 3, maxTurnDamage: 3, maxTurnKills: 2,
       maxHandCount: 16, equipmentUses: 10, lightningCasts: 2, lightningHits: 2,
       teammateDeaths: 0, maxAliveRound: 0, clutchEnemyCounts: [2, 3]
     },
@@ -235,7 +237,79 @@ async function evaluateTrackedAttack(finalAttackDamage, targetHp) {
   return { actualDamage, humanResult, unlocked };
 }
 
-export function registerHistoryAchievementTests(test) {
+/*
+功能
+创建使用真实 DyingWorkflow 与 MatchPerformanceTracker 的定向救援夹具。
+
+调用方
+征途成就救援事件回归测试。
+
+输入
+测试运行器提供的 makeGame/makePlayer/instance，以及目标初始生命和各救援者调息数量。
+
+输出
+Game、濒死目标、救援者与 tracker。
+
+读取状态
+测试 Game fixture 的真实玩家、牌区与事件总线。
+
+写入状态
+设置目标生命并向救援者手牌加入调息。
+
+调用函数
+makePlayer、instance、makeGame、MatchPerformanceTracker.initializeRoster。
+
+边界与不变量
+目标不持有调息；只有显式配置的同阵营真人救援者会接受 dyingRescue 响应。
+*/
+function createTrackedRescueFixture(
+  { makeGame, makePlayer, instance },
+  { targetHp, rescuerCardCounts }
+) {
+  const target = makePlayer("achievement-rescue-target", 0, "dawn", "human");
+  target.hp = targetHp;
+  const rescuers = [];
+  for (const [index, count] of rescuerCardCounts.entries()) {
+    const rescuer = makePlayer(`achievement-rescuer-${index}`, index + 1, "dawn", "human");
+    rescuer.hand.push(...Array.from({ length: count }, () => instance("recover")));
+    rescuers.push(rescuer);
+  }
+  const enemy = makePlayer("achievement-rescue-enemy", rescuers.length + 1, "dusk");
+  const { game } = makeGame([target, ...rescuers, enemy], {
+    response: (request) => request.type === "dyingRescue"
+  });
+  const tracker = game.matchPerformanceSidecar.tracker;
+  tracker.initializeRoster();
+  return { game, target, rescuers, tracker };
+}
+
+/*
+功能
+注册征途成就定义、事实链、持久化与展示的定向测试。
+
+调用方
+tests/run.mjs。
+
+输入
+测试注册函数，以及真实 Game 测试夹具构造器。
+
+输出
+无返回值。
+
+读取状态
+各测试在执行时读取独立 fixture 与生产成就定义。
+
+写入状态
+仅向传入测试注册器添加测试。
+
+调用函数
+test、makeGame、makePlayer、instance。
+
+边界与不变量
+每个测试使用独立状态；不运行 Balance、自博弈或随机长局。
+*/
+export function registerHistoryAchievementTests(test, gameFixtures) {
+  const { makeGame, makePlayer, instance } = gameFixtures;
   test("UI·征途成就：首次 duo 解锁提示一次且重复达成不再提示", async () => {
     const storage = memoryStorage();
     let index = 0;
@@ -611,6 +685,8 @@ export function registerHistoryAchievementTests(test) {
 
     assert.equal(evaluateAchievementForTest("self_lightning", {}, { selfLightningHit: true }), true);
     assert.equal(evaluateAchievementForTest("self_lightning", {}, { selfLightningHit: false, lightningDamageTakenHits: 1 }), false);
+    assert.equal(evaluateAchievementForTest("rescue_beacon", {}, { rescueCount: 0 }), false);
+    assert.equal(evaluateAchievementForTest("rescue_beacon", {}, { rescueCount: 1 }), true);
     assert.equal(evaluateAchievementForTest("rescue_chain", {}, { rescueCount: 1 }), false);
     assert.equal(evaluateAchievementForTest("rescue_chain", {}, { rescueCount: 2 }), true);
     assert.equal(evaluateAchievementForTest("rescue_master", {}, { rescueCount: 2 }), false);
@@ -654,17 +730,239 @@ export function registerHistoryAchievementTests(test) {
     const higherFirepower = [{ playerId: "ai-1", raw: { firepower: 6 } }];
     const tiedFirepower = [{ playerId: "ai-1", raw: { firepower: 5 } }];
     assert.equal(evaluateAchievementForTest(
-      "accidental_success", { raw: { firepower: 5 }, scores: { firepower: 0 } }, { activeAssaultUses: 0 }, {}, {}, lowerFirepower
+      "accidental_success", { raw: { firepower: 5 }, scores: { firepower: 0 } }, { committedAssaultUses: 0 }, {}, {}, lowerFirepower
     ), true);
     assert.equal(evaluateAchievementForTest(
-      "accidental_success", { raw: { firepower: 5 } }, { activeAssaultUses: 1 }, {}, {}, lowerFirepower
+      "accidental_success", { raw: { firepower: 5 } }, { committedAssaultUses: 1 }, {}, {}, lowerFirepower
     ), false);
     assert.equal(evaluateAchievementForTest(
-      "accidental_success", { raw: { firepower: 5 } }, { activeAssaultUses: 0 }, {}, {}, higherFirepower
+      "accidental_success", { raw: { firepower: 5 } }, { committedAssaultUses: 0 }, {}, {}, higherFirepower
     ), false);
     assert.equal(evaluateAchievementForTest(
-      "accidental_success", { raw: { firepower: 5 } }, { activeAssaultUses: 0 }, {}, {}, tiedFirepower
+      "accidental_success", { raw: { firepower: 5 } }, { committedAssaultUses: 0 }, {}, {}, tiedFirepower
     ), true);
+  });
+
+  test("UI·征途成就：无人倒下同时要求胜利、本人存活与队友无人死亡", () => {
+    assert.equal(evaluateAchievementForTest(
+      "flawless_victory", { won: true, aliveAtEnd: true }, { teammateDeaths: 0 }
+    ), true);
+    assert.equal(evaluateAchievementForTest(
+      "flawless_victory", { won: true, aliveAtEnd: false }, { teammateDeaths: 0 }
+    ), false);
+    assert.equal(evaluateAchievementForTest(
+      "flawless_victory", { won: true, aliveAtEnd: true }, { teammateDeaths: 1 }
+    ), false);
+    assert.equal(evaluateAchievementForTest(
+      "flawless_victory", { won: false, aliveAtEnd: true }, { teammateDeaths: 0 }
+    ), false);
+  });
+
+  test("UI·征途成就：成功救援按濒死事件及参与者去重提交", async () => {
+    const direct = createTrackedRescueFixture(gameFixtures, {
+      targetHp: 0,
+      rescuerCardCounts: [1]
+    });
+    assert.equal(await direct.game.dyingWorkflow.enter(direct.target, null), true);
+    assert.equal(direct.tracker.recordFor(direct.rescuers[0]).achievementFacts.rescueCount, 1);
+    direct.game.dispose();
+
+    const repeated = createTrackedRescueFixture(gameFixtures, {
+      targetHp: -2,
+      rescuerCardCounts: [3]
+    });
+    const countsBeforeSuccess = [];
+    repeated.game.eventDispatcher.on("afterHeal", "test:rescue-await-success", () => {
+      countsBeforeSuccess.push(
+        repeated.tracker.recordFor(repeated.rescuers[0]).achievementFacts.rescueCount
+      );
+    });
+    assert.equal(await repeated.game.dyingWorkflow.enter(repeated.target, null), true);
+    assert.deepEqual(countsBeforeSuccess, [0, 0, 0]);
+    assert.equal(repeated.tracker.recordFor(repeated.rescuers[0]).achievementFacts.rescueCount, 1);
+    repeated.game.dispose();
+
+    const shared = createTrackedRescueFixture(gameFixtures, {
+      targetHp: -1,
+      rescuerCardCounts: [1, 1]
+    });
+    assert.equal(await shared.game.dyingWorkflow.enter(shared.target, null), true);
+    assert.deepEqual(shared.rescuers.map((rescuer) => (
+      shared.tracker.recordFor(rescuer).achievementFacts.rescueCount
+    )), [1, 1]);
+    shared.game.dispose();
+  });
+
+  test("UI·征途成就：失败救援不计且两个独立成功濒死事件可累计", async () => {
+    const failed = createTrackedRescueFixture(gameFixtures, {
+      targetHp: -2,
+      rescuerCardCounts: [1, 1]
+    });
+    assert.equal(await failed.game.dyingWorkflow.enter(failed.target, null), false);
+    assert.deepEqual(failed.rescuers.map((rescuer) => (
+      failed.tracker.recordFor(rescuer).achievementFacts.rescueCount
+    )), [0, 0]);
+    failed.game.dispose();
+
+    const twice = createTrackedRescueFixture(gameFixtures, {
+      targetHp: 0,
+      rescuerCardCounts: [2]
+    });
+    assert.equal(await twice.game.dyingWorkflow.enter(twice.target, null), true);
+    twice.target.hp = 0;
+    assert.equal(await twice.game.dyingWorkflow.enter(twice.target, null), true);
+    assert.equal(twice.tracker.recordFor(twice.rescuers[0]).achievementFacts.rescueCount, 2);
+    twice.game.dispose();
+  });
+
+  test("UI·征途成就：普通、响应与借势突袭均写入 committed 事实", async () => {
+    assert.equal(evaluateAchievementForTest(
+      "accidental_success",
+      { raw: { firepower: 5 } },
+      { committedAssaultUses: 0 },
+      {},
+      {},
+      [{ playerId: "other", raw: { firepower: 4 } }]
+    ), true);
+
+    const ordinaryActor = makePlayer("achievement-assault-action", 0, "dawn", "human");
+    const ordinaryEnemy = makePlayer("achievement-assault-action-enemy", 1, "dusk");
+    const ordinaryAssault = instance("assault");
+    ordinaryActor.hand.push(ordinaryAssault);
+    const ordinary = makeGame([ordinaryActor, ordinaryEnemy]);
+    ordinary.game.matchPerformanceSidecar.tracker.initializeRoster();
+    assert.equal(await ordinary.game.playCard(ordinaryActor, ordinaryAssault, [ordinaryEnemy]), true);
+    assert.deepEqual([
+      ordinary.game.matchPerformanceSidecar.tracker.recordFor(ordinaryActor).achievementFacts.activeAssaultUses,
+      ordinary.game.matchPerformanceSidecar.tracker.recordFor(ordinaryActor).achievementFacts.committedAssaultUses
+    ], [1, 1]);
+    ordinary.game.dispose();
+
+    const responder = makePlayer("achievement-assault-response", 0, "dawn", "human");
+    const responseEnemy = makePlayer("achievement-assault-response-enemy", 1, "dusk");
+    responder.hand.push(instance("assault"));
+    const response = makeGame([responder, responseEnemy], {
+      response: (request) => request.type === "assaultDiscard"
+    });
+    response.game.matchPerformanceSidecar.tracker.initializeRoster();
+    const responseResult = await response.game.responseWorkflow.requestAssaultDiscard(
+      responder,
+      "在决斗中打出突袭",
+      { source: responseEnemy, target: responder, card: instance("duel") }
+    );
+    assert.equal(responseResult.status, "used");
+    assert.deepEqual([
+      response.game.matchPerformanceSidecar.tracker.recordFor(responder).achievementFacts.activeAssaultUses,
+      response.game.matchPerformanceSidecar.tracker.recordFor(responder).achievementFacts.committedAssaultUses
+    ], [0, 1]);
+    response.game.dispose();
+
+    const leverageSource = makePlayer("achievement-leverage-source", 0, "dawn", "human");
+    const leverageResponder = makePlayer("achievement-leverage-responder", 1, "dusk", "human");
+    const leverage = instance("leverage");
+    const forcedAssault = instance("assault");
+    const equipment = instance("energyDevice");
+    leverageSource.hand.push(leverage);
+    leverageResponder.hand.push(forcedAssault);
+    leverageResponder.equipment = equipment;
+    const leverageFixture = makeGame([leverageSource, leverageResponder], {
+      response: (request) => request.type === "leverageAssault"
+    });
+    leverageFixture.game.matchPerformanceSidecar.tracker.initializeRoster();
+    assert.equal(await leverageFixture.game.playCard(leverageSource, leverage, [], {
+      firstTargetId: leverageResponder.id,
+      equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId,
+      secondTargetId: leverageSource.id
+    }), true);
+    assert.deepEqual([
+      leverageFixture.game.matchPerformanceSidecar.tracker.recordFor(leverageResponder).achievementFacts.activeAssaultUses,
+      leverageFixture.game.matchPerformanceSidecar.tracker.recordFor(leverageResponder).achievementFacts.committedAssaultUses
+    ], [0, 1]);
+    leverageFixture.game.dispose();
+  });
+
+  test("UI·征途成就：非法、未提交与 rollback 突袭不污染 committed 事实", async () => {
+    const actor = makePlayer("achievement-assault-rollback", 0, "dawn", "human");
+    const ally = makePlayer("achievement-assault-rollback-ally", 1, "dawn");
+    const enemy = makePlayer("achievement-assault-rollback-enemy", 2, "dusk");
+    const illegalAssault = instance("assault");
+    const rollbackAssault = instance("assault");
+    actor.hand.push(illegalAssault, rollbackAssault);
+    const { game } = makeGame([actor, ally, enemy]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    assert.equal(await game.playCard(actor, illegalAssault, [ally]), false);
+    assert.equal(tracker.recordFor(actor).achievementFacts.committedAssaultUses, 0);
+    game.eventDispatcher.on("cardUsed", "test:rollback-assault-achievement-fact", (event) => {
+      if (event.card === rollbackAssault) throw new Error("rollback assault fact");
+    });
+    await assert.rejects(
+      game.playCard(actor, rollbackAssault, [enemy]),
+      /rollback assault fact/
+    );
+    assert.deepEqual([
+      tracker.recordFor(actor).achievementFacts.activeAssaultUses,
+      tracker.recordFor(actor).achievementFacts.committedAssaultUses
+    ], [0, 0]);
+    game.dispose();
+  });
+
+  test("UI·征途成就：真实 1v3 后进入 1v2 会保留两个残局档位", async () => {
+    const survivor = makePlayer("achievement-clutch-survivor", 0, "dawn", "human");
+    const ally = makePlayer("achievement-clutch-ally", 1, "dawn");
+    const enemies = [
+      makePlayer("achievement-clutch-enemy-a", 2, "dusk"),
+      makePlayer("achievement-clutch-enemy-b", 3, "dusk"),
+      makePlayer("achievement-clutch-enemy-c", 4, "dusk")
+    ];
+    const { game } = makeGame([survivor, ally, ...enemies]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    ally.hp = 0;
+    await game.dyingWorkflow.kill(ally, enemies[0]);
+    assert.deepEqual([...tracker.recordFor(survivor).achievementFacts.clutchEnemyCounts], [3]);
+    enemies[0].hp = 0;
+    await game.dyingWorkflow.kill(enemies[0], survivor);
+    game.state.winnerTeam = "dawn";
+    const snapshot = tracker.finalizeMatch();
+    const player = snapshot.players.find((entry) => entry.playerId === survivor.id);
+    const unlocked = evaluateMatchAchievements(
+      snapshot,
+      survivor.id,
+      createEmptyAchievementData().streaks
+    ).unlocked;
+    assert.deepEqual(player.achievementFacts.clutchEnemyCounts, [2, 3]);
+    assert.equal(unlocked.includes("last_stand_duo"), true);
+    assert.equal(unlocked.includes("last_stand_duo_three"), true);
+    game.dispose();
+  });
+
+  test("UI·征途成就：只形成 1v3 不会自动产生 1v2 残局事实", async () => {
+    const survivor = makePlayer("achievement-clutch-only-three", 0, "dawn", "human");
+    const ally = makePlayer("achievement-clutch-only-three-ally", 1, "dawn");
+    const enemies = [
+      makePlayer("achievement-clutch-only-three-a", 2, "dusk"),
+      makePlayer("achievement-clutch-only-three-b", 3, "dusk"),
+      makePlayer("achievement-clutch-only-three-c", 4, "dusk")
+    ];
+    const { game } = makeGame([survivor, ally, ...enemies]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    ally.hp = 0;
+    await game.dyingWorkflow.kill(ally, enemies[0]);
+    game.state.winnerTeam = "dawn";
+    const snapshot = tracker.finalizeMatch();
+    const player = snapshot.players.find((entry) => entry.playerId === survivor.id);
+    const unlocked = evaluateMatchAchievements(
+      snapshot,
+      survivor.id,
+      createEmptyAchievementData().streaks
+    ).unlocked;
+    assert.deepEqual(player.achievementFacts.clutchEnemyCounts, [3]);
+    assert.equal(unlocked.includes("last_stand_duo"), false);
+    assert.equal(unlocked.includes("last_stand_duo_three"), true);
+    game.dispose();
   });
 
   test("UI·征途成就：攻击峰值使用 HP cap 前最终结算伤害", async () => {
@@ -802,8 +1100,9 @@ export function registerHistoryAchievementTests(test) {
     await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 2, finalAttackDamage: 2, shieldAbsorbed: 0, resolutionId: "attack-2" });
     await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
     await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
-    assert.equal(tracker.recordFor(actor).achievementFacts.rescueCount, 2);
+    assert.equal(tracker.recordFor(actor).achievementFacts.rescueCount, 0);
     await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
+    await dispatcher.emit("playerRescued", { target: ally });
     const assault = { definitionId: "assault", category: "basic" };
     await dispatcher.emit("beforeCardUse", { source: actor, card: assault, cancelled: true });
     await dispatcher.emit("cardCommitted", { source: enemy, card: assault, usageContext: "action" });
@@ -811,6 +1110,7 @@ export function registerHistoryAchievementTests(test) {
     await dispatcher.emit("cardCommitted", { source: actor, card: assault, usageContext: "leverageAssault" });
     await dispatcher.emit("cardCommitted", { source: actor, card: { definitionId: "lightning" }, usageContext: "action" });
     assert.equal(tracker.recordFor(actor).achievementFacts.activeAssaultUses, 0);
+    assert.equal(tracker.recordFor(actor).achievementFacts.committedAssaultUses, 2);
     await dispatcher.emit("cardCommitted", { source: actor, card: assault, usageContext: "action" });
     await dispatcher.emit("cardUsed", { source: actor, card: { definitionId: "lightning", category: "tactic" }, resolved: true });
     await dispatcher.emit("afterDamage", { source: null, target: enemy, actualAmount: 3, shieldAbsorbed: 0, damageType: "lightning", metadata: { originPlayerId: actor.id } });
@@ -831,7 +1131,8 @@ export function registerHistoryAchievementTests(test) {
     const facts = playerResult.achievementFacts;
     assert.equal(facts.activeSkillUses, 1);
     assert.equal(facts.activeAssaultUses, 1);
-    assert.equal(facts.rescueCount, 3);
+    assert.equal(facts.committedAssaultUses, 3);
+    assert.equal(facts.rescueCount, 1);
     assert.equal(facts.maxTurnDamage, 3);
     assert.equal(facts.lightningCasts, 1);
     assert.equal(facts.lightningHits, 1);

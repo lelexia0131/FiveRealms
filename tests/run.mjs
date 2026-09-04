@@ -38794,7 +38794,7 @@ test("私人情报异步边界：PrivateRevealView.hide settle pending show Prom
 
 registerMatchPerformanceTests(test);
 registerHistoryStatsTests(test);
-registerHistoryAchievementTests(test);
+registerHistoryAchievementTests(test, { makeGame, makePlayer, instance });
 
 // ---- 开始界面与入局说明 ----
 

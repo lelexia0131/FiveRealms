@@ -165,7 +165,10 @@ function meets(definition, player, streak, persistentFacts, matchResult) {
     case "heavy_blow": return (facts.maxTurnDamage ?? 0) >= 3;
     case "damage_ten": return (player?.combatStats?.totalDamage ?? 0) >= 10;
     case "war_of_attrition": return (player?.combatStats?.damageTaken ?? 0) >= 5;
-    case "flawless_victory": return Boolean(player?.won) && Number.isFinite(facts.teammateDeaths) && facts.teammateDeaths === 0;
+    case "flawless_victory": return Boolean(player?.won)
+      && Boolean(player?.aliveAtEnd)
+      && Number.isFinite(facts.teammateDeaths)
+      && facts.teammateDeaths === 0;
     case "last_stand_duo": return Boolean(player?.won) && facts.clutchEnemyCounts?.includes?.(2);
     case "self_lightning": return Boolean(facts.selfLightningHit);
     case "single_punch": return (facts.maxSingleAttackDamage ?? 0) >= 3;
@@ -194,7 +197,7 @@ function meets(definition, player, streak, persistentFacts, matchResult) {
       .every((dimension) => Number(player?.scores?.[dimension]) > 100);
     case "accidental_success": {
       const humanFirepower = Number(player?.raw?.firepower);
-      return (facts.activeAssaultUses ?? 0) === 0
+      return (facts.committedAssaultUses ?? 0) === 0
         && Number.isFinite(humanFirepower)
         && matchResult.players.every((candidate) => candidate.playerId === player.playerId
           || humanFirepower >= Number(candidate?.raw?.firepower));

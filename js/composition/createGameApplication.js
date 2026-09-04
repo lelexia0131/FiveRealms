@@ -892,7 +892,8 @@ class MatchApplication {
           judgmentWorkflow,
           this.cardIntentRuntime,
           this.cardEffectRuntime,
-          this.publicCardPoolWorkflow
+          this.publicCardPoolWorkflow,
+          this.matchPerformanceSidecar.tracker
         ],
         randomPort:this.randomPort
       })
