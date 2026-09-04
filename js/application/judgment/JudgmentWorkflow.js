@@ -184,6 +184,7 @@ export function createJudgmentWorkflow(dependencies) {
       runtime.presentation.log(`${defender.name}获得判定牌，${requirementCount > 1 ? "本次格挡需求继续结算" : "此次攻击继续结算"}。`);
     } else {
       runtime.moveJudgmentToDiscard(card);
+      if (outcome.category === "tactic") runtime.presentation.showRadarSuccess?.(defender.id);
       if (outcome.immune) {
         runtime.presentation.log(requirementCount > 1
           ? `${defender.name}的「雷达」${requirementLabel}判定生效，免除1次格挡需求。`

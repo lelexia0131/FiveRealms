@@ -1464,6 +1464,39 @@ export class SoundManager {
 
   /*
   功能
+  合成轻触起音与上行和声组成的成就铭刻提示音。
+
+  调用方
+  SoundManager.play 的 achievementUnlock 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建一段 softNoise 与四个错峰 tone 音效节点。
+
+  调用函数
+  softNoise、tone。
+
+  边界与不变量
+  每条 Toast 开始显示时播放一次；总时长短于 Toast 停留时间，不与下一条队列提示叠音。
+  */
+  sound_achievementUnlock(time) {
+    this.softNoise(time, 0.05, 0.045, 900, 0.005);
+    this.tone(60, time, 0.42, "triangle", 0.11);
+    this.tone(67, time + 0.08, 0.55, "sine", 0.125);
+    this.tone(72, time + 0.17, 0.72, "triangle", 0.11);
+    this.tone(79, time + 0.27, 0.85, "sine", 0.07);
+  }
+
+  /*
+  功能
   合成噪声与下滑音组成的弃牌音效。
 
   调用方
@@ -1550,5 +1583,36 @@ export class SoundManager {
     this.tone(55, time, 0.52, "triangle", 0.11);
     this.tone(62, time + 0.018, 0.58, "sine", 0.075);
     this.tone(74, time + 0.05, 0.44, "sine", 0.045);
+  }
+
+  /*
+  功能
+  合成短促的雷达扫描完成确认音效。
+
+  调用方
+  SoundManager.play 的 radarSuccess 名称分派。
+
+  输入
+  Web Audio 开始时间。
+
+  输出
+  无返回值。
+
+  读取状态
+  SoundManager 音频图。
+
+  写入状态
+  创建一段上行 sweep 与两段确认音符，经 sfxGain 输出。
+
+  调用函数
+  sweep、tone。
+
+  边界与不变量
+  音效保持短促、低响度的科技扫描确认语义，不连接 musicGain，也不改变判定或动画生命周期。
+  */
+  sound_radarSuccess(time) {
+    this.sweep(520, 1480, time, 0.16, "sine", 0.21);
+    this.tone(79, time + 0.13, 0.2, "triangle", 0.15);
+    this.tone(83, time + 0.17, 0.24, "sine", 0.11);
   }
 }

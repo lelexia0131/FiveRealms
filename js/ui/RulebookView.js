@@ -345,7 +345,7 @@ export function buildRulebookPages() {
     {
       id:"victory",
       title:"阵营与胜利",
-      html:`${pageHead(2, "OBJECTIVE", "晨星 VS 暮影", "五人被分为 2 人小队与 3 人大队；你只需要与己方角色共同活到最后。")}
+      html:`${pageHead(2, "OBJECTIVE", "晨星 VS 暮影", "五人被分为 2 人小队与 3 人小队；你只需要与己方角色共同活到最后。")}
         <div class="rulebook-duel">
           <article class="faction-banner faction-dawn"><img src="./assets/characters/spirit-medic.svg" alt="晨星角色示意"><div class="faction-copy"><small>DAWN</small><strong>${TEAM_PRESENTATION.dawn.name}</strong><span>同阵营角色互为队友</span></div></article>
           <div class="duel-versus" aria-hidden="true"><i></i><b>VS</b><i></i></div>
@@ -389,7 +389,7 @@ export function buildRulebookPages() {
         </div>
         <div class="rulebook-rule-strip">
           <div><strong>二人小队补偿</strong><span>开局 ${small.initialHandCount} 张、每回合摸 ${small.drawCountPerTurn} 张、每回合可主动使用 ${small.attackLimitPerTurn} 张「突袭」、能量上限 ${small.maxEnergy}。</span></div>
-          <div><strong>三人大队基准</strong><span>开局 ${large.initialHandCount} 张、每回合摸 ${large.drawCountPerTurn} 张、每回合可主动使用 ${large.attackLimitPerTurn} 张「突袭」、能量上限 ${large.maxEnergy}。</span></div>
+          <div><strong>三人小队基准</strong><span>开局 ${large.initialHandCount} 张、每回合摸 ${large.drawCountPerTurn} 张、每回合可主动使用 ${large.attackLimitPerTurn} 张「突袭」、能量上限 ${large.maxEnergy}。</span></div>
           <div><strong>封印的例外</strong><span>封印生效时仍会获得能量并摸牌，但跳过出牌阶段，直接检查弃牌。</span></div>
         </div>`
     },
@@ -473,7 +473,7 @@ export function buildRulebookPages() {
         <div class="rulebook-resource-grid">
           <article class="resource-plate"><img src="./assets/ui/recover-glyph.svg" alt="生命图标"><h3>生命 HP</h3><div class="resource-demo"><b class="hp">4</b><i>受 1 点伤害 →</i><b class="hp">3</b><i>→</i><b class="hp">2</b></div><p>治疗不能超过最大生命。回合末手牌上限等于当前 HP，因此受伤也会压缩你能保留的手牌。</p></article>
           <article class="resource-plate"><img src="./assets/ui/shield-glyph.svg" alt="护盾图标"><h3>护盾</h3><div class="resource-demo"><b>伤害 2</b><i>→</i><b class="shield">护盾 1</b><i>→</i><b class="hp">HP -1</b></div><p>护盾先于生命承受伤害；每点护盾免疫 1 点伤害，吸收后会消耗。</p></article>
-          <article class="resource-plate"><img src="./assets/ui/charge-glyph.svg" alt="能量图标"><h3>能量</h3><div class="resource-demo"><b>+1</b><i>→</i><b>2 / 4</b><i>→ 技能</i><b>0 / 4</b></div><p>二人小队上限 ${small.maxEnergy}，三人大队上限 ${large.maxEnergy}；充能桩会让回合开始额外获得 1 点。</p></article>
+          <article class="resource-plate"><img src="./assets/ui/charge-glyph.svg" alt="能量图标"><h3>能量</h3><div class="resource-demo"><b>+1</b><i>→</i><b>2 / 4</b><i>→ 技能</i><b>0 / 4</b></div><p>二人小队上限 ${small.maxEnergy}，三人小队上限 ${large.maxEnergy}；充能桩会让回合开始额外获得 1 点。</p></article>
         </div>`
     },
     { id:"characters-one", title:"刃行者与守誓者", html:characterPage(14, CHARACTER_PAIRS[0], "锋刃与城垒", "刃行者用卡牌类别积蓄连势，守誓者用手牌与能量替队友承受压力。") },

@@ -16,7 +16,9 @@
   <link rel="stylesheet" href="./css/cards.css" />
   <link rel="stylesheet" href="./css/components.css" />
   <link rel="stylesheet" href="./css/rulebook.css" />
+  <link rel="stylesheet" href="./css/game-info.css" />
   <link rel="stylesheet" href="./css/history.css" />
+  <link rel="stylesheet" href="./css/achievements.css" />
   <link rel="stylesheet" href="./css/animations.css" />
 </head>
 
@@ -39,6 +41,9 @@
           </button>
           <button id="history-button" class="ghost-button history-entry-button" type="button">
             <span>历史档案馆</span><span aria-hidden="true">◇</span>
+          </button>
+          <button id="game-info-button" class="ghost-button history-entry-button" type="button">
+            <span>游戏说明</span><span aria-hidden="true">◇</span>
           </button>
           <div class="audio-controls">
             <button class="toggle-button audio-toggle-button" type="button" data-audio-toggle aria-pressed="true"><i
@@ -76,6 +81,8 @@
     </section>
 
     <section id="history-archive-screen" class="screen history-archive-screen is-hidden" aria-label="历史档案馆"></section>
+
+    <section id="game-info-screen" class="screen game-info-screen is-hidden" aria-label="游戏说明"></section>
 
     <section id="squad-selection-screen" class="screen squad-selection-screen is-hidden"
       aria-labelledby="squad-selection-title">
@@ -131,7 +138,7 @@
             <strong>3</strong>
           </span>
           <span class="squad-mode-copy">
-            <strong>三人大队</strong>
+            <strong>三人小队</strong>
             <span>2 名队友</span>
             <small>对抗 2 名敌人</small>
           </span>
@@ -219,6 +226,8 @@
           <button id="restart-button" class="ghost-button" type="button">重新征召</button>
         </div>
       </header>
+
+      <div id="achievement-toast-region" class="achievement-toast-region" aria-live="polite" aria-atomic="true"></div>
 
       <div id="battle-layout" class="battle-layout">
         <section class="battlefield" aria-label="对局桌面">

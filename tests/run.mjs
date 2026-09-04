@@ -157,8 +157,9 @@ import { InteractionController, hiddenSelectionMarkup, orderZoneSelectionSlots }
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
 import { MatchLogAdapter } from "../js/adapters/ui/MatchLogAdapter.js";
 import { RulebookView, buildRulebookPages, getRulebookCardView } from "../js/ui/RulebookView.js";
+import { GameInfoView, loadGameVersion } from "../js/ui/GameInfoView.js";
 import { PrivateRevealView } from "../js/ui/PrivateRevealView.js";
-import { AnimationController, LIGHTNING_HIT_DURATION_MS } from "../js/ui/animationController.js";
+import { AnimationController, LIGHTNING_HIT_DURATION_MS, RADAR_SUCCESS_DURATION_MS } from "../js/ui/animationController.js";
 import { JudgmentView } from "../js/ui/JudgmentView.js";
 import {
   CARD_CATEGORY_DISPLAY_ORDER,
@@ -203,6 +204,7 @@ import {
 import { configureAllAiRoster } from "./headless_match_setup.mjs";
 import { registerMatchPerformanceTests } from "./match_performance_test.mjs";
 import { registerHistoryStatsTests } from "./history_stats_test.mjs";
+import { registerHistoryAchievementTests } from "./history_achievements_test.mjs";
 import {
   CARD_AI_VALUES, ROLE_CARD_VALUE_DELTAS, cardPlayerValueTerms,
   getBaseCardAiValue, getRoleCardAiValue,
@@ -4026,7 +4028,7 @@ test("Match setup：二人小队在角色确认后生成真人 2 人阵营", asy
   await game.loopPromise;
 });
 
-test("Match setup：三人大队在角色确认后生成真人 3 人阵营", async () => {
+test("Match setup：三人小队在角色确认后生成真人 3 人阵营", async () => {
   const game = createGameApplication(makeUi(), () => 0.25);
   game.simulationMode = true;
   game.runGameLoop = async () => { };
@@ -4582,6 +4584,7 @@ async function frArch7ApplicationWorkflow() {
       payCardsFromHandAtomically: async (responder, cards, reason) => { payments.push({ responder, cards, reason }); return { status: "used", cards }; },
       setCurrentCard: () => { },
       log: () => { },
+      emitCardCommitted: async () => { },
       emitCardUsed: async () => { },
       getForceAiRescueHuman: () => false,
       setThinking: () => { },
@@ -4624,6 +4627,7 @@ async function frArch7ApplicationWorkflow() {
     payCardsFromHandAtomically: async () => ({ status: "used", cards: [] }),
     setCurrentCard: () => { },
     log: () => { },
+    emitCardCommitted: async () => { },
     emitCardUsed: async () => { },
     getForceAiRescueHuman: () => false,
     setThinking: () => { },
@@ -5022,6 +5026,7 @@ function frArch8PortsMinimalSurface() {
     showJudgment: (...args) => presentationCalls.push(["judgment", ...args]),
     hideJudgment: () => presentationCalls.push(["hide-judgment"]),
     showCurrentEffect: (...args) => presentationCalls.push(["effect", ...args]),
+    showRadarSuccess: (...args) => presentationCalls.push(["radar-success", ...args]),
     showLightningHit: (...args) => presentationCalls.push(["lightning", ...args]),
     showCurrentAction: (...args) => presentationCalls.push(["action", ...args]),
     playActionCue: (...args) => presentationCalls.push(["cue", ...args]),
@@ -5039,10 +5044,12 @@ function frArch8PortsMinimalSurface() {
   });
   presentation.showDamageFeedback("p1", 1, "assault", "normal");
   presentation.showMitigationFeedback("p1", 1, "guardianAid");
+  presentation.showRadarSuccess("p1");
   presentation.refresh();
-  assert.deepEqual(presentationCalls.slice(0, 3), [
+  assert.deepEqual(presentationCalls.slice(0, 4), [
     ["damage", "p1", 1, "assault", "normal"],
     ["mitigation", "p1", 1, "guardianAid"],
+    ["radar-success", "p1"],
     ["refresh"]
   ]);
   assert.throws(() => createPresentationPort({ log() { } }), /showDamageFeedback/);
@@ -5275,6 +5282,79 @@ async function frArch8JudgmentWorkflowDefenseTrace() {
 }
 
 test("判定轨迹：draw→show/log→reveal→destination→handVersion→restore", frArch8JudgmentWorkflowDefenseTrace);
+
+/*
+功能
+验证雷达成功反馈只由最终 tactical 判定结果触发一次。
+
+调用方
+当前雷达 Presentation 回归测试。
+
+输入
+一次 tactical 与一次 basic 的真实防御判定 workflow。
+
+输出
+无返回值；断言失败时抛出异常。
+
+读取状态
+fake defender、判定牌与 workflow presentation trace。
+
+写入状态
+fake 判定牌去向与 feedback trace。
+
+调用函数
+createJudgmentWorkflow、judgeDefense。
+
+边界与不变量
+只有 Domain outcome.category === "tactic" 才可触发 Radar Success；非 tactical 不得触发。
+*/
+async function frRadarSuccessPresentationSemantics() {
+  const defender = { id: "radar-defender", name: "雷达守方", alive: true, equipment: { definitionId: "defenseDevice" }, hand: [], handVersion: 0, battleTeam: "dawn" };
+  const attacker = { id: "radar-attacker", name: "雷达攻方", alive: true };
+  const state = { gameId: "radar-vfx", isGameOver: false, phase: "play", stateVersion: 0, players: [defender, attacker] };
+  const cards = [
+    { id: "radar-tactic", name: "战术判定", category: "tactic", art: "art" },
+    { id: "radar-basic", name: "基础判定", category: "basic", art: "art" }
+  ];
+  const radarSuccess = [], radarSounds = [], radarVfx = [];
+  const radarUi = {
+    playSound: (name) => radarSounds.push(name),
+    animationController: { startRadarSuccess: (playerId, root) => radarVfx.push([playerId, root]) },
+    render: () => { }
+  };
+  radarUi.playRadarSuccess = (playerId) => {
+    radarSuccess.push(playerId);
+    UIManager.prototype.playRadarSuccess.call(radarUi, playerId);
+  };
+  const presentation = createGamePresentationAdapter({
+    log: () => { },
+    getPlayerById: (playerId) => state.players.find((player) => player.id === playerId) ?? null,
+    getCardById: () => null,
+    ui: radarUi,
+    renderTarget: {}
+  });
+  const workflow = createJudgmentWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    emitEvent: async () => { },
+    drawJudgmentCard: () => cards.shift(),
+    syncDeckAliases: () => { },
+    moveJudgmentToDiscard: () => { },
+    moveJudgmentToHand: (card) => defender.hand.push(card),
+    observeJudgmentCard: () => { },
+    presentation,
+    setCurrentJudgmentProjection: () => { }
+  });
+  const tactical = await workflow.judgeDefense(attacker, defender, {});
+  const basic = await workflow.judgeDefense(attacker, defender, {});
+  assert.equal(tactical.category, "tactic");
+  assert.equal(basic.category, "basic");
+  assert.deepEqual(radarSuccess, [defender.id]);
+  assert.deepEqual(radarSounds, ["radarSuccess"]);
+  assert.deepEqual(radarVfx.map(([playerId]) => playerId), [defender.id]);
+}
+
+test("UI·雷达反馈：仅最终战术牌判定触发一次成功语义", frRadarSuccessPresentationSemantics);
 
 /*
 功能
@@ -6225,7 +6305,7 @@ function installFrArchTrace(game) {
 makePlayer、makeGame、instance、installFrArchTrace、Game.playCard。
 
 边界与不变量
-trace 序列必须与迁移前逐项一致。
+  trace 序列必须包含反制窗口前的 canonical cardCommitted 边界，其余顺序保持不变。
 */
 async function frArchAssaultEventTrace() {
   const actor = makePlayer("fr-trace-actor", 0, "dawn", "ai", 0);
@@ -6241,6 +6321,7 @@ async function frArchAssaultEventTrace() {
     "beforeCardUse",
     "targetSelected",
     "beforeCardResolve",
+    "cardCommitted",
     "beforeDamage",
     "beforeHpDamage",
     "afterDamage",
@@ -9576,6 +9657,135 @@ test("充能桩：只给回合能量额外+1", () => {
 
 // ---- 回收站 ----
 
+test("回收站：正式打出后在反制窗口前立即摸牌且只触发一次", async () => {
+  const source = makePlayer("recycle-immediate-source", 0, "dawn", "human"),
+    responder = makePlayer("recycle-immediate-responder", 1, "dusk", "human"),
+    tactic = instance("exposeWeakness"),
+    availableCounter = instance("counter"),
+    drawn = instance("charge");
+  let responseSnapshot = null;
+  const { game } = makeGame([source, responder], {
+    response: (request) => {
+      if (request.cardId === tactic.id) {
+        responseSnapshot = {
+          uses: source.turnFlags.recycleDeviceUses,
+          handIds: source.hand.map((card) => card.id)
+        };
+      }
+      return false;
+    }
+  });
+  source.equipment = instance("recycleDevice");
+  source.hand.push(tactic);
+  responder.hand.push(availableCounter);
+  game.state.deck.cards.push(drawn);
+  let committedCount = 0;
+  game.eventDispatcher.on("cardCommitted", "test:recycle-immediate-commit", (event) => {
+    if (event.card === tactic) committedCount += 1;
+  });
+  assert.equal(await game.playCard(source, tactic, []), true);
+  assert.deepEqual(responseSnapshot, { uses: 1, handIds: [drawn.id] });
+  assert.equal(source.turnFlags.recycleDeviceUses, 1);
+  assert.deepEqual(source.hand, [drawn]);
+  assert.equal(committedCount, 1);
+  assert.equal(
+    game.state.logs.filter((entry) => entry.message.includes("的「回收站」触发")).length,
+    1
+  );
+});
+
+test("回收站：原战术被敌人反制后已完成的摸牌不回滚", async () => {
+  const source = makePlayer("recycle-countered-source", 0, "dawn", "human"),
+    responder = makePlayer("recycle-countered-responder", 1, "dusk", "human"),
+    tactic = instance("exposeWeakness"),
+    counter = instance("counter"),
+    drawn = instance("charge"),
+    { game } = makeGame([source, responder], {
+      response: (request) => request.cardId === tactic.id
+    });
+  source.equipment = instance("recycleDevice");
+  source.hand.push(tactic);
+  responder.hand.push(counter);
+  game.state.deck.cards.push(drawn);
+  assert.equal(await game.playCard(source, tactic, []), true);
+  assert.equal(source.turnFlags.recycleDeviceUses, 1);
+  assert.deepEqual(source.hand, [drawn]);
+  assert.equal(source.statuses.exposeWeakness, undefined);
+  assert.ok(game.state.deck.discardPile.includes(tactic));
+  assert.ok(game.state.deck.discardPile.includes(counter));
+});
+
+test("回收站：即时摸到的反制可在同一条多层反制链使用", async () => {
+  const source = makePlayer("recycle-chain-source", 0, "dawn", "human"),
+    responder = makePlayer("recycle-chain-responder", 1, "dusk", "human"),
+    tactic = instance("exposeWeakness"),
+    firstCounter = instance("counter"),
+    drawnCounter = instance("counter"),
+    secondRecycleDraw = instance("block");
+  const responseTrace = [];
+  const { game } = makeGame([source, responder], {
+    response: (request) => {
+      responseTrace.push({
+        targetPlayerId: request.targetPlayerId,
+        cardId: request.cardId,
+        legalCardIds: [...request.legalCardIds]
+      });
+      if (request.targetPlayerId === responder.id && request.cardId === tactic.id) {
+        assert.deepEqual(source.hand, [drawnCounter]);
+        return true;
+      }
+      if (request.targetPlayerId === source.id && request.cardId === firstCounter.id) {
+        assert.ok(request.legalCardIds.includes(drawnCounter.id));
+        return true;
+      }
+      return false;
+    }
+  });
+  source.equipment = instance("recycleDevice");
+  source.hand.push(tactic);
+  responder.hand.push(firstCounter);
+  game.state.deck.cards.push(secondRecycleDraw, drawnCounter);
+  const committedCardIds = [];
+  game.eventDispatcher.on("cardCommitted", "test:recycle-chain-commits", (event) => {
+    committedCardIds.push(event.card.id);
+  });
+  assert.equal(await game.playCard(source, tactic, []), true);
+  assert.deepEqual(responseTrace.map((entry) => entry.targetPlayerId), [responder.id, source.id]);
+  assert.deepEqual(committedCardIds, [tactic.id, firstCounter.id, drawnCounter.id]);
+  assert.equal(source.turnFlags.recycleDeviceUses, 2);
+  assert.equal(source.hand.includes(drawnCounter), false);
+  assert.ok(source.hand.includes(secondRecycleDraw));
+  assert.ok(game.state.deck.discardPile.includes(firstCounter));
+  assert.ok(game.state.deck.discardPile.includes(drawnCounter));
+  assert.equal(source.statuses.exposeWeakness.stacks, 1);
+});
+
+test("回收站：正式 commit 前取消或非法的战术不触发", async () => {
+  const source = makePlayer("recycle-precommit-source", 0, "dawn", "human"),
+    ally = makePlayer("recycle-precommit-ally", 1, "dawn", "human"),
+    enemy = makePlayer("recycle-precommit-enemy", 2, "dusk", "human"),
+    illegalAssault = instance("assault"),
+    cancelledTactic = instance("exposeWeakness"),
+    drawn = instance("charge"),
+    { game } = makeGame([source, ally, enemy]);
+  source.equipment = instance("recycleDevice");
+  source.hand.push(illegalAssault, cancelledTactic);
+  game.state.deck.cards.push(drawn);
+  let committedCount = 0;
+  game.eventDispatcher.on("cardCommitted", "test:recycle-precommit-count", () => {
+    committedCount += 1;
+  });
+  assert.equal(await game.playCard(source, illegalAssault, [ally]), false);
+  game.eventDispatcher.on("beforeCardResolve", "test:recycle-precommit-cancel", (event) => {
+    if (event.card === cancelledTactic) event.cancelled = true;
+  });
+  assert.equal(await game.playCard(source, cancelledTactic, []), true);
+  assert.equal(source.turnFlags.recycleDeviceUses, 0);
+  assert.equal(committedCount, 0);
+  assert.ok(source.hand.includes(illegalAssault));
+  assert.ok(game.state.deck.cards.includes(drawn));
+});
+
 test("回收站：每回合前两张战术各摸1且被反制也触发", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk", "human");
   const { game }
@@ -9731,6 +9941,8 @@ async function frArch10RecycleDeviceTrigger() {
   assert.match(compositionSource, /application\.recycleDeviceTrigger\.register\(\)/);
   const triggerSource = await readFile(projectFile("js/application/trigger/RecycleDeviceTrigger.js"), "utf8");
   assert.match(triggerSource, /canTriggerRecycleDevice/);
+  assert.match(triggerSource, /onEvent\("cardCommitted"/);
+  assert.doesNotMatch(triggerSource, /onEvent\("cardUsed"/);
 }
 
 test("回收站触发：predicate 在 Domain，trigger 在 Application", frArch10RecycleDeviceTrigger);
@@ -27267,6 +27479,140 @@ test("AI·回收站：反制响应使用战术后按同一 global-turn 额度补
   assert.equal(responder.handCount, 1);
 });
 
+test("AI·回收站：Game 与 Simulator 在同一 response boundary 已更新反制可用性", async () => {
+  const realSource = makePlayer("recycle-parity-source", 0, "dawn", "human"),
+    realResponder = makePlayer("recycle-parity-responder", 1, "dusk", "human"),
+    realTactic = instance("exposeWeakness"),
+    realResponderCounter = instance("counter"),
+    realDrawnCounter = instance("counter");
+  let realBoundary = null;
+  const { game } = makeGame([realSource, realResponder], {
+    response: (request) => {
+      if (request.cardId === realTactic.id) {
+        realBoundary = {
+          handCount: realSource.hand.length,
+          counterAvailability: realSource.hand.some((card) => card.definitionId === "counter") ? 1 : 0,
+          recycleDeviceUses: realSource.turnFlags.recycleDeviceUses
+        };
+      }
+      return false;
+    }
+  });
+  realSource.equipment = instance("recycleDevice");
+  realSource.hand.push(realTactic);
+  realResponder.hand.push(realResponderCounter);
+  game.state.deck.cards.push(realDrawnCounter);
+  assert.equal(await game.playCard(realSource, realTactic, []), true);
+
+  const simulatedState = {
+    remainingCardCounts: { counter: 1 },
+    players: [
+      {
+        id: realSource.id,
+        seatIndex: 0,
+        battleTeam: "dawn",
+        alive: true,
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        handCount: 1,
+        hand: [{ id: "simulated-tactic", definitionId: "exposeWeakness" }],
+        equipmentDefinitionId: "recycleDevice",
+        equipmentRetentionProbability: 1,
+        recycleDeviceUses: 0,
+        exposeWeaknessStacks: 0
+      },
+      {
+        id: realResponder.id,
+        seatIndex: 1,
+        battleTeam: "dusk",
+        alive: true,
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        handCount: 1,
+        hand: [{ id: "simulated-responder-counter", definitionId: "counter" }]
+      }
+    ]
+  };
+  let simulatedBoundary = null;
+  const simulated = new Simulator(simulatedState, {
+    decideCounter: (world) => {
+      const actor = world.players.find((player) => player.id === realSource.id);
+      simulatedBoundary = {
+        handCount: actor.handCount,
+        counterAvailability: queryPlayerHandProbability(
+          world.probabilityState,
+          actor,
+          "counter"
+        ).probability,
+        recycleDeviceUses: actor.recycleDeviceUses
+      };
+      return false;
+    }
+  }).apply(
+    simulatedState,
+    {
+      type: "card",
+      card: { ...CARD_DEFINITIONS.exposeWeakness, id: "simulated-tactic" },
+      targets: []
+    },
+    realSource.id
+  );
+  assert.deepEqual(simulatedBoundary, realBoundary);
+  const simulatedSource = simulated.players.find((player) => player.id === realSource.id);
+  assert.equal(simulatedSource.handCount, 1);
+  assert.equal(
+    queryPlayerHandProbability(simulated.probabilityState, simulatedSource, "counter").probability,
+    1
+  );
+});
+
+test("AI·回收站：commit 后 root 效果重放不会重复触发", () => {
+  const state = {
+    remainingCardCounts: { counter: 1 },
+    players: [
+      {
+        id: "recycle-replay-source",
+        seatIndex: 0,
+        battleTeam: "dawn",
+        alive: true,
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        handCount: 1,
+        equipmentDefinitionId: "recycleDevice",
+        equipmentRetentionProbability: 1,
+        recycleDeviceUses: 1,
+        exposeWeaknessStacks: 0
+      },
+      {
+        id: "recycle-replay-target",
+        seatIndex: 1,
+        battleTeam: "dusk",
+        alive: true,
+        hp: 4,
+        maxHp: 4,
+        shield: 0,
+        handCount: 0
+      }
+    ]
+  };
+  const simulator = new Simulator(state);
+  const rootAction = createAction({
+    type: "card",
+    actorId: "recycle-replay-source",
+    cardId: "exposeWeakness",
+    cardInstanceId: "already-committed-tactic",
+    targetIds: []
+  });
+  const { resolvedWorld } = simulator.buildRootFlipWorlds(state, rootAction, 1);
+  const source = resolvedWorld.players.find((player) => player.id === "recycle-replay-source");
+  assert.equal(source.recycleDeviceUses, 1);
+  assert.equal(source.handCount, 1);
+  assert.equal(queryPlayerHandProbability(resolvedWorld.probabilityState, source, "counter").probability, 1);
+});
+
 test("AI·回收站：模拟换装把新实例次数重置为0", () => {
   const state = {
     players: [{
@@ -38197,6 +38543,7 @@ test("私人情报异步边界：PrivateRevealView.hide settle pending show Prom
 
 registerMatchPerformanceTests(test);
 registerHistoryStatsTests(test);
+registerHistoryAchievementTests(test);
 
 // ---- 开始界面与入局说明 ----
 
@@ -38222,8 +38569,9 @@ test("UI·入局说明：二十三页目录覆盖完整新手路径且页面 ID 
   ]) assert.match(content, new RegExp(required));
 });
 
-test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩家视角", () => {
+test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩家视角", async () => {
   const pages = Object.fromEntries(buildRulebookPages().map((page) => [page.id, page.html]));
+  const rulebookCss = await readFile(projectFile("css/rulebook.css"), "utf8");
   assert.doesNotMatch(pages.cover, /rulebook-cover-emblem|rulebook-cover-legend|阵营对抗|回合战斗|26 张正式卡|8 名角色/);
   assert.match(
     pages.cover,
@@ -38269,6 +38617,7 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(pages["horizontal-card-view"], /公共牌池/);
   assert.match(pages["example-one"], /<h2>从摸牌到一次格挡。<\/h2>/);
   assert.doesNotMatch(pages["example-one"], /漫画实战：/);
+  assert.match(rulebookCss, /\.callout-one, \.callout-three, \.callout-four, \.callout-five\s*\{[^}]*color:\s*var\(--text-primary\)[^}]*filter:\s*none;/s);
 });
 
 test("UI·入局说明：二十六张正式卡均以真实定义与素材逐张图解", () => {
@@ -38371,6 +38720,139 @@ test("UI·入局说明：打开、翻页与关闭统一触发现有激活音效�
     "sound", "close"
   ]);
 });
+
+/*
+功能
+验证游戏说明页只读取 package.json 版本、发布包不复制清单，并保留指定正文与一屏约束。
+
+调用方
+当前测试。
+
+输入
+仓库页面、样式、发布脚本与 package.json；GameInfoView 使用隔离 DOM 替身。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+游戏说明页运行时标记、项目清单版本和浏览器资源样式。
+
+写入状态
+隔离 root 的 innerHTML 与 click listener。
+
+调用函数
+loadGameVersion、GameInfoView.show、GameInfoView.handleClick。
+
+边界与不变量
+可见文案不得扩写；版本只从源码 package.json 读取且发布包不复制该文件；样式不得滚动或整体缩放。
+*/
+async function gameInfoUsesCanonicalVersionAndSpecifiedCopy() {
+  const [index, css, releaseScript, packageSource] = await Promise.all([
+    readFile(projectFile("index.html"), "utf8"),
+    readFile(projectFile("css/game-info.css"), "utf8"),
+    readFile(projectFile("tools/build_release.ps1"), "utf8"),
+    readFile(projectFile("package.json"), "utf8")
+  ]);
+  const packageMetadata = JSON.parse(packageSource);
+  const fetchedUrls = [];
+  const version = await loadGameVersion(async (url) => {
+    fetchedUrls.push(String(url));
+    return { ok:true, json:async () => packageMetadata };
+  });
+  assert.equal(version, packageMetadata.version);
+  assert.match(fetchedUrls[0], /package\.json$/);
+
+  const root = makeInteractiveElement();
+  let loadCount = 0;
+  let backCount = 0;
+  const view = new GameInfoView(root, () => { backCount += 1; }, async () => {
+    loadCount += 1;
+    return version;
+  });
+  await view.show();
+  await view.show();
+  assert.equal(loadCount, 1, "重复进入不得重复维护或读取第二份版本值");
+  root.click(clickTarget("[data-game-info-back]"));
+  assert.equal(backCount, 1);
+
+  for (const copy of [
+    "五域纷争", "FIVE REALMS", `v${packageMetadata.version}`, "Lelexia", "2026.09.04", "关于游戏",
+    "《五域纷争》是一款以阵营对抗、卡牌博弈与角色能力为核心的策略游戏。",
+    "游戏将根据实际对局体验持续进行规则调整、平衡优化、Bug 修复与界面改进。",
+    "反馈与联系", "colasmith3783@gmail.com", "2100532928@qq.com",
+    "https://github.com/lelexia0131/FiveRealms", "版权说明",
+    "© 2026 Five Realms. All Rights Reserved.", "感谢游玩《五域纷争》"
+  ]) assert.ok(root.innerHTML.includes(copy), `缺少游戏说明文案：${copy}`);
+  assert.doesNotMatch(root.innerHTML, /策略 · 博弈 · 阵营对抗|探索五域|命运由你书写|欢迎来到五域纷争/);
+  assert.match(root.innerHTML, /target="_blank" rel="noopener noreferrer"/);
+  assert.match(index, /href="\.\/css\/game-info\.css"/);
+  assert.match(css, /\.game-info-screen\s*\{[^}]*height:\s*100vh[^}]*overflow:\s*hidden/s);
+  assert.match(css, /@media\s*\(max-height:\s*800px\)/);
+  assert.doesNotMatch(css, /overflow-y:\s*auto|\bzoom\s*:|transform:\s*scale\(/);
+  assert.match(releaseScript, /ConvertFrom-Json[\s\S]*\$PackageMetadata\.version/);
+  const runtimeRootFiles = releaseScript.match(/\$runtimeRootFiles\s*=\s*@\(([\s\S]*?)\)/);
+  assert.ok(runtimeRootFiles, "发布脚本必须声明根目录文件白名单");
+  assert.doesNotMatch(runtimeRootFiles[1], /["']package\.json["']/, "发布目录不得包含 package.json");
+  assert.match(releaseScript, /"css\/game-info\.css"/);
+}
+
+test("UI·游戏说明：版本、指定正文、安全外链与一屏样式使用稳定资源", gameInfoUsesCanonicalVersionAndSpecifiedCopy);
+
+/*
+功能
+验证游戏说明入口复用首页按钮语言，并通过 UIManager 顶层生命周期往返首页。
+
+调用方
+当前测试。
+
+输入
+index.html 与隔离的 UIManager 页面元素替身。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+首页入口顺序和各顶层 screen 的显隐状态。
+
+写入状态
+隔离 screen classList、音乐与渲染调用记录。
+
+调用函数
+UIManager.showGameInfo、UIManager.hideGameInfo、UIManager.showStart。
+
+边界与不变量
+进入和返回不启动征召或游戏；历史入口与开始入口保留原顺序和样式。
+*/
+async function gameInfoUsesExistingTopLevelLifecycle() {
+  const index = await readFile(projectFile("index.html"), "utf8");
+  assert.match(index, /id="start-button"[\s\S]*id="history-button"[\s\S]*id="game-info-button"/);
+  assert.match(index, /id="game-info-button" class="ghost-button history-entry-button"/);
+
+  const elements = Object.fromEntries([
+    "start_screen", "history_archive_screen", "game_info_screen", "squad_selection_screen", "selection_screen", "game_screen"
+  ].map((name) => [name, makeInteractiveElement()]));
+  elements.start_screen.classList.remove("is-hidden");
+  const calls = [];
+  const context = {
+    elements,
+    sound: { playMenuMusic: () => calls.push("music") },
+    gameInfoView: { show:async () => calls.push("render") },
+    clearLog: () => calls.push("clear"),
+    showStart: UIManager.prototype.showStart
+  };
+  await UIManager.prototype.showGameInfo.call(context);
+  assert.equal(elements.start_screen.classList.contains("is-hidden"), true);
+  assert.equal(elements.history_archive_screen.classList.contains("is-hidden"), true);
+  assert.equal(elements.game_info_screen.classList.contains("is-hidden"), false);
+  assert.deepEqual(calls, ["music", "render"]);
+
+  UIManager.prototype.hideGameInfo.call(context);
+  assert.equal(elements.start_screen.classList.contains("is-hidden"), false);
+  assert.equal(elements.game_info_screen.classList.contains("is-hidden"), true);
+  assert.deepEqual(calls, ["music", "render", "music", "clear"]);
+}
+
+test("UI·游戏说明：入口与返回复用现有顶层页面生命周期", gameInfoUsesExistingTopLevelLifecycle);
 
 test("UI·对局标题：仅保留文字且首页品牌保持不变", async () => {
   const [index, componentsCss] = await Promise.all([
@@ -38490,7 +38972,7 @@ test("UI·编队方式：角色选择页显示 two、three 与 random 的征召�
   assert.equal(elements.candidate_grid.innerHTML, "");
   for (const [mode, eyebrow, title, copy] of [
     ["two", "晨星 · 角色征召", "二人小队征召", "你将拥有 1 名队友"],
-    ["three", "暮影 · 角色征召", "三人大队征召", "你将拥有 2 名队友"],
+    ["three", "暮影 · 角色征召", "三人小队征召", "你将拥有 2 名队友"],
     ["random", "命运 · 角色征召", "随机征召", "阵营规模将在本局随机决定"]
   ]) {
     UIManager.prototype.showSelection.call(context, [], mode);
@@ -39310,43 +39792,6 @@ test("UI·横向卡牌拖拽：统一绑定幂等且动态重渲染与容器外�
   }
 });
 
-test("UI·横向卡牌位置：主手牌重绘保留原位置并按新最大距离收束", () => {
-  const human = makePlayer("scroll-human", 0, "dawn", "human"),
-    enemy = makePlayer("scroll-enemy", 1, "dusk");
-  human.hand.push(
-    instance("assault"), instance("block"), instance("charge"), instance("shield"),
-    instance("scout"), instance("transfer")
-  );
-  const { game } = makeGame([human, enemy]);
-  let renderedScrollWidth = 800;
-  const hand = {
-    scrollLeft: 200,
-    scrollWidth: 900,
-    clientWidth: 300,
-    _innerHTML: "",
-    get innerHTML() { return this._innerHTML; },
-    set innerHTML(value) {
-      this._innerHTML = value;
-      this.scrollLeft = 0;
-      this.scrollWidth = renderedScrollWidth;
-    }
-  };
-  const fake = {
-    elements: { human_hand: hand, hand_hint: { textContent: "" } },
-    discardState: null,
-    targetState: null,
-    isInteractionActive: () => false
-  };
-  UIManager.prototype.renderHand.call(fake, game, human);
-  assert.equal(hand.scrollLeft, 200, "普通手牌重绘不得回到最左侧");
-
-  hand.scrollLeft = 400;
-  renderedScrollWidth = 600;
-  human.hand.pop();
-  UIManager.prototype.renderHand.call(fake, game, human);
-  assert.equal(hand.scrollLeft, 300, "内容缩短后必须 clamp 到新的 maxScrollLeft");
-});
-
 test("UI·横向卡牌位置：敌方席位重建后按玩家 ID 分别恢复位置", () => {
   const previousDocument = globalThis.document;
   const human = makePlayer("scroll-viewer", 0, "dawn", "human"),
@@ -39398,42 +39843,6 @@ test("UI·横向卡牌位置：敌方席位重建后按玩家 ID 分别恢复位
     if (previousDocument === undefined) delete globalThis.document;
     else globalThis.document = previousDocument;
   }
-});
-
-test("UI·横向卡牌位置：互利同一请求重绘保留并 clamp，新请求不继承旧位置", () => {
-  let nextScrollWidth = 700, scroller = null;
-  const element = {
-    _innerHTML: "",
-    classList: { add() { }, remove() { } },
-    querySelector: (selector) => selector === ".tableau-cards" ? scroller : null,
-    get innerHTML() { return this._innerHTML; },
-    set innerHTML(value) {
-      this._innerHTML = value;
-      scroller = value.includes("tableau-cards")
-        ? { scrollLeft: 0, scrollWidth: nextScrollWidth, clientWidth: 300 }
-        : null;
-    }
-  };
-  const cards = [instance("assault"), instance("block"), instance("charge")];
-  const view = new PublicPoolView(element);
-  view.show(cards, { interactive: true });
-  assert.equal(scroller.scrollLeft, 0);
-
-  view.pending = { selected: new Set() };
-  scroller.scrollLeft = 220;
-  view.show(cards, { interactive: true, selectedId: cards[1].id });
-  assert.equal(scroller.scrollLeft, 220, "同一互利请求选择牌后不得回到左侧");
-
-  scroller.scrollLeft = 380;
-  nextScrollWidth = 500;
-  view.show(cards.slice(0, 2), { interactive: true, selectedId: cards[0].id });
-  assert.equal(scroller.scrollLeft, 200, "牌池缩短后必须 clamp 到新的最右侧");
-
-  view.pending = null;
-  view.hide();
-  nextScrollWidth = 700;
-  view.show(cards, { interactive: true });
-  assert.equal(scroller.scrollLeft, 0, "新公开牌池请求不得继承旧请求位置");
 });
 
 test("UI·手牌：电脑玩家模板只暴露手牌数量", () => {
@@ -41665,6 +42074,76 @@ test("UI·闪电反馈：样式包含外扩锯齿主弧、分叉、火花且不�
   assert.match(source, /@keyframes lightningPanelShock/);
 });
 
+test("UI·雷达反馈：绿色扫描 overlay 单实例且动画结束后清理", () => {
+  const makeElement = (className = "") => {
+    const children = [];
+    const listeners = new Map();
+    const styleValues = new Map();
+    const element = {
+      className,
+      classList: {
+        add: (...names) => names.forEach((name) => { element.className += `${element.className ? " " : ""}${name}`; }),
+        remove: (...names) => names.forEach((name) => { element.className = element.className.split(" ").filter((value) => !names.includes(value)).join(" "); }),
+        contains: (name) => element.className.split(" ").includes(name)
+      },
+      children,
+      isConnected: true,
+      owner: null,
+      style: {
+        setProperty: (name, value) => styleValues.set(name, value),
+        getPropertyValue: (name) => styleValues.get(name),
+        removeProperty: (name) => styleValues.delete(name)
+      },
+      setAttribute(name, value) { this[name] = value; },
+      addEventListener(type, handler) { listeners.set(type, handler); },
+      append(child) { child.owner = this; children.push(child); },
+      remove() {
+        this.isConnected = false;
+        if (this.owner) this.owner.children.splice(this.owner.children.indexOf(this), 1);
+      },
+      listeners
+    };
+    return element;
+  };
+  const panel = makeElement("player-seat");
+  panel.getBoundingClientRect = () => ({ left: 80, top: 120, width: 260, height: 160 });
+  const body = makeElement("body");
+  const doc = {
+    ownerDocument: null,
+    body,
+    createElement: () => makeElement(),
+    querySelector: (selector) => selector.includes("radar-player") ? panel : null,
+    defaultView: {
+      addEventListener: () => { },
+      removeEventListener: () => { }
+    }
+  };
+  const controller = new AnimationController();
+  assert.equal(controller.startRadarSuccess("radar-player", doc), true);
+  assert.equal(body.children.length, 1);
+  const first = body.children[0];
+  assert.equal(first.className, "radar-success-vfx-overlay");
+  assert.equal(first.children.length, 3);
+  assert.equal(first.children[0].className, "radar-success-scan");
+  assert.equal(first.children[1].className, "radar-success-pulse");
+  assert.equal(first.children[2].className, "radar-success-particles");
+  assert.equal(first.children[2].children.length, 12);
+  assert.equal(first["aria-hidden"], "true");
+  assert.equal(first.style.getPropertyValue("--radar-success-left"), "70px");
+  assert.equal(first.style.getPropertyValue("--radar-success-duration"), `${RADAR_SUCCESS_DURATION_MS}ms`);
+  controller.startRadarSuccess("radar-player", doc);
+  assert.equal(first.isConnected, false, "连续判定必须清理旧扫描实例");
+  assert.equal(body.children.length, 1);
+  const second = body.children[0];
+  second.listeners.get("animationend")({ target: second, animationName: "radarSuccessLifetime" });
+  assert.equal(body.children.length, 0);
+  assert.equal(controller.activeRadarSuccess.size, 0);
+  controller.startRadarSuccess("radar-player", doc);
+  controller.clear();
+  assert.equal(body.children.length, 0);
+  assert.equal(controller.activeRadarSuccess.size, 0);
+});
+
 /*
 功能
 验证结算 VFX 样式包含全部授权效果且 overlay 不拦截操作。
@@ -41714,6 +42193,16 @@ async function frVfxCssContract() {
   assert.match(source, /\.resolution-vfx-overlay\.is-guardian-aid\s*\{[^}]*resolutionVfxLifetime/);
   assert.match(source, /\.resolution-vfx-overlay\.is-guardian-aid::before\s*\{[^}]*guardianAidBarrier \.68s/);
   assert.match(source, /\.resolution-vfx-overlay\.is-guardian-aid::after\s*\{[^}]*guardianAidRipple \.68s/);
+  assert.match(source, /\.radar-success-vfx-overlay\s*\{[^}]*pointer-events:\s*none/);
+  assert.match(source, /\.radar-success-vfx-overlay::after\s*\{[^}]*border-top-color:/);
+  assert.match(source, /\.radar-success-particles\s*\{[^}]*repeating-radial-gradient/);
+  assert.match(source, /\.radar-success-particles::before\s*\{[^}]*repeating-linear-gradient/);
+  assert.match(source, /\.radar-success-particles::after\s*\{[^}]*conic-gradient/);
+  assert.match(source, /\.radar-success-particle\s*\{[^}]*box-shadow:/);
+  assert.match(source, /@keyframes radarSuccessSweep/);
+  assert.match(source, /@keyframes radarSuccessMatrixSweep/);
+  assert.match(source, /@keyframes radarSuccessPulse/);
+  assert.match(source, /@keyframes radarSuccessParticleFlicker/);
   const huntDurationMs = Number(controllerSource.match(/const HUNT_HIT_DURATION_MS = (\d+);/)?.[1]);
   const burningFieldDurationMs = Number(
     controllerSource.match(/const BURNING_FIELD_HIT_DURATION_MS = (\d+);/)?.[1]
@@ -42227,9 +42716,9 @@ test("UI·音频控制：初始化与调整同步 BGM 和音效音量", uiAudioV
 
 // ---------- 音频与 BGM ----------
 
-test("音频：合成声音覆盖通用反馈与准备阶段卡牌选择且 lightning 改为采样播放", async () => {
+test("音频：合成声音覆盖通用反馈、雷达成功与准备阶段卡牌选择且 lightning 改为采样播放", async () => {
   const sound = new SoundManager();
-  for (const name of ["draw", "select", "cardSelect", "playCard", "hit", "skill", "discard", "heal", "shield"]) {
+  for (const name of ["draw", "select", "cardSelect", "playCard", "hit", "skill", "achievementUnlock", "discard", "heal", "shield", "radarSuccess"]) {
     assert.equal(typeof sound[`sound_${name}`], "function", name);
   }
   assert.equal(sound.sound_lightning, undefined, "lightning 不应再使用合成方法");
@@ -43026,7 +43515,7 @@ test("音频：全部 SFX 只走 sfxGain 且不触碰 musicGain", async () => {
       sound.musicTimer?.unref?.();
       const timer = sound.musicTimer;
       const sources = sound.musicSources.size;
-      for (const name of ["select", "cardSelect", "draw", "playCard", "hit", "skill", "discard", "heal", "shield", "lightning"]) {
+      for (const name of ["select", "cardSelect", "draw", "playCard", "hit", "skill", "achievementUnlock", "discard", "heal", "shield", "radarSuccess", "lightning"]) {
         const before = sound.musicGain.gain.calls.length;
         assert.equal(await sound.play(name, { force: true }), true, name);
         assert.equal(sound.musicGain.gain.calls.length, before, `${name} 不得触碰 musicGain`);

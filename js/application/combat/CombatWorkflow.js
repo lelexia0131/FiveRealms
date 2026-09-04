@@ -97,7 +97,8 @@ export function createCombatWorkflow(dependencies) {
 
   边界与不变量
   每个格挡需求独立进行雷达判定；正常格挡结束且预览生命伤害为正后才发布 beforeHpDamage；
-  mitigation feedback 只消费 listener 已确认的正 contribution，且必须在 1→0 分支仍提交；HP mutation 前保留 session 检查点。
+  mitigation feedback 只消费 listener 已确认的正 contribution，且必须在 1→0 分支仍提交；
+  afterDamage.finalAttackDamage 固定为增减伤完成且 HP/护盾截断前的攻击伤害；HP mutation 前保留 session 检查点。
   */
   async function damage(source, target, amount, context = {}) {
     const state = runtime.getState();
@@ -129,7 +130,10 @@ export function createCombatWorkflow(dependencies) {
         if (!target.alive || state.isGameOver) return 0;
       }
       if (requiredBlockCount <= 0) {
-        await runtime.emitEvent("afterDamage", { ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0, preventedBy: "defenseDevice" });
+        await runtime.emitEvent("afterDamage", {
+          ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0,
+          finalAttackDamage: 0, preventedBy: "defenseDevice"
+        });
         return 0;
       }
     }
@@ -137,7 +141,10 @@ export function createCombatWorkflow(dependencies) {
     if (!runtime.isSessionValid(gameId) || blockResult.status === "cancelled") return 0;
     if (blockResult.status === "used") {
       context.blockedByCard = true;
-      await runtime.emitEvent("afterDamage", { ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0, preventedBy: "block" });
+      await runtime.emitEvent("afterDamage", {
+        ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0,
+        finalAttackDamage: 0, preventedBy: "block"
+      });
       if (!runtime.isSessionValid(gameId)) return 0;
       runtime.presentation.refresh();
       return 0;
@@ -148,7 +155,8 @@ export function createCombatWorkflow(dependencies) {
     if (event.amount <= 0) {
       runtime.presentation.log(`${target.name}没有受到生命伤害。`);
       await runtime.emitEvent("afterDamage", {
-        ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0, preventedBy: "damageReduction"
+        ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0,
+        finalAttackDamage: 0, preventedBy: "damageReduction"
       });
       if (!runtime.isSessionValid(gameId)) return 0;
       runtime.presentation.refresh();
@@ -173,7 +181,8 @@ export function createCombatWorkflow(dependencies) {
       if (event.amount <= 0) {
         runtime.presentation.log(`${target.name}没有受到生命伤害。`);
         await runtime.emitEvent("afterDamage", {
-          ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0, preventedBy: "damageReduction"
+          ...event, type: "afterDamage", actualAmount: 0, shieldAbsorbed: 0,
+          finalAttackDamage: 0, preventedBy: "damageReduction"
         });
         if (!runtime.isSessionValid(gameId)) return 0;
         runtime.presentation.refresh();
@@ -201,7 +210,10 @@ export function createCombatWorkflow(dependencies) {
     } else {
       runtime.presentation.log(`${target.name}没有受到生命伤害。`);
     }
-    await runtime.emitEvent("afterDamage", { ...event, type: "afterDamage", actualAmount: hpDamage, shieldAbsorbed: damageResult.shieldAbsorbed });
+    await runtime.emitEvent("afterDamage", {
+      ...event, type: "afterDamage", actualAmount: hpDamage, shieldAbsorbed: damageResult.shieldAbsorbed,
+      finalAttackDamage: Math.max(0, Number(event.amount) || 0)
+    });
     if (!runtime.isSessionValid(gameId)) return hpDamage;
     if (isDying(target.hp, target.alive)) await runtime.enterDying(target, source, context);
     if (!runtime.isSessionValid(gameId)) return hpDamage;

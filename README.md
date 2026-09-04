@@ -26,6 +26,12 @@ npm test
 
 `npm run test:balance`、AI 自博弈统计和 `tests/ai-card-study` 研究实验仅允许由项目所有者本人手动运行。禁止 Codex、Claude、DeepSeek、任何其他 AI 或自动化流程执行平衡测试，或根据结果调整、试探、搜索、拟合平衡常数、权重、阈值、倍率、utility 参数及类似数值。平衡常数对 AI 而言是只读既定规则，不得以优化平衡为目的修改。详细的所有者专属 Balance 操作说明见 [`test.md`](./test.md)。
 
+## 对局表现、历史与成就
+
+终局 sidecar 已实现 `Match Performance → Achievement evaluation → Achievement Store / History persistence → Achievement ViewModel → History / Toast / MVP 本局成就展示`。Achievement 不参与 Gameplay 判定，也不进入 AI、Search 或 Simulation。
+
+`HistoryStatsManager` 是长期档案入口；`AchievementStore` 管理成就持久化记录与 ViewModel；`AchievementTracker` 只根据最终真实 Match facts 判定。Achievement Presentation 位于 UI/History sidecar，当前物理目录保持在 `js/ui/history/**`。
+
 ## 如何开始和操作
 
 1. 点击封面的“开启本局”。系统先生成公开的 2V3 阵营。

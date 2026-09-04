@@ -22,6 +22,7 @@ import { TEAM_ASSIGNMENT_MODE } from "../application/match/TeamAssignmentMode.js
 import { MatchMvpResultView } from "./results/MatchMvpResultView.js";
 import { RulebookView } from "./RulebookView.js";
 import { HistoryArchiveView } from "./history/HistoryArchiveView.js";
+import { GameInfoView } from "./GameInfoView.js";
 
 const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
@@ -33,9 +34,9 @@ const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   }),
   [TEAM_ASSIGNMENT_MODE.THREE]: Object.freeze({
     eyebrow: "暮影 · 角色征召",
-    title: "三人大队征召",
+    title: "三人小队征召",
     copy: "选择你的角色 · 你将拥有 2 名队友",
-    preview: "三人大队",
+    preview: "三人小队",
     detail: "2 名队友 · 对抗 2 名敌人"
   }),
   [TEAM_ASSIGNMENT_MODE.RANDOM]: Object.freeze({
@@ -192,7 +193,7 @@ export class UIManager {
   页面 DOM、窗口宽度与已持久化声音偏好。
 
   写入状态
-  初始化元素引用、交互状态、声音、动画、历史数据展示边界和各 View，并绑定事件。
+  初始化元素引用、交互状态、声音、动画、历史与游戏说明展示边界和各 View，并绑定事件。
 
   调用函数
   SoundManager、AnimationController、InteractionController、各 View 构造器、bindEvents、setAiSpeed。
@@ -202,7 +203,7 @@ export class UIManager {
   */
   constructor({ historyStatsManager = null } = {}) {
     this.elements = Object.fromEntries([
-      "start-screen", "history-archive-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "rules-button",
+      "start-screen", "history-archive-screen", "game-info-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "game-info-button", "rules-button",
       "squad-mode-grid", "back-to-start-button", "back-to-squad-button", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
@@ -210,7 +211,7 @@ export class UIManager {
       "skill-button", "end-play-button", "discard-confirm-button", "cancel-interaction-button",
       "log-panel", "battle-layout", "log-toggle-button", "ai-speed-control",
       "log-list", "log-count", "skill-details-overlay", "game-over-overlay", "game-over-title", "game-over-copy",
-      "match-mvp-result", "play-again-button", "rulebook-overlay"
+      "match-mvp-result", "achievement-toast-region", "play-again-button", "rulebook-overlay"
     ].map((id) => [id.replaceAll("-", "_"), document.getElementById(id)]));
     this.callbacks = {};
     this.sound = new SoundManager();
@@ -233,16 +234,29 @@ export class UIManager {
     this.horizontalCardDragState = null;
     this.horizontalCardDragSuppressClick = false;
     this.horizontalCardScrollGameId = null;
+    this.newlyUnlockedAchievements = Object.freeze([]);
     this.animationController = new AnimationController((feedback) => this.playFeedbackSound(feedback));
     this.interactionController = new InteractionController(this);
     this.publicPoolView = new PublicPoolView(this.elements.public_pool_view, () => this.playSound("select"));
     this.privateRevealView = new PrivateRevealView(this.elements.private_reveal);
     this.judgmentView = new JudgmentView(this.elements.judgment_view);
-    this.matchMvpResultView = new MatchMvpResultView(this.elements.match_mvp_result);
     this.historyArchiveView = new HistoryArchiveView(
       this.elements.history_archive_screen,
       historyStatsManager,
-      () => this.hideHistoryArchive()
+      () => this.hideHistoryArchive(),
+      {
+        modalRoot: document.body,
+        toastRoot: this.elements.achievement_toast_region,
+        onToastShown: () => this.playSound("achievementUnlock")
+      }
+    );
+    this.gameInfoView = new GameInfoView(
+      this.elements.game_info_screen,
+      () => this.hideGameInfo()
+    );
+    this.matchMvpResultView = new MatchMvpResultView(
+      this.elements.match_mvp_result,
+      (achievementId, trigger) => this.historyArchiveView.achievementView.openDetail(achievementId, trigger)
     );
     this.rulebookView = new RulebookView(
       this.elements.rulebook_overlay,
@@ -298,19 +312,23 @@ export class UIManager {
   旧 game 绑定。
 
   写入状态
-  必要时取消旧交互并更新 this.game。
+  必要时取消旧交互、清空本局成就会话并更新 this.game。
 
   调用函数
-  cancelPendingInteractions。
+  cancelPendingInteractions、MatchMvpResultView.reset、AchievementView.resetUnlockQueue。
 
   边界与不变量
-  普通 render 不得改变绑定；更换实例前必须收束旧局 Promise。
+  普通 render 不得改变绑定；更换实例前必须收束旧局 Promise；每个新 Match 从空 unlock session 开始。
   */
   attachGame(game) {
     const changed = this.game !== game;
     if (this.game && changed) this.cancelPendingInteractions();
     this.game = game ?? null;
-    if (changed) this.matchMvpResultView?.reset();
+    if (changed) {
+      this.newlyUnlockedAchievements = Object.freeze([]);
+      this.matchMvpResultView?.reset();
+      this.historyArchiveView?.achievementView?.resetUnlockQueue();
+    }
     return this.game;
   }
 
@@ -483,6 +501,7 @@ export class UIManager {
     for (const input of this.sfxVolumeInputs) input.addEventListener("input", () => this.setSfxVolume(input.value));
     this.elements.start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onStart?.(); });
     this.elements.history_button?.addEventListener("click", () => { this.playSound("select"); void this.showHistoryArchive(); });
+    this.elements.game_info_button?.addEventListener("click", () => { this.playSound("select"); void this.showGameInfo(); });
     this.elements.back_to_start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToStart?.(); });
     this.elements.back_to_squad_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToSquadSelection?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
@@ -630,6 +649,7 @@ export class UIManager {
     this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
@@ -663,6 +683,7 @@ export class UIManager {
   async showHistoryArchive() {
     this.sound.playMenuMusic();
     this.elements.start_screen.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
@@ -702,6 +723,71 @@ export class UIManager {
 
   /*
   功能
+  经现有顶层屏幕生命周期进入独立游戏说明页并读取当前应用版本。
+
+  调用方
+  首页游戏说明按钮。
+
+  输入
+  无。
+
+  输出
+  说明页面渲染完成的 Promise。
+
+  读取状态
+  页面屏幕元素、SoundManager 与 GameInfoView。
+
+  写入状态
+  仅切换顶层 screen 显隐并渲染游戏说明页。
+
+  调用函数
+  SoundManager.playMenuMusic、GameInfoView.show。
+
+  边界与不变量
+  不创建、销毁或修改 MatchApplication；版本读取完成前首页保持可见。
+  */
+  async showGameInfo() {
+    this.sound.playMenuMusic();
+    await this.gameInfoView.show();
+    this.elements.start_screen.classList.add("is-hidden");
+    this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.squad_selection_screen.classList.add("is-hidden");
+    this.elements.selection_screen.classList.add("is-hidden");
+    this.elements.game_screen.classList.add("is-hidden");
+    this.elements.game_info_screen.classList.remove("is-hidden");
+  }
+
+  /*
+  功能
+  离开游戏说明页并恢复首页。
+
+  调用方
+  GameInfoView 返回按钮 callback。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  顶层页面生命周期。
+
+  写入状态
+  切换到首页。
+
+  调用函数
+  showStart。
+
+  边界与不变量
+  返回不启动征召或对局，已读取版本留在 View 中供重复进入复用。
+  */
+  hideGameInfo() {
+    this.showStart();
+  }
+
+  /*
+  功能
   展示独立的编队方式选择界面。
 
   调用方
@@ -732,6 +818,7 @@ export class UIManager {
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.remove("is-hidden");
@@ -774,6 +861,7 @@ export class UIManager {
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.remove("is-hidden");
@@ -817,6 +905,7 @@ export class UIManager {
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.remove("is-hidden");
@@ -2701,6 +2790,36 @@ export class UIManager {
 
   /*
   功能
+  启动雷达战术判定成功的绿色扫描反馈。
+
+  调用方
+  GamePresentationAdapter.showRadarSuccess。
+
+  输入
+  被判定玩家的公开 ID。
+
+  输出
+  无返回值。
+
+  读取状态
+  sound、animationController 与当前文档。
+
+  写入状态
+  通过 SoundManager 创建一次成功音效，并创建或替换该玩家的雷达成功 overlay。
+
+  调用函数
+  playSound、AnimationController.startRadarSuccess。
+
+  边界与不变量
+  UI 只负责展示已经由 Application 判定 workflow 确认的成功语义，不解析牌名或日志。
+  */
+  playRadarSuccess(playerId) {
+    this.playSound("radarSuccess");
+    this.animationController.startRadarSuccess(playerId, globalThis.document);
+  }
+
+  /*
+  功能
   选择或停止当前阵营 BGM。
 
   调用方
@@ -2987,34 +3106,75 @@ export class UIManager {
 
   /*
   功能
-  将 immutable MatchResultViewModel 交给独立 MVP 结果 View 一次性渲染。
+  用 Store 成功写入结果建立本局 unlock session，并把同一批记录送入 Toast 队列。
+
+  调用方
+  main 的 recordHistoryMatchResult callback。
+
+  输入
+  只含 achievementId、teamScope、unlockedAt 的新增记录，以及保存后的安全成就 ViewModel。
+
+  输出
+  冻结的本局新增记录数组。
+
+  读取状态
+  HistoryStatsManager 返回的新增记录与安全 ViewModel。
+
+  写入状态
+  newlyUnlockedAchievements、AchievementView items 与 Toast 队列。
+
+  调用函数
+  AchievementView.setItems、AchievementView.enqueueUnlocks、Object.freeze。
+
+  边界与不变量
+  不检查 criteria 或扫描 History；session 只保留 achievementId、teamScope、unlockedAt，永久写入失败时调用方不会进入本方法。
+  */
+  presentMatchAchievementUnlocks(unlocks, achievementItems) {
+    this.newlyUnlockedAchievements = Object.freeze(
+      (Array.isArray(unlocks) ? unlocks : []).map((unlock) => Object.freeze({
+        achievementId: unlock.achievementId,
+        teamScope: unlock.teamScope,
+        unlockedAt: unlock.unlockedAt
+      }))
+    );
+    this.historyArchiveView.achievementView.setItems(achievementItems);
+    this.historyArchiveView.achievementView.enqueueUnlocks(this.newlyUnlockedAchievements);
+    return this.newlyUnlockedAchievements;
+  }
+
+  /*
+  功能
+  将 immutable MatchResultViewModel 和已完成的本局成就会话交给独立 MVP 结果 View 一次性渲染。
 
   调用方
   MatchPerformanceSidecar 的 gameOver listener。
 
   输入
-  已完成评分和排序的 MatchResultViewModel，以及当前绑定对局的参与者元数据。
+  已完成评分和排序的 MatchResultViewModel，以及当前绑定对局的参与者元数据与本局新增成就。
 
   输出
   无返回值。
 
   读取状态
-  matchMvpResultView 与当前对局玩家的 controllerType/id。
+  matchMvpResultView、AchievementView、newlyUnlockedAchievements 与当前对局玩家的 controllerType/id。
 
   写入状态
   MVP 结果区域 DOM 与默认选择。
 
   调用函数
-  Array.find、MatchMvpResultView.render。
+  Array.find、AchievementView.renderMatchUnlockList、MatchMvpResultView.render。
 
   边界与不变量
-  本人 ID 只作为展示上下文传给 View；不写入 MVP 结果，不修改游戏状态，也不重新评分或排序。
+  本人 ID 只作为展示上下文传给 View；成就列表只读 Store 产生的本局 session；不修改游戏状态，也不重新评分、排序或检查 criteria。
   */
   showMatchPerformance(viewModel) {
     const humanPlayerId = this.game?.state?.players?.find(
       (player) => player.controllerType === "human"
     )?.id ?? null;
-    this.matchMvpResultView.render(viewModel, humanPlayerId);
+    const achievementMarkup = this.historyArchiveView.achievementView.renderMatchUnlockList(
+      this.newlyUnlockedAchievements
+    );
+    this.matchMvpResultView.render(viewModel, humanPlayerId, achievementMarkup);
   }
 
   /*

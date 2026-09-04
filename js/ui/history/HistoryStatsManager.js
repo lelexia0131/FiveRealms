@@ -18,9 +18,17 @@ main 的对局结束回调与 HistoryArchiveView。
 不得读取 GameState、MatchPerformanceTracker 或 AI；View 不得绕过本模块访问文件接口。
 */
 import { CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js";
+import {
+  buildAchievementViewModels,
+  createEmptyAchievementData,
+  normalizeAchievementData,
+  recordAchievementUnlock
+} from "./achievements/AchievementStore.js";
+import { evaluateMatchAchievements } from "./achievements/AchievementTracker.js";
 
 const HISTORY_VERSION = 1;
 const HISTORY_ENDPOINT = "/api/history";
+const HISTORY_HTTP_TIMEOUT_MS = 5000;
 const RECENT_RECORD_LIMIT = 10;
 const TEAM_DEFINITIONS = Object.freeze([
   Object.freeze({ id: "dawn", name: "晨星" }),
@@ -63,11 +71,14 @@ export function createEmptyHistoryData() {
       highestScore: 0,
       highestRounds: 0,
       totalScore: 0,
-      totalRounds: 0
+      totalRounds: 0,
+      currentWinStreak: 0,
+      maxWinStreak: 0
     },
     characters: {},
     teams: {},
     achievements: {
+      ...createEmptyAchievementData(),
       companions: {},
       highestSingleMatchDamage: null,
       highestSingleMatchKills: null,
@@ -191,7 +202,7 @@ HistoryStatsManager.loadData。
 无。
 
 调用函数
-createEmptyHistoryData、nonNegativeNumber、calculateWinRate。
+createEmptyHistoryData、normalizeAchievementData、nonNegativeNumber、calculateWinRate。
 
 边界与不变量
 高于当前版本的数据拒绝读取；缺失字段补默认值，未知角色键原样保留以免丢档。
@@ -205,6 +216,7 @@ function normalizeHistoryData(source) {
   for (const key of Object.keys(empty.summary)) {
     empty.summary[key] = nonNegativeNumber(summarySource[key], key !== "highestScore" && key !== "totalScore");
   }
+  empty.summary.currentWinStreak = Math.min(empty.summary.currentWinStreak, empty.summary.maxWinStreak);
   for (const [characterId, value] of Object.entries(source.characters ?? {})) {
     if (!value || typeof value !== "object") continue;
     const matches = nonNegativeNumber(value.matches, true);
@@ -246,6 +258,13 @@ function normalizeHistoryData(source) {
   const achievementSource = source.achievements && typeof source.achievements === "object"
     ? source.achievements
     : {};
+  const normalizedAchievements = normalizeAchievementData(achievementSource, normalizedRecords);
+  empty.achievements.schemaVersion = normalizedAchievements.schemaVersion;
+  empty.achievements.records = normalizedAchievements.records;
+  empty.achievements.streaks = normalizedAchievements.streaks;
+  empty.achievements.completedMatches = Object.hasOwn(achievementSource, "completedMatches")
+    ? normalizedAchievements.completedMatches
+    : empty.summary.totalMatches;
   const companionSource = achievementSource.companions && typeof achievementSource.companions === "object"
     ? achievementSource.companions
     : null;
@@ -280,6 +299,48 @@ function normalizeHistoryData(source) {
 
 /*
 功能
+在有限时间内完成一次默认 History HTTP 请求及其可选 JSON 读取。
+
+调用方
+createHttpHistoryStorage 的 read、create 与 write。
+
+输入
+fetch 实现、同源端点、请求选项，以及是否读取成功响应的 JSON body。
+
+输出
+包含 Response 与可选 data 的对象；请求、读取或超时失败时抛错。
+
+读取状态
+HISTORY_HTTP_TIMEOUT_MS。
+
+写入状态
+只创建并清理本次请求的 AbortController 与 timeout。
+
+调用函数
+fetch、AbortController、Response.json、setTimeout、clearTimeout。
+
+边界与不变量
+timeout 只约束默认 HTTP adapter；非 timeout 错误保持原异常，计时器始终清理。
+*/
+async function requestHistoryEndpoint(fetchImpl, endpoint, options, readJson = false) {
+  const controller = new AbortController();
+  const timeoutId = globalThis.setTimeout(() => controller.abort(), HISTORY_HTTP_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(endpoint, { ...options, signal: controller.signal });
+    const data = readJson && response.ok ? await response.json() : null;
+    return { response, data };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`历史档案请求超时（${HISTORY_HTTP_TIMEOUT_MS}ms）`, { cause: error });
+    }
+    throw error;
+  } finally {
+    globalThis.clearTimeout(timeoutId);
+  }
+}
+
+/*
+功能
 创建浏览器环境下固定端点的历史文件读写适配器。
 
 调用方
@@ -289,7 +350,7 @@ HistoryStatsManager constructor 默认路径。
 fetch 实现与同源历史端点。
 
 输出
-具有 read/write 方法的存储适配器。
+具有 read/create/write 方法的存储适配器。
 
 读取状态
 同源 /api/history 响应。
@@ -298,10 +359,10 @@ fetch 实现与同源历史端点。
 通过 PUT 覆盖根目录 history_data.json。
 
 调用函数
-fetch、Response.json。
+requestHistoryEndpoint。
 
 边界与不变量
-404 表示尚无档案并交给 Manager 初始化；其他非成功响应必须抛错。
+404 表示尚无档案并交给 Manager 初始化；其他非成功响应必须抛错；三个操作均为有限等待。
 */
 function createHttpHistoryStorage(fetchImpl, endpoint) {
   return {
@@ -325,16 +386,21 @@ function createHttpHistoryStorage(fetchImpl, endpoint) {
     无。
 
     调用函数
-    fetch、Response.json。
+    requestHistoryEndpoint。
 
     边界与不变量
-    只有 HTTP 404 代表未初始化；其他失败不得伪装成空档。
+    只有 HTTP 404 代表未初始化；其他失败不得伪装成空档；请求与 JSON 读取均受统一 timeout 约束。
     */
     async read() {
-      const response = await fetchImpl(endpoint, { method: "GET", cache: "no-store" });
+      const { response, data } = await requestHistoryEndpoint(
+        fetchImpl,
+        endpoint,
+        { method: "GET", cache: "no-store" },
+        true
+      );
       if (response.status === 404) return null;
       if (!response.ok) throw new Error(`读取历史档案失败：HTTP ${response.status}`);
-      return response.json();
+      return data;
     },
     /*
     功能
@@ -356,13 +422,13 @@ function createHttpHistoryStorage(fetchImpl, endpoint) {
     仅在缺档时创建根目录 history_data.json。
 
     调用函数
-    fetch。
+    requestHistoryEndpoint。
 
     边界与不变量
-    If-None-Match 条件必须由 server 在写锁内判断，绝不以空档覆盖已存在档案。
+    If-None-Match 条件必须由 server 在写锁内判断，绝不以空档覆盖已存在档案；请求受统一 timeout 约束。
     */
     async create(json) {
-      const response = await fetchImpl(endpoint, {
+      const { response } = await requestHistoryEndpoint(fetchImpl, endpoint, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json; charset=utf-8",
@@ -394,13 +460,13 @@ function createHttpHistoryStorage(fetchImpl, endpoint) {
     同源服务映射的根目录 history_data.json。
 
     调用函数
-    fetch。
+    requestHistoryEndpoint。
 
     边界与不变量
-    只使用固定 endpoint，不接受调用方提供文件路径。
+    只使用固定 endpoint，不接受调用方提供文件路径；请求受统一 timeout 约束。
     */
     async write(json) {
-      const response = await fetchImpl(endpoint, {
+      const { response } = await requestHistoryEndpoint(fetchImpl, endpoint, {
         method: "PUT",
         headers: { "Content-Type": "application/json; charset=utf-8" },
         body: json
@@ -543,6 +609,12 @@ function buildArchiveData(data) {
     characters: Object.freeze(characters.map((entry) => Object.freeze(entry))),
     teams: Object.freeze(teams.map((entry) => Object.freeze(entry))),
     achievements: Object.freeze({
+      cards: buildAchievementViewModels({ records: data.achievements.records }),
+      streaks: Object.freeze({
+        duo: Object.freeze({ ...data.achievements.streaks.duo }),
+        trio: Object.freeze({ ...data.achievements.streaks.trio })
+      }),
+      completedMatches: data.achievements.completedMatches,
       mostFrequentCompanion: mostFrequentCompanion ? Object.freeze(mostFrequentCompanion) : null,
       highestSingleMatchDamage: data.achievements.highestSingleMatchDamage,
       highestSingleMatchKills: data.achievements.highestSingleMatchKills,
@@ -717,19 +789,20 @@ export class HistoryStatsManager {
   已完成评分/MVP 排名的 MatchResult 与真人 playerId。
 
   输出
-  保存完成后的冻结历史查询对象。
+  保存完成后的冻结历史查询对象，并附带本次真正新增的运行时成就记录。
 
   读取状态
   当前历史快照、最终 MatchResult 与注入时钟。
 
   写入状态
-  summary、真人角色、真人阵营、同行/传奇累计、最近 records、history_data.json 与成功后的内存档案。
+  summary、真人角色、真人阵营、分模式成就连续记录、同行/传奇累计、最近 records、history_data.json 与成功后的内存档案；返回值临时携带本局新增成就。
 
   调用函数
-  initialize、normalizeHistoryData、calculateWinRate、optionalNonNegativeNumber、storage.write、buildArchiveData。
+  initialize、normalizeHistoryData、evaluateMatchAchievements、recordAchievementUnlock、calculateWinRate、optionalNonNegativeNumber、storage.write、buildArchiveData。
 
   边界与不变量
-  只接受存在于最终结果中的真人；不重算评分、胜负、MVP、队友身份或战斗统计；文件写入成功前不得让查询看到未持久化记录。
+  只接受存在于最终结果中的真人；不重算评分、胜负、MVP、队友身份或战斗统计；
+  只有 achievementId + teamScope 首次写入且整个文件保存成功，返回值才暴露本局新增记录。
   */
   async recordMatchResult(matchResult, humanPlayerId) {
     if (!this.data) await this.initialize();
@@ -744,6 +817,25 @@ export class HistoryStatsManager {
     const teammateCharacterIds = Array.isArray(player.teammateCharacterIds)
       ? player.teammateCharacterIds.filter((characterId) => typeof characterId === "string" && characterId)
       : [];
+    const unlockedAt = this.now().toISOString();
+    const completedMatches = next.achievements.completedMatches + 1;
+    next.achievements.completedMatches = completedMatches;
+    const achievementResult = evaluateMatchAchievements(
+      matchResult,
+      humanPlayerId,
+      next.achievements.streaks,
+      { completedMatches }
+    );
+    const newlyUnlockedAchievements = [];
+    for (const achievementId of achievementResult.unlocked) {
+      if (recordAchievementUnlock(next.achievements.records, achievementId, achievementResult.scope, unlockedAt)) {
+        newlyUnlockedAchievements.push(Object.freeze({
+          achievementId,
+          teamScope: achievementResult.scope,
+          unlockedAt
+        }));
+      }
+    }
     next.summary.totalMatches += 1;
     next.summary.wins += player.won ? 1 : 0;
     next.summary.losses += player.won ? 0 : 1;
@@ -752,6 +844,12 @@ export class HistoryStatsManager {
     next.summary.highestRounds = Math.max(next.summary.highestRounds, rounds);
     next.summary.totalScore += score;
     next.summary.totalRounds += rounds;
+    if (player.won) {
+      next.summary.currentWinStreak += 1;
+      next.summary.maxWinStreak = Math.max(next.summary.maxWinStreak, next.summary.currentWinStreak);
+    } else {
+      next.summary.currentWinStreak = 0;
+    }
 
     const character = next.characters[player.characterId] ?? {
       matches: 0, wins: 0, winRate: 0, mvpCount: 0, highestScore: 0, totalScore: 0
@@ -786,7 +884,7 @@ export class HistoryStatsManager {
     }
 
     next.records.unshift({
-      timestamp: this.now().toISOString(),
+      timestamp: unlockedAt,
       characterId: player.characterId,
       characterName: player.characterName,
       teamId: player.teamId,
@@ -803,6 +901,9 @@ export class HistoryStatsManager {
     next.records.length = Math.min(next.records.length, RECENT_RECORD_LIMIT);
     await this.storage.write(`${JSON.stringify(next, null, 2)}\n`);
     this.data = next;
-    return buildArchiveData(this.data);
+    return Object.freeze({
+      ...buildArchiveData(this.data),
+      newlyUnlockedAchievements: Object.freeze(newlyUnlockedAchievements)
+    });
   }
 }

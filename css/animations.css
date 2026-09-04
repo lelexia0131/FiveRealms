@@ -147,6 +147,146 @@
   }
 }
 
+@keyframes radarSuccessLifetime {
+
+  0%,
+  12% {
+    opacity: 0;
+  }
+
+  22%,
+  78% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes radarSuccessPulse {
+  0% {
+    opacity: .15;
+    transform: translate(-50%, -50%) scale(.58);
+  }
+
+  34% {
+    opacity: .92;
+    transform: translate(-50%, -50%) scale(.84);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.12);
+  }
+}
+
+@keyframes radarSuccessSweep {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@keyframes radarSuccessScanLine {
+  0% {
+    opacity: 0;
+    transform: translateY(-50%) rotate(0deg) scaleX(.5);
+  }
+
+  16%,
+  72% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-50%) rotate(360deg) scaleX(1);
+  }
+}
+
+@keyframes radarSuccessParticleField {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(.6);
+  }
+
+  30%,
+  74% {
+    opacity: .9;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
+}
+
+@keyframes radarSuccessParticleFlicker {
+  0%,
+  100% {
+    opacity: 0;
+    transform: scale(.35);
+  }
+
+  20% {
+    opacity: .25;
+  }
+
+  42% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  70% {
+    opacity: .4;
+    transform: scale(.65);
+  }
+}
+
+@keyframes radarSuccessMatrixSweep {
+  0% {
+    opacity: 0;
+    transform: rotate(-28deg);
+  }
+
+  14% {
+    opacity: .86;
+  }
+
+  72% {
+    opacity: .62;
+  }
+
+  100% {
+    opacity: 0;
+    transform: rotate(332deg);
+  }
+}
+
+@keyframes radarSuccessMatrixFlicker {
+  0%,
+  100% {
+    opacity: 0;
+  }
+
+  18% {
+    opacity: .42;
+  }
+
+  42% {
+    opacity: .94;
+  }
+
+  68% {
+    opacity: .58;
+  }
+}
+
 @keyframes slashStrike {
   0% {
     opacity: 0;
@@ -431,8 +571,7 @@
 
 @keyframes positiveVfxLifetime {
 
-  from,
-  to {
+  from,to {
     opacity: 1;
   }
 }
@@ -989,9 +1128,9 @@
   animation: guardianAidRipple .68s ease-out forwards;
 }
 
-.resolution-vfx-overlay:is(.is-heal, .is-shield, .is-energy) {
+.resolution-vfx-overlay:is(.is-heal,.is-shield,.is-energy) {
   --positive-vfx-top: 52%;
-  --positive-vfx-size: min(64%, 168px);
+  --positive-vfx-size: min(64%,168px);
   --positive-glyph-scale: 1;
   animation-name: positiveVfxLifetime;
 }
@@ -1018,8 +1157,8 @@
   top: var(--positive-vfx-top);
   width: var(--positive-vfx-size);
   aspect-ratio: 1;
-  will-change: transform, opacity;
-  animation: positiveVfxExpand .9s cubic-bezier(.16, .75, .28, 1) forwards;
+  will-change: transform,opacity;
+  animation: positiveVfxExpand .9s cubic-bezier(.16,.75,.28,1) forwards;
 }
 
 .positive-vfx-visual::before {
@@ -1043,6 +1182,151 @@
   object-fit: contain;
   transform: scale(var(--positive-glyph-scale));
   filter: drop-shadow(0 0 14px rgba(var(--positive-vfx-rgb), .78));
+}
+
+.radar-success-vfx-overlay {
+  position: fixed;
+  z-index: 998;
+  left: var(--radar-success-left);
+  top: var(--radar-success-top);
+  width: var(--radar-success-width);
+  height: var(--radar-success-height);
+  overflow: visible;
+  pointer-events: none;
+  isolation: isolate;
+  border-radius: 50%;
+  animation: radarSuccessLifetime var(--radar-success-duration) linear forwards;
+}
+
+.radar-success-vfx-overlay.is-panel-local {
+  position: absolute;
+  inset: -10px;
+  width: auto;
+  height: auto;
+}
+
+.radar-success-vfx-overlay::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  top: 50%;
+  width: min(72%, 176px);
+  aspect-ratio: 1;
+  border: 3px solid rgba(93, 245, 126, .82);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(104, 255, 139, .16), transparent 66%);
+  box-shadow: 0 0 10px rgba(73, 236, 111, .78), 0 0 26px rgba(44, 190, 76, .42), inset 0 0 18px rgba(104, 255, 139, .32);
+  animation: radarSuccessPulse var(--radar-success-duration) ease-out forwards;
+}
+
+.radar-success-vfx-overlay::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 50%;
+  width: min(82%, 202px);
+  aspect-ratio: 1;
+  border: 2px solid transparent;
+  border-top-color: rgba(166, 255, 183, .98);
+  border-right-color: rgba(57, 223, 91, .76);
+  border-radius: 50%;
+  filter: drop-shadow(0 0 6px rgba(79, 255, 113, .86));
+  animation: radarSuccessSweep var(--radar-success-duration) cubic-bezier(.2, .75, .3, 1) forwards;
+}
+
+.radar-success-scan {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 50%;
+  width: min(42%, 104px);
+  height: 3px;
+  transform-origin: left center;
+  background: linear-gradient(90deg, rgba(176, 255, 192, .94), rgba(72, 240, 108, .72), transparent);
+  box-shadow: 0 0 8px rgba(100, 255, 135, .9);
+  animation: radarSuccessScanLine var(--radar-success-duration) cubic-bezier(.2, .75, .3, 1) forwards;
+}
+
+.radar-success-pulse {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 50%;
+  width: min(54%, 132px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(148, 255, 167, .76);
+  border-radius: 50%;
+  box-shadow: 0 0 12px rgba(81, 240, 112, .56);
+  animation: radarSuccessPulse var(--radar-success-duration) ease-out forwards;
+}
+
+.radar-success-particles {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 50%;
+  width: min(68%, 166px);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, rgba(123, 255, 151, .2), transparent 64%),
+    repeating-radial-gradient(circle, rgba(88, 239, 117, .23) 0 1px, transparent 1px 22px),
+    repeating-conic-gradient(from 0deg, rgba(88, 239, 117, .17) 0 1deg, transparent 1deg 45deg);
+  mask-image: radial-gradient(circle, #000 0 67%, transparent 82%);
+  animation: radarSuccessParticleField var(--radar-success-duration) ease-out forwards;
+}
+
+.radar-success-particles::before {
+  content: "";
+  position: absolute;
+  inset: 7%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 51% 50%, rgba(222, 255, 228, .96) 0 1px, transparent 2px),
+    radial-gradient(circle at 16% 27%, rgba(196, 255, 208, .96) 0 1px, transparent 2px),
+    radial-gradient(circle at 30% 64%, rgba(113, 255, 143, .88) 0 1px, transparent 2px),
+    radial-gradient(circle at 43% 39%, rgba(196, 255, 208, .94) 0 1px, transparent 2px),
+    radial-gradient(circle at 55% 72%, rgba(113, 255, 143, .86) 0 1px, transparent 2px),
+    radial-gradient(circle at 68% 28%, rgba(196, 255, 208, .96) 0 1px, transparent 2px),
+    radial-gradient(circle at 82% 56%, rgba(113, 255, 143, .84) 0 1px, transparent 2px),
+    repeating-linear-gradient(0deg, rgba(109, 255, 139, .2) 0 1px, transparent 1px 11px),
+    repeating-linear-gradient(90deg, rgba(109, 255, 139, .15) 0 1px, transparent 1px 14px);
+  box-shadow: inset 0 0 18px rgba(91, 255, 124, .28);
+  mix-blend-mode: screen;
+  animation: radarSuccessMatrixFlicker var(--radar-success-duration) steps(4, end) both;
+}
+
+.radar-success-particles::after {
+  content: "";
+  position: absolute;
+  inset: -18%;
+  border-radius: 50%;
+  background: conic-gradient(
+    from -28deg,
+    transparent 0 305deg,
+    rgba(155, 255, 176, .06) 315deg,
+    rgba(120, 255, 145, .64) 328deg,
+    rgba(197, 255, 208, .18) 341deg,
+    transparent 352deg 360deg
+  );
+  filter: blur(1px);
+  mix-blend-mode: screen;
+  animation: radarSuccessMatrixSweep var(--radar-success-duration) cubic-bezier(.2, .75, .3, 1) both;
+}
+
+.radar-success-particle {
+  position: absolute;
+  left: var(--radar-particle-left);
+  top: var(--radar-particle-top);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #c4ffd0;
+  box-shadow: 0 0 4px #8dffa6, 0 0 9px rgba(69, 245, 104, .92);
+  animation: radarSuccessParticleFlicker var(--radar-success-duration) ease-out var(--radar-particle-delay) both;
 }
 
 .player-seat.has-lightning-hit {

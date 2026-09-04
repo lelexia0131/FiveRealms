@@ -12,7 +12,7 @@ let game = null;
 
 /*
 功能
-在 MVP 终局结果确定后把真人一行提交给长期历史档案。
+在 MVP 终局结果确定后保存真人历史，并把 Store 新增结果提交给本局成就展示。
 
 调用方
 MatchApplication 的 onMatchResult callback。
@@ -21,23 +21,27 @@ MatchApplication 的 onMatchResult callback。
 冻结 MatchResult 与真人 playerId。
 
 输出
-保存尝试完成的 Promise。
+保存与本局成就会话更新完成的 Promise。
 
 读取状态
-HistoryStatsManager。
+HistoryStatsManager 与 UIManager 当前 Match 会话。
 
 写入状态
-history_data.json；失败仅写诊断日志。
+history_data.json；成功后写 UIManager 本局成就会话，失败仅写诊断日志。
 
 调用函数
-HistoryStatsManager.recordMatchResult、Debug.log。
+HistoryStatsManager.recordMatchResult、UIManager.presentMatchAchievementUnlocks、Debug.log。
 
 边界与不变量
-不得重新计算评分、胜负或 MVP；档案写入失败不得阻断终局展示和下一局流程。
+不得重新计算评分、胜负、MVP 或 criteria；只有永久写入成功的新记录能进入本局会话；失败不得阻断终局展示和下一局流程。
 */
 async function recordHistoryMatchResult(matchResult, humanPlayerId) {
   try {
-    await historyStatsManager.recordMatchResult(matchResult, humanPlayerId);
+    const archive = await historyStatsManager.recordMatchResult(matchResult, humanPlayerId);
+    ui.presentMatchAchievementUnlocks(
+      archive.newlyUnlockedAchievements,
+      archive.achievements.cards
+    );
   } catch (error) {
     Debug.log("History", "历史档案保存失败", error);
   }

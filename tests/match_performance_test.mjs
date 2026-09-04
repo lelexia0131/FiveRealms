@@ -1252,9 +1252,53 @@ export function registerMatchPerformanceTests(test) {
       { id: "leader", controllerType: "ai" },
       { id: "local", controllerType: "human" }
     ] } };
+    manager.newlyUnlockedAchievements = Object.freeze([]);
+    manager.historyArchiveView = {
+      achievementView: { renderMatchUnlockList: () => '<div class="match-achievement-empty">本局没有新的征途铭刻</div>' }
+    };
     manager.matchMvpResultView = { render: (...args) => calls.push(args) };
     manager.showMatchPerformance(viewModel);
-    assert.deepEqual(calls, [[viewModel, "local"]]);
+    assert.deepEqual(calls, [[
+      viewModel,
+      "local",
+      '<div class="match-achievement-empty">本局没有新的征途铭刻</div>'
+    ]]);
+  });
+
+  test("UI·MVP：本局成就 session 只保留必要字段并在新 Match 清空", () => {
+    const queued = [];
+    let resets = 0;
+    const manager = Object.create(UIManager.prototype);
+    manager.game = null;
+    manager.newlyUnlockedAchievements = Object.freeze([]);
+    manager.matchMvpResultView = { reset() { resets += 1; } };
+    manager.historyArchiveView = { achievementView: {
+      setItems() {},
+      enqueueUnlocks(unlocks) { queued.push(unlocks); },
+      resetUnlockQueue() { resets += 1; }
+    } };
+    manager.presentMatchAchievementUnlocks([{
+      achievementId: "first_blood",
+      teamScope: "duo",
+      unlockedAt: "2026-09-03T00:00:00.000Z",
+      ignored: "not-session-data"
+    }], []);
+    assert.deepEqual(Object.keys(manager.newlyUnlockedAchievements[0]), [
+      "achievementId", "teamScope", "unlockedAt"
+    ]);
+    assert.equal(queued.length, 1);
+    manager.attachGame({ state: { gameId: "next-match" } });
+    assert.deepEqual(manager.newlyUnlockedAchievements, []);
+    assert.equal(resets, 2);
+  });
+
+  test("UI·MVP：终局分发等待 History 与成就 session 完成后才渲染结果", async () => {
+    const source = await readFile(new URL("../js/composition/createGameApplication.js", import.meta.url), "utf8");
+    const body = source.match(/async function deliverMatchResult\([\s\S]*?\n\}/)?.[0] ?? "";
+    const historyIndex = body.indexOf("await application.onMatchResult");
+    const renderIndex = body.indexOf("application.ui.showMatchPerformance");
+    assert.ok(historyIndex >= 0);
+    assert.ok(renderIndex > historyIndex);
   });
 
   test("UI·MVP：详情使用回合系数与胜局系数且不再显示存活奖励", () => {

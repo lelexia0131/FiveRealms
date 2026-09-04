@@ -187,6 +187,77 @@ function matchResult(options = {}) {
 
 /*
 功能
+验证历史档案的连续胜场累计、重读与旧存档初始化。
+
+调用方
+registerHistoryStatsTests 的连胜回归测试。
+
+输入
+无；测试使用临时文件存储与固定终局序列。
+
+输出
+无返回值；断言失败时抛出异常。
+
+读取状态
+HistoryStatsManager 的 summary 与 history_data.json。
+
+写入状态
+临时历史文件中的连续胜场字段。
+
+调用函数
+HistoryStatsManager.recordMatchResult、getArchiveData、initialize、writeFile。
+
+边界与不变量
+currentWinStreak 只表示最近连续胜场；maxWinStreak 只增不减；旧档案缺字段时从零安全开始累计。
+*/
+async function historyWinStreakPersistenceAndCompatibility() {
+  const fixture = await createHistoryFixture();
+  try {
+    const manager = new HistoryStatsManager({ storage: fixture.storage });
+    const sequence = [true, true, false, true, true, true, false, true];
+    const checkpoints = [];
+    for (const [index, won] of sequence.entries()) {
+      const archive = await manager.recordMatchResult(matchResult({
+        gameId: `history-streak-${index}`,
+        won,
+        isMvp: false
+      }), "human");
+      checkpoints.push([archive.summary.currentWinStreak, archive.summary.maxWinStreak]);
+    }
+    assert.deepEqual(checkpoints, [[1, 1], [2, 2], [0, 2], [1, 2], [2, 2], [3, 3], [0, 3], [1, 3]]);
+    const persisted = JSON.parse(await readFile(fixture.filePath, "utf8"));
+    assert.equal(persisted.summary.currentWinStreak, 1);
+    assert.equal(persisted.summary.maxWinStreak, 3);
+
+    const reopened = new HistoryStatsManager({ storage: createFileStorage(fixture.filePath) });
+    const reopenedArchive = await reopened.getArchiveData();
+    assert.equal(reopenedArchive.summary.currentWinStreak, 1);
+    assert.equal(reopenedArchive.summary.maxWinStreak, 3);
+
+    await writeFile(fixture.filePath, JSON.stringify({
+      version: 1,
+      summary: {
+        totalMatches: 2, wins: 2, losses: 0, mvpCount: 0,
+        highestScore: 0, highestRounds: 0, totalScore: 0, totalRounds: 0
+      },
+      characters: {},
+      teams: {},
+      records: []
+    }), "utf8");
+    const legacyManager = new HistoryStatsManager({ storage: createFileStorage(fixture.filePath) });
+    const legacyArchive = await legacyManager.initialize();
+    assert.equal(legacyArchive.summary.currentWinStreak, 0);
+    assert.equal(legacyArchive.summary.maxWinStreak, 0);
+    const migratedArchive = await legacyManager.recordMatchResult(matchResult({ gameId: "history-legacy-win" }), "human");
+    assert.equal(migratedArchive.summary.currentWinStreak, 1);
+    assert.equal(migratedArchive.summary.maxWinStreak, 1);
+  } finally {
+    await fixture.cleanup();
+  }
+}
+
+/*
+功能
 注册历史数据初始化、累计、持久化与档案页边界测试。
 
 调用方
@@ -218,11 +289,18 @@ export function registerHistoryStatsTests(test) {
       const archive = await manager.initialize();
       const persisted = JSON.parse(await readFile(fixture.filePath, "utf8"));
       assert.equal(archive.version, 1);
-      assert.deepEqual(persisted, {
+      assert.deepEqual({ ...persisted, achievements: {
+        companions: persisted.achievements.companions,
+        highestSingleMatchDamage: persisted.achievements.highestSingleMatchDamage,
+        highestSingleMatchKills: persisted.achievements.highestSingleMatchKills,
+        highestSingleMatchSupport: persisted.achievements.highestSingleMatchSupport,
+        highestSingleMatchDamageTaken: persisted.achievements.highestSingleMatchDamageTaken
+      } }, {
         version: 1,
         summary: {
           totalMatches: 0, wins: 0, losses: 0, mvpCount: 0,
-          highestScore: 0, highestRounds: 0, totalScore: 0, totalRounds: 0
+          highestScore: 0, highestRounds: 0, totalScore: 0, totalRounds: 0,
+          currentWinStreak: 0, maxWinStreak: 0
         },
         characters: {},
         teams: {},
@@ -278,7 +356,8 @@ export function registerHistoryStatsTests(test) {
       const persisted = JSON.parse(await readFile(fixture.filePath, "utf8"));
       assert.deepEqual(persisted.summary, {
         totalMatches: 1, wins: 1, losses: 0, mvpCount: 1,
-        highestScore: 420, highestRounds: 8, totalScore: 420, totalRounds: 8
+        highestScore: 420, highestRounds: 8, totalScore: 420, totalRounds: 8,
+        currentWinStreak: 1, maxWinStreak: 1
       });
       assert.deepEqual(persisted.characters["blade-walker"], {
         matches: 1, wins: 1, winRate: 100, mvpCount: 1, highestScore: 420, totalScore: 420
@@ -324,7 +403,8 @@ export function registerHistoryStatsTests(test) {
       const dusk = archive.teams.find((team) => team.id === "dusk");
       assert.deepEqual(archive.summary, {
         totalMatches: 2, wins: 1, losses: 1, mvpCount: 1,
-        highestScore: 420, highestRounds: 8, totalScore: 695, totalRounds: 14, winRate: 50
+        highestScore: 420, highestRounds: 8, totalScore: 695, totalRounds: 14,
+        currentWinStreak: 0, maxWinStreak: 1, winRate: 50
       });
       assert.deepEqual(
         { matches: ember.matches, wins: ember.wins, winRate: ember.winRate, mvpCount: ember.mvpCount },
@@ -335,6 +415,8 @@ export function registerHistoryStatsTests(test) {
       await fixture.cleanup();
     }
   });
+
+  test("UI·历史档案：连续胜场按终局序列累计并兼容缺少字段的旧存档", historyWinStreakPersistenceAndCompatibility);
 
   test("UI·历史档案：关闭后重新创建 Manager 仍读取已保存历史", async () => {
     const fixture = await createHistoryFixture();
@@ -405,7 +487,13 @@ export function registerHistoryStatsTests(test) {
       assert.equal(archive.records[0].support, null);
       assert.equal(archive.records[0].damageTaken, null);
       assert.equal(archive.records[0].teammateCharacterIds, null);
-      assert.deepEqual(archive.achievements, {
+      assert.deepEqual({
+        mostFrequentCompanion: archive.achievements.mostFrequentCompanion,
+        highestSingleMatchDamage: archive.achievements.highestSingleMatchDamage,
+        highestSingleMatchKills: archive.achievements.highestSingleMatchKills,
+        highestSingleMatchSupport: archive.achievements.highestSingleMatchSupport,
+        highestSingleMatchDamageTaken: archive.achievements.highestSingleMatchDamageTaken
+      }, {
         mostFrequentCompanion: null,
         highestSingleMatchDamage: null,
         highestSingleMatchKills: null,
@@ -450,7 +538,13 @@ export function registerHistoryStatsTests(test) {
         totals: { enemyKills: 4 }
       }), "human");
       archive = await manager.getArchiveData();
-      assert.deepEqual(archive.achievements, {
+      assert.deepEqual({
+        mostFrequentCompanion: archive.achievements.mostFrequentCompanion,
+        highestSingleMatchDamage: archive.achievements.highestSingleMatchDamage,
+        highestSingleMatchKills: archive.achievements.highestSingleMatchKills,
+        highestSingleMatchSupport: archive.achievements.highestSingleMatchSupport,
+        highestSingleMatchDamageTaken: archive.achievements.highestSingleMatchDamageTaken
+      }, {
         mostFrequentCompanion: {
           characterId: "spirit-medic", characterName: "灵医", matches: 2
         },
@@ -544,8 +638,12 @@ export function registerHistoryStatsTests(test) {
       assert.match(root.innerHTML, /history-faction-card is-dawn/);
       assert.match(root.innerHTML, /history-journey-card is-victory/);
       assert.match(root.innerHTML, /最常同行/);
-      assert.match(root.innerHTML, /单局最高伤害/);
-      assert.match(root.innerHTML, /单局最高击杀/);
+      const honorStart = root.innerHTML.indexOf('<div class="history-honor-grid">');
+      const honorEnd = root.innerHTML.indexOf('<section class="history-section history-journeys"');
+      const honorMarkup = root.innerHTML.slice(honorStart, honorEnd);
+      const honorLabels = [...honorMarkup.matchAll(/<span>([^<]+)<\/span><strong>/g)].map((match) => match[1]);
+      assert.deepEqual(honorLabels.slice(0, 3), ["最常同行", "单局最高伤害", "最多连胜场数"]);
+      assert.doesNotMatch(root.innerHTML, /单局最高击杀/);
       assert.match(root.innerHTML, /单局最高支援/);
       assert.match(root.innerHTML, /单局最高承伤/);
       assert.match(root.innerHTML, /data-history-top>返回旅途起点/);

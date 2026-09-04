@@ -19,6 +19,7 @@ HistoryStatsManager 查询接口与公开角色展示素材。
 */
 import { CHARACTER_PRESENTATION } from "../../adapters/ui/CharacterPresentationDefinitions.js";
 import { escapeHtml } from "../templates.js";
+import { AchievementView } from "./achievements/AchievementView.js";
 
 /*
 功能
@@ -244,7 +245,7 @@ export class HistoryArchiveView {
   UIManager constructor。
 
   输入
-  页面根元素、HistoryStatsManager 与返回 callback。
+  页面根元素、HistoryStatsManager、返回 callback，以及共享详情弹窗和 Toast 容器。
 
   输出
   HistoryArchiveView 实例。
@@ -253,19 +254,29 @@ export class HistoryArchiveView {
   无。
 
   写入状态
-  保存依赖并注册根节点 click listener。
+  保存依赖、创建唯一 AchievementView，并注册根节点 click/scroll listener。
 
   调用函数
-  handleClick。
+  AchievementView、handleClick、classList.add/remove。
 
   边界与不变量
-  View 只能通过 Manager 查询数据；返回首页与页内滚动必须保持不同意图。
+  View 只能通过 Manager 查询数据；返回首页与页内滚动必须保持不同意图；对局入口复用同一个 AchievementView 详情弹窗。
   */
-  constructor(root, historyStatsManager, onBack) {
+  constructor(root, historyStatsManager, onBack, achievementViewOptions = {}) {
     this.root = root;
     this.historyStatsManager = historyStatsManager;
     this.onBack = onBack;
+    this.scrollHoverRestoreTimer = null;
+    this.achievementView = new AchievementView(root, achievementViewOptions);
     this.root?.addEventListener("click", (event) => this.handleClick(event));
+    this.root?.addEventListener("scroll", () => {
+      clearTimeout(this.scrollHoverRestoreTimer);
+      this.root.classList.add("is-scrolling");
+      this.scrollHoverRestoreTimer = setTimeout(() => {
+        this.root.classList.remove("is-scrolling");
+        this.scrollHoverRestoreTimer = null;
+      }, 100);
+    }, { passive:true });
   }
 
   /*
@@ -320,15 +331,20 @@ export class HistoryArchiveView {
   无。
 
   写入状态
-  无。
+  关闭详情并清除滚动期间的 hover 抑制状态。
 
   调用函数
-  无。
+  AchievementView.closeDetail、classList.remove。
 
   边界与不变量
   历史 DOM 保留到下次刷新覆盖，返回动作不触碰数据。
   */
-  hide() {}
+  hide() {
+    this.achievementView.closeDetail(false);
+    clearTimeout(this.scrollHoverRestoreTimer);
+    this.scrollHoverRestoreTimer = null;
+    this.root?.classList?.remove("is-scrolling");
+  }
 
   /*
   功能
@@ -438,9 +454,8 @@ export class HistoryArchiveView {
         glyph: "⚔"
       },
       {
-        label: "单局最高击杀",
-        value: archive.achievements.highestSingleMatchKills === null
-          ? "尚待落笔" : String(archive.achievements.highestSingleMatchKills),
+        label: "最多连胜场数",
+        value: String(archive.summary.maxWinStreak),
         glyph: "✹"
       },
       {
@@ -456,6 +471,7 @@ export class HistoryArchiveView {
         glyph: "⛨"
       }
     ];
+    const achievementSection = this.achievementView.renderSection(archive.achievements.cards);
     this.root.innerHTML = `<div class="history-archive-shell">
       <header class="history-archive-header">
         <button class="ghost-button history-back-button" type="button" data-history-back>← 返回主界面</button>
@@ -473,6 +489,8 @@ export class HistoryArchiveView {
           <article><i>Ⅴ</i><span>最长战斗</span><strong>${archive.summary.highestRounds}<small>回合</small></strong></article>
         </div>
       </section>
+
+      ${achievementSection}
 
       <section class="history-section" aria-labelledby="history-travelers-title">
         <div class="history-section-heading"><small>TRAVELER ARCHIVES</small><h2 id="history-travelers-title">旅者档案</h2><span>八域来客的每一次被选择，都在此留下墨痕</span></div>

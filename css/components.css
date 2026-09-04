@@ -7,6 +7,7 @@
 .start-button, .history-entry-button { min-width: 190px; }
 .history-entry-button { display: inline-flex; align-items: center; justify-content: space-between; gap: 18px; }
 .start-actions > .start-button, .start-actions > .history-entry-button, .start-actions > .audio-controls { flex: 0 0 auto; }
+.start-actions > .audio-controls { width: 100%; }
 .rules-card { padding: 30px; border: 1px solid var(--border); border-radius: 6px 26px 6px 26px; background: linear-gradient(145deg, rgba(255,253,247,.98), rgba(244,237,222,.96)); box-shadow: var(--shadow-card); }
 .rules-heading { display: flex; align-items: center; gap: 14px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
 .rules-heading small, .log-heading small { color: var(--text-muted); font-size: 12px; letter-spacing: .16em; }

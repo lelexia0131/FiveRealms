@@ -39,6 +39,57 @@ function createContributionFacts() {
 
 /*
 功能
+创建成就判定需要但不参与 MVP 评分的本局结构化事实桶。
+
+调用方
+createPlayerRecord。
+
+输入
+玩家开局手牌数量。
+
+输出
+从初始手牌峰值开始、其余归零的成就事实与局内集合。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Set。
+
+边界与不变量
+集合只在 tracker 内可变，冻结快照输出数组；初始手牌作为本局首批获牌计数，最高存活轮次只由 roundStart 推进。
+*/
+function createAchievementFacts(initialHandCount) {
+  return {
+    activeSkillUses: 0,
+    activeAssaultUses: 0,
+    rescueCount: 0,
+    maxTurnDamage: 0,
+    maxTurnKills: 0,
+    maxHandCount: Math.max(0, Number(initialHandCount) || 0),
+    equipmentUses: 0,
+    lightningCasts: 0,
+    lightningHits: 0,
+    lightningDamageTakenHits: 0,
+    selfLightningHit: false,
+    radarTacticJudgments: 0,
+    cardsGained: Math.max(0, Number(initialHandCount) || 0),
+    maxSingleAttackDamage: 0,
+    damageResolutionId: null,
+    damageResolutionTotal: 0,
+    teammateDeaths: 0,
+    maxAliveRound: 0,
+    clutchEnemyCounts: new Set(),
+    turnDamage: 0,
+    turnKills: 0
+  };
+}
+
+/*
+功能
 创建一名玩家本局的独立原始表现记录。
 
 调用方
@@ -85,6 +136,7 @@ function createPlayerRecord(player, initialTeamSize) {
       enemyControls: 0
     },
     contributionFacts: createContributionFacts(),
+    achievementFacts: createAchievementFacts(player.hand?.length),
     clutchEnemyCount: null,
     aliveAtEnd: false
   };
@@ -115,14 +167,28 @@ Object.freeze。
 边界与不变量
 effectiveRounds 至少为一；胜负按玩家自己的开局阵营判定；快照不共享可变 totals 引用。
 */
-function freezePlayerRecord(record, aliveAtEnd, winnerTeam) {
+function freezePlayerRecord(record, aliveAtEnd, winnerTeam, player) {
+  const {
+    turnDamage: _turnDamage,
+    turnKills: _turnKills,
+    damageResolutionId: _damageResolutionId,
+    damageResolutionTotal: _damageResolutionTotal,
+    clutchEnemyCounts,
+    ...achievementFacts
+  } = record.achievementFacts;
   return Object.freeze({
     ...record,
     effectiveRounds: Math.max(1, record.effectiveRounds),
     totals: Object.freeze({ ...record.totals }),
     contributionFacts: Object.freeze({ ...record.contributionFacts }),
+    achievementFacts: Object.freeze({
+      ...achievementFacts,
+      clutchEnemyCounts: Object.freeze([...clutchEnemyCounts].sort((left, right) => left - right))
+    }),
     won: record.teamId === winnerTeam,
-    aliveAtEnd
+    aliveAtEnd,
+    finalHp: Number.isFinite(Number(player?.hp)) ? Number(player.hp) : null,
+    finalMaxHp: Number.isFinite(Number(player?.maxHp)) ? Number(player.maxHp) : null
   });
 }
 
@@ -190,16 +256,22 @@ export class MatchPerformanceTracker {
     if (this.started) return this;
     const handlers = {
       gameStart: () => this.initializeRoster(),
-      roundStart: () => this.handleRoundStart(),
+      roundStart: (event) => this.handleRoundStart(event),
+      turnStart: (event) => this.handleTurnStart(event),
+      turnEnd: (event) => this.handleTurnEnd(event),
+      judgmentRevealed: (event) => this.handleJudgmentRevealed(event),
       afterDamage: (event) => this.handleAfterDamage(event),
       afterHpLoss: (event) => this.handleAfterHpLoss(event),
       afterHeal: (event) => this.handleAfterHeal(event),
       shieldGranted: (event) => this.handleShieldGranted(event),
       beforeCardUse: (event) => this.handleBeforeCardUse(event),
+      afterCardMove: (event) => this.handleAfterCardMove(event),
+      cardCommitted: (event) => this.handleCardCommitted(event),
       cardUsed: (event) => this.handleCardUsed(event),
       cardsGranted: (event) => this.handleCardsGranted(event),
       sealSettled: (event) => this.handleSealSettled(event),
       skillEnergyPaid: (event) => this.handleSkillEnergyPaid(event),
+      activeSkillUsed: (event) => this.handleActiveSkillUsed(event),
       playerDead: (event) => this.handlePlayerDead(event)
     };
     for (const [eventName, handler] of Object.entries(handlers)) {
@@ -275,6 +347,7 @@ export class MatchPerformanceTracker {
     this.gameId = null;
     this.pendingResolvedCounter = null;
     this.pendingMutualBenefitHands = new Map();
+    this.currentTurnPlayerId = null;
     this.finalizedSnapshot = null;
   }
 
@@ -568,22 +641,22 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  为本轮开始时仍存活的正式参与者增加一个有效回合。
+  为本轮开始时仍存活的正式参与者增加有效回合并记录最高存活轮次。
 
   调用方
   roundStart listener。
 
   输入
-  无。
+  含当前结构化 round 的 roundStart 事件。
 
   输出
   无返回值。
 
   读取状态
-  authoritative players.alive。
+  authoritative players.alive、event.round 与 MatchState.currentRound。
 
   写入状态
-  records.effectiveRounds。
+  records.effectiveRounds 与 achievementFacts.maxAliveRound。
 
   调用函数
   recordFor。
@@ -592,22 +665,167 @@ export class MatchPerformanceTracker {
   阵亡者之后的轮次不再增加；比赛结束所在轮已在轮开始时计入存活玩家；
   直接装配 roster 的 headless/test runtime 若未发布 gameStart，则在首个 roundStart 建立同一开局快照。
   */
-  handleRoundStart() {
+  handleRoundStart(event = {}) {
     if (!this.records.size) this.initializeRoster();
-    for (const player of this.getState().players) {
-      if (player.alive) this.recordFor(player).effectiveRounds += 1;
+    const state = this.getState();
+    const round = Math.max(0, Number(event.round ?? state.currentRound) || 0);
+    for (const player of state.players) {
+      if (!player.alive) continue;
+      const record = this.recordFor(player);
+      record.effectiveRounds += 1;
+      record.achievementFacts.maxAliveRound = Math.max(record.achievementFacts.maxAliveRound, round);
     }
   }
 
   /*
   功能
-  累计真实减伤与护盾吸收归属、目标实际生命承伤，以及来源对敌实际生命伤害。
+  为行动者重置单回合伤害/击杀计数并记录回合开始手牌峰值。
+
+  调用方
+  turnStart listener。
+
+  输入
+  含当前行动 player 的结构化事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  player.hand。
+
+  写入状态
+  对应 achievementFacts 的 turnDamage、turnKills 与 maxHandCount。
+
+  调用函数
+  recordFor、Math.max。
+
+  边界与不变量
+  每个行动回合独立计数，历史峰值不重置。
+  */
+  handleTurnStart(event) {
+    const record = this.recordFor(event.player);
+    if (!record) return;
+    this.currentTurnPlayerId = event.player.id;
+    record.achievementFacts.turnDamage = 0;
+    record.achievementFacts.turnKills = 0;
+    record.achievementFacts.maxHandCount = Math.max(
+      record.achievementFacts.maxHandCount,
+      event.player?.hand?.length ?? 0
+    );
+  }
+
+  /*
+  功能
+  在正式回合结束时关闭成就单回合观察窗口。
+
+  调用方
+  turnEnd listener。
+
+  输入
+  含当前行动 player 的结构化事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  currentTurnPlayerId。
+
+  写入状态
+  匹配时清空 currentTurnPlayerId。
+
+  调用函数
+  无。
+
+  边界与不变量
+  其他玩家或陈旧事件不能关闭当前窗口；gameOver 前的事实仍由 finalize 收束。
+  */
+  handleTurnEnd(event) {
+    if (this.currentTurnPlayerId === event.player?.id) this.currentTurnPlayerId = null;
+  }
+
+  /*
+功能
+在牌区移动提交后记录真实获牌，并更新当前行动者在自己出牌阶段的手牌峰值。
+
+  调用方
+  afterCardMove listener。
+
+  输入
+  无；读取当前 authoritative state。
+
+  输出
+  无返回值。
+
+  读取状态
+  phase、currentPlayerIndex、当前玩家 hand。
+
+写入状态
+收牌者 achievementFacts.cardsGained 与当前玩家 achievementFacts.maxHandCount。
+
+  调用函数
+  recordFor、Math.max。
+
+边界与不变量
+获牌按每张 afterCardMove 累计；只在 turnStart/turnEnd 界定的本人行动回合采样手牌峰值，响应者手牌变化不会被误算。
+  */
+  handleAfterCardMove(event = {}) {
+    if (event.to === "hand") {
+      const recipient = event.player ?? event.toPlayer;
+      const recipientRecord = this.recordFor(recipient);
+      if (recipientRecord) recipientRecord.achievementFacts.cardsGained += 1;
+    }
+    if (!this.currentTurnPlayerId) return;
+    const state = this.getState();
+    const current = state.players.find((player) => player.id === this.currentTurnPlayerId);
+    const record = this.recordFor(current);
+    if (record) record.achievementFacts.maxHandCount = Math.max(
+      record.achievementFacts.maxHandCount,
+      current.hand?.length ?? 0
+    );
+  }
+
+  /*
+  功能
+  记录雷达战术判定，并补记确定进入手牌的基础判定牌。
+
+  调用方
+  judgmentRevealed listener。
+
+  输入
+  含 attacker、defender 与判定牌 category 的结构化事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  defender record 与 card.category。
+
+  写入状态
+  defender achievementFacts.radarTacticJudgments/cardsGained。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  只有带攻击者的防御雷达判定才计数；tactic 仅增加 Radar 事实，basic 的确定性手牌去向增加获牌事实；延迟判定没有 attacker，不会混入。
+  */
+  handleJudgmentRevealed(event) {
+    if (!event?.attacker || !event.defender) return;
+    const record = this.recordFor(event.defender);
+    if (!record) return;
+    if (event.card?.category === "tactic") record.achievementFacts.radarTacticJudgments += 1;
+    if (event.card?.category === "basic") record.achievementFacts.cardsGained += 1;
+  }
+
+  /*
+功能
+累计真实减伤与护盾吸收归属、目标实际生命承伤、闪电命中事实、来源对敌实际生命伤害与攻击结算峰值。
 
   调用方
   afterDamage listener。
 
   输入
-  含 source、target 与 actualAmount 的结算后事件。
+含 source、target、actualAmount 与 finalAttackDamage 的结算后事件。
 
   输出
   无返回值。
@@ -615,14 +833,15 @@ export class MatchPerformanceTracker {
   读取状态
   结构化 afterDamage fact。
 
-  写入状态
-  合法 provider 的 allyMitigation/allyShieldAbsorbed、target.hpDamageTaken 与 source.enemyHpDamage。
+写入状态
+合法 provider 的 allyMitigation/allyShieldAbsorbed、target.hpDamageTaken/闪电命中与 source.enemyHpDamage/单次攻击峰值。
 
   调用函数
   settleMitigationContributions、settleShieldAbsorption、recordFor。
 
-  边界与不变量
-  承伤只取 actualAmount；友伤、自伤、环境伤害、格挡、护盾吸收和减伤部分均不增加火力。
+边界与不变量
+承伤与火力只取 actualAmount；单次攻击峰值只取同一 afterDamage 事实中的 finalAttackDamage，保留 HP/护盾截断前数值；
+友伤、自伤、环境伤害、格挡与减伤至零均不产生攻击峰值。
   */
   handleAfterDamage(event) {
     this.settleMitigationContributions(event);
@@ -630,9 +849,47 @@ export class MatchPerformanceTracker {
     const actualAmount = Math.max(0, Number(event.actualAmount) || 0);
     const targetRecord = this.recordFor(event.target);
     if (targetRecord) targetRecord.totals.hpDamageTaken += actualAmount;
+    if (targetRecord && event.damageType === "lightning" && actualAmount > 0) {
+      targetRecord.achievementFacts.lightningDamageTakenHits += 1;
+      if (event.metadata?.originPlayerId === event.target.id) {
+        targetRecord.achievementFacts.selfLightningHit = true;
+      }
+    }
+    if (event.damageType === "lightning" && actualAmount > 0 && event.metadata?.originPlayerId) {
+      const origin = this.getState().players.find((player) => player.id === event.metadata.originPlayerId);
+      if (origin && event.target && origin.battleTeam !== event.target.battleTeam) {
+        const originRecord = this.recordFor(origin);
+        if (originRecord) originRecord.achievementFacts.lightningHits += 1;
+      }
+    }
     if (!event.source || !event.target || event.source.battleTeam === event.target.battleTeam) return;
     const record = this.recordFor(event.source);
-    if (record) record.totals.enemyHpDamage += actualAmount;
+    if (record) {
+      record.totals.enemyHpDamage += actualAmount;
+      const finalAttackDamage = Math.max(0, Number(event.finalAttackDamage) || 0);
+      if (finalAttackDamage > 0) {
+        const resolutionId = event.resolutionId ?? null;
+        if (resolutionId && record.achievementFacts.damageResolutionId === resolutionId) {
+          record.achievementFacts.damageResolutionTotal += finalAttackDamage;
+        } else {
+          record.achievementFacts.damageResolutionId = resolutionId;
+          record.achievementFacts.damageResolutionTotal = finalAttackDamage;
+        }
+        record.achievementFacts.maxSingleAttackDamage = Math.max(
+          record.achievementFacts.maxSingleAttackDamage,
+          record.achievementFacts.damageResolutionTotal
+        );
+      }
+      const state = this.getState();
+      const current = state.players[state.currentPlayerIndex];
+      if (current?.id === event.source.id && this.currentTurnPlayerId === event.source.id) {
+        record.achievementFacts.turnDamage += actualAmount;
+        record.achievementFacts.maxTurnDamage = Math.max(
+          record.achievementFacts.maxTurnDamage,
+          record.achievementFacts.turnDamage
+        );
+      }
+    }
   }
 
   /*
@@ -696,10 +953,26 @@ export class MatchPerformanceTracker {
     if (!target) return;
     if (source && source.id !== target.id && source.battleTeam !== target.battleTeam) {
       const sourceRecord = this.recordFor(source);
-      if (sourceRecord) sourceRecord.totals.enemyKills += 1;
+      if (sourceRecord) {
+        sourceRecord.totals.enemyKills += 1;
+        const state = this.getState();
+        const current = state.players[state.currentPlayerIndex];
+        if (current?.id === source.id && this.currentTurnPlayerId === source.id) {
+          sourceRecord.achievementFacts.turnKills += 1;
+          sourceRecord.achievementFacts.maxTurnKills = Math.max(
+            sourceRecord.achievementFacts.maxTurnKills,
+            sourceRecord.achievementFacts.turnKills
+          );
+        }
+      }
     }
 
     const players = this.getState().players;
+    for (const record of this.records.values()) {
+      if (record.playerId !== target.id && record.teamId === target.battleTeam) {
+        record.achievementFacts.teammateDeaths += 1;
+      }
+    }
     const survivingAllies = players.filter(
       (player) => player.alive && player.battleTeam === target.battleTeam
     );
@@ -709,6 +982,7 @@ export class MatchPerformanceTracker {
       (player) => player.alive && player.battleTeam !== target.battleTeam
     ).length;
     if (!survivorRecord || clutchEnemyCount < 2) return;
+    survivorRecord.achievementFacts.clutchEnemyCounts.add(clutchEnemyCount);
     // 残局档位属于减员方的唯一幸存者；后续状态变化不得把更早的高档残局降级。
     survivorRecord.clutchEnemyCount = Math.max(
       survivorRecord.clutchEnemyCount ?? 0,
@@ -748,6 +1022,7 @@ export class MatchPerformanceTracker {
     const amount = Math.max(0, Number(event.actualAmount) || 0);
     const key = event.isDyingRescue ? "allyRescueHealing" : "allyHealing";
     record.totals[key] += amount;
+    if (event.isDyingRescue && amount > 0) record.achievementFacts.rescueCount += 1;
   }
 
   /*
@@ -963,6 +1238,8 @@ export class MatchPerformanceTracker {
     }
     const targets = Array.isArray(event.effectiveTargets) ? event.effectiveTargets : [];
     const cardId = event.card?.definitionId;
+    if (event.resolved && event.card?.category === "equipment") record.achievementFacts.equipmentUses += 1;
+    if (event.resolved && cardId === "lightning") record.achievementFacts.lightningCasts += 1;
     if (cardId === "mutualBenefit") {
       this.settleProtectedAllyResourceAction(event);
       this.settleMutualBenefitContribution(record, source, event);
@@ -1077,6 +1354,69 @@ export class MatchPerformanceTracker {
 
   /*
   功能
+  记录真人玩家正式提交的主动突袭次数。
+
+  调用方
+  cardCommitted listener。
+
+  输入
+  含 source、card 与 usageContext 的正式卡牌提交事实。
+
+  输出
+  无返回值。
+
+  读取状态
+  source.controllerType、card.definitionId 与 usageContext。
+
+  写入状态
+  source achievementFacts.activeAssaultUses。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  只接受真人在普通 action 上下文提交的突袭；AI、响应、借势强制突袭和提交前取消均不计数。
+  */
+  handleCardCommitted(event) {
+    if (event.source?.controllerType !== "human"
+      || event.card?.definitionId !== "assault"
+      || event.usageContext !== "action") return;
+    const record = this.recordFor(event.source);
+    if (record) record.achievementFacts.activeAssaultUses += 1;
+  }
+
+  /*
+  功能
+  累计一次事务已提交的主动技能使用动作。
+
+  调用方
+  activeSkillUsed listener。
+
+  输入
+  含 source 与 skill 的 immutable fact。
+
+  输出
+  无返回值。
+
+  读取状态
+  source 对应 tracker record。
+
+  写入状态
+  achievementFacts.activeSkillUses。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  免费主动技能也计一次；非法、取消、回滚和被动触发均不会发布该事实。
+  */
+  handleActiveSkillUsed(event) {
+    const record = this.recordFor(event.source);
+    if (record) record.achievementFacts.activeSkillUses += 1;
+  }
+
+  /*
+  功能
   收束未结束回合并冻结整局 raw performance snapshot。
 
   调用方
@@ -1085,11 +1425,11 @@ export class MatchPerformanceTracker {
   输入
   无。
 
-  输出
-  冻结的 { gameId, players } snapshot。
+输出
+冻结的 { gameId, finalRound, players } snapshot。
 
-  读取状态
-  MatchState players.alive/winnerTeam 与 tracker records。
+读取状态
+MatchState currentRound/players.alive/winnerTeam 与 tracker records。
 
   写入状态
   finalizedSnapshot。
@@ -1107,9 +1447,13 @@ export class MatchPerformanceTracker {
       .sort((left, right) => left.seatIndex - right.seatIndex)
       .map((record) => {
         const player = state.players.find((candidate) => candidate.id === record.playerId);
-        return freezePlayerRecord(record, Boolean(player?.alive), state.winnerTeam);
+        return freezePlayerRecord(record, Boolean(player?.alive), state.winnerTeam, player);
       }));
-    this.finalizedSnapshot = Object.freeze({ gameId: this.gameId, players });
+    this.finalizedSnapshot = Object.freeze({
+      gameId: this.gameId,
+      finalRound: Math.max(0, Number(state.currentRound) || 0),
+      players
+    });
     return this.finalizedSnapshot;
   }
 }

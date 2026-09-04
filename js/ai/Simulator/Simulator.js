@@ -1040,10 +1040,11 @@ class SimulatorCore {
   只写本次 clone 及 root 递归守卫；具体效果写入委托各 Simulation 组件。
 
   调用函数
-  clone、buildSkillExecutionWorlds、buildCardExecutionWorlds、applySkill、applyCardEffect 与响应查询。
+  clone、buildSkillExecutionWorlds、buildCardExecutionWorlds、triggerRecycleDeviceUse、applySkill、applyCardEffect 与响应查询。
 
   边界与不变量
-  普通 candidate 开始后必须完整 clone、支付和结算；卡牌级反制容量只消费一次；
+  普通 candidate 开始后必须完整 clone、支付和结算；战术 commit 触发必须发生在响应查询前且每个 World 只发生一次；
+  restoreActorHand 的 root 效果重放已经位于 commit 后，不得再次触发回收站；卡牌级反制容量只消费一次；
   只有已证实的大型 Probability 循环允许 cooperative checkpoint。
   */
   apply(state, action, controls = {}) {
@@ -1107,6 +1108,14 @@ class SimulatorCore {
       && executionProbability > PROBABILITY_EPSILON ? 1 : 0;
     actor.handCount = Math.max(0, (actor.handCount ?? 0) - executionProbability + handRestore);
     if (executionProbability <= 0) return next;
+    if (card.category === "tactic" && !controls.restoreActorHand) {
+      this.triggerRecycleDeviceUse(
+        next,
+        actor,
+        executionProbability,
+        card.id ?? card.definitionId
+      );
+    }
     // card-scope 的取消概率与容量消费必须使用同一份 responder 评估；两者之间没有
     // 状态变化，因此重复计算 counterDecision 只会增加开销，不会提供新信息。
     const cardScopeCounterEvaluation = card.category === "tactic"
@@ -2459,7 +2468,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
 
   /*
   功能
-  执行一张已完成动作支付与 card-scope 响应门控的卡牌效果。
+  执行一张已完成动作支付、commit trigger 与 card-scope 响应门控的卡牌效果。
 
   调用方
   Simulator.apply 唯一动作分派入口。
@@ -2481,7 +2490,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
   Damage、Response、Skill/Status 后置钩子与资源辅助函数。
 
   边界与不变量
-  不重新计算动作支付或 card-scope 响应；响应前摘要只供窥探 option value 读取，
+  不重新计算动作支付、commit trigger 或 card-scope 响应；响应前摘要只供窥探 option value 读取，
   不能作为结算目标；switch 顺序与既有后置触发顺序保持不变。
   */
   applyCardEffect(next, actor, abstractAction, context) {
@@ -2758,14 +2767,6 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
     }
     this.simulateGamble(next, actor, card, executionProbability);
     this.simulateCoordination(next, actor, coordinationTargets, coordinationProbability);
-    if (card.category === "tactic") {
-      this.triggerRecycleDeviceUse(
-        next,
-        actor,
-        executionProbability,
-        card.id ?? card.definitionId
-      );
-    }
     if (hasPassiveSkill(actor, "momentum") && actor.alive && card.definitionId !== "assault") {
       const category = card.category ?? CARD_DEFINITIONS[card.definitionId]?.category;
       this.simulateCategoryUse(next, actor, category, cardEventWorlds);
