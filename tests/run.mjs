@@ -157,6 +157,7 @@ import { InteractionController, hiddenSelectionMarkup, orderZoneSelectionSlots }
 import { UIManager, canSubmitResponse, skillButtonLabel } from "../js/ui/UIManager.js";
 import { MatchLogAdapter } from "../js/adapters/ui/MatchLogAdapter.js";
 import { RulebookView, buildRulebookPages, getRulebookCardView } from "../js/ui/RulebookView.js";
+import { GameInfoView, loadGameVersion } from "../js/ui/GameInfoView.js";
 import { PrivateRevealView } from "../js/ui/PrivateRevealView.js";
 import { AnimationController, LIGHTNING_HIT_DURATION_MS, RADAR_SUCCESS_DURATION_MS } from "../js/ui/animationController.js";
 import { JudgmentView } from "../js/ui/JudgmentView.js";
@@ -38719,6 +38720,137 @@ test("UI·入局说明：打开、翻页与关闭统一触发现有激活音效�
     "sound", "close"
   ]);
 });
+
+/*
+功能
+验证游戏说明页只使用 package.json 版本与指定正文，并保留安全外链和一屏约束。
+
+调用方
+当前测试。
+
+输入
+仓库页面、样式、发布脚本与 package.json；GameInfoView 使用隔离 DOM 替身。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+游戏说明页运行时标记、项目清单版本和浏览器资源样式。
+
+写入状态
+隔离 root 的 innerHTML 与 click listener。
+
+调用函数
+loadGameVersion、GameInfoView.show、GameInfoView.handleClick。
+
+边界与不变量
+可见文案不得扩写；版本只来自 package.json；样式不得滚动或整体缩放。
+*/
+async function gameInfoUsesCanonicalVersionAndSpecifiedCopy() {
+  const [index, css, releaseScript, packageSource] = await Promise.all([
+    readFile(projectFile("index.html"), "utf8"),
+    readFile(projectFile("css/game-info.css"), "utf8"),
+    readFile(projectFile("tools/build_release.ps1"), "utf8"),
+    readFile(projectFile("package.json"), "utf8")
+  ]);
+  const packageMetadata = JSON.parse(packageSource);
+  const fetchedUrls = [];
+  const version = await loadGameVersion(async (url) => {
+    fetchedUrls.push(String(url));
+    return { ok:true, json:async () => packageMetadata };
+  });
+  assert.equal(version, packageMetadata.version);
+  assert.match(fetchedUrls[0], /package\.json$/);
+
+  const root = makeInteractiveElement();
+  let loadCount = 0;
+  let backCount = 0;
+  const view = new GameInfoView(root, () => { backCount += 1; }, async () => {
+    loadCount += 1;
+    return version;
+  });
+  await view.show();
+  await view.show();
+  assert.equal(loadCount, 1, "重复进入不得重复维护或读取第二份版本值");
+  root.click(clickTarget("[data-game-info-back]"));
+  assert.equal(backCount, 1);
+
+  for (const copy of [
+    "五域纷争", "FIVE REALMS", `v${packageMetadata.version}`, "Lelexia", "2026.09.04", "关于游戏",
+    "《五域纷争》是一款以阵营对抗、卡牌博弈与角色能力为核心的策略游戏。",
+    "游戏将根据实际对局体验持续进行规则调整、平衡优化、Bug 修复与界面改进。",
+    "反馈与联系", "colasmith3783@gmail.com", "2100532928@qq.com",
+    "https://github.com/lelexia0131/FiveRealms", "版权说明",
+    "© 2026 Five Realms. All Rights Reserved.", "感谢游玩《五域纷争》"
+  ]) assert.ok(root.innerHTML.includes(copy), `缺少游戏说明文案：${copy}`);
+  assert.doesNotMatch(root.innerHTML, /策略 · 博弈 · 阵营对抗|探索五域|命运由你书写|欢迎来到五域纷争/);
+  assert.match(root.innerHTML, /target="_blank" rel="noopener noreferrer"/);
+  assert.match(index, /href="\.\/css\/game-info\.css"/);
+  assert.match(css, /\.game-info-screen\s*\{[^}]*height:\s*100vh[^}]*overflow:\s*hidden/s);
+  assert.match(css, /@media\s*\(max-height:\s*800px\)/);
+  assert.doesNotMatch(css, /overflow-y:\s*auto|\bzoom\s*:|transform:\s*scale\(/);
+  assert.match(releaseScript, /ConvertFrom-Json[\s\S]*\$PackageMetadata\.version/);
+  assert.match(releaseScript, /"package\.json"/);
+  assert.match(releaseScript, /"css\/game-info\.css"/);
+}
+
+test("UI·游戏说明：版本、指定正文、安全外链与一屏样式使用稳定资源", gameInfoUsesCanonicalVersionAndSpecifiedCopy);
+
+/*
+功能
+验证游戏说明入口复用首页按钮语言，并通过 UIManager 顶层生命周期往返首页。
+
+调用方
+当前测试。
+
+输入
+index.html 与隔离的 UIManager 页面元素替身。
+
+输出
+无返回值，断言失败时抛错。
+
+读取状态
+首页入口顺序和各顶层 screen 的显隐状态。
+
+写入状态
+隔离 screen classList、音乐与渲染调用记录。
+
+调用函数
+UIManager.showGameInfo、UIManager.hideGameInfo、UIManager.showStart。
+
+边界与不变量
+进入和返回不启动征召或游戏；历史入口与开始入口保留原顺序和样式。
+*/
+async function gameInfoUsesExistingTopLevelLifecycle() {
+  const index = await readFile(projectFile("index.html"), "utf8");
+  assert.match(index, /id="start-button"[\s\S]*id="history-button"[\s\S]*id="game-info-button"/);
+  assert.match(index, /id="game-info-button" class="ghost-button history-entry-button"/);
+
+  const elements = Object.fromEntries([
+    "start_screen", "history_archive_screen", "game_info_screen", "squad_selection_screen", "selection_screen", "game_screen"
+  ].map((name) => [name, makeInteractiveElement()]));
+  elements.start_screen.classList.remove("is-hidden");
+  const calls = [];
+  const context = {
+    elements,
+    sound: { playMenuMusic: () => calls.push("music") },
+    gameInfoView: { show:async () => calls.push("render") },
+    clearLog: () => calls.push("clear"),
+    showStart: UIManager.prototype.showStart
+  };
+  await UIManager.prototype.showGameInfo.call(context);
+  assert.equal(elements.start_screen.classList.contains("is-hidden"), true);
+  assert.equal(elements.history_archive_screen.classList.contains("is-hidden"), true);
+  assert.equal(elements.game_info_screen.classList.contains("is-hidden"), false);
+  assert.deepEqual(calls, ["music", "render"]);
+
+  UIManager.prototype.hideGameInfo.call(context);
+  assert.equal(elements.start_screen.classList.contains("is-hidden"), false);
+  assert.equal(elements.game_info_screen.classList.contains("is-hidden"), true);
+  assert.deepEqual(calls, ["music", "render", "music", "clear"]);
+}
+
+test("UI·游戏说明：入口与返回复用现有顶层页面生命周期", gameInfoUsesExistingTopLevelLifecycle);
 
 test("UI·对局标题：仅保留文字且首页品牌保持不变", async () => {
   const [index, componentsCss] = await Promise.all([

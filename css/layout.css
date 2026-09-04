@@ -8,7 +8,8 @@
 
 .start-screen { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(390px, .72fr); align-items: center; gap: clamp(42px, 8vw, 130px); max-width: 1440px; margin: 0 auto; padding: clamp(56px, 8vh, 100px) clamp(54px, 8vw, 130px); }
 .start-copy { max-width: 720px; }
-body:has(.squad-selection-screen:not(.is-hidden)), body:has(.history-archive-screen:not(.is-hidden)) { min-width: 0; }
+body:has(.squad-selection-screen:not(.is-hidden)), body:has(.game-info-screen:not(.is-hidden)) { min-width: 0; }
+body:has(.history-archive-screen:not(.is-hidden)) { min-width: 0; }
 .squad-selection-screen { min-height: 100vh; overflow: auto; padding: clamp(34px, 7vh, 76px) clamp(28px, 6vw, 92px); }
 .squad-selection-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; max-width: 1280px; margin: 0 auto clamp(24px, 4vh, 42px); }
 .squad-mode-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(14px, 2vw, 28px); max-width: 1280px; margin: 0 auto; }

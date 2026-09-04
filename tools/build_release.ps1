@@ -3,7 +3,8 @@ $ErrorActionPreference = "Stop"
 
 # The script lives under tools; the project root is its parent directory.
 $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$ReleaseRoot = Join-Path -Path $ProjectRoot -ChildPath "FiveRealms1.1.0"
+$PackageMetadata = Get-Content -LiteralPath (Join-Path $ProjectRoot "package.json") -Raw | ConvertFrom-Json
+$ReleaseRoot = Join-Path -Path $ProjectRoot -ChildPath ("FiveRealms" + $PackageMetadata.version)
 
 if ([IO.Path]::GetFullPath($ReleaseRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) -eq
     $ProjectRoot.TrimEnd([IO.Path]::DirectorySeparatorChar)) {
@@ -32,9 +33,10 @@ function Copy-WhitelistedFile {
     Copy-Item -LiteralPath $source -Destination $destination -Force
 }
 
-# The page entry is the only required file at the release root.
+# The page entry and canonical package version are required at the release root.
 $runtimeRootFiles = @(
-    "index.html"
+    "index.html",
+    "package.json"
 )
 
 # Stylesheets loaded directly by index.html.
@@ -46,6 +48,7 @@ $runtimeCssFiles = @(
     "css/cards.css",
     "css/components.css",
     "css/rulebook.css",
+    "css/game-info.css",
     "css/history.css",
     "css/achievements.css",
     "css/animations.css"

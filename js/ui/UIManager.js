@@ -22,6 +22,7 @@ import { TEAM_ASSIGNMENT_MODE } from "../application/match/TeamAssignmentMode.js
 import { MatchMvpResultView } from "./results/MatchMvpResultView.js";
 import { RulebookView } from "./RulebookView.js";
 import { HistoryArchiveView } from "./history/HistoryArchiveView.js";
+import { GameInfoView } from "./GameInfoView.js";
 
 const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
@@ -192,7 +193,7 @@ export class UIManager {
   页面 DOM、窗口宽度与已持久化声音偏好。
 
   写入状态
-  初始化元素引用、交互状态、声音、动画、历史数据展示边界和各 View，并绑定事件。
+  初始化元素引用、交互状态、声音、动画、历史与游戏说明展示边界和各 View，并绑定事件。
 
   调用函数
   SoundManager、AnimationController、InteractionController、各 View 构造器、bindEvents、setAiSpeed。
@@ -202,7 +203,7 @@ export class UIManager {
   */
   constructor({ historyStatsManager = null } = {}) {
     this.elements = Object.fromEntries([
-      "start-screen", "history-archive-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "rules-button",
+      "start-screen", "history-archive-screen", "game-info-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "game-info-button", "rules-button",
       "squad-mode-grid", "back-to-start-button", "back-to-squad-button", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
@@ -248,6 +249,10 @@ export class UIManager {
         toastRoot: this.elements.achievement_toast_region,
         onToastShown: () => this.playSound("achievementUnlock")
       }
+    );
+    this.gameInfoView = new GameInfoView(
+      this.elements.game_info_screen,
+      () => this.hideGameInfo()
     );
     this.matchMvpResultView = new MatchMvpResultView(
       this.elements.match_mvp_result,
@@ -496,6 +501,7 @@ export class UIManager {
     for (const input of this.sfxVolumeInputs) input.addEventListener("input", () => this.setSfxVolume(input.value));
     this.elements.start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onStart?.(); });
     this.elements.history_button?.addEventListener("click", () => { this.playSound("select"); void this.showHistoryArchive(); });
+    this.elements.game_info_button?.addEventListener("click", () => { this.playSound("select"); void this.showGameInfo(); });
     this.elements.back_to_start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToStart?.(); });
     this.elements.back_to_squad_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToSquadSelection?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
@@ -643,6 +649,7 @@ export class UIManager {
     this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
@@ -676,6 +683,7 @@ export class UIManager {
   async showHistoryArchive() {
     this.sound.playMenuMusic();
     this.elements.start_screen.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
@@ -715,6 +723,71 @@ export class UIManager {
 
   /*
   功能
+  经现有顶层屏幕生命周期进入独立游戏说明页并读取当前应用版本。
+
+  调用方
+  首页游戏说明按钮。
+
+  输入
+  无。
+
+  输出
+  说明页面渲染完成的 Promise。
+
+  读取状态
+  页面屏幕元素、SoundManager 与 GameInfoView。
+
+  写入状态
+  仅切换顶层 screen 显隐并渲染游戏说明页。
+
+  调用函数
+  SoundManager.playMenuMusic、GameInfoView.show。
+
+  边界与不变量
+  不创建、销毁或修改 MatchApplication；版本读取完成前首页保持可见。
+  */
+  async showGameInfo() {
+    this.sound.playMenuMusic();
+    await this.gameInfoView.show();
+    this.elements.start_screen.classList.add("is-hidden");
+    this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.squad_selection_screen.classList.add("is-hidden");
+    this.elements.selection_screen.classList.add("is-hidden");
+    this.elements.game_screen.classList.add("is-hidden");
+    this.elements.game_info_screen.classList.remove("is-hidden");
+  }
+
+  /*
+  功能
+  离开游戏说明页并恢复首页。
+
+  调用方
+  GameInfoView 返回按钮 callback。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  顶层页面生命周期。
+
+  写入状态
+  切换到首页。
+
+  调用函数
+  showStart。
+
+  边界与不变量
+  返回不启动征召或对局，已读取版本留在 View 中供重复进入复用。
+  */
+  hideGameInfo() {
+    this.showStart();
+  }
+
+  /*
+  功能
   展示独立的编队方式选择界面。
 
   调用方
@@ -745,6 +818,7 @@ export class UIManager {
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.remove("is-hidden");
@@ -787,6 +861,7 @@ export class UIManager {
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.remove("is-hidden");
@@ -830,6 +905,7 @@ export class UIManager {
     this.clearLog();
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
+    this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
     this.elements.selection_screen.classList.add("is-hidden");
     this.elements.game_screen.classList.remove("is-hidden");
