@@ -39658,43 +39658,6 @@ test("UI·横向卡牌拖拽：统一绑定幂等且动态重渲染与容器外�
   }
 });
 
-test("UI·横向卡牌位置：主手牌重绘保留原位置并按新最大距离收束", () => {
-  const human = makePlayer("scroll-human", 0, "dawn", "human"),
-    enemy = makePlayer("scroll-enemy", 1, "dusk");
-  human.hand.push(
-    instance("assault"), instance("block"), instance("charge"), instance("shield"),
-    instance("scout"), instance("transfer")
-  );
-  const { game } = makeGame([human, enemy]);
-  let renderedScrollWidth = 800;
-  const hand = {
-    scrollLeft: 200,
-    scrollWidth: 900,
-    clientWidth: 300,
-    _innerHTML: "",
-    get innerHTML() { return this._innerHTML; },
-    set innerHTML(value) {
-      this._innerHTML = value;
-      this.scrollLeft = 0;
-      this.scrollWidth = renderedScrollWidth;
-    }
-  };
-  const fake = {
-    elements: { human_hand: hand, hand_hint: { textContent: "" } },
-    discardState: null,
-    targetState: null,
-    isInteractionActive: () => false
-  };
-  UIManager.prototype.renderHand.call(fake, game, human);
-  assert.equal(hand.scrollLeft, 200, "普通手牌重绘不得回到最左侧");
-
-  hand.scrollLeft = 400;
-  renderedScrollWidth = 600;
-  human.hand.pop();
-  UIManager.prototype.renderHand.call(fake, game, human);
-  assert.equal(hand.scrollLeft, 300, "内容缩短后必须 clamp 到新的 maxScrollLeft");
-});
-
 test("UI·横向卡牌位置：敌方席位重建后按玩家 ID 分别恢复位置", () => {
   const previousDocument = globalThis.document;
   const human = makePlayer("scroll-viewer", 0, "dawn", "human"),
@@ -39746,42 +39709,6 @@ test("UI·横向卡牌位置：敌方席位重建后按玩家 ID 分别恢复位
     if (previousDocument === undefined) delete globalThis.document;
     else globalThis.document = previousDocument;
   }
-});
-
-test("UI·横向卡牌位置：互利同一请求重绘保留并 clamp，新请求不继承旧位置", () => {
-  let nextScrollWidth = 700, scroller = null;
-  const element = {
-    _innerHTML: "",
-    classList: { add() { }, remove() { } },
-    querySelector: (selector) => selector === ".tableau-cards" ? scroller : null,
-    get innerHTML() { return this._innerHTML; },
-    set innerHTML(value) {
-      this._innerHTML = value;
-      scroller = value.includes("tableau-cards")
-        ? { scrollLeft: 0, scrollWidth: nextScrollWidth, clientWidth: 300 }
-        : null;
-    }
-  };
-  const cards = [instance("assault"), instance("block"), instance("charge")];
-  const view = new PublicPoolView(element);
-  view.show(cards, { interactive: true });
-  assert.equal(scroller.scrollLeft, 0);
-
-  view.pending = { selected: new Set() };
-  scroller.scrollLeft = 220;
-  view.show(cards, { interactive: true, selectedId: cards[1].id });
-  assert.equal(scroller.scrollLeft, 220, "同一互利请求选择牌后不得回到左侧");
-
-  scroller.scrollLeft = 380;
-  nextScrollWidth = 500;
-  view.show(cards.slice(0, 2), { interactive: true, selectedId: cards[0].id });
-  assert.equal(scroller.scrollLeft, 200, "牌池缩短后必须 clamp 到新的最右侧");
-
-  view.pending = null;
-  view.hide();
-  nextScrollWidth = 700;
-  view.show(cards, { interactive: true });
-  assert.equal(scroller.scrollLeft, 0, "新公开牌池请求不得继承旧请求位置");
 });
 
 test("UI·手牌：电脑玩家模板只暴露手牌数量", () => {

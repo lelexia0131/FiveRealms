@@ -125,24 +125,24 @@ export function updateAchievementStreaks(streaks, player) {
 evaluateMatchAchievements。
 
 输入
-成就定义、玩家最终结果、对应模式连续记录与长期累计事实。
+成就定义、玩家最终结果、对应模式连续记录、长期累计事实与本局全部玩家结果。
 
 输出
 满足条件时返回 true。
 
 读取状态
-definition.id、player canonical 结果、achievementFacts、streak 与 persistentFacts。
+definition.id、player canonical 结果、achievementFacts、streak、persistentFacts 与 MatchResult.players 的 raw.firepower。
 
 写入状态
 无。
 
 调用函数
-factsFor、Array.includes、Number。
+factsFor、Array.includes、Array.every、Number。
 
 边界与不变量
-只消费已存在的真实伤害、击杀、救援、装备、闪电、MVP 与残局事实；不重算 MVP 或分数。
+只消费已存在的真实伤害、击杀、救援、装备、闪电、MVP、firepower 与残局事实；不重算 MVP、火力或分数。
 */
-function meets(definition, player, streak, persistentFacts) {
+function meets(definition, player, streak, persistentFacts, matchResult) {
   const facts = factsFor(player);
   switch (definition.id) {
     case "first_victory": return Boolean(player?.won);
@@ -192,6 +192,13 @@ function meets(definition, player, streak, persistentFacts) {
     case "armory_keeper": return (facts.equipmentUses ?? 0) >= 10;
     case "all_rounder": return ["activity", "support", "contribution", "control", "skill", "firepower"]
       .every((dimension) => Number(player?.scores?.[dimension]) > 100);
+    case "accidental_success": {
+      const humanFirepower = Number(player?.raw?.firepower);
+      return (facts.activeAssaultUses ?? 0) === 0
+        && Number.isFinite(humanFirepower)
+        && matchResult.players.every((candidate) => candidate.playerId === player.playerId
+          || humanFirepower >= Number(candidate?.raw?.firepower));
+    }
     default: return false;
   }
 }
@@ -228,7 +235,7 @@ export function evaluateMatchAchievements(matchResult, humanPlayerId, streaks, p
   const unlocked = ACHIEVEMENT_DEFINITIONS.filter((definition) => {
     if (definition.teamScope === "duo" && scope !== "duo") return false;
     if (definition.teamScope === "trio" && scope !== "trio") return false;
-    return meets(definition, player, streak, persistentFacts);
+    return meets(definition, player, streak, persistentFacts, matchResult);
   }).map((definition) => definition.id);
   return { scope, unlocked, player };
 }

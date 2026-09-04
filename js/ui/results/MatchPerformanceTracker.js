@@ -65,6 +65,7 @@ Set。
 function createAchievementFacts(initialHandCount) {
   return {
     activeSkillUses: 0,
+    activeAssaultUses: 0,
     rescueCount: 0,
     maxTurnDamage: 0,
     maxTurnKills: 0,
@@ -265,6 +266,7 @@ export class MatchPerformanceTracker {
       shieldGranted: (event) => this.handleShieldGranted(event),
       beforeCardUse: (event) => this.handleBeforeCardUse(event),
       afterCardMove: (event) => this.handleAfterCardMove(event),
+      cardCommitted: (event) => this.handleCardCommitted(event),
       cardUsed: (event) => this.handleCardUsed(event),
       cardsGranted: (event) => this.handleCardsGranted(event),
       sealSettled: (event) => this.handleSealSettled(event),
@@ -817,13 +819,13 @@ export class MatchPerformanceTracker {
 
   /*
 功能
-累计真实减伤与护盾吸收归属、目标实际生命承伤、闪电命中事实与来源对敌实际生命伤害。
+累计真实减伤与护盾吸收归属、目标实际生命承伤、闪电命中事实、来源对敌实际生命伤害与攻击结算峰值。
 
   调用方
   afterDamage listener。
 
   输入
-  含 source、target 与 actualAmount 的结算后事件。
+含 source、target、actualAmount 与 finalAttackDamage 的结算后事件。
 
   输出
   无返回值。
@@ -838,7 +840,8 @@ export class MatchPerformanceTracker {
   settleMitigationContributions、settleShieldAbsorption、recordFor。
 
 边界与不变量
-承伤与攻击均只取 actualAmount；友伤、自伤、环境伤害、格挡、护盾吸收和减伤部分均不增加火力。
+承伤与火力只取 actualAmount；单次攻击峰值只取同一 afterDamage 事实中的 finalAttackDamage，保留 HP/护盾截断前数值；
+友伤、自伤、环境伤害、格挡与减伤至零均不产生攻击峰值。
   */
   handleAfterDamage(event) {
     this.settleMitigationContributions(event);
@@ -863,13 +866,14 @@ export class MatchPerformanceTracker {
     const record = this.recordFor(event.source);
     if (record) {
       record.totals.enemyHpDamage += actualAmount;
-      if (actualAmount > 0) {
+      const finalAttackDamage = Math.max(0, Number(event.finalAttackDamage) || 0);
+      if (finalAttackDamage > 0) {
         const resolutionId = event.resolutionId ?? null;
         if (resolutionId && record.achievementFacts.damageResolutionId === resolutionId) {
-          record.achievementFacts.damageResolutionTotal += actualAmount;
+          record.achievementFacts.damageResolutionTotal += finalAttackDamage;
         } else {
           record.achievementFacts.damageResolutionId = resolutionId;
-          record.achievementFacts.damageResolutionTotal = actualAmount;
+          record.achievementFacts.damageResolutionTotal = finalAttackDamage;
         }
         record.achievementFacts.maxSingleAttackDamage = Math.max(
           record.achievementFacts.maxSingleAttackDamage,
@@ -1346,6 +1350,39 @@ export class MatchPerformanceTracker {
     const actualAmount = Math.max(0, Number(event.actualAmount) || 0);
     const record = this.recordFor(event.source);
     if (record && actualAmount > 0) record.totals.skillEnergySpent += actualAmount;
+  }
+
+  /*
+  功能
+  记录真人玩家正式提交的主动突袭次数。
+
+  调用方
+  cardCommitted listener。
+
+  输入
+  含 source、card 与 usageContext 的正式卡牌提交事实。
+
+  输出
+  无返回值。
+
+  读取状态
+  source.controllerType、card.definitionId 与 usageContext。
+
+  写入状态
+  source achievementFacts.activeAssaultUses。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  只接受真人在普通 action 上下文提交的突袭；AI、响应、借势强制突袭和提交前取消均不计数。
+  */
+  handleCardCommitted(event) {
+    if (event.source?.controllerType !== "human"
+      || event.card?.definitionId !== "assault"
+      || event.usageContext !== "action") return;
+    const record = this.recordFor(event.source);
+    if (record) record.achievementFacts.activeAssaultUses += 1;
   }
 
   /*

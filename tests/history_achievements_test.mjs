@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { createCombatWorkflow } from "../js/application/combat/CombatWorkflow.js";
 import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js";
 import {
   ACHIEVEMENT_DEFINITIONS,
@@ -91,7 +92,7 @@ function result(overrides = {}) {
     totals: { enemyHpDamage: 12, enemyKills: 2 },
     combatStats: { totalDamage: 12, damageTaken: 8, support: 0 },
     achievementFacts: {
-      activeSkillUses: 3, rescueCount: 3, maxTurnDamage: 3, maxTurnKills: 2,
+      activeSkillUses: 3, activeAssaultUses: 0, rescueCount: 3, maxTurnDamage: 3, maxTurnKills: 2,
       maxHandCount: 16, equipmentUses: 10, lightningCasts: 2, lightningHits: 2,
       teammateDeaths: 0, maxAliveRound: 0, clutchEnemyCounts: [2, 3]
     },
@@ -108,7 +109,7 @@ function result(overrides = {}) {
 新增成就边界测试。
 
 输入
-成就 ID、玩家字段覆盖、achievementFacts 覆盖、持久化事实与连胜前置值。
+成就 ID、玩家字段覆盖、achievementFacts 覆盖、持久化事实、连胜前置值与其他玩家结果。
 
 输出
 该成就在本次评估中是否满足。
@@ -125,7 +126,14 @@ evaluateMatchAchievements。
 边界与不变量
 不经过日志、DOM 或历史扫描；最高存活轮次与 scores 直接作为冻结 MatchResult 事实提供。
 */
-function evaluateAchievementForTest(id, playerOverrides = {}, factOverrides = {}, persistentFacts = {}, streakOverrides = {}) {
+function evaluateAchievementForTest(
+  id,
+  playerOverrides = {},
+  factOverrides = {},
+  persistentFacts = {},
+  streakOverrides = {},
+  otherPlayers = []
+) {
   const base = result().players[0];
   const player = {
     ...base,
@@ -137,11 +145,94 @@ function evaluateAchievementForTest(id, playerOverrides = {}, factOverrides = {}
   streaks.duo.mvp = streakOverrides.mvp ?? 0;
   streaks.duo.lostMvp = streakOverrides.lostMvp ?? 0;
   return evaluateMatchAchievements(
-    { gameId: "achievement-boundary", finalRound: playerOverrides.finalRound ?? 0, players: [player] },
+    { gameId: "achievement-boundary", finalRound: playerOverrides.finalRound ?? 0, players: [player, ...otherPlayers] },
     "human",
     streaks,
     persistentFacts
   ).unlocked.includes(id);
+}
+
+/*
+功能
+通过真实 CombatWorkflow 与 MatchPerformanceTracker 评估一次攻击对应的伤害成就。
+
+调用方
+攻击伤害成就回归测试。
+
+输入
+增减伤完成后的攻击伤害与目标攻击前生命。
+
+输出
+实际掉血、冻结成就事实与本场解锁 ID。
+
+读取状态
+测试内 MatchState 与 CombatWorkflow 发布的 afterDamage 事实。
+
+写入状态
+测试目标生命与 MatchPerformanceTracker 局内事实。
+
+调用函数
+createCombatWorkflow、MatchPerformanceTracker.finalizeMatch、evaluateMatchAchievements。
+
+边界与不变量
+目标护盾令实际生命伤害等于剩余 HP 且不格挡；成就事实必须保留 HP cap 前伤害，火力累计仍只使用实际掉血。
+*/
+async function evaluateTrackedAttack(finalAttackDamage, targetHp) {
+  const actor = {
+    id: "human", name: "human", seatIndex: 0, battleTeam: "dawn", controllerType: "human",
+    alive: true, hp: 4, maxHp: 4, shield: 0, hand: [], character: { id: "blade-walker", name: "human" }
+  };
+  const ally = {
+    id: "ally", name: "ally", seatIndex: 1, battleTeam: "dawn", controllerType: "ai",
+    alive: true, hp: 4, maxHp: 4, shield: 0, hand: [], character: { id: "oath-warden", name: "ally" }
+  };
+  const enemy = {
+    id: "enemy", name: "enemy", seatIndex: 2, battleTeam: "dusk", controllerType: "ai",
+    alive: true, hp: targetHp, maxHp: 4, shield: Math.max(0, finalAttackDamage - targetHp),
+    hand: [], character: { id: "ember-magus", name: "enemy" }
+  };
+  const state = {
+    gameId: `achievement-damage-${finalAttackDamage}-${targetHp}`,
+    isGameOver: false,
+    stateVersion: 0,
+    players: [actor, ally, enemy],
+    currentPlayerIndex: 0,
+    currentRound: 1,
+    phase: "play",
+    winnerTeam: "dawn"
+  };
+  const dispatcher = new EventDispatcher(() => true);
+  const tracker = new MatchPerformanceTracker({ eventDispatcher: dispatcher, getState: () => state }).start();
+  tracker.initializeRoster();
+  const workflow = createCombatWorkflow({
+    getState: () => state,
+    isSessionValid: () => true,
+    askForBlock: async () => ({ status: "declined", cards: [] }),
+    getBlockRequirement: () => 0,
+    judgeDefense: async () => ({ handled: false, immune: false, waivedBlock: false }),
+    enterDying: async () => false,
+    emitEvent: (type, payload) => dispatcher.emit(type, payload),
+    createId: () => "achievement-damage-resolution",
+    presentation: {
+      log() {}, showDamageFeedback() {}, showShieldFeedback() {}, refresh() {}
+    },
+    diagnostics: { recordDamage() {} },
+    observeDamage() {}
+  });
+  const actualDamage = await workflow.damage(actor, enemy, finalAttackDamage, {
+    card: { definitionId: "assault", name: "突袭" },
+    canBlock: false,
+    damageType: "normal",
+    resolutionId: "achievement-damage-resolution"
+  });
+  const snapshot = tracker.finalizeMatch();
+  const humanResult = snapshot.players.find((player) => player.playerId === actor.id);
+  const unlocked = evaluateMatchAchievements(
+    { gameId: state.gameId, players: snapshot.players },
+    actor.id,
+    createEmptyAchievementData().streaks
+  ).unlocked;
+  return { actualDamage, humanResult, unlocked };
 }
 
 export function registerHistoryAchievementTests(test) {
@@ -364,10 +455,10 @@ export function registerHistoryAchievementTests(test) {
       { id: "h", tier: "hidden", order: 1 }
     ];
     assert.deepEqual(sortAchievements(source).map((entry) => entry.id), ["a", "b", "z", "h"]);
-    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 39);
+    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 40);
   });
 
-  test("UI·征途成就：档案页渲染全部三十九张卡并保留隐藏卡面", async () => {
+  test("UI·征途成就：档案页渲染全部四十张卡并保留隐藏卡面", async () => {
     const storage = memoryStorage();
     const manager = new HistoryStatsManager({ storage });
     const root = { innerHTML: "", addEventListener() {} };
@@ -377,12 +468,12 @@ export function registerHistoryAchievementTests(test) {
       root.innerHTML.indexOf('<section class="history-section history-achievements"'),
       root.innerHTML.indexOf('<section class="history-section" aria-labelledby="history-travelers-title">')
     );
-    assert.equal((achievementMarkup.match(/class="achievement-card /g) ?? []).length, 39);
-    assert.equal((achievementMarkup.match(/journey-progress-segment/g) ?? []).length, 39);
+    assert.equal((achievementMarkup.match(/class="achievement-card /g) ?? []).length, 40);
+    assert.equal((achievementMarkup.match(/journey-progress-segment/g) ?? []).length, 40);
     assert.match(achievementMarkup, /每一道亮起的铭痕，都来自一场真实终局[\s\S]*?achievement-journey-progress/);
     assert.doesNotMatch(achievementMarkup, /achievement-journey-sigil|journey-crest-mark/);
-    assert.equal((achievementMarkup.match(/is-hidden-locked/g) ?? []).length, 8);
-    assert.equal((achievementMarkup.match(/achievement-card is-hidden-tier is-hidden-locked/g) ?? []).length, 4);
+    assert.equal((achievementMarkup.match(/is-hidden-locked/g) ?? []).length, 10);
+    assert.equal((achievementMarkup.match(/achievement-card is-hidden-tier is-hidden-locked/g) ?? []).length, 5);
     assert.doesNotMatch(achievementMarkup, /assets\/(cards|characters)\//);
     assert.match(achievementMarkup, /assets\/achievements\/storm_scribe\.svg/);
     assert.match(achievementMarkup, /assets\/achievements\/overflowing_grimoire\.svg/);
@@ -400,7 +491,7 @@ export function registerHistoryAchievementTests(test) {
     assert.match(achievementCss, /\.achievement-modal\s*\{[^}]*border:\s*1px solid var\(--achievement-tier-border\)[^}]*background:\s*var\(--achievement-tier-surface\)/s);
     assert.match(achievementCss, /\.achievement-modal-art > span:not\(\.achievement-crest\)/);
     assert.match(achievementCss, /\.achievement-card\.is-partial\s*\{[^}]*0 0 20px var\(--achievement-tier-glow\)/s);
-    assert.match(achievementCss, /\.journey-progress-track\s*\{[^}]*repeat\(39, minmax\(0, 1fr\)\)/s);
+    assert.match(achievementCss, /\.journey-progress-track\s*\{[^}]*repeat\(40, minmax\(0, 1fr\)\)/s);
     assert.match(achievementCss, /\.achievement-card\.is-partial, \.achievement-modal\.is-partial\s*\{[^}]*--achievement-art-brightness:\s*\.84/s);
     assert.match(achievementCss, /\.achievement-card\.is-complete, \.achievement-modal\.is-complete\s*\{[^}]*--achievement-art-brightness:\s*1\.08/s);
     assert.match(achievementCss, /\.achievement-card > img\s*\{[^}]*filter: saturate\(var\(--achievement-art-saturation\)\) brightness\(var\(--achievement-art-brightness\)\)/s);
@@ -411,7 +502,7 @@ export function registerHistoryAchievementTests(test) {
   test("UI·征途成就：标题长度有层次且无人倒下使用战旗插画", () => {
     const titles = ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title);
     const lengths = new Set(titles.map((title) => [...title].length));
-    assert.equal(new Set(titles).size, 39);
+    assert.equal(new Set(titles).size, 40);
     assert.ok(lengths.size >= 3);
     assert.ok(titles.every((title) => !/[。！？]$/.test(title)));
     const flawless = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "flawless_victory");
@@ -472,19 +563,40 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(evaluated.includes("last_stand_trio"), false);
   });
 
-  test("UI·征途成就：三十九项定义、ID、艺术资源与模式范围完整", () => {
-    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 39);
-    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id)).size, 39);
-    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title)).size, 39);
+  test("UI·征途成就：四十项定义、ID、艺术资源与模式范围完整", () => {
+    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 40);
+    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id)).size, 40);
+    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title)).size, 40);
     for (const definition of ACHIEVEMENT_DEFINITIONS) {
       assert.match(definition.id, /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
       assert.ok(existsSync(new URL(`../${definition.artwork.slice(2)}`, import.meta.url)), definition.id);
       assert.match(readFileSync(new URL(`../${definition.artwork.slice(2)}`, import.meta.url), "utf8"), /^\s*<svg\b/);
     }
+    const rescueChain = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "rescue_chain");
+    const rescueMaster = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "rescue_master");
+    const heavyBlow = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "heavy_blow");
+    const ace = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "ace");
+    const singlePunch = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "single_punch");
+    const seriousPunch = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "serious_punch");
+    const accidentalSuccess = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "accidental_success");
+    assert.deepEqual([rescueChain.title, rescueChain.criteria], ["医术高超", "单场成功救下至少 2 次濒死友军。"]);
+    assert.deepEqual([rescueMaster.title, rescueMaster.criteria], ["轮回天生", "单场成功救下至少 3 次濒死友军。"]);
+    assert.equal(heavyBlow.tier, "common");
+    assert.equal(ace.teamScope, "duo");
+    assert.equal(ace.criteria, "二人小队中玩家单场击杀全部敌人。");
+    assert.equal(singlePunch.criteria, "打出的一次攻击造成至少 3 点伤害。");
+    assert.equal(seriousPunch.criteria, "打出的一次攻击造成至少 5 点伤害。");
+    assert.deepEqual(
+      [accidentalSuccess.title, accidentalSuccess.tier, accidentalSuccess.hidden, accidentalSuccess.criteria],
+      ["歪打正着", "hidden", true, "全程未打出突袭并成为全场最高火力者。"]
+    );
     assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "storm_scribe").title, "雷神");
-    assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "ace").teamScope, "duo");
     assert.equal(ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "last_stand_trio").teamScope, "trio");
     assert.deepEqual(sortAchievements(ACHIEVEMENT_DEFINITIONS).map((definition) => definition.id), ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id));
+    assert.deepEqual(
+      ACHIEVEMENT_DEFINITIONS.slice(6, 9).map((definition) => definition.id),
+      ["full_health", "heavy_blow", "win_streak_three"]
+    );
   });
 
   test("UI·征途成就：新增判定严格遵守阈值、存活与真实来源", () => {
@@ -499,6 +611,10 @@ export function registerHistoryAchievementTests(test) {
 
     assert.equal(evaluateAchievementForTest("self_lightning", {}, { selfLightningHit: true }), true);
     assert.equal(evaluateAchievementForTest("self_lightning", {}, { selfLightningHit: false, lightningDamageTakenHits: 1 }), false);
+    assert.equal(evaluateAchievementForTest("rescue_chain", {}, { rescueCount: 1 }), false);
+    assert.equal(evaluateAchievementForTest("rescue_chain", {}, { rescueCount: 2 }), true);
+    assert.equal(evaluateAchievementForTest("rescue_master", {}, { rescueCount: 2 }), false);
+    assert.equal(evaluateAchievementForTest("rescue_master", {}, { rescueCount: 3 }), true);
     assert.equal(evaluateAchievementForTest("single_punch", {}, { maxSingleAttackDamage: 2 }), false);
     assert.equal(evaluateAchievementForTest("single_punch", {}, { maxSingleAttackDamage: 3 }), true);
     assert.equal(evaluateAchievementForTest("serious_punch", {}, { maxSingleAttackDamage: 4 }), false);
@@ -533,6 +649,40 @@ export function registerHistoryAchievementTests(test) {
     const allScores = { activity: 101, support: 101, contribution: 101, control: 101, skill: 101, firepower: 101 };
     assert.equal(evaluateAchievementForTest("all_rounder", { scores: { ...allScores, support: 100 } }), false);
     assert.equal(evaluateAchievementForTest("all_rounder", { scores: allScores }), true);
+
+    const lowerFirepower = [{ playerId: "ai-1", raw: { firepower: 4 }, scores: { firepower: 999 } }];
+    const higherFirepower = [{ playerId: "ai-1", raw: { firepower: 6 } }];
+    const tiedFirepower = [{ playerId: "ai-1", raw: { firepower: 5 } }];
+    assert.equal(evaluateAchievementForTest(
+      "accidental_success", { raw: { firepower: 5 }, scores: { firepower: 0 } }, { activeAssaultUses: 0 }, {}, {}, lowerFirepower
+    ), true);
+    assert.equal(evaluateAchievementForTest(
+      "accidental_success", { raw: { firepower: 5 } }, { activeAssaultUses: 1 }, {}, {}, lowerFirepower
+    ), false);
+    assert.equal(evaluateAchievementForTest(
+      "accidental_success", { raw: { firepower: 5 } }, { activeAssaultUses: 0 }, {}, {}, higherFirepower
+    ), false);
+    assert.equal(evaluateAchievementForTest(
+      "accidental_success", { raw: { firepower: 5 } }, { activeAssaultUses: 0 }, {}, {}, tiedFirepower
+    ), true);
+  });
+
+  test("UI·征途成就：攻击峰值使用 HP cap 前最终结算伤害", async () => {
+    const singlePunch = await evaluateTrackedAttack(3, 1);
+    assert.equal(singlePunch.actualDamage, 1);
+    assert.equal(singlePunch.humanResult.totals.enemyHpDamage, 1);
+    assert.equal(singlePunch.humanResult.achievementFacts.maxSingleAttackDamage, 3);
+    assert.equal(singlePunch.unlocked.includes("single_punch"), true);
+
+    const seriousPunch = await evaluateTrackedAttack(5, 2);
+    assert.equal(seriousPunch.actualDamage, 2);
+    assert.equal(seriousPunch.humanResult.totals.enemyHpDamage, 2);
+    assert.equal(seriousPunch.humanResult.achievementFacts.maxSingleAttackDamage, 5);
+    assert.equal(seriousPunch.unlocked.includes("serious_punch"), true);
+
+    const belowSeriousPunch = await evaluateTrackedAttack(4, 2);
+    assert.equal(belowSeriousPunch.humanResult.achievementFacts.maxSingleAttackDamage, 4);
+    assert.equal(belowSeriousPunch.unlocked.includes("serious_punch"), false);
   });
 
   test("UI·征途成就：长期完成局数与败方 MVP streak 按模式隔离", async () => {
@@ -638,19 +788,30 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(Object.hasOwn(persisted.achievements, "lostMvpStreak"), false);
   });
 
-  test("UI·征途成就：tracker 输出单回合、救援、装备与闪电事实", async () => {
-    const actor = { id: "actor", name: "actor", seatIndex: 0, battleTeam: "dawn", alive: true, shield: 0, hand: [], character: { id: "blade-walker", name: "actor" } };
-    const ally = { id: "ally", name: "ally", seatIndex: 1, battleTeam: "dawn", alive: true, shield: 0, hand: [], character: { id: "oath-warden", name: "ally" } };
-    const enemy = { id: "enemy", name: "enemy", seatIndex: 2, battleTeam: "dusk", alive: true, shield: 0, hand: [], character: { id: "ember-magus", name: "enemy" } };
+  test("UI·征途成就：tracker 输出攻击、救援、突袭、装备与闪电事实", async () => {
+    const actor = { id: "actor", name: "actor", seatIndex: 0, battleTeam: "dawn", controllerType: "human", alive: true, shield: 0, hand: [], character: { id: "blade-walker", name: "actor" } };
+    const ally = { id: "ally", name: "ally", seatIndex: 1, battleTeam: "dawn", controllerType: "ai", alive: true, shield: 0, hand: [], character: { id: "oath-warden", name: "ally" } };
+    const enemy = { id: "enemy", name: "enemy", seatIndex: 2, battleTeam: "dusk", controllerType: "ai", alive: true, shield: 0, hand: [], character: { id: "ember-magus", name: "enemy" } };
     const state = { gameId: "tracker-achievements", players: [actor, ally, enemy], phase: "play", currentPlayerIndex: 0, currentRound: 1, winnerTeam: "dawn" };
     const dispatcher = new EventDispatcher(() => true);
     const tracker = new MatchPerformanceTracker({ eventDispatcher: dispatcher, getState: () => state }).start();
     tracker.initializeRoster();
     await dispatcher.emit("turnStart", { player: actor });
     await dispatcher.emit("activeSkillUsed", { source: actor });
-    await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 1, shieldAbsorbed: 0, resolutionId: "attack-1" });
-    await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 2, shieldAbsorbed: 0, resolutionId: "attack-1" });
+    await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 1, finalAttackDamage: 3, shieldAbsorbed: 0, resolutionId: "attack-1" });
+    await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 2, finalAttackDamage: 2, shieldAbsorbed: 0, resolutionId: "attack-2" });
     await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
+    await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
+    assert.equal(tracker.recordFor(actor).achievementFacts.rescueCount, 2);
+    await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
+    const assault = { definitionId: "assault", category: "basic" };
+    await dispatcher.emit("beforeCardUse", { source: actor, card: assault, cancelled: true });
+    await dispatcher.emit("cardCommitted", { source: enemy, card: assault, usageContext: "action" });
+    await dispatcher.emit("cardCommitted", { source: actor, card: assault, usageContext: "response" });
+    await dispatcher.emit("cardCommitted", { source: actor, card: assault, usageContext: "leverageAssault" });
+    await dispatcher.emit("cardCommitted", { source: actor, card: { definitionId: "lightning" }, usageContext: "action" });
+    assert.equal(tracker.recordFor(actor).achievementFacts.activeAssaultUses, 0);
+    await dispatcher.emit("cardCommitted", { source: actor, card: assault, usageContext: "action" });
     await dispatcher.emit("cardUsed", { source: actor, card: { definitionId: "lightning", category: "tactic" }, resolved: true });
     await dispatcher.emit("afterDamage", { source: null, target: enemy, actualAmount: 3, shieldAbsorbed: 0, damageType: "lightning", metadata: { originPlayerId: actor.id } });
     await dispatcher.emit("afterDamage", { source: null, target: actor, actualAmount: 1, shieldAbsorbed: 0, damageType: "lightning", metadata: { originPlayerId: actor.id } });
@@ -669,7 +830,8 @@ export function registerHistoryAchievementTests(test) {
     const playerResult = tracker.finalizeMatch().players[0];
     const facts = playerResult.achievementFacts;
     assert.equal(facts.activeSkillUses, 1);
-    assert.equal(facts.rescueCount, 1);
+    assert.equal(facts.activeAssaultUses, 1);
+    assert.equal(facts.rescueCount, 3);
     assert.equal(facts.maxTurnDamage, 3);
     assert.equal(facts.lightningCasts, 1);
     assert.equal(facts.lightningHits, 1);

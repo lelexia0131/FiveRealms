@@ -1,6 +1,6 @@
 /*
 功能
-把横向卡牌容器恢复到本次重绘前的位置，并限制在新的有效滚动范围内。
+把横向卡牌容器恢复到本次重绘前的位置。
 
 调用方
 UIManager 的主手牌/敌方手牌 renderer、PublicPoolView.show 与 UI 回归测试。
@@ -12,22 +12,20 @@ UIManager 的主手牌/敌方手牌 renderer、PublicPoolView.show 与 UI 回归
 实际写入的合法 scrollLeft。
 
 读取状态
-容器 scrollWidth、clientWidth。
+无。
 
 写入状态
 容器 scrollLeft。
 
 调用函数
-Number、Math.max、Math.min。
+Number、Math.max。
 
 边界与不变量
-缺少容器时返回0；非法旧值按0处理；不得超过新的 maxScrollLeft。
+缺少容器时返回0；非法旧值按0处理；滚动边界由浏览器自动限制；不得读取布局尺寸。
 */
 export function restoreHorizontalCardScroll(container, previousScrollLeft) {
   if (!container) return 0;
-  const maxScrollLeft = Math.max(0, Number(container.scrollWidth) - Number(container.clientWidth));
-  const requestedScrollLeft = Math.max(0, Number(previousScrollLeft) || 0);
-  const nextScrollLeft = Math.min(requestedScrollLeft, maxScrollLeft);
+  const nextScrollLeft = Math.max(0, Number(previousScrollLeft) || 0);
   container.scrollLeft = nextScrollLeft;
   return nextScrollLeft;
 }
