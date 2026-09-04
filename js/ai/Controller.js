@@ -1849,6 +1849,7 @@ export class Controller {
         Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
         {
           selection:rawContext.selection ?? null,
+          responseViewerId:responder.id,
           publicTransferContext:publicContext.publicTransferContext,
           publicSelectionContext:publicContext.publicSelectionContext
         }

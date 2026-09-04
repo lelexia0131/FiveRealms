@@ -52,7 +52,7 @@ import { actionSearchKey, createAction } from "./Action.js";
 
 /*
 功能
-从响应者合法可见的单一身份或匿名容量构造 root 反事实 selection。
+从响应者合法可见的单一身份、匿名容量或尚未揭晓的均匀手牌选择构造 root 反事实 selection。
 
 调用方
 Generator.createRootResolutionAction 的 Transfer/Plunder/Destroy runtime binding。
@@ -61,7 +61,7 @@ Generator.createRootResolutionAction 的 Transfer/Plunder/Destroy runtime bindin
 canonical World player。
 
 输出
-known 或 unknown hand selection；无玩家时返回 null。
+known、unknown 或带 uniform-hand 标记的 hand selection；无玩家时返回 null。
 
 读取状态
 viewer 自己的 hand、合法 knownCards、公开 handCount 与 canonical availability。
@@ -73,7 +73,8 @@ viewer 自己的 hand、合法 knownCards、公开 handCount 与 canonical avail
 cardAvailability。
 
 边界与不变量
-只有唯一可推导身份才返回 known；其余一律保持 anonymous，不读取未知实体定义。
+只有唯一可推导身份才返回 known；多张仅对响应者可见的手牌保持 uniform-hand，
+其余一律保持 anonymous，不读取未知实体定义。
 */
 function inferPublicHandSelection(player) {
   if (!player) return null;
@@ -98,13 +99,17 @@ function inferPublicHandSelection(player) {
       availableUnknownCount:0
     };
   }
+  const availableUnknownCount = Math.max(0, handCount - known.length);
   return {
     zone:"hand",
     selectionKind:"unknown",
     cardId:null,
     definitionId:null,
     knownCardIds:known.map((entry) => entry.cardId),
-    availableUnknownCount:Math.max(0, handCount - known.length)
+    availableUnknownCount,
+    ...(known.length > 1 && availableUnknownCount <= PROBABILITY_EPSILON
+      ? { selectionMode:"uniform-hand" }
+      : {})
   };
 }
 
@@ -155,7 +160,7 @@ export class Generator {
   Controller 真实响应边界的 dynamic root flip 查询。
 
   输入
-  当前 World、root 卡牌公开身份、来源 ID、原始目标 ID 与公开选择上下文。
+当前 World、root 卡牌公开身份、来源 ID、原始目标 ID、响应者 ID 与公开选择上下文。
 
   输出
   target 与 selection 完整的 card Action；输入无效时返回 null。
@@ -218,7 +223,13 @@ export class Generator {
           definitionId:owner.equipmentDefinitionId,
           availableUnknownCount:0
         };
-      } else if (!selection && context?.zone === "hand") {
+      } else if (!selection && (
+        context?.zone === "hand"
+        || (!context
+          && owner?.id === options.responseViewerId
+          && Number(owner?.handCount ?? 0) > 0
+          && !owner?.equipmentDefinitionId)
+      )) {
         selection = inferPublicHandSelection(owner);
       }
       if (!selection) return null;

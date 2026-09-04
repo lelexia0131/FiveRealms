@@ -35,6 +35,7 @@ import {
   hypergeometricProbabilityAtLeast,
   probabilityFromCurrentCounts,
   queryCurrentCardCounts,
+  queryHandSelectionProbability,
   queryProbability,
   queryPlayerHandProbability,
   sealOutcomeProbabilities,
@@ -842,10 +843,10 @@ function dyingRescueWillingness({
 planningCounterDecision 与 runtime shouldRespond。
 
 输入
-取消 root 效果的收益。
+取消 root 效果的收益，以及 root 对响应者 Counter 库存造成的 plain overlap value facts。
 
 输出
-有限收益严格超过 Counter 机会成本时为 true。
+扣除自身 Counter 保留重叠后的有限收益严格超过边际机会成本时为 true。
 
 读取状态
 只读数值。
@@ -854,13 +855,23 @@ planningCounterDecision 与 runtime shouldRespond。
 无。
 
 调用函数
-counterOpportunityCost。
+counterOpportunityCost、clampProbability。
 
 边界与不变量
-planning 近似和 runtime paired Worlds 只能改变 gain 来源，不能复制或改变比较阈值。
+planning 近似和 runtime paired Worlds 只能改变 gain 来源；概率必须 clamp 到 [0,1]，
+所有价值必须 finite，严格大于比较不得改为大于等于。
 */
-function dynamicCounterWillingness(gain) {
-  return Number.isFinite(gain) && gain > counterOpportunityCost();
+function dynamicCounterWillingness(gain, overlapTerms = null) {
+  const baseCost = counterOpportunityCost();
+  const rawCounterLossProbability = Number(overlapTerms?.counterLossProbability ?? 0);
+  const selfCounterGainOverlap = Number(overlapTerms?.selfCounterGainOverlap ?? 0);
+  if (!Number.isFinite(gain) || !Number.isFinite(baseCost)
+    || !Number.isFinite(rawCounterLossProbability)
+    || !Number.isFinite(selfCounterGainOverlap)) return false;
+  const counterLossProbability = clampProbability(rawCounterLossProbability);
+  const effectiveGain = gain - selfCounterGainOverlap;
+  const effectiveCost = baseCost * (1 - counterLossProbability);
+  return effectiveGain > effectiveCost;
 }
 
 /*
@@ -965,6 +976,97 @@ function selectedResourceStateValue(player, selection, viewerId) {
     equipmentRetentionProbability:1
   }, viewerId);
   return projection.equipmentDelta + projection.equipmentRoleDelta;
+}
+
+/*
+功能
+计算当前 root 在 STAY 世界中与响应者 Counter 支付重叠的概率和值。
+
+调用方
+planningCounterDecision 与 runtime shouldRespond。
+
+输入
+canonical World、响应者、root 卡牌、目标、selection、STAY 是否结算 root，
+以及可选的 Simulator 已物化 base/resolved Worlds。
+
+输出
+只含 counterLossProbability 与 selfCounterGainOverlap 的冻结普通数值对象。
+
+读取状态
+响应者合法自有手牌、canonical selection、ProbabilityState finite-pool query 与可选配对 Worlds。
+
+写入状态
+无。
+
+调用函数
+queryHandSelectionProbability、queryPlayerHandProbability、selectedResourceStateValue、clampProbability。
+
+边界与不变量
+只处理 Plunder、Destroy、Transfer 从响应者手牌移走一张资源的 STAY 世界；
+已物化配对 Worlds 优先按 Counter 期望库存差取得实际概率；否则 known、anonymous 与
+uniform-hand 概率由 canonical Probability selection query 提供；
+本函数只解释旧 gain 中的自身 Counter 保留项，不改变 CardValue、StateValue 或资源 transition。
+*/
+export function counterRootOverlapTerms(
+  state,
+  responder,
+  card,
+  targets,
+  selection,
+  { resolvesAtStay = true, baseWorld = null, resolvedWorld = null } = {}
+) {
+  const noOverlap = Object.freeze({
+    counterLossProbability:0,
+    selfCounterGainOverlap:0
+  });
+  const definitionId = card?.definitionId ?? card?.cardId ?? null;
+  if (!resolvesAtStay || !state || !responder || selection?.zone !== "hand"
+    || !["plunder", "destroy", "transfer"].includes(definitionId)) return noOverlap;
+  const sourceId = definitionId === "transfer"
+    ? selection.sourceId
+    : targets?.[0]?.id ?? null;
+  const source = state.players?.find((player) => player.id === sourceId) ?? null;
+  if (!source || source.id !== responder.id) return noOverlap;
+
+  let counterLossProbability = 0;
+  const baseSource = baseWorld?.players?.find((player) => player.id === source.id) ?? null;
+  const resolvedSource = resolvedWorld?.players?.find((player) => player.id === source.id) ?? null;
+  if (baseSource && resolvedSource) {
+    const beforeCounters = queryPlayerHandProbability(
+      baseWorld.probabilityState,
+      baseSource,
+      "counter"
+    ).expected;
+    const afterCounters = queryPlayerHandProbability(
+      resolvedWorld.probabilityState,
+      resolvedSource,
+      "counter"
+    ).expected;
+    counterLossProbability = clampProbability(beforeCounters - afterCounters);
+  } else {
+    counterLossProbability = queryHandSelectionProbability(
+      state.probabilityState,
+      source,
+      selection,
+      "counter"
+    );
+  }
+  if (counterLossProbability <= PROBABILITY_EPSILON) return noOverlap;
+  const overlapSelection = {
+    zone:"hand",
+    definitionId:selection.selectionKind === "known" ? "counter" : null
+  };
+  const selfCounterGainOverlap = selectedResourceStateValue(
+    source,
+    overlapSelection,
+    responder.id
+  ) * counterLossProbability;
+  return Object.freeze({
+    counterLossProbability,
+    selfCounterGainOverlap:Number.isFinite(selfCounterGainOverlap)
+      ? selfCounterGainOverlap
+      : 0
+  });
 }
 
 /*
@@ -1161,7 +1263,7 @@ World、响应上下文、全体受益查询、root guard 与动态收益查询�
 无。
 
 调用函数
-globalBenefitCounterDecision、queryPlayerHandProbability、counterOpportunityCost、dynamicCounterGain。
+globalBenefitCounterDecision、queryPlayerHandProbability、counterRootOverlapTerms、dynamicCounterGain。
 
 边界与不变量
 先处理全体受益，再执行递归守卫和无容量短路；价值分数不得作为随机响应概率。
@@ -1193,7 +1295,15 @@ export function planningCounterDecision(
   ).probability > 0;
   if (!hasCounter) return false;
   const gain = dynamicCounterGain(state, responder, actor, card, targets, selection);
-  return dynamicCounterWillingness(gain);
+  const overlapTerms = counterRootOverlapTerms(
+    state,
+    responder,
+    card,
+    targets,
+    selection,
+    { resolvesAtStay:true }
+  );
+  return dynamicCounterWillingness(gain, overlapTerms);
 }
 
 /*
@@ -3527,6 +3637,9 @@ export class Evaluator {
         }
       );
       if (globalDecision !== null) return globalDecision;
+      const rootTargets = (context.rootTargetIds ?? []).map((targetId) => (
+        world.players.find((player) => player.id === targetId)
+      )).filter(Boolean);
       const gain = rootFlipWorlds
         ? this.dynamicRootFlipGain(
             rootFlipWorlds,
@@ -3539,12 +3652,23 @@ export class Evaluator {
             responder,
             context.rootSource ?? context.source,
             { definitionId:rootId },
-            (context.rootTargetIds ?? []).map((targetId) => (
-              world.players.find((player) => player.id === targetId)
-            )).filter(Boolean),
+            rootTargets,
             counterSelection
           );
-      return dynamicCounterWillingness(gain);
+      const overlapTerms = counterRootOverlapTerms(
+        world,
+        responder,
+        { definitionId:rootId },
+        rootTargets,
+        counterSelection,
+        {
+          resolvesAtStay:rootFlipWorlds?.resolvesAtStay
+            ?? (((context.counterDepth ?? 0) % 2) === 0),
+          baseWorld:rootFlipWorlds?.baseWorld ?? null,
+          resolvedWorld:rootFlipWorlds?.resolvedWorld ?? null
+        }
+      );
+      return dynamicCounterWillingness(gain, overlapTerms);
     }
     if (type === "assaultDiscard") {
       if (context.card?.definitionId === "provoke") {

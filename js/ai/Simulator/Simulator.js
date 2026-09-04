@@ -588,7 +588,8 @@ class SimulatorCore {
   当前 response World、canonical root Action 与 counter depth。
 
   输出
-  非战术或全体受益牌返回 null；否则返回 `{ baseWorld, resolvedWorld, resolvesAtStay }`。
+  非战术、全体受益牌或尚未揭晓的均匀手牌选择返回 null；
+  否则返回 `{ baseWorld, resolvedWorld, resolvesAtStay }`。
 
   读取状态
   固定卡牌定义、root 来源/目标、响应容量与当前 counter depth。
@@ -600,7 +601,8 @@ class SimulatorCore {
   clone、conditionProbability、apply。
 
   边界与不变量
-  两侧除 root 是否生效外必须完全配对；目标级群体战术继续清零目标反制容量，
+  两侧除 root 是否生效外必须完全配对；未揭晓的多手牌选择不能伪装成单一 resolved World，
+  目标级群体战术继续清零目标反制容量，
   root apply 期间不得递归请求同一动态反制。
   */
   buildRootFlipWorlds(state, rootAction, counterDepth) {
@@ -608,6 +610,7 @@ class SimulatorCore {
     if (!rootAction?.cardId || definition?.category !== "tactic" || definition.globalBenefit === true) {
       return null;
     }
+    if (rootAction.selection?.selectionMode === "uniform-hand") return null;
     const actor = state.players.find((player) => player.id === rootAction.actorId);
     if (!actor?.alive) {
       return { baseWorld:state, resolvedWorld:state, resolvesAtStay:(counterDepth % 2) === 0 };
