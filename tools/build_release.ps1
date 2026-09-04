@@ -33,10 +33,9 @@ function Copy-WhitelistedFile {
     Copy-Item -LiteralPath $source -Destination $destination -Force
 }
 
-# The page entry and canonical package version are required at the release root.
+# The release root contains only the browser entry; package metadata stays in the source tree.
 $runtimeRootFiles = @(
-    "index.html",
-    "package.json"
+    "index.html"
 )
 
 # Stylesheets loaded directly by index.html.

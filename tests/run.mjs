@@ -38723,7 +38723,7 @@ test("UI·入局说明：打开、翻页与关闭统一触发现有激活音效�
 
 /*
 功能
-验证游戏说明页只使用 package.json 版本与指定正文，并保留安全外链和一屏约束。
+验证游戏说明页只读取 package.json 版本、发布包不复制清单，并保留指定正文与一屏约束。
 
 调用方
 当前测试。
@@ -38744,7 +38744,7 @@ test("UI·入局说明：打开、翻页与关闭统一触发现有激活音效�
 loadGameVersion、GameInfoView.show、GameInfoView.handleClick。
 
 边界与不变量
-可见文案不得扩写；版本只来自 package.json；样式不得滚动或整体缩放。
+可见文案不得扩写；版本只从源码 package.json 读取且发布包不复制该文件；样式不得滚动或整体缩放。
 */
 async function gameInfoUsesCanonicalVersionAndSpecifiedCopy() {
   const [index, css, releaseScript, packageSource] = await Promise.all([
@@ -38790,7 +38790,9 @@ async function gameInfoUsesCanonicalVersionAndSpecifiedCopy() {
   assert.match(css, /@media\s*\(max-height:\s*800px\)/);
   assert.doesNotMatch(css, /overflow-y:\s*auto|\bzoom\s*:|transform:\s*scale\(/);
   assert.match(releaseScript, /ConvertFrom-Json[\s\S]*\$PackageMetadata\.version/);
-  assert.match(releaseScript, /"package\.json"/);
+  const runtimeRootFiles = releaseScript.match(/\$runtimeRootFiles\s*=\s*@\(([\s\S]*?)\)/);
+  assert.ok(runtimeRootFiles, "发布脚本必须声明根目录文件白名单");
+  assert.doesNotMatch(runtimeRootFiles[1], /["']package\.json["']/, "发布目录不得包含 package.json");
   assert.match(releaseScript, /"css\/game-info\.css"/);
 }
 
