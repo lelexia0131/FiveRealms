@@ -191,7 +191,7 @@ function meets(definition, player, streak, persistentFacts, matchResult) {
     case "card_creator": return (facts.cardsGained ?? 0) > 100;
     case "battle_over_eighteen": return Number(facts.maxAliveRound ?? 0) > 18;
     case "storm_scribe": return (facts.lightningCasts ?? 0) >= 2 && (facts.lightningHits ?? 0) >= 2;
-    case "overflowing_grimoire": return (facts.maxHandCount ?? 0) > 12;
+    case "overflowing_grimoire": return (facts.maxHandCount ?? 0) >= 10;
     case "armory_keeper": return (facts.equipmentUses ?? 0) >= 10;
     case "all_rounder": return ["activity", "support", "contribution", "control", "skill", "firepower"]
       .every((dimension) => Number(player?.scores?.[dimension]) >= 100);

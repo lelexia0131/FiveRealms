@@ -82,7 +82,7 @@ const definitions = [
   { id: "card_creator", tier: "legendary", hidden: false, title: "造物主", description: "牌页在你手中汇成壮阔的构造，仿佛一座新世界。", criteria: "单场获取超过 100 张牌。", teamScope: "both", order: 7, artwork: artwork("card_creator") },
   { id: "battle_over_eighteen", tier: "legendary", hidden: false, title: "战斗~爽", description: "战线延伸到第十九道刻度，意志仍在燃烧。", criteria: "存活超过 18 回合。", teamScope: "both", order: 8, artwork: artwork("battle_over_eighteen") },
   { id: "storm_scribe", tier: "hidden", hidden: true, title: "雷神", description: "闪电掠过敌阵，留下两道无法忽视的回声。", criteria: "单场主动打出至少 2 次闪电，且两次都实际对敌人造成闪电伤害。", teamScope: "both", order: 1, artwork: artwork("storm_scribe") },
-  { id: "overflowing_grimoire", tier: "hidden", hidden: true, title: "满手乾坤", description: "牌页越过边界时，连命运也得为你让路。", criteria: "自己的一个行动回合中手牌数量曾超过 12 张。", teamScope: "both", order: 2, artwork: artwork("overflowing_grimoire") },
+  { id: "overflowing_grimoire", tier: "hidden", hidden: true, title: "收藏家", description: "你喜欢收藏奇珍异宝，成为了名副其实的大收藏家。", criteria: "自己的一个行动回合中，手牌数量曾不少于 10 张", teamScope: "both", order: 2, artwork: artwork("overflowing_grimoire") },
   { id: "armory_keeper", tier: "hidden", hidden: true, title: "兵库尽开", description: "一件件装备在手中轮转，最终铸成自己的军械谱。", criteria: "单场实际完成装备动作至少 10 次。", teamScope: "both", order: 3, artwork: artwork("armory_keeper") },
   { id: "all_rounder", tier: "hidden", hidden: true, title: "全能神", description: "六边形无法束缚你的完美，此刻你已然化身神明。", criteria: "单场最终个人成绩中的所有计分项目都达到 100 分或更高。", teamScope: "both", order: 4, artwork: artwork("all_rounder") },
   { id: "accidental_success", tier: "hidden", hidden: true, title: "歪打正着", description: "没有突袭的锋芒，你仍让全场火力刻度停在自己名下。", criteria: "全程未打出突袭并成为全场最高火力者。", teamScope: "both", order: 5, artwork: artwork("accidental_success") }

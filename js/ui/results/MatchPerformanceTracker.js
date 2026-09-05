@@ -48,7 +48,7 @@ createPlayerRecord。
 玩家开局手牌数量。
 
 输出
-从初始手牌峰值开始、其余归零的成就事实与局内集合。
+获牌数从初始手牌开始、其余归零的成就事实与局内集合。
 
 读取状态
 无。
@@ -60,7 +60,7 @@ createPlayerRecord。
 Set。
 
 边界与不变量
-集合只在 tracker 内可变，冻结快照输出数组；初始手牌作为本局首批获牌计数，最高存活轮次只由 roundStart 推进。
+集合只在 tracker 内可变，冻结快照输出数组；初始手牌作为本局首批获牌计数，手牌峰值只在本人行动回合采样，最高存活轮次只由 roundStart 推进。
 */
 function createAchievementFacts(initialHandCount) {
   return {
@@ -70,7 +70,7 @@ function createAchievementFacts(initialHandCount) {
     rescueCount: 0,
     maxTurnDamage: 0,
     maxTurnKills: 0,
-    maxHandCount: Math.max(0, Number(initialHandCount) || 0),
+    maxHandCount: 0,
     equipmentUses: 0,
     lightningCasts: 0,
     lightningHits: 0,

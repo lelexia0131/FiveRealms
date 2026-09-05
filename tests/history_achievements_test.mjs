@@ -722,8 +722,9 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     assert.equal(evaluateAchievementForTest("damage_taken_twelve", { combatStats: { damageTaken: 12 } }), true);
     assert.equal(evaluateAchievementForTest("card_creator", {}, { cardsGained: 100 }), false);
     assert.equal(evaluateAchievementForTest("card_creator", {}, { cardsGained: 101 }), true);
-    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 12 }), false);
-    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 13 }), true);
+    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 9 }), false);
+    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 10 }), true);
+    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 11 }), true);
     const allScores = { activity: 100, support: 100, contribution: 100, control: 100, skill: 100, firepower: 100 };
     assert.equal(evaluateAchievementForTest("all_rounder", { scores: allScores }), true);
     assert.equal(evaluateAchievementForTest("all_rounder", { scores: { ...allScores, support: 99 } }), false);
@@ -746,6 +747,69 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     assert.equal(evaluateAchievementForTest(
       "accidental_success", { raw: { firepower: 5 } }, { committedAssaultUses: 0 }, {}, {}, tiedFirepower
     ), true);
+  });
+
+  test("UI·征途成就：收藏家保留隐藏属性并使用新文案", () => {
+    const definition = ACHIEVEMENT_DEFINITIONS.find(({ id }) => id === "overflowing_grimoire");
+    assert.equal(definition.title, "收藏家");
+    assert.equal(definition.criteria, "自己的一个行动回合中，手牌数量曾不少于 10 张");
+    assert.equal(definition.description, "你喜欢收藏奇珍异宝，成为了名副其实的大收藏家。");
+    assert.equal(definition.hidden, true);
+    assert.equal(definition.tier, "hidden");
+  });
+
+  test("UI·征途成就：收藏家不计开局或他人回合手牌且本人回合开始可达成", async () => {
+    const actor = makePlayer("human", 0, "dawn", "human");
+    const enemy = makePlayer("collector-enemy", 1, "dusk");
+    actor.hand = Array.from({ length: 10 }, () => instance("charge"));
+    const { game } = makeGame([actor, enemy]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 0);
+    assert.equal(tracker.recordFor(actor).achievementFacts.cardsGained, 10);
+    await game.eventDispatcher.emit("turnStart", { player: enemy });
+    game.state.deck.cards.push(instance("charge"));
+    await game.drawCards(actor, 1, "收藏家回合外获牌");
+    assert.equal(actor.hand.length, 11);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 0);
+    await game.eventDispatcher.emit("turnEnd", { player: enemy });
+    game.state.deck.cards.push(instance("charge"));
+    await game.drawCards(actor, 1, "收藏家行动回合间获牌");
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 0);
+    actor.hand.splice(0, 2);
+    await game.eventDispatcher.emit("turnStart", { player: actor });
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 10);
+    const matchResult = tracker.finalizeMatch();
+    assert.ok(evaluateMatchAchievements(
+      matchResult, actor.id, createEmptyAchievementData().streaks
+    ).unlocked.includes("overflowing_grimoire"));
+    game.dispose();
+  });
+
+  test("UI·征途成就：收藏家本人回合中达到十张后减少及结束仍保留达成事实", async () => {
+    const actor = makePlayer("human", 0, "dawn", "human");
+    const enemy = makePlayer("collector-enemy", 1, "dusk");
+    actor.hand = Array.from({ length: 9 }, () => instance("charge"));
+    const { game } = makeGame([actor, enemy]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    await game.eventDispatcher.emit("turnStart", { player: actor });
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 9);
+    game.state.deck.cards.push(instance("charge"));
+    await game.drawCards(actor, 1, "收藏家回合内获牌");
+    assert.equal(actor.hand.length, 10);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 10);
+    actor.hand.splice(0, 2);
+    await game.eventDispatcher.emit("afterCardMove", { from: "hand", to: "discard", player: actor });
+    await game.eventDispatcher.emit("turnEnd", { player: actor });
+    assert.equal(actor.hand.length, 8);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 10);
+    await game.eventDispatcher.emit("turnStart", { player: enemy });
+    const matchResult = tracker.finalizeMatch();
+    assert.ok(evaluateMatchAchievements(
+      matchResult, actor.id, createEmptyAchievementData().streaks
+    ).unlocked.includes("overflowing_grimoire"));
+    game.dispose();
   });
 
   test("UI·征途成就：无人倒下同时要求胜利、本人存活与队友无人死亡", () => {
