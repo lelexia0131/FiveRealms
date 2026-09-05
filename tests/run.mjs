@@ -41,7 +41,7 @@ import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/d
 import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js";
 import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js";
 import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js";
-import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js";
+import { getAttackLimit, getDrawCount, getEffectiveAttackLimit, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js";
 import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js";
 import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js";
 import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js";
@@ -59,7 +59,7 @@ import { TeamAssignment as TeamManager } from "../js/application/match/TeamAssig
 import { ActionLegality } from "../js/application/action/ActionLegality.js";
 import { getRangeConditionBranches, getRangeLegalityProbability, inAttackRange } from "../js/ai/Event/Probability/Probability.js";
 import { createInitialWorld, cloneWorld } from "../js/ai/Simulator/World.js";
-import { createFact, deriveCurrentCardCounts, getCharacterRoleTags, hasFactStatus } from "../js/ai/Event/Fact.js";
+import { createFact, deriveCurrentCardCounts, getCharacterRoleTags, hasFactStatus, projectAttackUsage } from "../js/ai/Event/Fact.js";
 import {
   PROBABILITY_CLASSIFICATION,
   buildLightningHitDistribution as buildProbabilityLightningHitDistribution,
@@ -972,9 +972,9 @@ for (const definition of Object.values(CARD_DEFINITIONS)) test(`卡牌资源：$
 
 // ---- 卡牌定义与数量 ----
 
-test("卡牌定义：牌组恰有26种定义和163张实体牌", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
-  assert.equal(TOTAL_CARD_COUNT, 163);
+test("卡牌定义：牌组恰有27种定义和164张实体牌", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 27);
+  assert.equal(TOTAL_CARD_COUNT, 164);
 });
 
 test(
@@ -1039,14 +1039,15 @@ test("卡牌定义：借势在集中牌堆中固定3张且均为不同真实实�
   assert.equal(deck.cards.filter((card) => card.definitionId === "leverage").length, 3);
 });
 
-test("卡牌定义：装备牌数量合计15且数量来自统一配置", () => {
+test("卡牌定义：装备牌数量合计16且数量来自统一配置", () => {
   const equipment = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment");
-  assert.equal(equipment.reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0), 15);
-  assert.equal(equipment.length, 6);
+  assert.equal(equipment.reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0), 16);
+  assert.equal(equipment.length, 7);
   assert.deepEqual(
     Object.fromEntries(equipment.map((card) => [card.definitionId, CARD_COUNTS[card.definitionId]])),
     {
-      energyDevice: 2, recycleDevice: 3, defenseDevice: 2, battleDevice: 2, telescope: 3, barrierDevice: 3
+      energyDevice: 2, recycleDevice: 3, defenseDevice: 2, battleDevice: 2,
+      assaultMagazine: 1, telescope: 3, barrierDevice: 3
     }
   );
 });
@@ -1798,10 +1799,10 @@ test("架构治理：architecture authority 与 checker guard 已冻结", frArch
 
 // ---- 牌堆、区域与重洗 ----
 
-test("牌堆：Deck 创建163个唯一实体 card.id", () => {
+test("牌堆：Deck 创建164个唯一实体 card.id", () => {
   const deck = new Deck(() => .4);
-  assert.equal(deck.build(TEST_VERSION_STATE), 163);
-  assert.equal(new Set(deck.cards.map((card) => card.id)).size, 163);
+  assert.equal(deck.build(TEST_VERSION_STATE), 164);
+  assert.equal(new Set(deck.cards.map((card) => card.id)).size, 164);
 });
 
 test("牌堆：结算区不会进入重洗", () => {
@@ -1914,6 +1915,18 @@ test("回合：大队规则为开局4张、每回合摸2张、突袭1、调息�
   assert.equal(rules.getTurnEnergyGain(large), 1);
   assert.equal(rules.getMaxEnergy(large), 3);
   assert.equal(large.maxEnergy, 3);
+});
+
+test("回合：备用弹夹只在有效突袭上限查询中叠加且不改写回合基础次数", () => {
+  const { game, small, large } = makeTeamFixture();
+  small.equipment = instance("assaultMagazine");
+  large.equipment = instance("assaultMagazine");
+  assert.equal(small.turnFlags.attackLimit, 2);
+  assert.equal(large.turnFlags.attackLimit, 1);
+  assert.equal(game.teamRules.getAttackLimit(small), 4);
+  assert.equal(game.teamRules.getAttackLimit(large), 3);
+  assert.deepEqual(ActionLegality.getAssaultUsage(small), { used: 0, limit: 4 });
+  assert.deepEqual(ActionLegality.getAssaultUsage(large), { used: 0, limit: 3 });
 });
 
 test("回合：初始发牌静默但仍走标准移动事件且正式摸牌继续记录", async () => {
@@ -3109,6 +3122,18 @@ function frArch5TeamRules() {
   assert.equal(getDrawCount(ruleState, smallRule), game.teamRules.getDrawCount(small));
   assert.equal(getAttackLimit(ruleState, smallRule), game.teamRules.getAttackLimit(small));
   assert.equal(getAttackLimit(ruleState, largeRule), game.teamRules.getAttackLimit(large));
+  assert.equal(
+    getAttackLimit(ruleState, { ...largeRule, equipmentDefinitionId: "assaultMagazine" }),
+    3
+  );
+  assert.equal(
+    getAttackLimit(ruleState, {
+      ...largeRule,
+      attackLimit: 2,
+      equipmentDefinitionId: "assaultMagazine"
+    }),
+    4
+  );
   assert.equal(getRecoverLimit(ruleState, smallRule), null);
   assert.equal(getMaxEnergy(ruleState, smallRule), game.teamRules.getMaxEnergy(small));
   assert.equal(getMaxEnergy(ruleState, largeRule), game.teamRules.getMaxEnergy(large));
@@ -7074,11 +7099,13 @@ test("震荡：不计突袭次数也不消耗破势", async () => {
     c = makePlayer("c", 2, "dusk");
   const { game }
     = makeGame([a, b, c]);
+  a.equipment = instance("assaultMagazine");
+  a.turnFlags.attackUsed = a.turnFlags.attackLimit;
   a.statuses.exposeWeakness = { stacks: 2 };
   const card = instance("shockwave");
   a.hand.push(card);
   await game.playCard(a, card, [b, c]);
-  assert.equal(a.turnFlags.attackUsed, 0);
+  assert.equal(a.turnFlags.attackUsed, a.turnFlags.attackLimit);
   assert.equal(a.statuses.exposeWeakness.stacks, 2);
 });
 
@@ -7090,6 +7117,8 @@ test("挑衅：有突袭者可打出，没有者优先消耗护盾且不触发�
     c = makePlayer("c", 2, "dusk", "human");
   const { game, ui }
     = makeGame([a, b, c], { response: (r) => r.targetPlayerId === b.id });
+  b.equipment = instance("assaultMagazine");
+  b.turnFlags.attackUsed = b.turnFlags.attackLimit;
   a.hand.push(instance("provoke"));
   b.hand.push(instance("assault"));
   c.shield = 2;
@@ -7098,6 +7127,7 @@ test("挑衅：有突袭者可打出，没有者优先消耗护盾且不触发�
   const hp = c.hp;
   await game.playCard(a, a.hand[0], [b, c]);
   assert.equal(b.hand.length, 0);
+  assert.equal(b.turnFlags.attackUsed, b.turnFlags.attackLimit);
   assert.equal(c.hp, hp);
   assert.equal(c.shield, 1);
   assert.ok(!ui.responseRequests.some((request) => request.type === "block"));
@@ -7417,7 +7447,7 @@ test("借势：成功响应使用真实突袭并完整复用次数、伤害、�
 test("借势：忽略第一目标已用突袭次数并完整执行真实突袭", async () => {
   const actor = makePlayer("actor", 0, "dawn", "human"),
     first = makePlayer("first", 1, "dusk", "human"),
-    equipment = instance("energyDevice"),
+    equipment = instance("assaultMagazine"),
     assault = instance("assault"),
     use = instance("leverage");
   actor.hand.push(use);
@@ -7425,7 +7455,8 @@ test("借势：忽略第一目标已用突袭次数并完整执行真实突袭",
   first.equipment = equipment;
   const { game, ui }
     = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
-  first.turnFlags.attackUsed = first.turnFlags.attackLimit;
+  const effectiveLimit = ActionLegality.getAssaultUsage(first).limit;
+  first.turnFlags.attackUsed = effectiveLimit;
   assert.equal(ActionLegality.canPlayCard(game, actor, use).ok, true);
   assert.equal(ActionLegality.canUseForcedAssault(game, first, assault, actor).ok, true);
   assert.deepEqual(
@@ -7446,7 +7477,7 @@ test("借势：忽略第一目标已用突袭次数并完整执行真实突袭",
     )
   );
   assert.equal(first.equipment, equipment);
-  assert.equal(first.turnFlags.attackUsed, first.turnFlags.attackLimit + 1);
+  assert.equal(first.turnFlags.attackUsed, effectiveLimit + 1);
   assert.ok(game.state.deck.discardPile.includes(assault));
   assert.ok(!actor.hand.includes(equipment));
   assert.ok(!ui.logs.some((message) => message.includes("拒绝使用「突袭」")));
@@ -8447,11 +8478,14 @@ test("决斗：轮流打出突袭，先不能响应者承受可被护盾吸收�
   const duel = instance("duel");
   a.hand.push(duel);
   b.hand.push(instance("assault"));
+  b.equipment = instance("assaultMagazine");
+  b.turnFlags.attackUsed = ActionLegality.getAssaultUsage(b).limit;
   a.shield = 1;
   await game.playCard(a, duel, [b]);
   assert.equal(a.hp, a.maxHp);
   assert.equal(a.shield, 0);
   assert.equal(a.turnFlags.attackUsed, 0);
+  assert.equal(b.turnFlags.attackUsed, ActionLegality.getAssaultUsage(b).limit);
 });
 
 // ---- 互利 ----
@@ -8667,11 +8701,11 @@ test("封印：定义、数量、牌堆与原有牌数量正确", () => {
   assert.equal(CARD_COUNTS.seal, 3);
   assert.equal(getBaseCardAiValue(seal.definitionId), 7);
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("seal"));
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
-  assert.equal(TOTAL_CARD_COUNT, 163);
-  assert.equal(TOTAL_CARD_COUNT - CARD_COUNTS.seal, 160);
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 27);
+  assert.equal(TOTAL_CARD_COUNT, 164);
+  assert.equal(TOTAL_CARD_COUNT - CARD_COUNTS.seal, 161);
   const deck = new Deck(() => 0);
-  assert.equal(deck.build(TEST_VERSION_STATE), 163);
+  assert.equal(deck.build(TEST_VERSION_STATE), 164);
   const cards = deck.cards.filter((card) => card.definitionId === "seal");
   assert.equal(cards.length, 3);
   assert.equal(new Set(cards.map((card) => card.id)).size, 3);
@@ -8988,17 +9022,17 @@ test("闪电：定义、数量与牌堆总数正确", () => {
   assert.equal(getBaseCardAiValue(lightning.definitionId), 3);
   assert.ok(lightning.description.includes("闪电"));
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("lightning"));
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 27);
   const tacticTotal = Object.values(
     CARD_DEFINITIONS
   ).filter((card) => card.category === "tactic").reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0);
   assert.equal(tacticTotal, 56);
-  assert.equal(TOTAL_CARD_COUNT, 163);
+  assert.equal(TOTAL_CARD_COUNT, 164);
 });
 
 test("闪电：Deck.build 生成正好两张不同实体 ID", () => {
   const deck = new Deck(() => 0);
-  assert.equal(deck.build(TEST_VERSION_STATE), 163);
+  assert.equal(deck.build(TEST_VERSION_STATE), 164);
   const cards = deck.cards.filter((card) => card.definitionId === "lightning");
   assert.equal(cards.length, 2);
   assert.equal(new Set(cards.map((card) => card.id)).size, 2);
@@ -9589,7 +9623,7 @@ test("闪电：卡牌描述与 README 当前描述完全一致", async () => {
 
 // ---- 装备公共规则 ----
 
-for (const id of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"]) test(`装备：${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => {
+for (const id of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) test(`装备：${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
     = makeGame([a, b]);
@@ -9622,6 +9656,91 @@ test("装备：替换装备时旧装备进入弃牌堆且新装备留在槽内",
   await game.playCard(a, next, []);
   assert.equal(a.equipment, next);
   assert.ok(game.state.deck.discardPile.includes(old));
+});
+
+test("备用弹夹：定义字段、阵营基础上限与破军临时次数只在有效查询中叠加", async () => {
+  const { game, small, large } = makeTeamFixture();
+  small.equipment = instance("assaultMagazine");
+  large.equipment = instance("assaultMagazine");
+  assert.equal(CARD_DEFINITIONS.assaultMagazine.attackLimitBonus, 2);
+  assert.deepEqual(CARD_DEFINITIONS.assaultMagazine.subtypes, ["equipment", "assault-capacity"]);
+  assert.equal(CARD_DEFINITIONS.assaultMagazine.subtypes.includes("attack"), false);
+  assert.equal(small.turnFlags.attackLimit, 2);
+  assert.equal(large.turnFlags.attackLimit, 1);
+  assert.equal(game.teamRules.getAttackLimit(small), 4);
+  assert.equal(game.teamRules.getAttackLimit(large), 3);
+  assert.equal(getEffectiveAttackLimit(2, "assaultMagazine"), 4);
+  assert.equal(getEffectiveAttackLimit(1, "assaultMagazine"), 3);
+
+  large.energy = ACTIVE_SKILLS.breakArmy.cost;
+  game.state.currentPlayerIndex = large.seatIndex;
+  assert.equal(await game.useActiveSkill(large, "breakArmy", []), true);
+  assert.equal(large.turnFlags.attackLimit, 2);
+  assert.equal(game.teamRules.getAttackLimit(large), 4);
+  assert.equal(ActionLegality.getAssaultUsage(large).limit, 4);
+});
+
+test("备用弹夹：先用满基础次数后装备会立即开放两次主动突袭", async () => {
+  const { game, large, small } = makeTeamFixture();
+  game.state.currentPlayerIndex = large.seatIndex;
+  small.hp = 10;
+  small.maxHp = 10;
+  const first = instance("assault"), magazine = instance("assaultMagazine"),
+    second = instance("assault"), third = instance("assault"), blocked = instance("assault");
+  large.hand.push(first, magazine, second, third, blocked);
+
+  assert.equal(await game.playCard(large, first, [small]), true);
+  assert.equal(large.turnFlags.attackUsed, 1);
+  assert.equal(ActionLegality.canPlayCard(game, large, second).ok, false);
+  assert.equal(await game.playCard(large, magazine, []), true);
+  assert.equal(large.turnFlags.attackUsed, 1);
+  assert.equal(ActionLegality.getAssaultUsage(large).limit, 3);
+  assert.equal(await game.playCard(large, second, [small]), true);
+  assert.equal(await game.playCard(large, third, [small]), true);
+  assert.equal(ActionLegality.canPlayCard(game, large, blocked).ok, false);
+  assert.equal(await game.playCard(large, blocked, [small]), false);
+  assert.equal(large.turnFlags.attackUsed, 3);
+});
+
+test("备用弹夹：使用额外突袭后换装会即时恢复当前有效上限且不回滚已用次数", async () => {
+  const { game, large, small } = makeTeamFixture();
+  game.state.currentPlayerIndex = large.seatIndex;
+  small.hp = 10;
+  small.maxHp = 10;
+  const magazine = instance("assaultMagazine"), first = instance("assault"),
+    extra = instance("assault"), replacement = instance("energyDevice"), blocked = instance("assault");
+  large.hand.push(magazine, first, extra, replacement, blocked);
+
+  assert.equal(await game.playCard(large, magazine, []), true);
+  assert.equal(await game.playCard(large, first, [small]), true);
+  assert.equal(await game.playCard(large, extra, [small]), true);
+  assert.equal(large.turnFlags.attackUsed, 2);
+  assert.equal(await game.playCard(large, replacement, []), true);
+  assert.equal(large.turnFlags.attackUsed, 2);
+  assert.equal(ActionLegality.getAssaultUsage(large).limit, 1);
+  assert.equal(ActionLegality.canPlayCard(game, large, blocked).ok, false);
+});
+
+test("备用弹夹：掠夺进入手牌不生效，真正装备后才增加主动突袭上限", async () => {
+  const actor = makePlayer("magazine-plunder-actor", 0, "dawn", "human"),
+    target = makePlayer("magazine-plunder-target", 1, "dusk", "human"),
+    magazine = instance("assaultMagazine"), plunder = instance("plunder");
+  target.equipment = magazine;
+  actor.hand.push(plunder);
+  const { game } = makeGame([actor, target]);
+  const selection = game.hiddenCardSelection.createHiddenSelection(target);
+  assert.equal(await game.playCard(actor, plunder, [target], {
+    zone: "equipment",
+    selectionKind: "equipment",
+    definitionId: magazine.definitionId,
+    equipmentCardId: magazine.id,
+    selectionId: selection.selectionId
+  }), true);
+  assert.equal(actor.equipment, null);
+  assert.ok(actor.hand.includes(magazine));
+  assert.equal(ActionLegality.getAssaultUsage(actor).limit, actor.turnFlags.attackLimit);
+  assert.equal(await game.playCard(actor, magazine, []), true);
+  assert.equal(ActionLegality.getAssaultUsage(actor).limit, actor.turnFlags.attackLimit + 2);
 });
 
 test("装备：望远镜替换为屏障后方向性距离立即按新装备重算", async () => {
@@ -19483,7 +19602,7 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
     assert.equal(stats.expanded, 102);
     assert.equal(stats.depth, 3);
     assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 2.4933032320944317);
+    assert.equal(stats.bestValueScore, 2.49588542851475);
     assert.equal(stats.stopReason, "COMPLETE");
     assert.equal(stats.simulationCalls, 186);
     assert.equal(stats.cloneCalls, 196);
@@ -19494,7 +19613,7 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
     assert.equal(stats.matchedPatternCount, 1);
     assert.equal(stats.patternProposalCount, 1);
     assert.equal(stats.completedPatternCount, 1);
-    assert.equal(stats.patternIncumbentUpdateCount, 2);
+    assert.equal(stats.patternIncumbentUpdateCount, 3);
     assert.equal(stats.selectedPatternId, "SEAL_LAST");
   } finally {
     disposeBenchmarkGame(game);
@@ -19610,7 +19729,7 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.equal(outcome.stats.uniqueRootCandidateCount, 4);
     assert.equal(outcome.stats.completedRootCandidateCount, 4);
     assert.equal(outcome.stats.expanded, 5);
-    assert.equal(outcome.stats.bestValueScore, 1.0909621093750004);
+    assert.equal(outcome.stats.bestValueScore, 1.0913203160774465);
     assert.ok(outcome.stats.elapsedMs >= 30);
     assert.ok(outcome.stats.timeObservedAtMs >= 30);
     assert.ok(outcome.stats.searchReturnAtMs >= outcome.stats.timeObservedAtMs);
@@ -19684,7 +19803,7 @@ test("AI·搜索：TIME 在候选边界返回赌命者最佳完整 root incumben
     assert.equal(outcome.stats.uniqueRootCandidateCount, 3);
     assert.equal(outcome.stats.completedRootCandidateCount, 3);
     assert.equal(outcome.stats.expanded, 9);
-    assert.equal(outcome.stats.bestValueScore, 0.8012499999999996);
+    assert.equal(outcome.stats.bestValueScore, 0.7998136645962725);
     assert.ok(outcome.stats.elapsedMs >= 40);
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
       type: "skill",
@@ -27179,7 +27298,7 @@ test("AI·封印：fallback 从权威牌堆组成动态推导且无固定概率�
     "utf8"
   ),
     rulesetSource = await readFile(projectFile("js/domain/definitions/ruleset/RulesetDefinition.js"), "utf8");
-  assert.doesNotMatch(source, /\b(?:56|163)\b/);
+  assert.doesNotMatch(source, /\b(?:56|164)\b/);
   assert.match(source, /RULESET_DEFINITION\.deckComposition/);
   assert.match(source, /CARD_DEFINITIONS\.seal\.judgmentTriggerCategory/);
   assert.match(source, /judgmentCategoryCounts/);
@@ -28166,6 +28285,28 @@ test("AI·雷达：战术判定概率来自剩余牌堆且战术牌耗尽时归�
   assertClose(fixed.tactic, tacticTotal / total);
 });
 
+test("AI·雷达：标准完整牌堆的装备判定概率由16张装备除以164张总牌动态得出", () => {
+  const fixed = buildRadarJudgmentProbabilities(null);
+  const equipmentTotal = Object.values(CARD_DEFINITIONS)
+    .filter((definition) => definition.category === "equipment")
+    .reduce((sum, definition) => sum + CARD_COUNTS[definition.definitionId], 0);
+  const total = Object.values(CARD_COUNTS).reduce((sum, count) => sum + count, 0);
+  assert.equal(equipmentTotal, 16);
+  assert.equal(total, 164);
+  assertClose(fixed.equipment, equipmentTotal / total);
+  assertClose(fixed.equipment, 16 / 164);
+  const lightningState = upgradeProbabilityFixture({
+    remainingCardCounts: { ...CARD_COUNTS },
+    players: []
+  });
+  const holderIds = Array.from({ length: total - equipmentTotal + 1 }, (_, index) => `holder-${index}`);
+  const lightning = buildProbabilityLightningHitDistribution(
+    lightningState,
+    holderIds
+  );
+  assertClose(lightning[0].probability, 16 / 164);
+});
+
 test("AI·雷达：canonical Probability 单次判定保持质量、空池、override 与输入只读", async () => {
   const counts = { assault: 3, block: 2, counter: 4, defenseDevice: 1 };
   const snapshot = structuredClone(counts);
@@ -28420,6 +28561,58 @@ test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
     state
   ).apply(state, { type: "card", card: { id: "hit", definitionId: "assault" }, targets: [{ id: "b" }] }, "a");
   assert.equal(next.players[1].hp, 2);
+});
+
+
+// ---- AI 装备行为·备用弹夹 ----
+
+test("AI·备用弹夹：模拟换装即时重算有效上限并保留已用突袭次数", () => {
+  const actor = makePlayer("ai-magazine-actor", 0, "dusk", "ai", 1),
+    allyA = makePlayer("ai-magazine-ally-a", 1, "dusk"),
+    enemyA = makePlayer("ai-magazine-enemy-a", 2, "dawn"),
+    allyB = makePlayer("ai-magazine-ally-b", 3, "dusk"),
+    enemyB = makePlayer("ai-magazine-enemy-b", 4, "dawn"),
+    magazine = instance("assaultMagazine"),
+    replacement = instance("energyDevice"),
+    assaults = [instance("assault"), instance("assault"), instance("assault")];
+  actor.hand.push(magazine, replacement, ...assaults);
+  const { game } = makeGame([actor, allyA, enemyA, allyB, enemyB]);
+  actor.turnFlags.attackUsed = 1;
+  const generator = game.aiController.actionGenerator;
+  const root = createInitialWorld(actor.id, game.state);
+  const simulator = new Simulator(root);
+  let world = cloneWorld(root);
+  const equipAction = generator.generate(world, actor.id)
+    .find((action) => action.cardInstanceId === magazine.id);
+  assert.ok(equipAction);
+  world = simulator.apply(world, equipAction);
+  assert.equal(world.players[0].attackUsed, 1);
+  assert.equal(world.players[0].attackLimit, 1);
+  assert.equal(projectAttackUsage(world.players[0]).limit, 3);
+
+  for (const assault of assaults.slice(0, 2)) {
+    const action = generator.generate(world, actor.id)
+      .find((candidate) => candidate.cardInstanceId === assault.id);
+    assert.ok(action);
+    world = simulator.apply(world, action);
+  }
+  assert.equal(world.players[0].attackUsed, 3);
+  assert.equal(
+    generator.generate(world, actor.id).some((action) => action.cardId === "assault"),
+    false
+  );
+
+  const replacementAction = generator.generate(world, actor.id)
+    .find((action) => action.cardInstanceId === replacement.id);
+  assert.ok(replacementAction);
+  world = simulator.apply(world, replacementAction);
+  assert.equal(world.players[0].equipmentDefinitionId, "energyDevice");
+  assert.equal(world.players[0].attackUsed, 3);
+  assert.equal(projectAttackUsage(world.players[0]).limit, 1);
+  assert.equal(
+    generator.generate(world, actor.id).some((action) => action.cardId === "assault"),
+    false
+  );
 });
 
 
@@ -29520,7 +29713,7 @@ test("AI·灵医：energyPressure 归因保留且不生成静态当前能量价�
   const adjacentEnemy = owner("b");
   const distantEnemy = owner("e");
   assert.ok(adjacentEnemy && distantEnemy, "应能找到相邻与不相邻敌人 owner");
-  assertClose(adjacentEnemy.threat.residualExposureValue, 1.7730061349693251);
+  assertClose(adjacentEnemy.threat.residualExposureValue, 1.7804878048780488);
   assertClose(distantEnemy.threat.residualExposureValue, 0, 1e-9);
   assert.equal(Object.hasOwn(actorTerms, "energy"), false);
   assert.equal(Object.hasOwn(adjacentEnemy.generic, "energy"), false);
@@ -33170,6 +33363,7 @@ const EXPECTED_CARD_AI_VALUES = Object.freeze({
   recycleDevice: ["回收站", 8],
   defenseDevice: ["雷达", 9],
   battleDevice: ["军火库", 9],
+  assaultMagazine: ["备用弹夹", 8],
   telescope: ["望远镜", 8],
   barrierDevice: ["屏障", 9]
 });
@@ -33202,6 +33396,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     energyDevice: -1,
     defenseDevice: -1,
     battleDevice: 2,
+    assaultMagazine: 2,
     telescope: 1,
     barrierDevice: -1
   },
@@ -33273,7 +33468,8 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     symbiosis: -1,
     seal: 1,
     energyDevice: 1,
-    recycleDevice: 1
+    recycleDevice: 1,
+    assaultMagazine: 1
   },
   "trail-hunter": {
     assault: 2,
@@ -33291,6 +33487,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: -1,
     defenseDevice: -1,
     battleDevice: 1,
+    assaultMagazine: 2,
     telescope: 1,
     barrierDevice: -1
   },
@@ -33312,6 +33509,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: 1,
     defenseDevice: -1,
     battleDevice: 1,
+    assaultMagazine: 1,
     barrierDevice: -1
   },
   "resonance-tuner": {
@@ -33339,7 +33537,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
   }
 });
 
-test("AI·角色卡牌价值：26 张正式基础值与名称、definitionId 全部匹配", () => {
+test("AI·角色卡牌价值：27 张正式基础值与名称、definitionId 全部匹配", () => {
   const actual = Object.fromEntries(
     Object.values(CARD_DEFINITIONS).map(
       (definition) => [
@@ -33354,7 +33552,7 @@ test("AI·角色卡牌价值：26 张正式基础值与名称、definitionId 全
   }
 });
 
-test("AI·角色卡牌价值：八名角色 ID 与 135 项正式非零差值全部匹配", () => {
+test("AI·角色卡牌价值：八名角色 ID 与 139 项正式非零差值全部匹配", () => {
   assert.deepEqual(
     Object.fromEntries(CHARACTER_DEFINITIONS.map((character) => [character.id, character.name])),
     EXPECTED_ROLE_NAMES
@@ -33370,11 +33568,11 @@ test("AI·角色卡牌价值：八名角色 ID 与 135 项正式非零差值全�
   }
   assert.equal(
     Object.values(ROLE_CARD_VALUE_DELTAS).reduce((sum, deltas) => sum + Object.keys(deltas).length, 0),
-    135
+    139
   );
 });
 
-test("AI·角色卡牌价值：八名角色乘 26 张牌的差值与最终值全部匹配", () => {
+test("AI·角色卡牌价值：八名角色乘 27 张牌的差值与最终值全部匹配", () => {
   for (const [characterId, expectedDeltas] of Object.entries(EXPECTED_ROLE_CARD_VALUE_DELTAS)) {
     for (const [definitionId, [, baseValue]] of Object.entries(EXPECTED_CARD_AI_VALUES)) {
       const expectedDelta = expectedDeltas[definitionId] ?? 0;
@@ -37463,6 +37661,87 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
 
 // ---- AI 评分·威胁评估 ----
 
+/*
+功能
+构造三人阵营角色持有备用弹夹时的 canonical World，并计算下一回合突袭容量价值。
+
+调用方
+备用弹夹 StateValue 公式测试。
+
+输入
+确定突袭库存、装备保留概率与是否使用刃行者。
+
+输出
+玩家、World、可兑现突袭数、突袭威胁与装备协同值。
+
+读取状态
+正式 CardDefinitions、Ruleset、World/Probability 与 StateValue primitives。
+
+写入状态
+只写独立测试玩家和 clone World 的装备保留概率。
+
+调用函数
+makePlayer、makeGame、createInitialWorld、cloneWorld、expectedUsableAssaultsNextTurn、assaultThreat、equipmentThreatSynergy。
+
+边界与不变量
+三人阵营基础上限固定由 Ruleset 投影；库存牌身份来自观察者自己的合法手牌。
+*/
+function magazineAssaultValueFixture(assaultCount, retention = 1, bladeWalker = false) {
+  const actor = makePlayer("magazine-value-actor", 0, "dusk", "ai", bladeWalker ? 0 : 1),
+    allyA = makePlayer("magazine-value-ally-a", 1, "dusk"),
+    enemyA = makePlayer("magazine-value-enemy-a", 2, "dawn"),
+    allyB = makePlayer("magazine-value-ally-b", 3, "dusk"),
+    enemyB = makePlayer("magazine-value-enemy-b", 4, "dawn");
+  actor.equipment = instance("assaultMagazine");
+  actor.hand.push(...Array.from({ length: assaultCount }, () => instance("assault")));
+  if (bladeWalker) actor.energy = 1;
+  const { game } = makeGame([actor, allyA, enemyA, allyB, enemyB]);
+  const world = cloneWorld(createInitialWorld(actor.id, game.state));
+  const worldActor = world.players.find((player) => player.id === actor.id);
+  worldActor.equipmentRetentionProbability = retention;
+  return {
+    player:worldActor,
+    world,
+    usable:expectedUsableAssaultsNextTurn(worldActor, world),
+    threat:assaultThreat(worldActor, world),
+    equipmentSynergy:equipmentThreatSynergy(worldActor, world)
+  };
+}
+
+test("AI·备用弹夹：0到3张突袭只按真实库存兑现额外容量", () => {
+  const expected = [0, 1, 2, 3];
+  expected.forEach((usable, assaultCount) => {
+    const result = magazineAssaultValueFixture(assaultCount);
+    assertClose(result.usable, usable);
+    if (assaultCount === 0) assertClose(result.threat, 0);
+    assertClose(result.equipmentSynergy, 0);
+  });
+  const one = magazineAssaultValueFixture(1);
+  one.player.equipmentDefinitionId = null;
+  one.player.equipmentRetentionProbability = 0;
+  assertClose(expectedUsableAssaultsNextTurn(one.player, one.world), 1);
+});
+
+test("AI·备用弹夹：装备保留概率线性混合有无额外容量的配对世界", () => {
+  const result = magazineAssaultValueFixture(3, 0.5);
+  assertClose(result.usable, 2);
+  assertClose(result.threat, 2.75);
+  result.player.equipmentRetentionProbability = 0;
+  assertClose(expectedUsableAssaultsNextTurn(result.player, result.world), 1);
+  result.player.equipmentRetentionProbability = 1;
+  assertClose(expectedUsableAssaultsNextTurn(result.player, result.world), 3);
+});
+
+test("AI·备用弹夹：破军概率在有无装备容量世界之后各自叠加一次", () => {
+  const result = magazineAssaultValueFixture(4, 0.5, true);
+  assertClose(futureSkillReadinessProbability(result.player), 1);
+  assertClose(result.usable, 3);
+  result.player.equipmentRetentionProbability = 0;
+  assertClose(expectedUsableAssaultsNextTurn(result.player, result.world), 2);
+  result.player.equipmentRetentionProbability = 1;
+  assertClose(expectedUsableAssaultsNextTurn(result.player, result.world), 4);
+});
+
 test("AI·威胁评估：转移 preference 保留来源与接收者 ID", () => {
   const actor = { id: "actor", battleTeam: "dawn" };
   const source = {
@@ -39297,7 +39576,7 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(pages["basic-cards"], /聚能积攒潜力，护盾为下一轮铺路。/);
   assert.equal(getRulebookCardView("recover").targetLabel, "自己或濒死的队友");
   assert.equal(getRulebookCardView("harvest").targetLabel, "自己");
-  for (const definitionId of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"]) {
+  for (const definitionId of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) {
     assert.equal(getRulebookCardView(definitionId).destinationLabel, "使用后进入装备槽");
   }
 
@@ -39322,9 +39601,9 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(rulebookCss, /\.callout-one, \.callout-three, \.callout-four, \.callout-five\s*\{[^}]*color:\s*var\(--text-primary\)[^}]*filter:\s*none;/s);
 });
 
-test("UI·入局说明：二十六张正式卡均以真实定义与素材逐张图解", () => {
+test("UI·入局说明：二十七张正式卡均以真实定义与素材逐张图解", () => {
   const content = buildRulebookPages().map((page) => page.html).join("\n");
-  assert.equal((content.match(/<article class="manual-card"/g) ?? []).length, 26);
+  assert.equal((content.match(/<article class="manual-card"/g) ?? []).length, 27);
   for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
     const view = getRulebookCardView(definitionId);
     assert.equal(view.description, definition.description);
@@ -42998,11 +43277,11 @@ test("UI·布局样式：上方 AI 思考提示出现时隐藏下方重复提示
   assert.ok(!promptClasses.values.has("is-hidden"));
 });
 
-test("UI·布局样式：装备槽空置和六种装备生成不同可访问 DOM", () => {
+test("UI·布局样式：装备槽空置和七种装备生成不同可访问 DOM", () => {
   const p = makePlayer("a", 0, "dawn");
   const empty = equipmentSlotTemplate(p, true);
   assert.match(empty, /is-empty|装备槽为空/);
-  for (const id of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"]) {
+  for (const id of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) {
     p.equipment = instance(id);
     const markup = equipmentSlotTemplate(p, true);
     assert.match(markup, new RegExp(CARD_DEFINITIONS[id].name));
@@ -43024,8 +43303,8 @@ test("UI·布局样式：UIManager 源码不直接写生命、能量、手牌或
   ) assert.doesNotMatch(source, forbidden);
 });
 
-test("UI·布局样式：26 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
+test("UI·布局样式：27 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 27);
   for (const definition of Object.values(CARD_DEFINITIONS)) {
     const card = { ...definition, id: `layout-${definition.definitionId}` };
     for (const markup of [handCardTemplate(card), opponentHandStripTemplate([{ known: true, ...card }])]) {

@@ -886,6 +886,32 @@ runtime/card/skill facts。
     async battleDevice(source, card, _targets, context) { return resolveEquipment(source, card, context); },
 /*
 功能
+执行 assaultMagazine 装备效果 sequencing。
+
+调用方
+assaultMagazine 的 direct callers。
+
+输入
+按 signature 传入的 runtime facts。
+
+输出
+按 signature 返回。
+
+读取状态
+runtime/card/skill facts。
+
+写入状态
+无直接 Domain write。
+
+调用函数
+resolveEquipment。
+
+边界与不变量
+只进入唯一装备槽；主动突袭有效上限由 Domain TeamRules 查询即时派生。
+*/
+    async assaultMagazine(source, card, _targets, context) { return resolveEquipment(source, card, context); },
+/*
+功能
 执行 telescope 装备效果 sequencing。
 
 调用方

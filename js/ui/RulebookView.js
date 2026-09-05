@@ -57,7 +57,7 @@ const CARD_GROUPS = Object.freeze({
   control:Object.freeze(["scout", "transfer", "plunder", "destroy", "counter"]),
   pressure:Object.freeze(["exposeWeakness", "shockwave", "provoke", "leverage", "duel"]),
   supply:Object.freeze(["harvest", "mutualBenefit", "symbiosis", "seal", "lightning"]),
-  equipment:Object.freeze(["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"])
+  equipment:Object.freeze(["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"])
 });
 
 const CHARACTER_PAIRS = Object.freeze([

@@ -55,6 +55,7 @@ export const CARD_AI_VALUES = Object.freeze({
   recycleDevice: 8,
   defenseDevice: 9,
   battleDevice: 9,
+  assaultMagazine: 8,
   telescope: 8,
   barrierDevice: 9
 });
@@ -80,6 +81,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     energyDevice: -1,
     defenseDevice: -1,
     battleDevice: 2,
+    assaultMagazine: 2,
     telescope: 1,
     barrierDevice: -1
   }),
@@ -155,7 +157,8 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     symbiosis: -1,
     seal: 1,
     energyDevice: 1,
-    recycleDevice: 1
+    recycleDevice: 1,
+    assaultMagazine: 1
   }),
 
   "trail-hunter": Object.freeze({
@@ -174,6 +177,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: -1,
     defenseDevice: -1,
     battleDevice: 1,
+    assaultMagazine: 2,
     telescope: 1,
     barrierDevice: -1
   }),
@@ -196,6 +200,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: 1,
     defenseDevice: -1,
     battleDevice: 1,
+    assaultMagazine: 1,
     barrierDevice: -1
   }),
 

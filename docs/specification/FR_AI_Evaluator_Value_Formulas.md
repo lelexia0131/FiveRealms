@@ -89,6 +89,23 @@ $$
 
 源码：`Evaluator.js:3647 evaluateTransition()`。
 
+## 0.4 牌堆与装备判定基线
+
+标准牌堆由 `RulesetDefinition.deckComposition` 唯一拥有：
+
+| 类别 | 张数 |
+| --- | ---: |
+| 基础牌 | 92 |
+| 战术牌 | 56 |
+| 装备牌 | 16 |
+| 总计 | 164 |
+
+所有运行中判定概率继续从扣除合法已知牌后的 remaining finite pool 动态计算。标准完整牌堆的装备类别概率为：
+
+$$
+\boxed{P(\text{equipment})=\frac{16}{164}\approx9.7561\%}
+$$
+
 # 1. 哪些公式真正进入 Final Utility
 
 为了避免把 Search Prior 当作 AI“真实价值”，最终只需沿这条主链看：
@@ -711,6 +728,7 @@ $$
 | recycleDevice 回收站  | 8    |
 | defenseDevice 雷达    | 9    |
 | battleDevice 军火库   | 9    |
+| assaultMagazine 备用弹夹 | 8 |
 | telescope 望远镜      | 8    |
 | barrierDevice 屏障    | 9    |
 
@@ -755,6 +773,7 @@ $$
 | 回收站                                               | 0    | -1   | -1   | 0    | +1   | -1   | +1   | +1   |
 | 雷达                                                 | -1   | +1   | +1   | 0    | 0    | -1   | -1   | +1   |
 | 军火库                                               | +2   | -1   | -1   | +1   | 0    | +1   | +1   | -1   |
+| 备用弹夹                                             | +2   | 0    | 0    | 0    | +1   | +2   | +1   | 0    |
 | 望远镜                                               | +1   | -1   | -1   | +1   | 0    | +1   | 0    | +1   |
 | 屏障                                                 | -1   | +1   | +1   | 0    | 0    | -1   | -1   | +1   |
 
@@ -790,44 +809,66 @@ $$
 
 ## 12.3 下一回合可兑现突袭数
 
-基础攻击次数：`L`。
+当前主动突袭有效上限为：
+
+$$
+\boxed{L_{effective}=L_{team}+L_{equipment}+L_{temporary}}
+$$
+
+备用弹夹装备在装备槽时：
+
+$$
+L_{equipment}=2
+$$
+
+未装备时：
+
+$$
+L_{equipment}=0
+$$
+
+下一回合估值中，令突袭库存为 `A`，阵营基础主动突袭次数为 `L`，备用弹夹保留概率为 `r`。
 
 破军额外一次容量概率：
 
 $$
-P_{extra}= \begin{cases} P_{skillReady},&activeSkill=breakArmy\\ 0,&otherwise \end{cases}
+p= \begin{cases} P_{skillReady},&activeSkill=breakArmy\\ 0,&otherwise \end{cases}
 $$
 
-给定突袭库存 `n`：
+先定义没有备用弹夹时的兑现函数：
 
 $$
-BaseUses=\min(n,L)
+\boxed{g(A,L,p)=\min(A,L)+p\cdot\min(1,\max(0,A-L))}
 $$
 
-$$
-ExtraUses=\min(1,\max(0,n-L))
-$$
+备用弹夹保留分支的兑现量为：
 
 $$
-Usable(n)=BaseUses+ExtraUses\times P_{extra}
+\boxed{U(A)=(1-r)g(A,L,p)+r\,g(A,L+2,p)}
 $$
 
-若 Event 提供库存分布 `P(N=n)`：
+若突袭库存为概率分布：
 
 $$
-\boxed{ E[UsableAssaultsNextTurn] = \frac{\displaystyle \sum_nP(N=n)Usable(n)}{\displaystyle \sum_nP(N=n)} }
+\boxed{E[U]=\sum_aP(A=a)\left[(1-r)g(a,L,p)+r\,g(a,L+2,p)\right]}
 $$
 
-否则使用库存期望值代入。
+等价地，可写为：
+
+$$
+\boxed{U=E_{A,R,B}[\min(A,L+2R+B)]}
+$$
+
+其中 $R\sim Bernoulli(r)$，$B\sim Bernoulli(p)$。Event 分布若存在会先按实际总质量归一化；否则使用库存期望值代入同一函数。
 
 ## 12.4 突袭威胁
 
 $$
-Reserve=\max(0,E[Assault]-E[UsableAssaultsNextTurn])
+Reserve=\max(0,E[A]-E[U])
 $$
 
 $$
-\boxed{ AssaultThreat =1.25\times E[UsableAssaultsNextTurn]+0.25\times\min(2,Reserve) }
+\boxed{ V_{assault}=1.25E[U]+0.25\min(2,\max(0,E[A]-E[U])) }
 $$
 
 ## 12.5 角色属性威胁
@@ -855,6 +896,8 @@ $$
 $$
 \boxed{ EquipmentThreatSynergy =Resources\times0.75\times Retention }
 $$
+
+备用弹夹的 subtype 为 `assault-capacity`，不属于本节的 `attack` 装备集合；它的收益只通过有效次数上限进入 `expectedUsableAssaultsNextTurn()` 与 `AssaultThreat`。
 
 ## 12.7 回合机会价值
 

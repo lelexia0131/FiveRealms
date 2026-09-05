@@ -86,8 +86,8 @@ export function equipmentSlotTemplate(player, isHuman = false) {
     </div>`;
   }
   const equipment = presentCard(player.equipment);
-  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"战术后摸1张·每回合2次", defenseDevice:"需要格挡时公开判定", battleDevice:"突袭需2张格挡", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
-  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待回收", defenseDevice:"待判定", battleDevice:"强化中", telescope:"观测中", barrierDevice:"屏障展开" };
+  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"战术后摸1张·每回合2次", defenseDevice:"需要格挡时公开判定", battleDevice:"突袭需2张格挡", assaultMagazine:"主动突袭上限+2", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
+  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待回收", defenseDevice:"待判定", battleDevice:"强化中", assaultMagazine:"连续供弹", telescope:"观测中", barrierDevice:"屏障展开" };
   const recycleUses = player.turnFlags?.recycleDeviceUses ?? 0;
   const triggered = equipment.definitionId === "recycleDevice" && recycleUses >= 2;
   const stateLabel = equipment.definitionId === "recycleDevice" ? `${recycleUses}/2` : stateLabels[equipment.definitionId] ?? "生效中";

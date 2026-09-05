@@ -25,7 +25,7 @@ import {
   getMaxEnergy as getDomainMaxEnergy,
   getTurnEnergyBreakdown as getDomainTurnEnergyBreakdown
 } from "../../domain/rules/team/TeamRules.js";
-import { hasFactStatus, projectRulePlayers } from "../Event/Fact.js";
+import { hasFactStatus, projectAttackUsage, projectRulePlayers } from "../Event/Fact.js";
 import {
   PROBABILITY_EPSILON,
   buildRadarJudgmentProbabilities,
@@ -2113,7 +2113,7 @@ export class Evaluator {
   无。
 
   调用函数
-  CardValue 静态入口。
+  projectAttackUsage、CardValue 静态入口。
 
   边界与不变量
   只用于搜索展开，不能进入 final transition。
@@ -2122,10 +2122,10 @@ export class Evaluator {
     const assaultCount = (actor.hand ?? [])
       .filter((card) => card.definitionId === "assault")
       .reduce((sum, card) => sum + cardAvailability(card), 0);
+    const attackUsage = projectAttackUsage(actor);
     const availableAttackUses = Math.max(
       0,
-      (Number(actor.attackLimit ?? actor.turnFlags?.attackLimit) || 0)
-        - (Number(actor.attackUsed ?? actor.turnFlags?.attackUsed) || 0)
+      attackUsage.limit - attackUsage.used
     );
     const redeemableExtraCapacity = Math.min(
       1,

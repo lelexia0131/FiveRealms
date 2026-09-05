@@ -6,7 +6,7 @@
 Simulator 正式模拟门面。
 
 下游
-canonical Probability facade。
+canonical Probability facade 与 Domain TeamRules。
 
 状态边界
 只修改 Simulator 门面提供的独立 World 副本。
@@ -31,6 +31,7 @@ import {
   totalBranchProbability,
   inAttackRange
 } from "../Event/Probability/Probability.js";
+import { getEffectiveAttackLimit } from "../../domain/rules/team/TeamRules.js";
 
 /*
 功能
@@ -2177,21 +2178,33 @@ export const withResource = (Base) => class Resource extends Base {
   每次突袭容量各自对应的可用状态分支数组。
 
   读取状态
-  attackLimit 与 attackUsed 当前摘要。
+  非装备 attackLimit、attackUsed、当前装备定义与存在概率摘要。
 
   写入状态
   无；槽位只存在本次突袭 transition 调用栈。
 
   调用函数
-  getAvailabilityStateBranches、availableBranchesFromState。
+  getEffectiveAttackLimit、getAvailabilityStateBranches、availableBranchesFromState。
 
   边界与不变量
-  标量次数只投影为本次 transition 的有界局部槽位；不得写回 World 或 Action。
+  装备加成从 Domain 公开字段即时派生；标量次数只投影为本次 transition 的有界局部槽位，不得写回 World 或 Action。
   */
   ensureAttackUseSlots(player) {
     const used = Math.max(0, Number(player.attackUsed) || 0);
-    const limit = Number.isFinite(Number(player.attackLimit))
-      ? Math.max(0, Number(player.attackLimit))
+    const limitWithoutEquipment = Number(player.attackLimit);
+    const exactEquippedLimit = getEffectiveAttackLimit(
+      limitWithoutEquipment,
+      player.equipmentDefinitionId
+    );
+    const equipmentProbability = player.equipmentDefinitionId
+      ? Math.min(1, Math.max(0, Number(player.equipmentRetentionProbability ?? 1) || 0))
+      : 0;
+    const limit = Number.isFinite(limitWithoutEquipment)
+      ? Math.max(
+          0,
+          limitWithoutEquipment
+            + (exactEquippedLimit - limitWithoutEquipment) * equipmentProbability
+        )
       : used + 1;
     const remaining = Math.max(0, limit - used);
     return Array.from({ length: Math.ceil(remaining) }, (_, index) => probabilityEventPartition(

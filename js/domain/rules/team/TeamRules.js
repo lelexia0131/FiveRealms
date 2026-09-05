@@ -232,6 +232,40 @@ export function getAttackLimitFromRules(teamRules) {
 
 /*
 功能
+把当前阵营与临时次数额度同公开装备加成合成为有效主动突袭上限。
+
+调用方
+Application 动作合法性、AI Fact 投影、Simulator 次数槽与 tests。
+
+输入
+已包含阵营基础和临时加成的非装备上限，以及当前装备 definitionId。
+
+输出
+非负有效主动突袭次数上限。
+
+读取状态
+CardDefinitions 的 attackLimitBonus 公开字段。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+装备未定义加成时按零处理；本函数不读取已使用次数，也不把装备加成写回 Player。
+*/
+export function getEffectiveAttackLimit(baseAndTemporaryLimit, equipmentDefinitionId = null) {
+  const limitWithoutEquipment = Math.max(0, Number(baseAndTemporaryLimit) || 0);
+  const equipmentBonus = Math.max(
+    0,
+    Number(CARD_DEFINITIONS[equipmentDefinitionId]?.attackLimitBonus) || 0
+  );
+  return limitWithoutEquipment + equipmentBonus;
+}
+
+/*
+功能
 从已决定 team rules 返回调息上限。
 
 调用方
@@ -411,7 +445,7 @@ export function getDrawCount(state, player) {
 
 /*
 功能
-返回玩家每回合突袭上限。
+返回玩家当前装备生效后的每回合主动突袭上限。
 
 调用方
 TeamRules。
@@ -420,22 +454,29 @@ TeamRules。
 state 与 player 投影。
 
 输出
-整数。
+非负有效次数。
 
 读取状态
-getTeamRules。
+getTeamRules 与 player.equipmentDefinitionId。
 
 写入状态
 无。
 
 调用函数
-getTeamRules。
+getTeamRules、getAttackLimitFromRules、getEffectiveAttackLimit。
 
 边界与不变量
-不读取当前使用次数。
+不读取当前使用次数；player.attackLimit 存在时视为已含临时加成，装备固定加成只来自 CardDefinitions。
 */
 export function getAttackLimit(state, player) {
-  return getAttackLimitFromRules(getTeamRules(state, player));
+  const configured = getAttackLimitFromRules(getTeamRules(state, player));
+  const baseAndTemporaryLimit = Number.isFinite(Number(player?.attackLimit))
+    ? Number(player.attackLimit)
+    : configured;
+  return getEffectiveAttackLimit(
+    baseAndTemporaryLimit,
+    player?.equipmentDefinitionId ?? null
+  );
 }
 
 /*

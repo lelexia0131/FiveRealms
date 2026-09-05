@@ -22,6 +22,7 @@ import { hasStatus as hasStatusFromRule, nextLightningReceiverId } from "../../d
 import { getSkillTargetIds } from "../../domain/rules/skill/SkillRules.js";
 import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js";
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { getEffectiveAttackLimit } from "../../domain/rules/team/TeamRules.js";
 import {
   canActuallyUseAssault as decideAssaultLegality, canPlayCard as decideCardLegality,
   findPlayerFact, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds,
@@ -287,26 +288,32 @@ export class ActionLegality {
   source。
 
   输出
-  冻结的 { used, limit } 整数。
+  冻结的 { used, limit } 数值。
 
   读取状态
-  source.turnFlags 或 flat usage facts。
+  source.turnFlags、flat usage facts 与当前公开装备。
 
   写入状态
   无。
 
   调用函数
-  getAttackUsage。
+  getEffectiveAttackLimit、createAttackUsage。
 
   边界与不变量
-  额外次数统一体现在 limit；dual-schema 归一化只发生在本 boundary。
+  turnFlags.attackLimit 保持阵营基础与临时加成；装备加成只在查询时合成，换装不会回写历史次数。
   */
   static getAssaultUsage(source) {
     const turnFlags = source?.turnFlags;
     const raw = turnFlags?.attackUsed !== undefined || turnFlags?.attackLimit !== undefined
       ? turnFlags
       : source;
-    return createAttackUsage(raw?.attackUsed, raw?.attackLimit);
+    const equipmentDefinitionId = source?.equipment?.definitionId
+      ?? source?.equipmentDefinitionId
+      ?? null;
+    return createAttackUsage(
+      raw?.attackUsed,
+      getEffectiveAttackLimit(raw?.attackLimit, equipmentDefinitionId)
+    );
   }
 
   /*

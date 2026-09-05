@@ -18,6 +18,7 @@ Domain Card Definitions 与 canonical Probability facade。
 不得拥有卡牌资产价值、最终 utility 聚合或候选比较；不得 import CardValue 或 Simulator。
 */
 import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
+import { getEffectiveAttackLimit } from "../../domain/rules/team/TeamRules.js";
 import {
   PROBABILITY_EPSILON,
   clampProbability,
@@ -224,13 +225,13 @@ const nextTurnBaseAttackLimit = (player) => {
 
 /*
 功能
-计算给定库存、基础次数与一次额外容量概率下的期望可兑现数量。
+计算给定库存、基础次数、装备保留分支与一次临时额外容量概率下的期望可兑现数量。
 
 调用方
 expectedUsableAssaultsNextTurn。
 
 输入
-库存数量、基础上限与额外一次攻击概率。
+库存数量、基础上限、额外一次攻击概率、装备次数加成与装备保留概率。
 
 输出
 非负期望使用数量。
@@ -242,16 +243,28 @@ expectedUsableAssaultsNextTurn。
 无。
 
 调用函数
-无。
+clampProbability。
 
 边界与不变量
-额外容量最多兑现一张且只在库存超过基础上限时生效。
+装备存在时先扩充基础容量；破军额外容量最多兑现一张且只在库存超过对应容量时生效。
 */
-const expectedUsableFromInventory = (inventory, limit, extraAttackProbability) => {
+const expectedUsableFromInventory = (
+  inventory,
+  limit,
+  extraAttackProbability,
+  equipmentAttackLimitBonus = 0,
+  equipmentRetentionProbability = 0
+) => {
   const count = Math.max(0, Number(inventory) || 0);
   const baseUses = Math.min(count, limit);
   const extraUses = Math.min(1, Math.max(0, count - limit));
-  return baseUses + extraUses * extraAttackProbability;
+  const withoutEquipment = baseUses + extraUses * extraAttackProbability;
+  const equippedLimit = limit + Math.max(0, Number(equipmentAttackLimitBonus) || 0);
+  const equippedBaseUses = Math.min(count, equippedLimit);
+  const equippedExtraUses = Math.min(1, Math.max(0, count - equippedLimit));
+  const withEquipment = equippedBaseUses + equippedExtraUses * extraAttackProbability;
+  const retention = clampProbability(equipmentRetentionProbability);
+  return (1 - retention) * withoutEquipment + retention * withEquipment;
 };
 
 /*
@@ -336,19 +349,24 @@ assaultThreat、roleThreatSynergy 与 equipmentThreatSynergy。
 非负期望可用突袭数。
 
 读取状态
-攻击次数、破军可用概率与突袭库存分布。
+攻击次数、当前装备公开加成/保留概率、破军可用概率与突袭库存分布。
 
 写入状态
 无。
 
 调用函数
-futureSkillReadinessProbability、expectedUsableFromInventory。
+getEffectiveAttackLimit、futureSkillReadinessProbability、expectedUsableFromInventory。
 
 边界与不变量
-先受基础次数限制；破军只在未来可发动的概率世界增加一次容量。
+装备保留世界先把公开加成叠到阵营基础次数；破军再在未来可发动的概率世界增加一次容量。
 */
 export function expectedUsableAssaultsNextTurn(player, state) {
   const limit = nextTurnBaseAttackLimit(player);
+  const equippedLimit = getEffectiveAttackLimit(limit, player?.equipmentDefinitionId);
+  const equipmentAttackLimitBonus = equippedLimit - limit;
+  const equipmentRetentionProbability = equipmentAttackLimitBonus > 0
+    ? clampProbability(player?.equipmentRetentionProbability ?? 1)
+    : 0;
   const extraAttackProbability = player?.activeSkillId === "breakArmy"
     ? futureSkillReadinessProbability(player)
     : 0;
@@ -359,11 +377,21 @@ export function expectedUsableAssaultsNextTurn(player, state) {
   if (total > PROBABILITY_EPSILON) {
     return distribution.reduce((sum, branch) => (
       sum + Number(branch.probability)
-      * expectedUsableFromInventory(branch.count, limit, extraAttackProbability)
+      * expectedUsableFromInventory(
+        branch.count,
+        limit,
+        extraAttackProbability,
+        equipmentAttackLimitBonus,
+        equipmentRetentionProbability
+      )
     ), 0) / total;
   }
   return expectedUsableFromInventory(
-    expectedAssaultResources(player, state), limit, extraAttackProbability
+    expectedAssaultResources(player, state),
+    limit,
+    extraAttackProbability,
+    equipmentAttackLimitBonus,
+    equipmentRetentionProbability
   );
 }
 

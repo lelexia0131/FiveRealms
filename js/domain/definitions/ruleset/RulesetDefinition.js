@@ -68,6 +68,7 @@ export const RULESET_DEFINITION = Object.freeze({
     recycleDevice: 3,
     defenseDevice: 2,
     battleDevice: 2,
+    assaultMagazine: 1,
     telescope: 3,
     barrierDevice: 3
   }),

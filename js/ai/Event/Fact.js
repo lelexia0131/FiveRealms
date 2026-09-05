@@ -23,6 +23,7 @@ import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefi
 import { assertCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js";
 import { hasStatus } from "../../domain/rules/status/StatusRules.js";
 import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js";
+import { getEffectiveAttackLimit } from "../../domain/rules/team/TeamRules.js";
 
 const CARD_COUNTS = RULESET_DEFINITION.deckComposition;
 const CHARACTER_ROLE_TAGS = Object.freeze({
@@ -315,22 +316,29 @@ Generator root/deep legality 与 Simulator queries。
 Domain canonical attack usage。
 
 读取状态
-确定 attackUsed/attackLimit。
+确定 attackUsed、非装备 attackLimit 与当前装备。
 
 写入状态
 无。
 
 调用函数
-createAttackUsage。
+getEffectiveAttackLimit、createAttackUsage。
 
 边界与不变量
-只投影事实，不复制攻击合法性公式。
+装备规则值由 Domain TeamRules 合成；概率执行质量由 Simulator 当前 transition 负责。
 */
 export function projectAttackUsage(player) {
   const turnFlags = player?.turnFlags;
+  const limitWithoutEquipment = Math.max(
+    0,
+    Number(turnFlags?.attackLimit ?? player?.attackLimit) || 0
+  );
+  const equipmentDefinitionId = player?.equipment?.definitionId
+    ?? player?.equipmentDefinitionId
+    ?? null;
   return createAttackUsage(
     turnFlags?.attackUsed ?? player?.attackUsed ?? 0,
-    turnFlags?.attackLimit ?? player?.attackLimit ?? 0
+    getEffectiveAttackLimit(limitWithoutEquipment, equipmentDefinitionId)
   );
 }
 

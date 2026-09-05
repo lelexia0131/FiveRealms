@@ -191,6 +191,13 @@ export const CARD_PRESENTATION = Object.freeze({
     accent: "#9a6139",
     frameStyle: "machine",
   }),
+  assaultMagazine: Object.freeze({
+    categoryName: "装备牌",
+    art: "./assets/cards/assault-magazine.svg",
+    icon: "./assets/cards/assault-magazine.svg",
+    accent: "#a76a3d",
+    frameStyle: "machine",
+  }),
   telescope: Object.freeze({
     categoryName: "装备牌",
     art: "./assets/cards/telescope.svg",

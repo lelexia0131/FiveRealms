@@ -10,7 +10,7 @@ export const CARD_CATEGORY_DISPLAY_ORDER = Object.freeze({ basic:0, tactic:1, eq
 export const CARD_DEFINITION_DISPLAY_ORDER = Object.freeze([
   "assault", "recover", "block", "charge", "shield",
   "scout", "transfer", "exposeWeakness", "shockwave", "provoke", "leverage", "plunder", "destroy", "counter", "harvest", "duel", "mutualBenefit", "symbiosis", "seal", "lightning",
-  "energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"
+  "energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"
 ]);
 const definitionOrder = new Map(CARD_DEFINITION_DISPLAY_ORDER.map((definitionId, index) => [definitionId, index]));
 
