@@ -30317,7 +30317,7 @@ test("AI·反制：hand 与 equipment 未预填 selection 时仍投影 canonical
   }
 });
 
-test("AI·反制：root actor 合法知道并选择 Counter 时 future pC 为一", async () => {
+test("AI·反制：root actor 知道 Counter 时预测仍匿名且 runtime 保留具体身份", async () => {
   const fixture = await buildCounterRootOverlapFixture({
     handDefinitionIds:["counter", "assault", "recover"],
     rootDefinitionId:"plunder",
@@ -30327,15 +30327,20 @@ test("AI·反制：root actor 合法知道并选择 Counter 时 future pC 为一
   });
   try {
     const counter = fixture.responder.hand.find((card) => card.definitionId === "counter");
-    assert.equal(fixture.futureSelection?.selectionKind, "known");
-    assert.equal(fixture.futureSelection?.cardId, counter.id);
-    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 1);
+    assert.equal(fixture.futureSelection?.selectionKind, "unknown");
+    assert.equal(fixture.futureSelection?.cardId, null);
+    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 1 / 3);
+    const runtime = await fixture.game.aiController.choosePostCounterResource(
+      fixture.source, fixture.responder, { purpose:"plunder", card:fixture.rootCard }
+    );
+    assert.equal(runtime?.selection.selectionKind, "known");
+    assert.equal(runtime?.card.id, counter.id);
   } finally {
     fixture.game.dispose();
   }
 });
 
-test("AI·反制：root actor 合法知道并选择非 Counter 时 future pC 为零", async () => {
+test("AI·反制：root actor 知道非 Counter 时预测仍匿名且 runtime 保留具体身份", async () => {
   const fixture = await buildCounterRootOverlapFixture({
     handDefinitionIds:["counter", "assault", "recover"],
     rootDefinitionId:"plunder",
@@ -30345,11 +30350,227 @@ test("AI·反制：root actor 合法知道并选择非 Counter 时 future pC 为
   });
   try {
     const assault = fixture.responder.hand.find((card) => card.definitionId === "assault");
-    assert.equal(fixture.futureSelection?.selectionKind, "known");
-    assert.equal(fixture.futureSelection?.cardId, assault.id);
-    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 0);
+    assert.equal(fixture.futureSelection?.selectionKind, "unknown");
+    assert.equal(fixture.futureSelection?.cardId, null);
+    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 1 / 3);
+    const runtime = await fixture.game.aiController.choosePostCounterResource(
+      fixture.source, fixture.responder, { purpose:"plunder", card:fixture.rootCard }
+    );
+    assert.equal(runtime?.selection.selectionKind, "known");
+    assert.equal(runtime?.card.id, assault.id);
   } finally {
     fixture.game.dispose();
+  }
+});
+
+/*
+功能
+在同一资源 Counter fixture 的当前状态重新构造响应输入。
+
+调用方
+future resource 信息边界回归测试。
+
+输入
+buildCounterRootOverlapFixture 结果与可选公开 context 覆盖。
+
+输出
+生产 Controller 的 DecisionContext。
+
+读取状态
+fixture 当前玩家及之前公开 context。
+
+写入状态
+无。
+
+调用函数
+Controller.buildResponseDecisionContext。
+
+边界与不变量
+不预填资源 identity，不复制价值或概率公式。
+*/
+async function rebuildCounterResourceDecision(fixture, context = {}) {
+  return fixture.game.aiController.buildResponseDecisionContext(
+    fixture.responder,
+    "counter",
+    { ...fixture.decision.context, ...context },
+    fixture.responder.hand.filter((card) => card.definitionId === "counter")
+  );
+}
+
+test("AI·反制：future prediction 隔离 root actor hidden hand 与私人记忆", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter", "assault", "recover"],
+      rootDefinitionId,
+      equipmentDefinitionId:"defenseDevice"
+    });
+    try {
+      fixture.source.hand = [instance("counter"), instance("recover")];
+      const baseline = await rebuildCounterResourceDecision(fixture);
+      fixture.source.hand = [instance("assault"), instance("charge")];
+      const changedHand = await rebuildCounterResourceDecision(fixture);
+      fixture.game.rememberPrivateCard(fixture.source, fixture.responder, fixture.responder.hand[0]);
+      const changedMemory = await rebuildCounterResourceDecision(fixture);
+      for (const decision of [changedHand, changedMemory]) {
+        assert.deepEqual(decision.world, baseline.world, rootDefinitionId);
+        assert.deepEqual(decision.futureSelectionOutcomes, baseline.futureSelectionOutcomes);
+        assert.deepEqual(decision.futureCounterTerms, baseline.futureCounterTerms);
+        assert.equal(
+          fixture.game.aiController.evaluator.shouldRespond(decision),
+          fixture.game.aiController.evaluator.shouldRespond(baseline)
+        );
+      }
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：future candidates 私密手牌只生成一个匿名候选并保留公开装备", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter", "assault", "recover"],
+      rootDefinitionId,
+      equipmentDefinitionId:"barrierDevice",
+      rootKnownDefinitionIds:["counter", "assault", "recover"]
+    });
+    try {
+      const candidates = fixture.game.aiController.actionGenerator.getResponderSafeFutureRootSelections(
+        fixture.decision.world, fixture.rootCard, fixture.decision.context.rootTargetIds,
+        { publicTransferContext:fixture.decision.context.publicTransferContext }
+      );
+      const hands = candidates.filter((selection) => selection.zone === "hand");
+      assert.equal(hands.length, 1);
+      assert.deepEqual(hands[0], {
+        zone:"hand", selectionKind:"unknown", cardId:null, definitionId:null,
+        selectionMode:"uniform-hand",
+        ...(rootDefinitionId === "transfer" ? {
+          sourceId:fixture.responder.id,
+          receiverId:fixture.decision.context.publicTransferContext.receiverPlayerId
+        } : {})
+      });
+      assert.equal(candidates.length, rootDefinitionId === "transfer" ? 1 : 2);
+      if (rootDefinitionId !== "transfer") {
+        assert.equal(candidates[1].zone, "equipment");
+        assert.equal(candidates[1].definitionId, "barrierDevice");
+      }
+      const handTerms = fixture.game.aiController.evaluator.futureSelectionCounterTerms(
+        fixture.decision.world, fixture.responderWorld, fixture.sourceWorld,
+        fixture.rootCard, fixture.targets,
+        [{ weight:1, selection:hands[0], resolvesAtStay:true }]
+      );
+      assert.equal(handTerms.counterLossProbability, 1 / 3);
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：future production path 不读取 actor 私密字段或启动二阶采样", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter", "assault", "recover"], rootDefinitionId,
+      equipmentDefinitionId:"barrierDevice"
+    });
+    const memory = Object.getOwnPropertyDescriptor(fixture.source, "aiMemory");
+    const hand = fixture.source.hand;
+    const controller = fixture.game.aiController;
+    const originalFactory = controller.simulatorFactory;
+    const originalSelector = controller.chooseCanonicalPostCounterSelection;
+    const materialized = [];
+    try {
+      Object.defineProperty(fixture.source, "aiMemory", {
+        configurable:true,
+        get() { throw new Error("Counter prediction accessed actor private memory"); }
+      });
+      fixture.source.hand = new Proxy(hand, {
+        get(target, property) {
+          assert.equal(property, "length", "只允许读取公开手牌数量");
+          return target.length;
+        }
+      });
+      controller.chooseCanonicalPostCounterSelection = () => {
+        throw new Error("Counter prediction entered actor runtime selector");
+      };
+      controller.simulatorFactory = () => {
+        const simulator = originalFactory();
+        const build = simulator.buildFutureResourceSelectionWorlds.bind(simulator);
+        simulator.buildFutureResourceSelectionWorlds = (world, action, depth) => {
+          materialized.push(action.selection);
+          assert.equal(world.players.find((player) => player.id === fixture.source.id).hand, undefined);
+          return build(world, action, depth);
+        };
+        return simulator;
+      };
+      const decision = await rebuildCounterResourceDecision(fixture);
+      assert.deepEqual(decision.futureCounterTerms, fixture.futureCounterTerms);
+      assert.equal(materialized.length, rootDefinitionId === "transfer" ? 1 : 2);
+      assert.equal(materialized.filter((selection) => selection.zone === "hand").length, 1);
+      assert.doesNotMatch(
+        controller.buildFutureResourceCounterProjection.toString(),
+        /createInitialWorld|chooseCanonicalPostCounterSelection|hiddenStateSamples|sampleHidden|Searcher/
+      );
+      assert.doesNotMatch(
+        originalFactory().buildFutureResourceSelectionWorlds.toString(),
+        /createInitialWorld|hiddenStateSamples|sampleHidden|Searcher/
+      );
+    } finally {
+      fixture.source.hand = hand;
+      Object.defineProperty(fixture.source, "aiMemory", memory);
+      controller.simulatorFactory = originalFactory;
+      controller.chooseCanonicalPostCounterSelection = originalSelector;
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：future anonymous projection 保持 Counter depth 与公开声明边界", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter", "assault", "recover"], rootDefinitionId
+    });
+    try {
+      const flipped = await rebuildCounterResourceDecision(fixture, { counterDepth:1 });
+      assert.deepEqual(flipped.futureSelectionOutcomes[0].selection, fixture.futureSelection);
+      assert.equal(flipped.futureCounterTerms.gain, -fixture.futureCounterTerms.gain);
+      assert.equal(flipped.futureCounterTerms.counterLossProbability, 0);
+      assert.equal(flipped.futureCounterTerms.selfCounterGainOverlap, 0);
+      const restored = await rebuildCounterResourceDecision(fixture, { counterDepth:2 });
+      assert.deepEqual(restored.futureCounterTerms, fixture.futureCounterTerms);
+      const invalid = await rebuildCounterResourceDecision(fixture,
+        rootDefinitionId === "transfer"
+          ? { publicTransferContext:{ fromPlayerId:fixture.responder.id, receiverPlayerId:fixture.responder.id } }
+          : { rootTargetIds:[] }
+      );
+      assert.equal(invalid.futureCounterTerms, null);
+      fixture.responder.hand = [];
+      const empty = await rebuildCounterResourceDecision(fixture);
+      assert.equal(empty.futureSelectionOutcomes, null);
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：future hand 来源为其他玩家时保留匿名资源收益", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter"], rootDefinitionId, transferReceiverTeam:"dawn"
+    });
+    try {
+      const owner = fixture.game.state.players.find((player) => player.id === "counter-overlap-receiver");
+      owner.hand.push(instance("recover"), instance("assault"));
+      const decision = await rebuildCounterResourceDecision(fixture,
+        rootDefinitionId === "transfer"
+          ? { publicTransferContext:{ fromPlayerId:owner.id, receiverPlayerId:fixture.source.id } }
+          : { rootTargetIds:[owner.id] }
+      );
+      assert.equal(decision.futureSelectionOutcomes[0].selection.selectionKind, "unknown");
+      assert.ok(decision.futureCounterTerms.gain > 0);
+      assert.equal(decision.futureCounterTerms.counterLossProbability, 0);
+    } finally {
+      fixture.game.dispose();
+    }
   }
 });
 

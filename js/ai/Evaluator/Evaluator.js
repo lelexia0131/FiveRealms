@@ -980,7 +980,7 @@ function selectedResourceStateValue(player, selection, viewerId) {
 
 /*
 功能
-计算完整已知手牌中随机选中一张时，指定资源持有者的期望 State Value。
+计算响应者合法手牌信息中随机选中一张时，指定资源持有者的期望 State Value。
 
 调用方
 planningDynamicCounterGain 的 uniform-hand Plunder/Destroy/Transfer 分支。
@@ -992,7 +992,7 @@ selection 来源玩家、价值落点玩家与当前 viewer ID。
 按实体 availability 和当前 handCount 加权的单张资源 State Value。
 
 读取状态
-来源玩家完整自有 hand、每张 availability 与价值落点玩家的角色事实。
+来源玩家自有 hand 或合法 knownCards、availability 与价值落点玩家的角色事实。
 
 写入状态
 无。
@@ -1001,20 +1001,21 @@ selection 来源玩家、价值落点玩家与当前 viewer ID。
 selectedResourceStateValue、cardAvailability。
 
 边界与不变量
-只用于 viewer 已完整知道来源手牌身份的 uniform-hand；分母只含手牌，装备不进入随机池；
+uniform-hand 不表示施放者掌握身份；分母只含手牌，装备不进入随机池；
 缺少完整实体质量时保留匿名单张 hand value。
 */
 function uniformHandResourceStateValue(source, valueOwner, viewerId) {
   const handCount = Math.max(0, Number(source?.handCount) || 0);
-  if (handCount <= PROBABILITY_EPSILON || !Array.isArray(source?.hand)) return 0;
-  const weighted = source.hand.reduce((sum, card) => (
+  if (handCount <= PROBABILITY_EPSILON) return 0;
+  const hand = source?.hand ?? source?.knownCards ?? [];
+  const weighted = hand.reduce((sum, card) => (
     sum + cardAvailability(card) * selectedResourceStateValue(valueOwner, {
       zone:"hand",
       selectionKind:"known",
       definitionId:card.definitionId
     }, viewerId)
   ), 0);
-  const knownMass = source.hand.reduce((sum, card) => sum + cardAvailability(card), 0);
+  const knownMass = hand.reduce((sum, card) => sum + cardAvailability(card), 0);
   if (knownMass + PROBABILITY_EPSILON < handCount) {
     return selectedResourceStateValue(valueOwner, {
       zone:"hand",
@@ -3187,7 +3188,7 @@ export class Evaluator {
   Controller 的 runtime future-selection orchestration。
 
   输入
-  root actor 视角 World、actor 与 Simulator 已构造的 candidate root Worlds。
+  合法输入 World、待估值 actor 与 Simulator 已构造的 candidate root Worlds。
 
   输出
   当前确定性 selection policy 选中的原 outcome；没有完整候选时返回 null。
@@ -3203,6 +3204,7 @@ export class Evaluator {
 
   边界与不变量
   Plunder/Destroy 复用 contextual/static comparator，Transfer 复用 evaluateTransferAction；
+  Counter prediction 输入响应者 World，只估计 actor 的选择收益，不要求 actor 私人 World；
   同分保持 Generator 枚举顺序，确定策略只产生一个 weight=1 的后续结果。
   */
   chooseFutureResourceSelectionOutcome(state, actor, outcomes) {

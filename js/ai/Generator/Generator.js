@@ -61,56 +61,30 @@ Controller 的 post-Counter future-selection projection。
 canonical World player。
 
 输出
-known、unknown 或带 uniform-hand 标记的 hand selection；无玩家或空手牌时返回 null。
+单个 uniform-hand anonymous selection；无玩家或空手牌时返回 null。
 
 读取状态
-viewer 自己的 hand、合法 knownCards、公开 handCount 与 canonical availability。
+公开 handCount。
 
 写入状态
 无。
 
 调用函数
-cardAvailability。
+无。
 
 边界与不变量
-只有唯一可推导身份才返回 known；观察者完整知道的多张手牌保持 uniform-hand，
-其余一律保持 anonymous，不读取未暴露的实体定义。
+Counter prediction 不建模对手知道哪些私密牌；即使只有一张手牌也不暴露 identity。
 */
 export function projectFutureHandSelection(player) {
   if (!player) return null;
-  const knownById = new Map();
-  for (const entry of [
-    ...(Array.isArray(player.hand) ? player.hand : []),
-    ...(Array.isArray(player.knownCards) ? player.knownCards : [])
-  ]) {
-    const cardId = entry?.id ?? entry?.cardId ?? null;
-    if (cardId && entry.definitionId && cardAvailability(entry) > PROBABILITY_EPSILON) {
-      knownById.set(cardId, { cardId, definitionId:entry.definitionId });
-    }
-  }
-  const known = [...knownById.values()];
   const handCount = Math.max(0, Number(player.handCount) || 0);
   if (handCount <= PROBABILITY_EPSILON) return null;
-  if (known.length === 1 && handCount <= 1) {
-    return {
-      zone:"hand",
-      selectionKind:"known",
-      cardId:known[0].cardId,
-      definitionId:known[0].definitionId,
-      availableUnknownCount:0
-    };
-  }
-  const availableUnknownCount = Math.max(0, handCount - known.length);
   return {
     zone:"hand",
     selectionKind:"unknown",
     cardId:null,
     definitionId:null,
-    knownCardIds:known.map((entry) => entry.cardId),
-    availableUnknownCount,
-    ...(known.length > 1 && availableUnknownCount <= PROBABILITY_EPSILON
-      ? { selectionMode:"uniform-hand" }
-      : {})
+    selectionMode:"uniform-hand"
   };
 }
 
@@ -207,19 +181,19 @@ export class Generator {
 
   /*
   功能
-  把 actor 视角选出的未来资源区域投影到响应者视角的合法 selection 表示。
+  从响应者合法 World 枚举匿名手牌与公开装备的 future resource candidates。
 
   调用方
-  Controller 的 runtime future-selection orchestration。
+  Controller.buildFutureResourceCounterProjection。
 
   输入
-  响应者视角 World、root 卡牌、目标 ID、actor 视角选中 selection 与 Transfer 公开声明。
+  响应者视角 World、root 卡牌、目标 ID 与 Transfer 公开声明。
 
   输出
-  可供 Counter gain/probability 查询使用的 canonical future selection；无法投影时返回 null。
+  canonical selections；无合法资源或公开目标失效时返回空数组。
 
   读取状态
-  响应者视角的目标手牌摘要、合法身份、公开装备与 Transfer 来源/接收者。
+  公开手牌数量、装备与 Transfer 来源/接收者。
 
   写入状态
   无。
@@ -228,48 +202,35 @@ export class Generator {
   projectFutureHandSelection。
 
   边界与不变量
-  只保留 actor post-Counter policy 已选中的资源语义；该 policy 合法确定 known cardId 时
-  必须保留其身份，anonymous hand 才按响应者视角投影为 uniform-hand；equipment 使用公开定义。
-  selected 只能来自 root actor 合法 World，不得从真实未知牌面补造身份。
+  不接收 actor 私人 World 或具体手牌选择；三个卡牌共享匿名化，真实 runtime 枚举不受影响。
   */
-  projectFutureRootSelection(state, rootCard, rootTargetIds, selected, options = {}) {
+  getResponderSafeFutureRootSelections(state, rootCard, rootTargetIds, options = {}) {
     const definitionId = rootCard?.definitionId ?? null;
+    if (!["plunder", "destroy", "transfer"].includes(definitionId)) return [];
     const sourceId = definitionId === "transfer"
       ? options.publicTransferContext?.fromPlayerId ?? null
       : rootTargetIds?.[0] ?? null;
     const source = state?.players?.find((player) => player.id === sourceId && player.alive) ?? null;
-    if (!source || !selected?.zone) return null;
-    if (selected.zone === "equipment") {
-      if (!["plunder", "destroy"].includes(definitionId) || !source.equipmentDefinitionId) return null;
-      return {
+    if (!source) return [];
+    const handSelection = projectFutureHandSelection(source);
+    if (definitionId === "transfer") {
+      const receiverId = options.publicTransferContext?.receiverPlayerId ?? null;
+      if (!handSelection || receiverId === source.id
+        || !state.players.some((player) => player.id === receiverId && player.alive)) return [];
+      return [{ ...handSelection, sourceId:source.id, receiverId }];
+    }
+    const selections = handSelection ? [handSelection] : [];
+    if (source.equipmentDefinitionId
+      && Number(source.equipmentRetentionProbability ?? 1) > PROBABILITY_EPSILON) {
+      selections.push({
         zone:"equipment",
         selectionKind:"equipment",
         cardId:null,
         definitionId:source.equipmentDefinitionId,
         availableUnknownCount:0
-      };
+      });
     }
-    if (selected.zone !== "hand") return null;
-    const handSelection = selected.selectionKind === "known"
-      && selected.cardId && selected.definitionId
-      ? {
-          zone:"hand",
-          selectionKind:"known",
-          cardId:selected.cardId,
-          definitionId:selected.definitionId,
-          availableUnknownCount:0
-        }
-      : projectFutureHandSelection(source);
-    if (!handSelection) return null;
-    if (definitionId !== "transfer") return handSelection;
-    const receiverId = options.publicTransferContext?.receiverPlayerId ?? null;
-    if (!state.players.some((player) => player.id === receiverId && player.alive)) return null;
-    return {
-      ...handSelection,
-      sourceId:source.id,
-      receiverId,
-      zone:"hand"
-    };
+    return selections;
   }
 
   /*

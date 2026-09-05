@@ -1669,7 +1669,7 @@ export class Controller {
   在给定真实时点的 root actor World 中选择唯一 canonical post-Counter 资源语义。
 
   调用方
-  choosePostCounterResource 与 buildFutureResourceCounterProjection。
+  choosePostCounterResource。
 
   输入
   当前 GameState、root card/source/targets、Transfer 公开声明、Counter depth 与是否 cooperative yield。
@@ -1838,27 +1838,27 @@ export class Controller {
   buildResponseDecisionContext 的普通 Counter 分支。
 
   输入
-  当前 GameState、响应者视角 World/player、root card/source/targets、Counter depth 与 Transfer 公开声明。
+  响应者视角 World/player、root card/source/targets、Counter depth 与 Transfer 公开声明。
 
   输出
   `{ futureSelectionOutcomes, futureCounterTerms }`；没有合法未来选择时两个字段均为空。
 
   读取状态
-  root actor 合法视角 World、Generator selection candidates、Simulator root Worlds 与 Evaluator comparison。
+  仅响应者合法 World、Generator 匿名/公开 candidates 与预物化期望 Worlds。
 
   写入状态
   只推进 cooperative yield；所有 World 都是独立投影或 clone，不写 GameState。
 
   调用函数
-  chooseCanonicalPostCounterSelection、Generator.projectFutureRootSelection/createRootResolutionAction、
-  Simulator.buildRootFlipWorlds、Evaluator.futureSelectionCounterTerms、yieldControl。
+  Generator.getResponderSafeFutureRootSelections/createRootResolutionAction、
+  Simulator.buildFutureResourceSelectionWorlds、Evaluator.chooseFutureResourceSelectionOutcome、
+  Evaluator.futureSelectionCounterTerms、yieldControl。
 
   边界与不变量
-  actor 视角只决定未来 selection policy winner，响应者视角只计算 Gain/pC/overlap；
-  Counter 前传入的 selection、zone 与 cardId 均不进入本投影，确定策略只返回 weight=1。
+  只在响应者信息内估计 actor 收益，不能读取 raw GameState 或 actor 私人 World；
+  private hand 只有一个匿名候选，确定策略只返回 weight=1，runtime 可以选择不同具体牌。
   */
   async buildFutureResourceCounterProjection({
-    state,
     responseWorld,
     responder,
     rootCard,
@@ -1871,60 +1871,49 @@ export class Controller {
       futureSelectionOutcomes:null,
       futureCounterTerms:null
     });
-    const selected = await this.chooseCanonicalPostCounterSelection({
-      state,
-      rootCard,
-      rootSourceId,
-      rootTargetIds,
-      counterDepth,
-      publicTransferContext,
-      cooperativeYield:true
-    });
-    if (!selected) return this.isSessionValid(state.gameId) ? empty : null;
-    const projectedSelection = this.actionGenerator.projectFutureRootSelection(
+    const sourceView = responseWorld.players.find(
+      (player) => player.id === rootSourceId && player.alive
+    ) ?? null;
+    if (!sourceView) return empty;
+    const selections = this.actionGenerator.getResponderSafeFutureRootSelections(
       responseWorld,
       rootCard,
       rootTargetIds,
-      selected,
       { publicTransferContext }
     );
-    const responseAction = this.actionGenerator.createRootResolutionAction(
-      responseWorld,
-      rootCard,
-      rootSourceId,
-      rootTargetIds,
-      { futureSelection:projectedSelection }
-    );
-    if (!responseAction) return empty;
     const simulator = this.simulatorFactory();
-    const projectedWorlds = responseAction.selection?.zone === "hand"
-      ? null
-      : simulator.buildRootFlipWorlds(
-          responseWorld,
-          responseAction,
-          counterDepth
-        );
-    if (!(await this.yieldControl(state.gameId))) return null;
-    const rootWorlds = projectedWorlds
-      ? {
-          ...projectedWorlds,
-          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(projectedWorlds.baseWorld),
+    const outcomes = [];
+    for (const selection of selections) {
+      const action = this.actionGenerator.createRootResolutionAction(
+        responseWorld, rootCard, rootSourceId, rootTargetIds, { futureSelection:selection }
+      );
+      if (!action) continue;
+      const worlds = simulator.buildFutureResourceSelectionWorlds(responseWorld, action, counterDepth);
+      if (!worlds) continue;
+      if (!(await this.yieldControl(responseWorld.gameId))) return null;
+      outcomes.push({
+        action,
+        rootWorlds:{
+          ...worlds,
+          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.baseWorld),
           resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
-            projectedWorlds.resolvedWorld
+            worlds.resolvedWorld
           )
         }
-      : null;
+      });
+    }
+    const selected = this.evaluator.chooseFutureResourceSelectionOutcome(
+      responseWorld, sourceView, outcomes
+    );
+    if (!selected) return empty;
     const futureSelectionOutcomes = Object.freeze([Object.freeze({
       weight:1,
-      selection:responseAction.selection,
-      rootWorlds,
+      selection:selected.action.selection,
+      rootWorlds:selected.action.selection.zone === "hand" ? null : selected.rootWorlds,
       resolvesAtStay:(counterDepth % 2) === 0
     })]);
     const responderView = responseWorld.players.find(
       (player) => player.id === responder.id
-    ) ?? null;
-    const sourceView = responseWorld.players.find(
-      (player) => player.id === rootSourceId
     ) ?? null;
     const targetViews = rootTargetIds.map((targetId) => (
       responseWorld.players.find((player) => player.id === targetId)
@@ -2113,9 +2102,8 @@ export class Controller {
         : [];
       if (["plunder", "destroy", "transfer"].includes(rootCard?.definitionId)) {
         const projection = await this.buildFutureResourceCounterProjection({
-          state,
           responseWorld:world,
-          responder,
+          responder:responderView,
           rootCard,
           rootSourceId,
           rootTargetIds,

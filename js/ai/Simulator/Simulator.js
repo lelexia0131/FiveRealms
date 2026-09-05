@@ -661,6 +661,52 @@ class SimulatorCore {
 
   /*
   功能
+  为响应者预测 future resource choice 准备有界期望资源 World。
+
+  调用方
+  Controller.buildFutureResourceCounterProjection。
+
+  输入
+  响应者合法 World、匿名手牌或公开装备 Action 与 Counter depth。
+
+  输出
+  只用于候选比较的 base/resolved Worlds；公开装备复用真实 root 镜像。
+
+  读取状态
+  响应者合法身份、公开资源与其当前 ProbabilityState。
+
+  写入状态
+  一个局部 clone 的资源数量、身份 availability 与 ProbabilityState。
+
+  调用函数
+  buildRootFlipWorlds、clone、consumeRandomHandCards、gainUnknownCardsWithCounterState。
+
+  边界与不变量
+  hand 是随机失牌与匿名得牌的期望投影，不表示 actor 知道或选中任何私密身份。
+  接收方按当前有限池近似获得匿名牌，不重建所得牌的条件身份；此 World 只供 selection
+  comparator 使用，Counter G/pC/overlap 仍由原 World 的 uniform-hand 查询提供。
+  不采样 opponent World、不启动 Searcher，也不执行递归对手策略。
+  */
+  buildFutureResourceSelectionWorlds(state, action, counterDepth) {
+    if (action?.selection?.selectionMode !== "uniform-hand") {
+      return this.buildRootFlipWorlds(state, action, counterDepth);
+    }
+    const resolvedWorld = this.clone(state);
+    const sourceId = action.cardId === "transfer"
+      ? action.selection.sourceId : action.targetIds[0];
+    const source = resolvedWorld.players.find((player) => player.id === sourceId && player.alive);
+    if (!source) return null;
+    const receiverId = action.cardId === "transfer"
+      ? action.selection.receiverId : (action.cardId === "plunder" ? action.actorId : null);
+    const receiver = resolvedWorld.players.find((player) => player.id === receiverId && player.alive);
+    if (receiverId && !receiver) return null;
+    const removed = this.consumeRandomHandCards(resolvedWorld, source, 1);
+    if (receiver) this.gainUnknownCardsWithCounterState(resolvedWorld, receiver, removed);
+    return { baseWorld:state, resolvedWorld, resolvesAtStay:(counterDepth % 2) === 0 };
+  }
+
+  /*
+  功能
   构造实际响应结果与只移除指定响应能力的配对反事实 World。
 
   调用方
