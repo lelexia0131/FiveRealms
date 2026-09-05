@@ -78,6 +78,31 @@ export function candidateCardTemplate(character, index) {
   </article>`;
 }
 
+/*
+功能
+渲染玩家公开装备槽及其权威回合使用状态。
+
+调用方
+playerPanelTemplate、UI 直接回归测试。
+
+输入
+公开 Player 展示对象与是否为真人视角。
+
+输出
+已转义的装备槽 HTML。
+
+读取状态
+当前装备定义、turnFlags.recycleDeviceUses 与 turnFlags.assaultMagazineUsed。
+
+写入状态
+无。
+
+调用函数
+presentCard、escapeHtml。
+
+边界与不变量
+备用弹夹和回收站次数只读取权威计数；模板不得从总突袭次数或上限反推使用量。
+*/
 export function equipmentSlotTemplate(player, isHuman = false) {
   if (!player.equipment) {
     return `<div class="equipment-slot is-empty" tabindex="0" aria-label="装备槽为空">
@@ -87,10 +112,15 @@ export function equipmentSlotTemplate(player, isHuman = false) {
   }
   const equipment = presentCard(player.equipment);
   const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"战术后摸1张·每回合2次", defenseDevice:"需要格挡时公开判定", battleDevice:"突袭需2张格挡", assaultMagazine:"主动突袭上限+2", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
-  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待回收", defenseDevice:"待判定", battleDevice:"强化中", assaultMagazine:"连续供弹", telescope:"观测中", barrierDevice:"屏障展开" };
+  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待回收", defenseDevice:"待判定", battleDevice:"强化中", telescope:"观测中", barrierDevice:"屏障展开" };
   const recycleUses = player.turnFlags?.recycleDeviceUses ?? 0;
   const triggered = equipment.definitionId === "recycleDevice" && recycleUses >= 2;
-  const stateLabel = equipment.definitionId === "recycleDevice" ? `${recycleUses}/2` : stateLabels[equipment.definitionId] ?? "生效中";
+  const magazineUses = Math.max(0, Math.min(2, Number(player.turnFlags?.assaultMagazineUsed) || 0));
+  const stateLabel = equipment.definitionId === "recycleDevice"
+    ? `${recycleUses}/2`
+    : equipment.definitionId === "assaultMagazine"
+      ? `${magazineUses}/2`
+      : stateLabels[equipment.definitionId] ?? "生效中";
   return `<div class="equipment-slot is-equipped ${triggered ? "is-triggered" : "is-ready"}" tabindex="0" aria-label="装备：${escapeHtml(equipment.name)}，${escapeHtml(stateLabel)}">
     <img class="equipment-icon" src="${escapeHtml(equipment.icon || equipment.art)}" alt="" aria-hidden="true">
     <div class="equipment-copy"><strong>${escapeHtml(equipment.name)}</strong><small>${isHuman ? escapeHtml(equipment.description) : escapeHtml(summaries[equipment.definitionId] ?? equipment.description)}</small></div>

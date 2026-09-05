@@ -457,7 +457,7 @@ state 与 player 投影。
 非负有效次数。
 
 读取状态
-getTeamRules 与 player.equipmentDefinitionId。
+getTeamRules、state 中同 ID 真实玩家的 turnFlags.attackLimit 与公开装备定义。
 
 写入状态
 无。
@@ -466,16 +466,23 @@ getTeamRules 与 player.equipmentDefinitionId。
 getTeamRules、getAttackLimitFromRules、getEffectiveAttackLimit。
 
 边界与不变量
-不读取当前使用次数；player.attackLimit 存在时视为已含临时加成，装备固定加成只来自 CardDefinitions。
+不读取当前使用次数；非装备上限优先取显式 player.attackLimit，其次取 state 中同 ID 玩家 turnFlags.attackLimit，
+最后才回落阵营规则。装备固定加成只在查询时来自 CardDefinitions，不写回 Player 或 RuleStateView。
 */
 export function getAttackLimit(state, player) {
   const configured = getAttackLimitFromRules(getTeamRules(state, player));
+  const statePlayer = state?.players?.find((entry) => entry?.id === player?.id) ?? null;
   const baseAndTemporaryLimit = Number.isFinite(Number(player?.attackLimit))
     ? Number(player.attackLimit)
-    : configured;
+    : Number.isFinite(Number(statePlayer?.turnFlags?.attackLimit))
+      ? Number(statePlayer.turnFlags.attackLimit)
+      : configured;
   return getEffectiveAttackLimit(
     baseAndTemporaryLimit,
-    player?.equipmentDefinitionId ?? null
+    player?.equipmentDefinitionId
+      ?? statePlayer?.equipmentDefinitionId
+      ?? statePlayer?.equipment?.definitionId
+      ?? null
   );
 }
 

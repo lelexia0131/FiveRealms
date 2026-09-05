@@ -9678,6 +9678,59 @@ test("备用弹夹：定义字段、阵营基础上限与破军临时次数只�
   assert.equal(large.turnFlags.attackLimit, 2);
   assert.equal(game.teamRules.getAttackLimit(large), 4);
   assert.equal(ActionLegality.getAssaultUsage(large).limit, 4);
+
+  const projected = createRuleStateView(game.state).playerById(large.id);
+  assert.equal(getAttackLimit(game.state, projected), 4);
+});
+
+test("备用弹夹：额外主动突袭按0/2到2/2计数且破军额度优先消费", async () => {
+  const { game, small, large } = makeTeamFixture();
+  game.state.currentPlayerIndex = large.seatIndex;
+  small.hp = 20;
+  small.maxHp = 20;
+  large.energy = ACTIVE_SKILLS.breakArmy.cost;
+  const magazine = instance("assaultMagazine"),
+    assaults = Array.from({ length: 4 }, () => instance("assault"));
+  large.hand.push(magazine, ...assaults);
+
+  assert.equal(await game.playCard(large, magazine, []), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 0);
+  assert.equal(await game.playCard(large, assaults[0], [small]), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 0);
+  assert.equal(await game.playCard(large, assaults[1], [small]), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 1);
+
+  assert.equal(await game.useActiveSkill(large, "breakArmy", []), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 1);
+  assert.equal(await game.playCard(large, assaults[2], [small]), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 1);
+  assert.equal(await game.playCard(large, assaults[3], [small]), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 2);
+
+  large.resetTurnFlags(game.state, game.teamRules.getRules(large));
+  assert.equal(large.turnFlags.assaultMagazineUsed, 0);
+});
+
+test("备用弹夹：借势内嵌突袭不消耗装备额外次数", async () => {
+  const actor = makePlayer("magazine-leverage-actor", 0, "dawn", "human"),
+    forced = makePlayer("magazine-leverage-source", 1, "dusk", "human"),
+    magazine = instance("assaultMagazine"), assault = instance("assault"),
+    leverage = instance("leverage"),
+    { game } = makeGame([actor, forced], {
+      response: (request) => request.type === "leverageAssault"
+    });
+  actor.hand.push(leverage);
+  forced.hand.push(assault);
+  forced.equipment = magazine;
+  forced.turnFlags.attackUsed = forced.turnFlags.attackLimit;
+
+  assert.equal(await game.playCard(actor, leverage, [], {
+    firstTargetId:forced.id,
+    equipmentCardId:magazine.id,
+    equipmentDefinitionId:magazine.definitionId,
+    secondTargetId:actor.id
+  }), true);
+  assert.equal(forced.turnFlags.assaultMagazineUsed, 0);
 });
 
 test("备用弹夹：先用满基础次数后装备会立即开放两次主动突袭", async () => {
@@ -28566,6 +28619,59 @@ test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
 
 // ---- AI 装备行为·备用弹夹 ----
 
+test("AI·备用弹夹：连续两个额外突袭共享同一装备存在世界", () => {
+  const { game, small, large } = makeTeamFixture();
+  small.hp = 20;
+  small.maxHp = 20;
+  large.equipment = instance("assaultMagazine");
+  large.turnFlags.attackUsed = large.turnFlags.attackLimit;
+  const assaults = [instance("assault"), instance("assault")];
+  large.hand.push(...assaults);
+  let world = cloneWorld(createInitialWorld(large.id, game.state));
+  world.players.find((player) => player.id === large.id).equipmentRetentionProbability = .5;
+  const simulator = new Simulator(world);
+  const actor = world.players.find((player) => player.id === large.id);
+  const slots = simulator.ensureAttackUseSlots(actor);
+  const attackWorlds = [];
+  const consumeAttackUse = simulator.consumeAttackUse;
+  simulator.consumeAttackUse = (...args) => {
+    const consumed = consumeAttackUse(...args);
+    attackWorlds.push(consumed.eventWorlds);
+    return consumed;
+  };
+
+  assert.equal(projectAttackUsage(actor).limit - projectAttackUsage(actor).used, 2);
+  assert.equal(slots.length, 2);
+  for (const slot of slots) {
+    assertClose(totalBranchProbability(slot.filter((branch) => branch.available)), .5);
+  }
+  assert.deepEqual(slots[0][0].conditions, slots[1][0].conditions);
+  assert.deepEqual(slots[0][1].conditions, slots[1][1].conditions);
+  const joint = intersectProbabilityStateBranches(slots[0], slots[1]);
+  assertClose(totalBranchProbability(joint.filter((branch) => branch.available)), .5);
+  assertClose(totalBranchProbability(joint.filter((branch) => !branch.available)), .5);
+
+  for (const assault of assaults) {
+    const action = game.aiController.actionGenerator.generate(world, large.id)
+      .find((candidate) => (
+        candidate.cardInstanceId === assault.id && candidate.targetIds[0] === small.id
+      ));
+    assert.ok(action);
+    world = simulator.apply(world, action);
+  }
+  assert.equal(attackWorlds.length, 2);
+  const firstProbability = totalBranchProbability(
+    attackWorlds[0].filter((branch) => branch.occurs)
+  );
+  const jointAttackWorlds = intersectProbabilityStateBranches(attackWorlds[0], attackWorlds[1]);
+  const jointProbability = totalBranchProbability(
+    jointAttackWorlds.filter((branch) => branch.occurs)
+  );
+  assertClose(firstProbability, .5);
+  assertClose(jointProbability, .5);
+  assertClose(jointProbability / firstProbability, 1);
+});
+
 test("AI·备用弹夹：模拟换装即时重算有效上限并保留已用突袭次数", () => {
   const actor = makePlayer("ai-magazine-actor", 0, "dusk", "ai", 1),
     allyA = makePlayer("ai-magazine-ally-a", 1, "dusk"),
@@ -43287,6 +43393,17 @@ test("UI·布局样式：装备槽空置和七种装备生成不同可访问 DOM
     assert.match(markup, new RegExp(CARD_DEFINITIONS[id].name));
     assert.match(markup, new RegExp(CARD_DEFINITIONS[id].description.slice(0, 6)));
     assert.notEqual(markup, empty);
+  }
+});
+
+test("UI·备用弹夹：装备槽只读取权威额外次数并显示0/2到2/2", () => {
+  const player = makePlayer("assault-magazine-ui", 0, "dawn", "human");
+  player.equipment = instance("assaultMagazine");
+  for (const used of [0, 1, 2]) {
+    player.turnFlags.assaultMagazineUsed = used;
+    const markup = equipmentSlotTemplate(player, true);
+    assert.match(markup, new RegExp(`>${used}/2<`));
+    assert.doesNotMatch(markup, /连续供弹/);
   }
 });
 

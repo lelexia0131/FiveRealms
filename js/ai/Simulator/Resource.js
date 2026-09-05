@@ -2166,7 +2166,7 @@ export const withResource = (Base) => class Resource extends Base {
 
   /*
   功能
-  根据当前攻击次数上限与已使用次数，临时构造本次 transition 使用的攻击可用槽位。
+  根据非装备次数与同一装备存在世界，临时构造本次 transition 使用的攻击可用槽位。
 
   调用方
   consumeAttackUse、Simulator 与破军技能：取得突袭次数资源的完整槽位。
@@ -2178,7 +2178,7 @@ export const withResource = (Base) => class Resource extends Base {
   每次突袭容量各自对应的可用状态分支数组。
 
   读取状态
-  非装备 attackLimit、attackUsed、当前装备定义与存在概率摘要。
+  非装备 attackLimit、attackUsed、备用弹夹条件消耗次数、当前装备定义与存在概率摘要。
 
   写入状态
   无；槽位只存在本次突袭 transition 调用栈。
@@ -2187,11 +2187,12 @@ export const withResource = (Base) => class Resource extends Base {
   getEffectiveAttackLimit、getAvailabilityStateBranches、availableBranchesFromState。
 
   边界与不变量
-  装备加成从 Domain 公开字段即时派生；标量次数只投影为本次 transition 的有界局部槽位，不得写回 World 或 Action。
+  装备加成从 Domain 公开字段即时派生；两个备用弹夹槽共享同一个装备存在 condition，
+  不得先把 bonus 乘存在概率压成期望上限，也不得为两个槽创建独立概率事件。
   */
   ensureAttackUseSlots(player) {
     const used = Math.max(0, Number(player.attackUsed) || 0);
-    const limitWithoutEquipment = Number(player.attackLimit);
+    const limitWithoutEquipment = Math.max(0, Number(player.attackLimit) || 0);
     const exactEquippedLimit = getEffectiveAttackLimit(
       limitWithoutEquipment,
       player.equipmentDefinitionId
@@ -2199,19 +2200,28 @@ export const withResource = (Base) => class Resource extends Base {
     const equipmentProbability = player.equipmentDefinitionId
       ? Math.min(1, Math.max(0, Number(player.equipmentRetentionProbability ?? 1) || 0))
       : 0;
-    const limit = Number.isFinite(limitWithoutEquipment)
-      ? Math.max(
-          0,
-          limitWithoutEquipment
-            + (exactEquippedLimit - limitWithoutEquipment) * equipmentProbability
-        )
-      : used + 1;
-    const remaining = Math.max(0, limit - used);
-    return Array.from({ length: Math.ceil(remaining) }, (_, index) => probabilityEventPartition(
-      `attack-use:${player.id}:${index}`,
-      Math.min(1, remaining - index),
-      "available"
-    ));
+    const equipmentBonus = exactEquippedLimit - limitWithoutEquipment;
+    const equipmentUsed = Math.max(
+      0,
+      Math.min(equipmentBonus, Number(player.assaultMagazineUsed) || 0)
+    );
+    const nonEquipmentUsed = Math.max(0, used - equipmentUsed * equipmentProbability);
+    const nonEquipmentRemaining = Math.max(0, limitWithoutEquipment - nonEquipmentUsed);
+    const equipmentRemaining = Math.max(0, equipmentBonus - equipmentUsed);
+    const nonEquipmentSlots = Array.from(
+      { length: Math.ceil(nonEquipmentRemaining) },
+      (_, index) => probabilityEventPartition(
+        `attack-use:${player.id}:${index}`,
+        Math.min(1, nonEquipmentRemaining - index),
+        "available"
+      )
+    );
+    const equipmentConditionKey = `equipment:${player.id}:${player.equipmentDefinitionId}`;
+    const equipmentSlots = Array.from(
+      { length: Math.ceil(equipmentRemaining) },
+      () => probabilityEventPartition(equipmentConditionKey, equipmentProbability, "available")
+    );
+    return [...nonEquipmentSlots, ...equipmentSlots];
   }
 
   /*
@@ -2340,16 +2350,26 @@ export const withResource = (Base) => class Resource extends Base {
   行动者 attackLimit 与 attackUsed 次数摘要；攻击槽位由当前调用临时构造。
 
   写入状态
-  attackUsed 当前摘要。
+  attackUsed 期望摘要；消费装备槽时推进 assaultMagazineUsed 条件次数。
 
   调用函数
   ensureAttackUseSlots、consumeSlot、eventProbability。
 
   边界与不变量
-  同一槽位在同一条件世界只能使用一次；摘要必须由槽位重新投影而不能另行扣减。
+  同一槽位在同一条件世界只能使用一次；非装备槽排在装备槽之前，确保破军新增额度优先消费。
   */
   consumeAttackUse(state, player, desiredEventWorlds) {
     const slots = this.ensureAttackUseSlots(player);
+    const equipmentBonus = Math.max(
+      0,
+      getEffectiveAttackLimit(player.attackLimit, player.equipmentDefinitionId)
+        - Math.max(0, Number(player.attackLimit) || 0)
+    );
+    const equipmentRemaining = Math.max(
+      0,
+      equipmentBonus - Math.max(0, Number(player.assaultMagazineUsed) || 0)
+    );
+    const equipmentStartIndex = slots.length - Math.ceil(equipmentRemaining);
     const consumed = this.consumeSlot(
       state,
       slots,
@@ -2357,6 +2377,12 @@ export const withResource = (Base) => class Resource extends Base {
       `attack-slot:${player.id}`
     );
     const probability = this.eventProbability(consumed.eventWorlds);
+    if (consumed.index !== null && consumed.index >= equipmentStartIndex) {
+      player.assaultMagazineUsed = Math.min(
+        equipmentBonus,
+        Math.max(0, Number(player.assaultMagazineUsed) || 0) + 1
+      );
+    }
     player.attackUsed = (player.attackUsed ?? 0) + probability;
     return consumed;
   }

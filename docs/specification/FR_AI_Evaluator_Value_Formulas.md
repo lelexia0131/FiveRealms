@@ -1691,13 +1691,13 @@ $$
 若存在 remaining counts：
 
 $$
-\boxed{ V_{unknownTransfer} =\frac{\sum_dn_dV_d}{\sum_dn_d} }
+ V_{unknownTransfer} =\frac{\sum_dn_dV_d}{\sum_dn_d} 
 $$
 
 否则：
 
 $$
-\boxed{UNKNOWN\_HAND\_EXPECTED\_VALUE=4}
+UNKNOWN\_HAND\_EXPECTED\_VALUE=4
 $$
 
 ## 20.3 装备替换 Keep Deduction
@@ -1715,7 +1715,7 @@ $$
 若新旧装备定义相同：
 
 $$
-\boxed{Deduction\;+=4}
+Deduction\;+=4
 $$
 
 ## 20.4 Discard Keep Value
@@ -1752,7 +1752,7 @@ $$
 ### Destroy
 
 $$
-\boxed{ U_{destroy}=RoleCardValue(owner,definition) }
+ U_{destroy}=RoleCardValue(owner,definition) 
 $$
 
 ### Plunder
@@ -1765,13 +1765,13 @@ $$
 若 owner 是己方：
 
 $$
-\boxed{U_{plunder}=A-O}
+U_{plunder}=A-O
 $$
 
 若 owner 是敌方：
 
 $$
-\boxed{U_{plunder}=A+O}
+U_{plunder}=A+O
 $$
 
 ## 20.6 匿名资源 Utility
@@ -1836,25 +1836,25 @@ $$
 ### Ally → Enemy
 
 $$
-\boxed{-\infty}
+-\infty
 $$
 
 ### Ally → Ally
 
 $$
-\boxed{U=V_r-V_s}
+U=V_r-V_s
 $$
 
 ### Enemy → Ally
 
 $$
-\boxed{U=V_s+V_r}
+U=V_s+V_r
 $$
 
 ### Enemy → Enemy
 
 $$
-\boxed{U=V_s-V_r}
+U=V_s-V_r
 $$
 
 ## 21.2 手牌容量调整
@@ -1947,7 +1947,7 @@ $$
 最终：
 
 $$
-\boxed{ ContextualUtility =RawStateDelta -EquipmentMaterialDelta +AcquisitionUtility\times0.25\times P_{applied} +ThresholdOption\times P_{applied} }
+ ContextualUtility =RawStateDelta -EquipmentMaterialDelta\\ +AcquisitionUtility\times0.25\times P_{applied} +ThresholdOption\times P_{applied} 
 $$
 
 同一个 Destroy/Plunder 根资源选择比较顺序：
@@ -1961,7 +1961,7 @@ $$
 
 ## 23.1 Mutual Benefit 实际公开牌选择
 
-这一节描述**实际公开牌领取选择**，与 16.3 的 Transition Option 静态 draft 分开。
+这一节描述实际公开牌领取选择，与 16.3 的 Transition Option 静态 draft 分开。
 
 Controller 请求公开牌选择时，Simulator 对每张公开实体牌 `c` 构造合法领取结果 Worlds；Evaluator 只比较这些已构造 Worlds，不自行构造状态。
 
@@ -1978,8 +1978,6 @@ $$
 $$
 \boxed{c^*=\arg\max_c DraftValue(c)}
 $$
-
-## 这里比较的是正式 `StateValue` 的真实边际，而不是 `CardValue`。完全同分时保持公开牌原始顺序。
 
 ## 23.2 Symbiosis 直接收益
 
@@ -2002,7 +2000,7 @@ EnemyBenefit=\sum_{enemy}Benefit_i
 $$
 
 $$
-\boxed{NetBenefit=AllyBenefit-EnemyBenefit}
+NetBenefit=AllyBenefit-EnemyBenefit
 $$
 
 Search prior 中 `symbiosisNetFromState()`：

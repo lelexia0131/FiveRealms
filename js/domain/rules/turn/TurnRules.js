@@ -47,6 +47,7 @@ export function createTurnUsageState(teamRules = null) {
   return {
     attackUsed: 0,
     attackLimit: teamRules?.attackLimitPerTurn ?? 1,
+    assaultMagazineUsed: 0,
     recoverUsed: 0,
     recoverLimit: teamRules ? teamRules.recoverLimitPerTurn : null,
     categoriesUsed: new Set(),

@@ -17,6 +17,7 @@ private intent 只存在于当前调用栈；public context 不泄漏 hidden car
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、ActionLegality 或 concrete adapters。
 */
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js";
 import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getScoutMaxRevealCount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 import { changeShield } from "../../domain/state/transitions/ResourceTransitions.js";
@@ -151,20 +152,38 @@ assault 的 direct callers。
 按 signature 返回。
 
 读取状态
-runtime/card/skill facts。
+当前总突袭次数、非装备上限、备用弹夹消耗次数与 forced assault 上下文。
 
 写入状态
-无直接 Domain write。
+经 RuleUsageTransition 原子推进 attackUsed 与可选 assaultMagazineUsed。
 
 调用函数
-下游 collaborator。
+incrementAttackUsed、伤害与状态下游 collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+只有正常主动突袭在非装备额度耗尽后才消费备用弹夹；借势等 forced assault 不计入该装备额度。
 */
     async assault(source, card, targets, context) {
       const state = runtime.getState();
-      incrementAttackUsed(state, source);
+      const magazineLimit = Math.max(
+        0,
+        Number(CARD_DEFINITIONS.assaultMagazine.attackLimitBonus) || 0
+      );
+      const magazineUsed = Math.max(
+        0,
+        Math.min(magazineLimit, Number(source.turnFlags.assaultMagazineUsed) || 0)
+      );
+      const nonEquipmentUsed = Math.max(0, source.turnFlags.attackUsed - magazineUsed);
+      const consumesMagazine = !context.forcedAssault
+        && source.equipment?.definitionId === "assaultMagazine"
+        && nonEquipmentUsed >= source.turnFlags.attackLimit
+        && magazineUsed < magazineLimit;
+      incrementAttackUsed(
+        state,
+        source,
+        1,
+        consumesMagazine ? magazineUsed + 1 : magazineUsed
+      );
       runtime.diagnostics.recordAssaultUse({ sourceId: source.id });
       const stacks = getNextExposeWeaknessStacks(source.statuses.exposeWeakness) - 1;
       if (isExposeWeaknessConsumable(source.statuses.exposeWeakness)) {

@@ -118,7 +118,7 @@ export function resetRoundFlags(state, player, decidedRoundFlags) {
 CardRuntime assault resolver。
 
 输入
-state、Player 与增量。
+state、Player、总突袭次数增量与可选的已决定备用弹夹消耗次数。
 
 输出
 新值。
@@ -127,17 +127,21 @@ state、Player 与增量。
 state.stateVersion 与 player.turnFlags.attackUsed。
 
 写入状态
-attackUsed；增量非 0 时 bump。
+attackUsed 与可选 assaultMagazineUsed；任一变化时 bump 一次。
 
 调用函数
 bumpStateVersion。
 
 边界与不变量
-不决定何时合法。
+不决定何时合法或哪类额度被消费；备用弹夹计数必须由调用方先完成规则判断。
 */
-export function incrementAttackUsed(state, player, delta = 1) {
+export function incrementAttackUsed(state, player, delta = 1, assaultMagazineUsed = null) {
+  const previousMagazineUsed = player.turnFlags.assaultMagazineUsed;
   player.turnFlags.attackUsed += delta;
-  if (delta !== 0) bumpStateVersion(state);
+  if (assaultMagazineUsed !== null) player.turnFlags.assaultMagazineUsed = assaultMagazineUsed;
+  if (delta !== 0 || player.turnFlags.assaultMagazineUsed !== previousMagazineUsed) {
+    bumpStateVersion(state);
+  }
   return player.turnFlags.attackUsed;
 }
 
