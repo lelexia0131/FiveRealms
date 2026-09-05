@@ -18565,6 +18565,20 @@ test("AI·动作生成：转移排除己方到敌方并保留其它合法方向"
   )));
 });
 
+test("AI·动作生成：共生只治疗敌方且无可触发回收站收益时不生成", () => {
+  const actor = makePlayer("symbiosis-actor", 0, "dawn"),
+    ally = makePlayer("symbiosis-ally", 1, "dawn"),
+    enemy = makePlayer("symbiosis-enemy", 2, "dusk");
+  actor.hand.push(instance("symbiosis"));
+  enemy.hp -= 1;
+  const { game } = makeGame([actor, ally, enemy]);
+  const actions = game.aiController.actionGenerator.generate(
+    createInitialWorld(actor.id, game.state),
+    actor.id
+  );
+  assert.equal(actions.some((action) => action.cardId === "symbiosis"), false);
+});
+
 test("AI·动作生成：使用同一距离合法性", () => {
   const ps = [
     makePlayer("a", 0, "dawn"),
@@ -19301,7 +19315,7 @@ test("AI·搜索：负收益共生不因技能机会或故障 fallback 被强迫
         energy: 4,
         hand: [makeBenchmarkCard("symbiosis", "negative-symbiosis")]
       },
-      { id: "negative-symbiosis-ally", team: "dawn", character: "oath-warden" },
+      { id: "negative-symbiosis-ally", team: "dawn", character: "oath-warden", hp: 3 },
       { id: "negative-symbiosis-enemy-a", team: "dusk", character: "spirit-medic", hp: 2 },
       { id: "negative-symbiosis-enemy-b", team: "dusk", character: "shade-agent", hp: 2 },
       { id: "negative-symbiosis-enemy-c", team: "dusk", character: "ember-magus", hp: 2 }
@@ -19312,16 +19326,16 @@ test("AI·搜索：负收益共生不因技能机会或故障 fallback 被强迫
     const ledger = await captureSymbiosisSearchLedger(game, "negative-symbiosis-actor");
     const symbiosis = [...ledger.rows.values()].find((row) => row.action.cardId === "symbiosis");
     const end = [...ledger.rows.values()].find((row) => row.action.type === "end");
-    assertClose(symbiosis.beforeStateValue, 12.6);
+    assertClose(symbiosis.beforeStateValue, 7.6);
     assertClose(symbiosis.afterStateValue, -4.5);
-    assert.equal(symbiosis.allyHealTotal, 0);
+    assert.equal(symbiosis.allyHealTotal, 1);
     assert.equal(symbiosis.enemyHealTotal, 3);
-    assertClose(symbiosis.transitionTerms.stateDelta, -17.1);
+    assertClose(symbiosis.transitionTerms.stateDelta, -12.1);
     assertClose(symbiosis.transitionTerms.transitionOptionPoints, 0);
     assertClose(symbiosis.schedulingScore, .75);
-    assertClose(symbiosis.prior.prior, -20);
+    assertClose(symbiosis.prior.prior, -16);
     assertClose(symbiosis.frontierValue, 0);
-    assertClose(symbiosis.finalUtility, -3.42);
+    assertClose(symbiosis.finalUtility, -2.42);
     assertClose(end.transitionTerms.baseTransition, 0);
     assertClose(end.endOpportunity.pf, 1.2);
     assertClose(end.endOpportunity.ps, 2.625);

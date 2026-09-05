@@ -26,6 +26,7 @@ import {
   getTransferReceiverIds,
   getTransferSourceIds
 } from "../../domain/rules/card/CardRules.js";
+import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js";
 import {
   canUseSkillBase,
   getSkillCost,
@@ -938,12 +939,13 @@ export class Generator {
   无；只在全部字段确定后调用一次 createAction。
 
   调用函数
-  isActionConditionPossible、isSelectionPossible 与 createAction。
+  canTriggerRecycleDevice、isActionConditionPossible、isSelectionPossible 与 createAction。
 
   边界与不变量
   Generator 只判断 possible/impossible，不计算联合概率、次数槽或执行世界；
   非调律师不得生成破坏队友手牌的 Action，敌方手牌、队友装备与调律师例外保持可生成；
   所有 AI 不得生成己方来源向敌方接收者转移手牌的 Action，其它 Domain 合法方向保持可生成；
+  共生仅在己方无人可治疗、敌方有人可治疗且无可触发回收站收益时排除；
   返回后 Searcher/Simulator 不得补 target、selection 或重新创建另一种 Action。
   */
   createCompleteAction(
@@ -958,6 +960,21 @@ export class Generator {
   ) {
     const targetIds = targets.map((target) => target.id);
     const target = targets[0] ?? null;
+    // AI 不搜索只会治疗敌方且没有回收站收益的共生分支。
+    if (definition.definitionId === "symbiosis") {
+      const hasInjuredAlly = state.players.some((player) => player.alive
+        && player.battleTeam === actor.battleTeam && player.hp < player.maxHp);
+      const hasInjuredEnemy = state.players.some((player) => player.alive
+        && player.battleTeam !== actor.battleTeam && player.hp < player.maxHp);
+      const canTriggerRecycle = Number(actor.equipmentRetentionProbability ?? 1)
+        > PROBABILITY_EPSILON && canTriggerRecycleDevice({
+          ownerAlive:actor.alive,
+          equipmentDefinitionId:actor.equipmentDefinitionId,
+          cardCategory:definition.category,
+          useCount:actor.recycleDeviceUses
+        });
+      if (!hasInjuredAlly && hasInjuredEnemy && !canTriggerRecycle) return null;
+    }
     // 调律师可能通过协调从队友资源损失中获益；其余 AI 不搜索破坏队友手牌的分支。
     if (definition.definitionId === "destroy"
       && actor.characterId !== "resonance-tuner"
