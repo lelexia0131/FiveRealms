@@ -1998,11 +1998,35 @@ $$
 
 ## 25.2 Dynamic Counter 的 STAY / RESPOND 边际修正
 
+设：
+
+```text
+A = root actor
+B = responder
+```
+
+Counter prediction 使用的是 `B` 的合法信息边界。
+
+对每个 future resource candidate `s`，定义：
+$$
+\hat U_{A|B}(s)
+$$
+表示 `B` 基于自己当前合法掌握的 World、ProbabilityState 与公开信息，对 `A` 在 future selection 中选择 `s` 的价值估计。
+
+这里的 `A|B` 表示：
+
+```text
+从 B 的信息边界预测 A 的选择价值
+```
+
+不表示构造 `A` 的真实私人 World，也不建立二阶 belief。
+
+private hand 在 prediction 中统一表示为 anonymous-hand candidate；public equipment 保持 exact。
+
 资源类 root 的 Counter window 先于 resource selection。定义 Counter chain 后的
 canonical future selection outcomes：
-
 $$
-\mathcal S=\{s\}
+\mathcal S_B=\{s\}
 $$
 
 对应权重为 $q_s$，且：
@@ -2014,7 +2038,7 @@ $$
 确定性 selection policy 使用：
 
 $$
-s^*=\arg\max_s U(s),\qquad q_{s^*}=1
+s^*=\arg\max_{s\in\mathcal S_B}\hat U_{A|B}(s),\qquad q_{s^*}=1
 $$
 
 每个 outcome 的 root flip gain 为 $G_s$，Counter 损失概率为 $p_C(s)$，自身 Counter
@@ -2086,9 +2110,6 @@ p_C(equipment)=0
 $$
 
 equipment 的保护价值包含在 $G_s$；equipment 不进入 hand 分母。
-
-已知 hand identity 使用实体 availability，匿名 hand identity 使用 canonical Probability slot
-query，响应者完整已知的 hand 使用 Counter count expectation 与当前 hand count。
 
 ## 25.3 Global Benefit Counter
 
