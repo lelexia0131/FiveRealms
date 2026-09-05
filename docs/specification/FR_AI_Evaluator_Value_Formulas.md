@@ -2019,23 +2019,22 @@ $$
 
 每个 outcome 的 root flip gain 为 $G_s$，Counter 损失概率为 $p_C(s)$，自身 Counter
 保留重叠为 $O_C(s)$。聚合量为：
-
 $$
-\boxed{G=\sum_s q_sG_s}
-$$
-
-$$
-\boxed{p_C=\sum_s q_sp_C(s)}
+G=\sum_s q_sG_s
 $$
 
 $$
-\boxed{O_C=\sum_s q_sO_C(s)}
+p_C=\sum_s q_sp_C(s)
+$$
+
+$$
+O_C=\sum_s q_sO_C(s)
 $$
 
 Counter opportunity cost 基线为：
 
 $$
-\boxed{C_0=2.8}
+C_0=2.8
 $$
 
 当前 root 在 `STAY` 世界中使响应者失去一张 Counter 的概率为：
@@ -2077,13 +2076,13 @@ $$
 future selection 为 hand 时，响应者手牌中的 Counter 数量为 $c$，其它手牌数量为 $x$：
 
 $$
-\boxed{p_C(hand)=\frac{c}{c+x}}
+p_C(hand)=\frac{c}{c+x}
 $$
 
 future selection 为 equipment 时：
 
 $$
-\boxed{p_C(equipment)=0}
+p_C(equipment)=0
 $$
 
 equipment 的保护价值包含在 $G_s$；equipment 不进入 hand 分母。
