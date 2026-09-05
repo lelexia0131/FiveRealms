@@ -1666,6 +1666,172 @@ export class Controller {
 
   /*
   功能
+  在给定真实时点的 root actor World 中选择唯一 canonical post-Counter 资源语义。
+
+  调用方
+  choosePostCounterResource 与 buildFutureResourceCounterProjection。
+
+  输入
+  当前 GameState、root card/source/targets、Transfer 公开声明、Counter depth 与是否 cooperative yield。
+
+  输出
+  Evaluator 选中的 canonical selection；无合法候选或会话失效时返回 null。
+
+  读取状态
+  root actor 合法视角 World、Generator selection candidates、Simulator root Worlds 与 Evaluator comparison。
+
+  写入状态
+  cooperative 模式只推进 yield；所有 World 都是独立投影或 clone，不写 GameState。
+
+  调用函数
+  createInitialWorld、Generator future-selection methods、Simulator.buildRootFlipWorlds、
+  Evaluator.chooseFutureResourceSelectionOutcome、yieldControl。
+
+  边界与不变量
+  Generator 只枚举，Simulator 只物化，Evaluator 是 selection value/comparison 的唯一 owner；
+  Counter 前的 private selection 不得作为输入，Transfer 只沿用公开 source/receiver。
+  */
+  async chooseCanonicalPostCounterSelection({
+    state,
+    rootCard,
+    rootSourceId,
+    rootTargetIds,
+    counterDepth = 0,
+    publicTransferContext = null,
+    cooperativeYield = false
+  }) {
+    const rootSource = state?.players?.find(
+      (player) => player.id === rootSourceId && player.alive
+    ) ?? null;
+    if (!rootSource) return null;
+    const selectionWorld = createInitialWorld(
+      rootSource.id,
+      state,
+      deriveCurrentCardCounts(rootSource, state)
+    );
+    const selectionActor = selectionWorld.players.find(
+      (player) => player.id === rootSource.id
+    ) ?? null;
+    const selections = this.actionGenerator.getFutureRootSelections(
+      selectionWorld,
+      rootCard,
+      rootTargetIds,
+      { publicTransferContext }
+    );
+    if (!selectionActor || !selections.length) return null;
+    const simulator = this.simulatorFactory();
+    const actorOutcomes = [];
+    for (const selection of selections) {
+      const action = this.actionGenerator.createRootResolutionAction(
+        selectionWorld,
+        rootCard,
+        rootSourceId,
+        rootTargetIds,
+        { futureSelection:selection }
+      );
+      if (!action) continue;
+      const rootWorlds = simulator.buildRootFlipWorlds(selectionWorld, action, counterDepth);
+      if (!rootWorlds) continue;
+      if (cooperativeYield && !(await this.yieldControl(state.gameId))) return null;
+      actorOutcomes.push({
+        action,
+        rootWorlds:{
+          ...rootWorlds,
+          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(rootWorlds.baseWorld),
+          resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
+            rootWorlds.resolvedWorld
+          )
+        }
+      });
+    }
+    return this.evaluator.chooseFutureResourceSelectionOutcome(
+      selectionWorld,
+      selectionActor,
+      actorOutcomes
+    )?.action?.selection ?? null;
+  }
+
+  /*
+  功能
+  为真实 AI 在完整 Counter chain 后重新选择并绑定当前资源实体。
+
+  调用方
+  AiChoiceAdapter 的 plunder/destroy/transfer hidden-card request。
+
+  输入
+  真实行动者、资源拥有者与包含 purpose/card/Transfer receiver 的私有执行上下文。
+
+  输出
+  frozen { selection, card, zone }；当前声明或资源已失效时返回 null。
+
+  读取状态
+  当前 GameState、行动者合法记忆、公开资源与 canonical selection owners。
+
+  写入状态
+  仅 anonymous hand 实体绑定时推进 search RNG；不修改 GameState。
+
+  调用函数
+  chooseCanonicalPostCounterSelection、bindCanonicalHiddenCards。
+
+  边界与不变量
+  只处理 plunder/destroy/transfer；不信任 Counter 前 planning selection；Transfer source/receiver
+  必须保持公开声明，具体 hand card、Plunder/Destroy zone 与实体都从当前真实状态重新决定。
+  */
+  async choosePostCounterResource(actor, owner, context = null) {
+    const state = this.getState();
+    const gameId = state.gameId;
+    const purpose = context?.purpose ?? null;
+    const receiver = context?.receiver ?? null;
+    if (!["plunder", "destroy", "transfer"].includes(purpose)
+      || !actor?.alive || !owner?.alive
+      || !state.players.includes(actor) || !state.players.includes(owner)
+      || (purpose === "transfer"
+        && (!receiver?.alive || !state.players.includes(receiver) || receiver === owner))) return null;
+    const rootCard = {
+      ...CARD_DEFINITIONS[purpose],
+      id:context?.card?.id ?? `post-counter-${purpose}`
+    };
+    const publicTransferContext = purpose === "transfer"
+      ? {
+          fromPlayerId:owner.id,
+          receiverPlayerId:receiver.id
+        }
+      : null;
+    const selection = await this.chooseCanonicalPostCounterSelection({
+      state,
+      rootCard,
+      rootSourceId:actor.id,
+      rootTargetIds:purpose === "transfer" ? [] : [owner.id],
+      publicTransferContext
+    });
+    const latestState = this.getState();
+    const currentOwner = latestState.players.find(
+      (player) => player.id === owner.id && player.alive
+    ) ?? null;
+    if (!selection || !this.isSessionValid(gameId) || !actor.alive || !currentOwner) return null;
+    if (selection.zone === "equipment") {
+      const card = currentOwner.equipment;
+      return card && card.definitionId === selection.definitionId
+        ? Object.freeze({ selection, card, zone:"equipment" })
+        : null;
+    }
+    if (selection.zone !== "hand") return null;
+    const excludedCardIds = purpose === "transfer" && context?.card?.id
+      ? new Set([context.card.id])
+      : null;
+    const [card] = this.bindCanonicalHiddenCards(
+      currentOwner,
+      selection,
+      1,
+      excludedCardIds
+    );
+    return card
+      ? Object.freeze({ selection, card, zone:"hand" })
+      : null;
+  }
+
+  /*
+  功能
   投影资源类 root 在 Counter chain 后的 canonical selection，并准备响应者价值 terms。
 
   调用方
@@ -1684,8 +1850,8 @@ export class Controller {
   只推进 cooperative yield；所有 World 都是独立投影或 clone，不写 GameState。
 
   调用函数
-  createInitialWorld、Generator future-selection methods、Simulator.buildRootFlipWorlds、
-  Evaluator.chooseFutureResourceSelectionOutcome/futureSelectionCounterTerms、yieldControl。
+  chooseCanonicalPostCounterSelection、Generator.projectFutureRootSelection/createRootResolutionAction、
+  Simulator.buildRootFlipWorlds、Evaluator.futureSelectionCounterTerms、yieldControl。
 
   边界与不变量
   actor 视角只决定未来 selection policy winner，响应者视角只计算 Gain/pC/overlap；
@@ -1705,61 +1871,21 @@ export class Controller {
       futureSelectionOutcomes:null,
       futureCounterTerms:null
     });
-    const rootSource = state.players.find(
-      (player) => player.id === rootSourceId && player.alive
-    ) ?? null;
-    if (!rootSource) return empty;
-    const selectionWorld = createInitialWorld(
-      rootSource.id,
+    const selected = await this.chooseCanonicalPostCounterSelection({
       state,
-      deriveCurrentCardCounts(rootSource, state)
-    );
-    const selectionActor = selectionWorld.players.find(
-      (player) => player.id === rootSource.id
-    ) ?? null;
-    const selections = this.actionGenerator.getFutureRootSelections(
-      selectionWorld,
       rootCard,
+      rootSourceId,
       rootTargetIds,
-      { publicTransferContext }
-    );
-    if (!selectionActor || !selections.length) return empty;
-    const simulator = this.simulatorFactory();
-    const actorOutcomes = [];
-    for (const selection of selections) {
-      const action = this.actionGenerator.createRootResolutionAction(
-        selectionWorld,
-        rootCard,
-        rootSourceId,
-        rootTargetIds,
-        { futureSelection:selection }
-      );
-      if (!action) continue;
-      const rootWorlds = simulator.buildRootFlipWorlds(selectionWorld, action, counterDepth);
-      if (!rootWorlds) continue;
-      if (!(await this.yieldControl(state.gameId))) return null;
-      actorOutcomes.push({
-        action,
-        rootWorlds:{
-          ...rootWorlds,
-          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(rootWorlds.baseWorld),
-          resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
-            rootWorlds.resolvedWorld
-          )
-        }
-      });
-    }
-    const selected = this.evaluator.chooseFutureResourceSelectionOutcome(
-      selectionWorld,
-      selectionActor,
-      actorOutcomes
-    );
-    if (!selected) return empty;
+      counterDepth,
+      publicTransferContext,
+      cooperativeYield:true
+    });
+    if (!selected) return this.isSessionValid(state.gameId) ? empty : null;
     const projectedSelection = this.actionGenerator.projectFutureRootSelection(
       responseWorld,
       rootCard,
       rootTargetIds,
-      selected.action.selection,
+      selected,
       { publicTransferContext }
     );
     const responseAction = this.actionGenerator.createRootResolutionAction(
@@ -1770,6 +1896,7 @@ export class Controller {
       { futureSelection:projectedSelection }
     );
     if (!responseAction) return empty;
+    const simulator = this.simulatorFactory();
     const projectedWorlds = responseAction.selection?.zone === "hand"
       ? null
       : simulator.buildRootFlipWorlds(

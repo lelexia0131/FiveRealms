@@ -138,6 +138,7 @@ export function createCardIntentRuntime(dependencies) {
 
   边界与不变量
   来源与接收者沿用公开声明；具体牌只在反制后选择，返回前必须仍位于来源手牌且不得是正在结算的转移牌。
+  AI 的 planned selection 只是 planning projection，真实选择必须从当前状态重新进入 canonical policy。
   */
   async function prepareTransferEffectIntent(source, card, declaration, selection = null) {
     const gameId = runtime.getState().gameId;
@@ -152,9 +153,10 @@ export function createCardIntentRuntime(dependencies) {
       || !runtime.getTransferReceivers(source, from, card).includes(receiver)) return null;
     if (selection?.zone && selection.zone !== "hand") return null;
 
+    const runtimeSelection = source.controllerType === "human" ? selection : null;
     const hiddenCard = (await runtime.chooseHiddenCards(
-      source, from, 1, "转移：选择1张手牌", selection, excludedCardIds,
-      { purpose: "transfer", receiver }
+      source, from, 1, "转移：选择1张手牌", runtimeSelection, excludedCardIds,
+      { purpose: "transfer", receiver, card }
     ))[0] ?? null;
     const latestState = runtime.getState();
     if (!runtime.isSessionValid(gameId) || !source?.alive || !latestState.players.includes(source)
@@ -228,7 +230,8 @@ export function createCardIntentRuntime(dependencies) {
   getCardTargets、chooseHiddenCards、choosePlayerZoneCard。
 
   边界与不变量
-  打开选择前目标必须仍有合法资源；返回实体必须仍位于原区域。
+  打开选择前目标必须仍有合法资源；返回实体必须仍位于原区域；AI 的 planned
+  zone/cardId 不作为执行事实，Plunder/Destroy 必须从 Counter 后当前状态重新选择。
   */
   async function preparePrivateCardSelectionIntent(source, card, targets, selection = null) {
     const state = runtime.getState();
@@ -252,10 +255,11 @@ export function createCardIntentRuntime(dependencies) {
           { purpose: "scout" }, { exact:false }
         );
       } else if (["plunder", "destroy"].includes(card.definitionId)) {
+        const runtimeSelection = source.controllerType === "human" ? selection : null;
         const chosen = await runtime.choosePlayerZoneCard(
           source, target,
           `${card.name}：选择1张手牌或装备牌`,
-          selection, null, { purpose: card.definitionId }
+          runtimeSelection, null, { purpose: card.definitionId, card }
         );
         if (chosen) {
           zone = chosen.zone;
@@ -273,7 +277,12 @@ export function createCardIntentRuntime(dependencies) {
         : uniqueCards.length === 1 && target.equipment === uniqueCards[0];
       if (!entitiesRemainInZone) return null;
       return Object.freeze({
-        privateIntent: Object.freeze({ owner: target, zone, cards: Object.freeze(uniqueCards), selectionId: selection?.selectionId ?? null }),
+        privateIntent: Object.freeze({
+          owner: target,
+          zone,
+          cards: Object.freeze(uniqueCards),
+          selectionId:source.controllerType === "human" ? selection?.selectionId ?? null : null
+        }),
         publicContext: Object.freeze({ ownerPlayerId: target.id, zone, selectedCount: uniqueCards.length })
       });
     } finally {

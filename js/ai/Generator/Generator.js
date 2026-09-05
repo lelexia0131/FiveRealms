@@ -228,8 +228,9 @@ export class Generator {
   projectFutureHandSelection。
 
   边界与不变量
-  只保留 actor 已选中的资源区域；hand identity 在响应者完整可见时使用 uniform-hand，
-  equipment 使用公开定义；不得沿用 Counter 前传入的 cardId 或 zone。
+  只保留 actor post-Counter policy 已选中的资源语义；该 policy 合法确定 known cardId 时
+  必须保留其身份，anonymous hand 才按响应者视角投影为 uniform-hand；equipment 使用公开定义。
+  selected 只能来自 root actor 合法 World，不得从真实未知牌面补造身份。
   */
   projectFutureRootSelection(state, rootCard, rootTargetIds, selected, options = {}) {
     const definitionId = rootCard?.definitionId ?? null;
@@ -249,7 +250,16 @@ export class Generator {
       };
     }
     if (selected.zone !== "hand") return null;
-    const handSelection = projectFutureHandSelection(source);
+    const handSelection = selected.selectionKind === "known"
+      && selected.cardId && selected.definitionId
+      ? {
+          zone:"hand",
+          selectionKind:"known",
+          cardId:selected.cardId,
+          definitionId:selected.definitionId,
+          availableUnknownCount:0
+        }
+      : projectFutureHandSelection(source);
     if (!handSelection) return null;
     if (definitionId !== "transfer") return handSelection;
     const receiverId = options.publicTransferContext?.receiverPlayerId ?? null;

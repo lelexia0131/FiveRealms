@@ -537,6 +537,7 @@ class MatchApplication {
       choosePublicCard: (player, cards) => this.aiController.choosePublicCard(player, cards),
       chooseDiscards: (player, count) => this.aiController.chooseDiscards(player, count),
       chooseHiddenCards: (...args) => this.aiController.chooseHiddenCards(...args),
+      choosePostCounterResource: (...args) => this.aiController.choosePostCounterResource(...args),
       requestHiddenCards: (...args) => this.ui.requestHiddenCards?.(...args),
       requestZoneCard: (...args) => this.ui.requestZoneCard?.(this, ...args),
       resolveHiddenToken: (...args) => this.hiddenCardSelection.resolveToken(...args),

@@ -30093,7 +30093,7 @@ const counterProbabilityOf = (player) => (
 AI 响应模型·反制中的 Plunder、Destroy 与 Transfer overlap 回归测试。
 
 输入
-响应者手牌/装备、root 定义、Transfer 接收方阵营与可选 root source 角色。
+响应者手牌/装备、root 定义、Transfer 接收方阵营、双方角色与 root actor 合法记忆定义。
 
 输出
 Game、DecisionContext、World 玩家、root targets、future selection 与聚合 Counter terms。
@@ -30109,16 +30109,24 @@ makeGame、buildResponseDecisionContext。
 
 边界与不变量
 响应者固定为 blade-walker，使 Counter 身份差量为零；所有概率仍由生产 World/Probability query 得出，
-helper 不复制 Counter 概率、成本或意愿公式。
+角色覆盖可为 known-selection 场景显式替换；helper 不复制 Counter 概率、成本或意愿公式。
 */
 async function buildCounterRootOverlapFixture({
   handDefinitionIds,
   rootDefinitionId,
   transferReceiverTeam = "dusk",
   equipmentDefinitionId = null,
-  rootSourceGeneralIndex = 1
+  rootSourceGeneralIndex = 1,
+  responderGeneralIndex = 0,
+  rootKnownDefinitionIds = []
 }) {
-  const responder = makePlayer("counter-overlap-responder", 0, "dawn", "ai", 0);
+  const responder = makePlayer(
+    "counter-overlap-responder",
+    0,
+    "dawn",
+    "ai",
+    responderGeneralIndex
+  );
   const source = makePlayer(
     "counter-overlap-source",
     1,
@@ -30154,6 +30162,16 @@ async function buildCounterRootOverlapFixture({
       }
     : null;
   const { game } = makeGame([responder, source, receiver, filler]);
+  const rememberedIds = new Set();
+  for (const definitionId of rootKnownDefinitionIds) {
+    const known = responder.hand.find((card) => (
+      card.definitionId === definitionId && !rememberedIds.has(card.id)
+    ));
+    if (known) {
+      game.rememberPrivateCard(source, responder, known);
+      rememberedIds.add(known.id);
+    }
+  }
   const decision = await game.aiController.buildResponseDecisionContext(
     responder,
     "counter",
@@ -30176,6 +30194,8 @@ async function buildCounterRootOverlapFixture({
   const futureCounterTerms = decision.futureCounterTerms ?? null;
   return {
     game,
+    responder,
+    source,
     decision,
     responderWorld,
     sourceWorld,
@@ -30292,6 +30312,56 @@ test("AI·反制：hand 与 equipment 未预填 selection 时仍投影 canonical
     assert.equal(fixture.futureSelection?.cardId ?? null, null);
     assert.equal(fixture.futureCounterTerms?.selectionOutcomes?.[0]?.weight, 1);
     assert.ok(Math.abs(fixture.futureCounterTerms.counterLossProbability - 1 / 2) < 1e-9);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·反制：root actor 合法知道并选择 Counter 时 future pC 为一", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter", "assault", "recover"],
+    rootDefinitionId:"plunder",
+    responderGeneralIndex:7,
+    rootSourceGeneralIndex:7,
+    rootKnownDefinitionIds:["counter"]
+  });
+  try {
+    const counter = fixture.responder.hand.find((card) => card.definitionId === "counter");
+    assert.equal(fixture.futureSelection?.selectionKind, "known");
+    assert.equal(fixture.futureSelection?.cardId, counter.id);
+    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 1);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·反制：root actor 合法知道并选择非 Counter 时 future pC 为零", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter", "assault", "recover"],
+    rootDefinitionId:"plunder",
+    responderGeneralIndex:5,
+    rootSourceGeneralIndex:0,
+    rootKnownDefinitionIds:["assault"]
+  });
+  try {
+    const assault = fixture.responder.hand.find((card) => card.definitionId === "assault");
+    assert.equal(fixture.futureSelection?.selectionKind, "known");
+    assert.equal(fixture.futureSelection?.cardId, assault.id);
+    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 0);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·反制：真正匿名的三张 hand future selection 保持三分之一 pC", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter", "assault", "recover"],
+    rootDefinitionId:"plunder"
+  });
+  try {
+    assert.equal(fixture.futureSelection?.selectionKind, "unknown");
+    assert.equal(fixture.futureSelection?.selectionMode, "uniform-hand");
+    assert.ok(Math.abs(fixture.futureCounterTerms.counterLossProbability - 1 / 3) < 1e-9);
   } finally {
     fixture.game.dispose();
   }
@@ -33996,6 +34066,160 @@ function chooseGameResourceActionForTest(
     game.aiController.evaluator
   );
 }
+
+/*
+功能
+让真实 AI 携带 Counter 前 stale resource projection 经过双重 Counter 后结算指定资源牌。
+
+调用方
+AI post-Counter Plunder/Destroy/Transfer 端到端回归测试。
+
+输入
+plunder、destroy 或 transfer definition ID。
+
+输出
+Game fixture、参与者、资源实体、post-Counter hand snapshots 与 runtime canonical selections。
+
+读取状态
+真实 ActionWorkflow、ResponseWorkflow、AI Choice adapter 与 Controller canonical selection boundary。
+
+写入状态
+独立测试 GameState；两个 Counter 与最终资源按真实 workflow 移动。
+
+调用函数
+makeGame、rememberPrivateCard、forceAvailableAiCounters、playCard。
+
+边界与不变量
+传入的 stale selection 固定指向 Counter；root 恢复生效时 runtime 必须只看 Counter chain 后的当前资源，
+Transfer 的 source/receiver 仍沿用反制前公开声明。
+*/
+async function playAiResourceCardThroughCounterChain(definitionId) {
+  const actor = makePlayer(`post-counter-${definitionId}-actor`, 0, "dawn", "ai", 1);
+  const owner = makePlayer(`post-counter-${definitionId}-owner`, 1, "dusk", "ai", 1);
+  const receiver = makePlayer(`post-counter-${definitionId}-receiver`, 2, "dawn", "ai", 0);
+  const use = instance(definitionId);
+  const actorCounter = instance("counter");
+  const staleCounter = instance("counter");
+  const assault = instance("assault");
+  actor.hand.push(use, actorCounter);
+  owner.hand.push(staleCounter, assault);
+  const { game } = makeGame([actor, owner, receiver], { random:() => 0 });
+  game.rememberPrivateCard(actor, owner, staleCounter);
+  game.rememberPrivateCard(actor, owner, assault);
+  forceAvailableAiCounters(game);
+  const handSnapshots = [];
+  const runtimeSelections = [];
+  const runtimeContexts = [];
+  const originalChoose = game.aiController.choosePostCounterResource.bind(game.aiController);
+  game.aiController.choosePostCounterResource = async (...args) => {
+    handSnapshots.push(args[1].hand.map((card) => card.definitionId));
+    runtimeContexts.push(args[2]);
+    const chosen = await originalChoose(...args);
+    runtimeSelections.push(chosen?.selection ?? null);
+    return chosen;
+  };
+  const staleSelection = {
+    zone:"hand",
+    selectionKind:"known",
+    cardId:staleCounter.id,
+    definitionId:staleCounter.definitionId,
+    availableUnknownCount:0,
+    ...(definitionId === "transfer"
+      ? { sourceId:owner.id, receiverId:receiver.id }
+      : {})
+  };
+  const executed = await game.playCard(
+    actor,
+    use,
+    definitionId === "transfer" ? [] : [owner],
+    staleSelection
+  );
+  return {
+    game,
+    actor,
+    owner,
+    receiver,
+    use,
+    actorCounter,
+    staleCounter,
+    assault,
+    executed,
+    handSnapshots,
+    runtimeSelections,
+    runtimeContexts
+  };
+}
+
+test("AI·资源选择：掠夺在双重 Counter 后从最新手牌重选实体", async () => {
+  const fixture = await playAiResourceCardThroughCounterChain("plunder");
+  try {
+    assert.equal(fixture.executed, true);
+    assert.deepEqual(fixture.handSnapshots, [["assault"]]);
+    assert.equal(fixture.runtimeSelections[0]?.selectionKind, "known");
+    assert.equal(fixture.runtimeSelections[0]?.cardId, fixture.assault.id);
+    assert.ok(fixture.actor.hand.includes(fixture.assault));
+    assert.ok(!fixture.owner.hand.includes(fixture.assault));
+    assert.ok(fixture.game.state.deck.discardPile.includes(fixture.staleCounter));
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·资源选择：破坏在双重 Counter 后从最新手牌重选实体", async () => {
+  const fixture = await playAiResourceCardThroughCounterChain("destroy");
+  try {
+    assert.equal(fixture.executed, true);
+    assert.deepEqual(fixture.handSnapshots, [["assault"]]);
+    assert.equal(fixture.runtimeSelections[0]?.cardId, fixture.assault.id);
+    assert.ok(!fixture.owner.hand.includes(fixture.assault));
+    assert.ok(fixture.game.state.deck.discardPile.includes(fixture.assault));
+    assert.ok(fixture.game.state.deck.discardPile.includes(fixture.staleCounter));
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·资源选择：转移冻结公开双方但在双重 Counter 后重选具体手牌", async () => {
+  const fixture = await playAiResourceCardThroughCounterChain("transfer");
+  try {
+    assert.equal(fixture.executed, true);
+    assert.deepEqual(fixture.handSnapshots, [["assault"]]);
+    assert.equal(fixture.runtimeContexts[0]?.receiver, fixture.receiver);
+    assert.equal(fixture.runtimeSelections[0]?.sourceId, fixture.owner.id);
+    assert.equal(fixture.runtimeSelections[0]?.receiverId, fixture.receiver.id);
+    assert.equal(fixture.runtimeSelections[0]?.cardId, fixture.assault.id);
+    assert.ok(!fixture.owner.hand.includes(fixture.assault));
+    assert.ok(fixture.receiver.hand.includes(fixture.assault));
+    assert.ok(fixture.game.state.deck.discardPile.includes(fixture.staleCounter));
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·资源选择：同一当前状态的 planning 与 runtime canonical selection 一致", async () => {
+  const actor = makePlayer("resource-parity-actor", 0, "dawn", "ai", 1);
+  const owner = makePlayer("resource-parity-owner", 1, "dusk", "ai", 1);
+  const use = instance("plunder");
+  const counter = instance("counter");
+  const assault = instance("assault");
+  actor.hand.push(use);
+  owner.hand.push(counter, assault);
+  const { game } = makeGame([actor, owner]);
+  game.rememberPrivateCard(actor, owner, counter);
+  game.rememberPrivateCard(actor, owner, assault);
+  try {
+    const planning = chooseGameResourceActionForTest(game, actor, owner, "plunder");
+    const runtime = await game.aiController.choosePostCounterResource(
+      actor,
+      owner,
+      { purpose:"plunder", card:use }
+    );
+    assert.deepEqual(runtime?.selection, planning?.action?.selection);
+    assert.equal(runtime?.card?.id, planning?.action?.selection?.cardId);
+  } finally {
+    game.dispose();
+  }
+});
 
 test("AI·资源选择：破坏已知手牌使用目标角色价值", () => {
   const actor = makePlayer("actor", 0, "dawn");
