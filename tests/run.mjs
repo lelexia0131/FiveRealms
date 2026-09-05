@@ -41124,17 +41124,64 @@ test("UI·手牌：已知对手手牌保留中文实体卡层级、删除英文�
   );
 });
 
+/*
+功能
+守住主游戏 viewport 分配、人物局部滚动及矮屏选择器边界。
+
+调用方
+UI 与模板区域的主布局回归测试。
+
+输入
+无。
+
+输出
+布局约束被破坏时抛出断言错误。
+
+读取状态
+css/layout.css 与 css/characters.css。
+
+写入状态
+无。
+
+调用函数
+readFile、assert.match、assert.doesNotMatch。
+
+边界与不变量
+静态检查仅守住空间分配约束，实际溢出与交互仍需浏览器 viewport 验证。
+*/
+async function gameViewportLayoutKeepsPlayerRowsBounded() {
+  const [layout, characters] = await Promise.all([
+    readFile(projectFile("css/layout.css"), "utf8"),
+    readFile(projectFile("css/characters.css"), "utf8")
+  ]);
+  assert.match(layout, /\.game-screen\s*\{[^}]*height:\s*100dvh;[^}]*min-height:\s*0;/s);
+  assert.match(layout, /\.battlefield\s*\{[^}]*grid-template-rows:\s*max-content\s+minmax\(174px,\s*1fr\)\s+clamp\(270px,\s*28\.7vh,\s*296px\)/s);
+  assert.match(layout, /\.status-bar\s*\{[^}]*minmax\(0,\s*2\.5fr\)/s);
+  assert.match(layout, /\.status-actions button\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.doesNotMatch(layout, /min-height:\s*720px|1\.1fr|zoom\s*:|scale\(/);
+  assert.match(layout, /@media \(max-height:\s*880px\)[\s\S]*grid-template-rows:\s*max-content\s+minmax\(160px,\s*1fr\)\s+246px/);
+  assert.match(characters, /\.cpu-seat\s*\{[^}]*height:\s*auto;[^}]*align-self:\s*start/s);
+  assert.match(characters, /\.human-seat \.seat-main\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto/s);
+  assert.doesNotMatch(characters, /\.cpu-seat \.seat-main\s*\{[^}]*(?:overflow|overflow-y):\s*hidden/s);
+  assert.match(characters, /\.seat-main > \*\s*\{[^}]*flex-shrink:\s*0/s);
+  const lowHeightRules = characters.slice(characters.indexOf("@media (max-height: 880px)"));
+  assert.match(lowHeightRules, /\.cpu-seat\s*\{[^}]*grid-template-rows:\s*140px\s+96px/s);
+  assert.doesNotMatch(lowHeightRules, /\.player-seat\s*\{[^}]*grid-template-rows/s);
+}
+
+test("UI·主布局：剩余高度由行动行吸收且人物信息可局部滚动", gameViewportLayoutKeepsPlayerRowsBounded);
+
 test("UI·手牌：人物席、中央消息区和真人区各占独立网格行且桌面高度动态压缩", async () => {
   const layoutCss = await readFile(projectFile("css/layout.css"), "utf8"),
     characterCss = await readFile(projectFile("css/characters.css"), "utf8");
   assert.match(
     layoutCss,
-    /@media \(max-height:\s*1080px\)[\s\S]*\.battlefield\s*\{[^}]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
+    /@media \(max-height:\s*1100px\)[\s\S]*\.battlefield\s*\{[^}]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
   );
   assert.match(layoutCss, /\.cpu-grid\s*\{[^}]*overflow:\s*hidden/s);
   assert.match(
     layoutCss,
-    /@media \(max-height:\s*1080px\)[\s\S]*\.command-deck\s*\{[^}]*max-width:\s*1120px[^}]*min-height:\s*130px[^}]*grid-template-rows:\s*minmax\(67px,\s*1fr\)/
+    /@media \(max-height:\s*1100px\)[\s\S]*\.command-deck\s*\{[^}]*max-width:\s*1120px[^}]*min-height:\s*130px[^}]*grid-template-rows:\s*minmax\(67px,\s*1fr\)/
   );
   assert.match(
     characterCss,
@@ -41156,7 +41203,7 @@ test("UI·手牌：对手手牌隐藏滑条且行动状态只保留文字提示"
 test("UI·手牌：主玩家人物框与手牌框等高且信息纵向填满", async () => {
   const layout = await readFile(projectFile("css/layout.css"), "utf8"),
     css = await readFile(projectFile("css/characters.css"), "utf8");
-  assert.match(layout, /\.human-zone\s*\{[^}]*align-content:\s*start/s);
+  assert.match(layout, /\.human-zone\s*\{[^}]*align-content:\s*stretch/s);
   assert.doesNotMatch(layout, /\.human-panel\s*\{[^}]*align-self:\s*start/s);
   assert.match(css, /\.human-seat\s*\{[^}]*height:\s*100%/s);
   assert.match(css, /\.human-seat \.seat-main\s*\{[^}]*justify-content:\s*space-between/s);
@@ -41170,7 +41217,7 @@ test("UI·手牌：常见桌面高度压缩为单屏且真人手牌溢出时保�
     characters = await readFile(projectFile("css/characters.css"), "utf8");
   assert.match(
     layout,
-    /@media \(max-height:\s*1080px\)[\s\S]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
+    /@media \(max-height:\s*1100px\)[\s\S]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
   );
   assert.match(
     cards,
@@ -41546,12 +41593,15 @@ test("UI·响应思考：真实 setThinking 链为晨昏角色名着色且正文
   assert.match(css, /\.thinking-indicator div span\s*\{[^}]*color:\s*var\(--text-secondary\)/s);
 });
 
-test("UI·响应窗口：响应窗口保持居中浮层原布局且中央结算卡在普通阶段下移", async () => {
+test("UI·响应窗口：响应窗口保持居中浮层且结算卡与操作按钮使用独立网格行", async () => {
   const css = await readFile(projectFile("css/layout.css"), "utf8");
-  assert.match(css, /\.current-card\s*\{[^}]*translateY\(clamp\(20px,\s*2\.4vh,\s*30px\)\)/s);
+  assert.match(css, /\.current-card\s*\{[^}]*grid-row:\s*1\s*\/\s*span\s+2/s);
+  assert.match(css, /\.action-prompt\s*\{[^}]*grid-row:\s*2/s);
+  assert.match(css, /\.action-row\s*\{[^}]*grid-row:\s*3/s);
+  assert.doesNotMatch(css, /\.current-card\s*\{[^}]*transform:/s);
   assert.match(
     css,
-    /:has\(\.response-panel:not\(\.is-hidden\)\)\s+\.current-card\s*\{[^}]*translateY\(clamp\(26px,\s*3vh,\s*38px\)\)/s
+    /\.command-deck\s*\{[^}]*grid-template-rows:\s*minmax\(66px,\s*1fr\)\s+auto\s+auto/s
   );
   assert.match(
     css,

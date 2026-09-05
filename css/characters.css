@@ -43,7 +43,7 @@
 .skill-copy p { margin-top: 2px; color: var(--text-secondary); font-size: 11.5px; line-height: 1.4; }
 .candidate-select { width: 100%; margin-top: auto; }
 
-.player-seat { --team: var(--dawn); --team-soft: var(--dawn-soft); position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: clamp(78px, 7vw, 112px) minmax(0, 1fr); grid-template-rows: minmax(245px, 1fr) 202px; gap: 7px 9px; overflow: hidden; padding: 9px; border: 2px solid var(--team); border-radius: 12px 20px 12px 12px; background: linear-gradient(120deg, var(--surface-raised), var(--team-soft)); box-shadow: 0 7px 16px rgba(66,48,28,.11); transition: transform .2s ease, box-shadow .2s ease, filter .2s ease; }
+.player-seat { --team: var(--dawn); --team-soft: var(--dawn-soft); position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: clamp(78px, 7vw, 112px) minmax(0, 1fr); grid-template-rows: 245px 202px; gap: 7px 9px; overflow: hidden; padding: 9px; border: 2px solid var(--team); border-radius: 12px 20px 12px 12px; background: linear-gradient(120deg, var(--surface-raised), var(--team-soft)); box-shadow: 0 7px 16px rgba(66,48,28,.11); transition: transform .2s ease, box-shadow .2s ease, filter .2s ease; }
 .player-seat.team-dusk { --team: var(--dusk); --team-soft: var(--dusk-soft); }
 .player-seat.is-ally::before, .player-seat.is-enemy::before, .player-seat.is-self::before { position: absolute; z-index: 3; top: 6px; left: 6px; padding: 2px 7px; color: #fff; border-radius: 999px; background: var(--team); font-size: 12px; font-weight: 800; box-shadow: 0 2px 6px rgba(50,35,20,.18); }
 .player-seat.is-ally::before { content: "盟友"; }
@@ -55,7 +55,7 @@
 .player-seat.target-selected { outline: 4px solid #c6882d; box-shadow: 0 0 0 6px rgba(198,136,45,.2), var(--shadow-card); }
 .player-seat.target-illegal { filter: saturate(.55) brightness(.94); }
 .player-seat.is-dead { filter: grayscale(.9) sepia(.14); opacity: .76; }
-.seat-portrait-wrap { position: relative; min-width: 0; overflow: hidden; padding: 0; border: 1px solid color-mix(in srgb, var(--team), #fff 48%); border-radius: 8px 14px 8px 8px; background: var(--surface-muted); cursor: pointer; }
+.seat-portrait-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; padding: 0; border: 1px solid color-mix(in srgb, var(--team), #fff 48%); border-radius: 8px 14px 8px 8px; background: var(--surface-muted); cursor: pointer; }
 .seat-portrait { width: 100%; height: 100%; object-fit: cover; object-position: center 17%; }
 .team-emblem { position: absolute; left: 6px; bottom: 6px; display: grid; place-items: center; width: 29px; height: 29px; color: #fff; border: 2px solid rgba(255,255,255,.8); border-radius: 50%; background: var(--team); font: 700 13px/1 var(--serif); box-shadow: 0 2px 7px rgba(0,0,0,.2); }
 .death-stamp { position: absolute; inset: 45% -9px auto; transform: rotate(-12deg); padding: 4px; color: #7f2929; border: 3px double #8e3636; background: rgba(250,238,221,.86); font: 800 14px/1 var(--serif); text-align: center; }
@@ -83,7 +83,7 @@
 .resource-pill strong { font-size: 15px; }
 .resource-pill.energy strong { color: var(--energy); }
 .resource-pill.shield strong { color: var(--shield); }
-.cpu-seat { width: 100%; height: 100%; max-height: 100%; }
+.cpu-seat { width: 100%; height: auto; align-self: start; max-height: 100%; }
 .cpu-seat .seat-main { grid-column: 2; grid-row: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding-right: 2px; scrollbar-width: thin; }
 .cpu-seat .seat-portrait-wrap { grid-column: 1; grid-row: 1; }
 .opponent-hand-region { grid-column: 1 / -1; grid-row: 2; min-width: 0; overflow: hidden; padding-top: 5px; border-top: 1px solid color-mix(in srgb, var(--team), transparent 72%); }
@@ -130,7 +130,9 @@
 
 .human-seat { height: 100%; grid-template-columns: 104px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); padding: 10px; }
 .player-seat.human-seat { padding-bottom: 32px; }
-.human-seat .seat-main { justify-content: space-between; }
+.human-seat .seat-main { min-height: 0; overflow-x: hidden; overflow-y: auto; justify-content: space-between; scrollbar-width: thin; }
+/* 信息在卡内滚动，禁止 Flex 压扁每项内容后互相重叠。 */
+.seat-main > * { flex-shrink: 0; }
 .human-seat .seat-heading { display: grid; gap: 1px; }
 .human-seat .seat-heading strong { font-size: 20px; }
 .human-seat .seat-heading .turn-state { justify-self: start; }
@@ -142,7 +144,7 @@
   .squad-mode-visual svg { height: 135px; }
   .candidate-body { padding: 13px; }
   .player-seat { grid-template-columns: 72px minmax(0, 1fr); grid-template-rows: minmax(194px, 1fr) 197px; gap: 5px 7px; padding: 5px; }
-  .cpu-seat .seat-main { gap: 4px; overflow-y: hidden; padding-right: 0; }
+  .cpu-seat .seat-main { gap: 4px; overflow-y: auto; padding-right: 0; }
   .cpu-seat .vitals { gap: 3px; }
   .cpu-seat .resource-pill { padding: 1px 2px; }
   .cpu-seat .range-readout { padding: 2px 5px; }
@@ -172,7 +174,7 @@
 @media (max-height: 1080px) {
   .player-seat { grid-template-columns: 66px minmax(0, 1fr); grid-template-rows: clamp(185px, 21vh, 195px) clamp(153px, 19.7vh, 178px); align-content: start; gap: 4px 6px; padding: 4px; }
   .cpu-seat { height: auto; align-self: start; }
-  .cpu-seat .seat-main { justify-content: space-between; gap: 3px; overflow: hidden; padding-right: 0; }
+  .cpu-seat .seat-main { justify-content: space-between; gap: 3px; overflow-x: hidden; overflow-y: auto; padding-right: 0; }
   .cpu-seat .vitals { gap: 2px; }
   .cpu-seat .resource-pill { min-height: 32px; padding: 3px; }
   .cpu-seat .range-readout { padding: 2px 4px; }
@@ -205,8 +207,8 @@
   .human-seat .equipment-outline, .human-seat .equipment-icon { width: 25px; height: 25px; }
 }
 
-@media (max-height: 820px) {
-  .player-seat { grid-template-rows: 140px 96px; }
+@media (max-height: 880px) {
+  .cpu-seat { grid-template-rows: 140px 96px; }
   .cpu-seat .seat-heading strong { font-size: 15px; }
   .cpu-seat .seat-heading small, .cpu-seat .turn-state { font-size: 10px; }
   .cpu-seat .resource-pill { min-height: 0; padding: 1px 2px; }

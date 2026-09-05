@@ -18,13 +18,16 @@ body:has(.history-archive-screen:not(.is-hidden)) { min-width: 0; }
 .selection-header { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 20px; max-width: 1540px; margin: 0 auto clamp(12px, 1.8vh, 18px); }
 .candidate-grid { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: clamp(12px, 1.3vw, 20px); max-width: 1540px; margin: 0 auto; }
 
-.game-screen { display: flex; flex-direction: column; height: 100vh; min-height: 720px; overflow: hidden; padding: 10px; }
-.status-bar { flex: 0 0 70px; display: grid; grid-template-columns: minmax(160px, .68fr) minmax(650px, 2.5fr) auto; align-items: center; gap: 16px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 15px 15px 8px 8px; background: rgba(255, 253, 247, .94); box-shadow: var(--shadow-soft); }
+.game-screen { display: flex; flex-direction: column; height: 100vh; height: 100dvh; min-height: 0; min-width: 0; overflow: hidden; padding: 10px; }
+.status-bar { flex: 0 0 70px; display: grid; grid-template-columns: minmax(120px, .68fr) minmax(0, 2.5fr) auto; align-items: center; gap: 16px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 15px 15px 8px 8px; background: rgba(255, 253, 247, .94); box-shadow: var(--shadow-soft); }
 .status-actions { display: flex; align-items: center; gap: 8px; }
+.status-actions > * { flex-shrink: 0; }
+.status-actions button { white-space: nowrap; }
 .battle-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 330px); gap: 10px; padding-top: 10px; transition: grid-template-columns .25s ease; }
 .battle-layout.log-collapsed { grid-template-columns: minmax(0, 1fr) 52px; }
 .battlefield, .game-over-overlay { grid-column: 1; grid-row: 1; }
-.battlefield { position: relative; min-height: 0; display: grid; grid-template-rows: minmax(480px, 1.05fr) minmax(174px, .6fr) minmax(270px, 1.1fr); gap: 10px; overflow-x: hidden; overflow-y: auto; padding: 12px; border: 1px solid #b9a582; border-radius: 12px; background:
+/* 玩家行保持内容尺寸，只有行动行吸收剩余高度；矮到无法容纳时由战场局部滚动。 */
+.battlefield { position: relative; min-height: 0; min-width: 0; display: grid; grid-template-rows: max-content minmax(174px, 1fr) clamp(270px, 28.7vh, 296px); gap: 10px; overflow-x: hidden; overflow-y: auto; padding: 12px; border: 1px solid #b9a582; border-radius: 12px; background:
   linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,.05)),
   repeating-linear-gradient(90deg, transparent 0 39px, rgba(94,66,34,.035) 40px),
   repeating-linear-gradient(0deg, transparent 0 39px, rgba(94,66,34,.025) 40px),
@@ -33,17 +36,17 @@ body:has(.history-archive-screen:not(.is-hidden)) { min-width: 0; }
 }
 .battlefield::before { content: ""; position: absolute; inset: 9px; pointer-events: none; border: 1px solid rgba(181,138,59,.34); border-radius: 9px; }
 .cpu-grid { position: relative; z-index: 1; min-height: 0; overflow: hidden; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
-.command-deck { position: relative; z-index: 2; align-self: stretch; display: grid; grid-template-columns: minmax(280px, .85fr) minmax(380px, 1.25fr); grid-template-rows: minmax(90px, 1fr) auto; column-gap: clamp(18px, 4vw, 64px); align-items: center; max-width: 1120px; width: 100%; min-height: 174px; margin: 0 auto; padding: 12px clamp(18px, 4vw, 54px); border: 1px solid rgba(169,151,123,.9); border-radius: clamp(28px, 5vw, 64px); background: rgba(250,246,234,.74); box-shadow: inset 0 0 0 8px rgba(255,253,247,.32), 0 12px 28px rgba(80,56,25,.09); backdrop-filter: blur(5px); }
+.command-deck { position: relative; z-index: 2; align-self: stretch; min-width: 0; display: grid; grid-template-columns: minmax(280px, .85fr) minmax(380px, 1.25fr); grid-template-rows: minmax(66px, 1fr) auto auto; column-gap: clamp(18px, 4vw, 64px); align-items: center; max-width: 1120px; width: 100%; min-height: 174px; margin: 0 auto; padding: 12px clamp(18px, 4vw, 54px); border: 1px solid rgba(169,151,123,.9); border-radius: clamp(28px, 5vw, 64px); background: rgba(250,246,234,.74); box-shadow: inset 0 0 0 8px rgba(255,253,247,.32), 0 12px 28px rgba(80,56,25,.09); backdrop-filter: blur(5px); }
 .thinking-indicator, .current-card { min-width: 0; }
-.current-card { z-index: 1; grid-column: 1; grid-row: 1; align-self: center; display: grid; width: min(440px, calc(100% + 72px)); min-height: 104px; justify-self: center; transform: translateY(clamp(20px, 2.4vh, 30px)); transition: transform .18s ease; }
+.current-card { z-index: 1; grid-column: 1; grid-row: 1 / span 2; align-self: center; display: grid; width: min(440px, calc(100% + 72px)); min-height: 104px; justify-self: center; transition: transform .18s ease; }
 .thinking-indicator { grid-column: 2; grid-row: 1; }
-.action-prompt { grid-column: 2; grid-row: 1; align-self: end; margin-bottom: 5px; padding-top: 52px; }
+/* 提示与按钮单独占行，结算卡跨越信息区，避免依赖下移量和空 padding 互相让位。 */
+.action-prompt { grid-column: 2; grid-row: 2; align-self: end; margin-bottom: 5px; }
 .private-reveal, .response-panel, .public-pool-view { position: absolute; z-index: 8; left: 50%; top: 50%; transform: translate(-50%, -50%); }
-.command-deck:has(.response-panel:not(.is-hidden)) .current-card { transform: translateY(clamp(26px, 3vh, 38px)); }
 .judgment-view, .dying-view, .duel-view { position: absolute; z-index: 7; right: 18px; top: 14px; }
-.action-row { grid-column: 1 / -1; display: flex; justify-content: center; gap: 9px; padding-top: 8px; }
-.human-zone { position: relative; z-index: 1; min-height: 0; display: grid; grid-template-columns: clamp(360px, 24vw, 430px) minmax(0, 1fr); gap: 12px; align-content: start; }
-.human-panel, .hand-wrap { min-height: 0; }
+.action-row { grid-column: 1 / -1; grid-row: 3; display: flex; justify-content: center; gap: 9px; padding-top: 8px; }
+.human-zone { position: relative; z-index: 1; min-height: 0; display: grid; grid-template-columns: clamp(360px, 24vw, 430px) minmax(0, 1fr); gap: 12px; align-content: stretch; }
+.human-panel, .hand-wrap { min-height: 0; min-width: 0; }
 .hand-wrap { position: relative; isolation: isolate; display: flex; flex-direction: column; min-width: 0; overflow: hidden; padding: 6px 8px 0; border: 1px solid rgba(169,151,123,.72); border-radius: var(--radius-panel); background: rgba(255,253,247,.55); }
 .hand-heading { position: relative; z-index: 2; flex: 0 0 auto; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 3px 3px; }
 .human-hand { position: relative; z-index: 1; flex: 1; min-height: 0; display: flex; align-items: end; gap: clamp(7px, .8vw, 13px); overflow-x: auto; overflow-y: hidden; padding: 4px 5px 7px; scrollbar-width: none; scroll-snap-type: x proximity; }
@@ -60,7 +63,7 @@ body:has(.history-archive-screen:not(.is-hidden)) { min-width: 0; }
 .log-panel.is-collapsed .log-toggle-button { left: 12px; transform: rotate(180deg); }
 
 @media (max-width: 1280px) {
-  .status-bar { grid-template-columns: 150px minmax(610px, 1fr) auto; gap: 8px; }
+  .status-bar { grid-template-columns: 150px minmax(0, 1fr) auto; gap: 8px; }
   .brand-lockup small, .toggle-button span { display: none; }
   .battle-layout { grid-template-columns: minmax(0, 1fr) 52px; }
   .log-panel:not(.is-collapsed) { position: absolute; z-index: 30; right: 10px; top: 90px; bottom: 10px; width: 320px; }
@@ -84,15 +87,14 @@ body:has(.history-archive-screen:not(.is-hidden)) { min-width: 0; }
   .selection-header, .candidate-grid { max-width: 1300px; }
 }
 
-@media (max-height: 1080px) {
+@media (max-height: 1100px) {
   .game-screen { padding: 4px; }
   .status-bar { flex-basis: 44px; }
   .battle-layout { padding-top: 4px; gap: 4px; }
   .battlefield { grid-template-rows: max-content minmax(130px, 1fr) clamp(246px, 28.7vh, 296px); gap: 2px; padding: 5px; }
-  .command-deck { max-width: 1120px; min-height: 130px; grid-template-rows: minmax(67px, 1fr) auto; padding: 3px clamp(14px, 3vw, 32px); }
-  .current-card { min-height: 66px; transform: translateY(5px); }
-  .command-deck:has(.response-panel:not(.is-hidden)) .current-card { transform: translateY(8px); }
-  .action-prompt { margin-bottom: 2px; padding-top: 44px; font-size: 13px; line-height: 1.3; }
+  .command-deck { max-width: 1120px; min-height: 130px; grid-template-rows: minmax(67px, 1fr) auto auto; padding: 3px clamp(14px, 3vw, 32px); }
+  .current-card { min-height: 66px; }
+  .action-prompt { margin-bottom: 2px; font-size: 13px; line-height: 1.3; }
   .action-row { gap: 7px; padding-top: 3px; }
   .action-row button { min-height: 36px; padding-block: 6px; }
   .human-zone { gap: 5px; align-content: stretch; }
@@ -101,8 +103,7 @@ body:has(.history-archive-screen:not(.is-hidden)) { min-width: 0; }
   .human-hand { padding: 2px 3px 4px; }
 }
 
-@media (max-height: 820px) {
-  .battlefield { grid-template-rows: 248px 102px minmax(230px, 1fr); gap: 0; }
-  .command-deck { min-height: 102px; grid-template-rows: minmax(52px, 1fr) auto; }
-  .action-prompt { padding-top: 28px; }
+@media (max-height: 880px) {
+  .battlefield { grid-template-rows: max-content minmax(160px, 1fr) 246px; gap: 0; }
+  .command-deck { min-height: 160px; grid-template-rows: minmax(67px, 1fr) auto auto; }
 }
