@@ -1224,7 +1224,8 @@ function assaultMagazineFutureUtility(state, player, blockSpendValueByPlayerId =
 把敌方攻击暴露拆成当前威胁、未来突袭库存与能量压力。
 
 调用方
-Evaluator 的 frontier 诊断与响应判断。
+StateValue 的 incomingExposure、statePlayerValueTerms，以及 Evaluator 的
+decidePlanningGuardianAid、guardianAidValues。
 
 输入
 过滤后的状态与被评估玩家。
