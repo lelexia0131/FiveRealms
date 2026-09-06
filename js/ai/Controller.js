@@ -741,7 +741,7 @@ export class Controller {
   从当前真实状态取得最终恢复分支共享的 canonical actions 与唯一 END。
 
   调用方
-  selectRuntimeRecoveryEndAction、selectRuntimeEmergencyAction。
+  selectRuntimeRecoveryEndAction、selectRuntimeEmergencyAction、selectRuntimeActionCapClosureAction。
 
   输入
   当前行动 Player。
@@ -829,7 +829,7 @@ export class Controller {
   当前行动 Player，以及由 TurnWorkflow 真实弃牌规则计算的正 mandatoryDiscardCount。
 
   输出
-  冻结 emergency 记录；优先返回 Generator 顺序中的首个安全 card，否则返回 canonical END。
+  冻结 emergency 记录；空装备槽优先返回安全装备，否则返回 Generator 顺序中的首个安全 card 或 canonical END。
 
   读取状态
   当前 GameState、Domain card definitions 与 Generator canonical Action 集合。
@@ -842,7 +842,7 @@ export class Controller {
 
   边界与不变量
   不评分、不调用 Evaluator/Searcher、不选择技能；只消费最新 Generator 已生成的完整 Action。
-  必须排除高风险牌、装备覆盖和队友参与动作；本入口不得用于无强制弃牌的恢复。
+  必须排除高风险牌、已有装备时的覆盖和队友参与动作；本入口不得用于无强制弃牌的恢复。
   */
   selectRuntimeEmergencyAction(player, { mandatoryDiscardCount = 0 } = {}) {
     if (!(Number(mandatoryDiscardCount) > 0)) {
@@ -860,7 +860,12 @@ export class Controller {
       if (!definition || (hasEquipment && definition.category === "equipment")) return false;
       return !hasEmergencyTeammateParticipant(action, currentPlayer, state.players);
     });
-    const action = safeCardActions[0] ?? endAction;
+    const equipmentAction = !hasEquipment
+      ? safeCardActions.find(
+          (candidate) => CARD_DEFINITIONS[candidate.cardId]?.category === "equipment"
+        ) ?? null
+      : null;
+    const action = equipmentAction ?? safeCardActions[0] ?? endAction;
     const status = safeCardActions.length > 0
       ? "SELECTED_SAFE_CARD"
       : "SELECTED_END_NO_SAFE_CARD";
@@ -875,6 +880,41 @@ export class Controller {
     });
     this.lastRuntimeEmergencyFallback = result;
     return result;
+  }
+
+  /*
+  功能
+  为正常 Action 上限后的 one-shot closure 选择最新 canonical equipment Action。
+
+  调用方
+  TurnWorkflow.takeAiPlayPhase。
+
+  输入
+  当前行动 Player 与真实规则计算的正 mandatoryDiscardCount。
+
+  输出
+  空装备槽且存在合法装备 Action 时返回该 canonical Action，否则返回 null。
+
+  读取状态
+  最新真实 Player、Generator canonical Action 集合与 Domain card definitions。
+
+  写入状态
+  无。
+
+  调用函数
+  getRuntimeRecoveryCandidates。
+
+  边界与不变量
+  不评分、不调用 Searcher/Evaluator、不生成第二套 Action；一次只消费一次最新 Generator candidates。
+  */
+  selectRuntimeActionCapClosureAction(player, { mandatoryDiscardCount = 0 } = {}) {
+    if (!(Number(mandatoryDiscardCount) > 0)) return null;
+    const { currentPlayer, actions } = this.getRuntimeRecoveryCandidates(player);
+    if (currentPlayer.equipment ?? currentPlayer.equipmentDefinitionId) return null;
+    return actions.find((action) => (
+      action.type === "card"
+        && CARD_DEFINITIONS[action.cardId]?.category === "equipment"
+    )) ?? null;
   }
 
   /*

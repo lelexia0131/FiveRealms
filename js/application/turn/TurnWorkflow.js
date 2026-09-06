@@ -37,6 +37,7 @@ const REQUIRED_DEPENDENCIES = [
   "getTeamRules", "waitForHumanPlayEnd", "runAiPlayPhase", "choiceCoordinator",
   "choiceContexts", "createId",
   "selectAction", "selectRuntimeRecoveryEndAction", "selectRuntimeEmergencyAction",
+  "selectRuntimeActionCapClosureAction",
   "playCard", "useActiveSkill", "getAiMaxActions",
   "getActionTargetLabel", "resetActionLocks", "discardCardFromHand",
   "cancelPendingInteractions"
@@ -354,18 +355,21 @@ export function createTurnWorkflow(dependencies) {
   thinking/prompt 经 PresentationPort；真实卡牌/技能经注入 action collaborators。
 
   调用函数
-  selectAction、selectRuntimeRecoveryEndAction、selectRuntimeEmergencyAction、playCard、useActiveSkill。
+  selectAction、selectRuntimeRecoveryEndAction、selectRuntimeEmergencyAction、
+  selectRuntimeActionCapClosureAction、playCard、useActiveSkill。
 
   边界与不变量
   每个真实 Action 后必须从最新 World 重新调用 selectAction；每步只采样一个窗口，MAX 作为显式预算，MIN 只补剩余可见等待。
   Search/Worker failure 或 Action 故障后立即进入 final recovery；null 不代表 END。
   无弃牌损失则 canonical END，有损失才请求一次 Controller emergency legal Action。
   emergency 成功执行一张后下一轮必须回到正常 Searcher；无安全 card 时才允许 canonical END 接受不可避免弃牌。
+  16 个正常 Action 耗尽后只可从最新 canonical candidates 额外装备一次，随后立即结束且不得重入搜索循环。
   搜索、绑定和 recovery 诊断只进入 diagnostics/Controller 状态，不得写入玩家 Battle Log；finally presentation failure 不得覆盖 rollback failure。
   */
   async function takeAiPlayPhase(player, gameId) {
     const state = runtime.getState();
     let propagatingRollbackError = null;
+    let endedByCanonicalEnd = false;
     try {
       runtime.presentation.setPrompt(`${player.name}进入出牌阶段，正在观察战场。`, "电脑正在行动");
       runtime.presentation.showThinking({ playerId: player.id, message: "正在观察战场与可用资源" });
@@ -441,6 +445,7 @@ export function createTurnWorkflow(dependencies) {
             if (delayPending && !(await runtime.delay(remainingSearchDelay))) return;
             if (!runtime.isSessionValid(gameId)) return;
             endPlayPhase = true;
+            endedByCanonicalEnd = true;
             break;
           }
           const definition = action.type === "card"
@@ -509,6 +514,52 @@ export function createTurnWorkflow(dependencies) {
           break;
         }
         if (endPlayPhase) break;
+      }
+      if (!endedByCanonicalEnd
+        && runtime.isSessionValid(gameId)
+        && !state.isGameOver
+        && player.alive) {
+        const currentPlayer = runtime.getState().players.find(
+          (entry) => entry.id === player.id
+        ) ?? null;
+        const mandatoryDiscardCount = currentPlayer
+          ? getMandatoryDiscardCount(currentPlayer)
+          : 0;
+        let closureAction = null;
+        if (currentPlayer?.alive && mandatoryDiscardCount > 0) {
+          closureAction = runtime.selectRuntimeActionCapClosureAction(currentPlayer, {
+            mandatoryDiscardCount
+          });
+        }
+        if (closureAction) {
+          const definition = CARD_DEFINITIONS[closureAction.cardId] ?? null;
+          const targets = (closureAction.targetIds ?? [])
+            .map((id) => runtime.getState().players.find((entry) => entry.id === id))
+            .filter(Boolean);
+          try {
+            const card = currentPlayer.hand.find(
+              (entry) => entry.id === closureAction.cardInstanceId
+            ) ?? null;
+            if (!definition || definition.category !== "equipment" || !card
+              || targets.length !== (closureAction.targetIds?.length ?? 0)) {
+              throw new Error("AI Action 上限 closure 的 canonical 装备绑定失败");
+            }
+            const executed = await runtime.playCard(
+              currentPlayer,
+              card,
+              targets,
+              closureAction.selection ?? null
+            );
+            if (!executed) throw new Error("AI Action 上限 closure 装备未能完整提交真实结算");
+          } catch (error) {
+            if (error instanceof ActionRollbackError) throw error;
+            runtime.diagnostics.reportWorkflowError(
+              "AI",
+              `${player.name}的 Action 上限装备 closure 未完成，按原逻辑结束出牌阶段`,
+              error
+            );
+          }
+        }
       }
       if (runtime.isSessionValid(gameId) && !state.isGameOver) runtime.presentation.setPrompt(`${player.name}结束了出牌阶段。`);
     } catch (error) {

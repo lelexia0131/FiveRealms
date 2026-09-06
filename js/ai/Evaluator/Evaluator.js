@@ -146,8 +146,8 @@ evaluateTransition 与 Searcher 的唯一 candidate evaluation 入口。
 输入
 Evaluator transition terms 普通对象。
 
-输出
-合同完整时原样返回 terms；缺失或非法时抛出 TypeError。
+  输出
+  合同完整时原样返回 terms；缺失、非法或 END policy facts 不配对时抛出 TypeError。
 
 读取状态
 无。
@@ -160,8 +160,9 @@ assertValueContract。
 
 边界与不变量
 state/option/danger/sibling 输入必须有限；baseTransition 单独允许 -Infinity 表示合法不可竞争，
-X 技能若已附带 nextEnergyStateDelta 也必须是有限数值；普通技能的该字段只能为 null，
-不得用 null、NaN 或缺字段冒充完整 candidate。
+  X 技能若已附带 nextEnergyStateDelta 也必须是有限数值；普通技能的该字段只能为 null，
+  END 必须独立携带 hasEquipmentBefore，且不得把它塞进 discardOpportunityInputs；
+  不得用 null、NaN 或缺字段冒充完整 candidate。
 */
 export function assertCompleteTransitionTerms(terms) {
   if (!terms || typeof terms !== "object") {
@@ -210,6 +211,15 @@ export function assertCompleteTransitionTerms(terms) {
     for (const name of ["energy", "turnEnergyGain", "maxEnergy", "activeSkillCost"]) {
       assertValueContract(terms.endOpportunityInputs[name], `endOpportunityInputs.${name}`);
     }
+  }
+  if (terms.endPolicyInputs !== null) {
+    if (!terms.endPolicyInputs || typeof terms.endPolicyInputs !== "object"
+      || typeof terms.endPolicyInputs.hasEquipmentBefore !== "boolean") {
+      throw new TypeError("Evaluator value invariant 失败：endPolicyInputs 必须包含 hasEquipmentBefore 布尔值");
+    }
+  }
+  if ((terms.endOpportunityInputs === null) !== (terms.endPolicyInputs === null)) {
+    throw new TypeError("Evaluator value invariant 失败：END opportunity 与 policy inputs 必须同时存在");
   }
   return terms;
 }
@@ -4450,7 +4460,7 @@ export class Evaluator {
   与 Searcher 物化的 generic transition-option points。
 
   输出
-  各命名 term、X 技能的下一能量反事实输入与 baseTransition 的普通对象。
+  各命名 term、X 技能的下一能量反事实输入、END 独立装备槽事实与 baseTransition 的普通对象。
 
   读取状态
   只读 before/after World 与 Evaluator state aggregation。
@@ -4464,6 +4474,7 @@ export class Evaluator {
   边界与不变量
   BaseTransition 只由 StateDeltaValue 与 TransitionOptionValue 构成；低于冻结门槛的 Transfer 只失去竞争资格；
   depth 只作诊断，不缩放价值，search-prior terms 不得进入；手牌溢出只作为后续同层真实状态比较输入，
+  hasEquipmentBefore 只进入 END policy inputs，不污染 discard opportunity；
   X 技能只在此识别并以 min(E+1,Emax) 交给 Searcher 构造同 World 反事实；
   不在本函数产生固定 END 或卡牌分数。
   */
@@ -4530,6 +4541,7 @@ export class Evaluator {
       stateDelta
     };
     let endOpportunityInputs = null;
+    let endPolicyInputs = null;
     if (action?.type === "end") {
       const maxEnergy = Math.max(
         0,
@@ -4548,6 +4560,9 @@ export class Evaluator {
         activeSkillCost:Math.max(0, Number(beforeActor.activeSkillCost) || 0),
         hasActiveSkill:Boolean(beforeActor.activeSkillId)
       };
+      endPolicyInputs = {
+        hasEquipmentBefore:Boolean(beforeActor.equipmentDefinitionId)
+      };
     }
     return assertCompleteTransitionTerms({
       resolutionScale:effectResolutionScale,
@@ -4560,6 +4575,7 @@ export class Evaluator {
       xSkillNextEnergy,
       discardOpportunityInputs,
       endOpportunityInputs,
+      endPolicyInputs,
       baseTransition:transferCompetitive
         ? stateDeltaValue + transitionOptionValue
         : Number.NEGATIVE_INFINITY
@@ -4606,7 +4622,7 @@ export class Evaluator {
   从同 parent 的完整 sibling transition terms 聚合 END 的全部机会惩罚点数。
 
   调用方
-  Searcher.finalizeCandidates 在全部 sibling 完整后请求 END Final Utility。
+  直接价值合同与诊断测试；生产 END finalization 复用同一 sibling 聚合。
 
   输入
   END transition terms，以及带 actionType 与 transitionTerms 的完整 sibling terms 数组。
@@ -4630,19 +4646,66 @@ export class Evaluator {
   sibling 顺序不得改变结果，单项公式、单位换算和零 sibling 行为保持不变。
   */
   endOpportunityPoints(endTransitionTerms, siblingTransitionTerms = []) {
-    const maximumLegalSkillStateValueOpportunity = siblingTransitionTerms
-      .filter((sibling) => (
-        sibling?.actionType === "skill"
-          && !Number.isFinite(sibling.transitionTerms?.xSkillNextEnergy)
-      ))
-      .reduce((maximum, sibling) => Math.max(
-        maximum,
-        Math.max(0, Number(sibling.transitionTerms?.stateDelta) || 0)
-      ), 0);
-    const xSkillSibling = siblingTransitionTerms.find((sibling) => (
-      sibling?.actionType === "skill"
-        && Number.isFinite(sibling.transitionTerms?.xSkillNextEnergy)
-    ));
+    return this.endSiblingFinalizationFacts(
+      endTransitionTerms,
+      siblingTransitionTerms
+    ).endOpportunityPoints;
+  }
+
+  /*
+  功能
+  在一次完整 sibling 遍历中聚合 END 的既有机会项与装备结构事实。
+
+  调用方
+  endOpportunityPoints、finalizeEndTransition。
+
+  输入
+  END transition terms，以及同 parent 的完整 canonical sibling facts。
+
+  输出
+  endOpportunityPoints 与 hasEquipmentSibling。
+
+  读取状态
+  sibling 的 actionType/cardId、已物化 transition terms 与 Domain card definitions。
+
+  写入状态
+  无。
+
+  调用函数
+  endSiblingFinalizationFacts。
+
+  边界与不变量
+  只消费 Searcher 已完整物化的 sibling；不得生成动作、读取静态牌值或改变 Pf/Ps/Pd 公式。
+  */
+  endSiblingFinalizationFacts(endTransitionTerms, siblingTransitionTerms = []) {
+    let maximumLegalSkillStateValueOpportunity = 0;
+    let xSkillSibling = null;
+    let maximumDiscardOpportunityRelief = 0;
+    let hasEquipmentSibling = false;
+    for (const sibling of siblingTransitionTerms) {
+      if (sibling?.actionType === "skill") {
+        if (Number.isFinite(sibling.transitionTerms?.xSkillNextEnergy)) {
+          xSkillSibling ??= sibling;
+        } else {
+          maximumLegalSkillStateValueOpportunity = Math.max(
+            maximumLegalSkillStateValueOpportunity,
+            Math.max(0, Number(sibling.transitionTerms?.stateDelta) || 0)
+          );
+        }
+      }
+      if (sibling?.actionType === "card") {
+        hasEquipmentSibling ||= CARD_DEFINITIONS[sibling.cardId]?.category === "equipment";
+      }
+      if (sibling?.actionType !== "end") {
+        maximumDiscardOpportunityRelief = Math.max(
+          maximumDiscardOpportunityRelief,
+          this.endDiscardOpportunityRelief(
+            endTransitionTerms,
+            sibling.transitionTerms
+          )
+        );
+      }
+    }
     const xSkillStateDeltaPair = xSkillSibling
       ? {
           current:Number(xSkillSibling.transitionTerms.stateDelta) || 0,
@@ -4652,21 +4715,62 @@ export class Evaluator {
           )
         }
       : null;
-    const maximumDiscardOpportunityRelief = siblingTransitionTerms
-      .filter((sibling) => sibling?.actionType !== "end")
-      .reduce((maximum, sibling) => Math.max(
-        maximum,
-        this.endDiscardOpportunityRelief(
-          endTransitionTerms,
-          sibling.transitionTerms
-        )
-      ), 0);
-    return this.endEnergyOpportunityPenalty(
+    return {
+      endOpportunityPoints:this.endEnergyOpportunityPenalty(
+        endTransitionTerms,
+        maximumLegalSkillStateValueOpportunity,
+        maximumDiscardOpportunityRelief,
+        xSkillStateDeltaPair
+      ),
+      hasEquipmentSibling
+    };
+  }
+
+  /*
+  功能
+  在完整 sibling 上下文中产生 END 的唯一 Final Utility。
+
+  调用方
+  Searcher.finalizeCandidate。
+
+  输入
+  END 的 base/frontier value、transition terms 与完整 canonical sibling facts。
+
+  输出
+  空装备槽且强制弃牌并存在完整装备 sibling 时返回 -Infinity，否则返回既有 Final Utility。
+
+  读取状态
+  END 独立 policy inputs、discard overflow 与一次聚合后的 sibling facts。
+
+  写入状态
+  无。
+
+  调用函数
+  endSiblingFinalizationFacts、composeTransitionValue。
+
+  边界与不变量
+  装备约束不进入 Pf/Ps/Pd，不读取 CardValue；只有完整物化的 canonical equipment Action 能否决 END。
+  */
+  finalizeEndTransition({
+    baseTransition,
+    frontierValue = 0,
+    endTransitionTerms,
+    siblingTransitionTerms = []
+  }) {
+    const facts = this.endSiblingFinalizationFacts(
       endTransitionTerms,
-      maximumLegalSkillStateValueOpportunity,
-      maximumDiscardOpportunityRelief,
-      xSkillStateDeltaPair
+      siblingTransitionTerms
     );
+    const beforeOverflow = endTransitionTerms?.discardOpportunityInputs?.beforeOverflow ?? 0;
+    const hasEquipmentBefore = endTransitionTerms?.endPolicyInputs?.hasEquipmentBefore;
+    if (beforeOverflow > 0 && hasEquipmentBefore === false && facts.hasEquipmentSibling) {
+      return Number.NEGATIVE_INFINITY;
+    }
+    return this.composeTransitionValue({
+      baseTransition,
+      frontierValue,
+      endOpportunityPoints:facts.endOpportunityPoints
+    });
   }
 
   /*

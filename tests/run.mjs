@@ -1134,11 +1134,11 @@ test("角色规则：八名角色初始能量配置与规则一致", () => {
       "blade-walker": 0,
       "oath-warden": 0,
       "spirit-medic": 1,
-      "shade-agent": 0,
+      "shade-agent": 2,
       "ember-magus": 1,
       "trail-hunter": 0,
       "fate-gambler": 0,
-      "resonance-tuner": 1
+      "resonance-tuner": 0
     };
   assert.equal(CHARACTER_DEFINITIONS.length, 8);
   for (const [id, energy] of Object.entries(expected)) {
@@ -1146,8 +1146,8 @@ test("角色规则：八名角色初始能量配置与规则一致", () => {
   }
 });
 
-test("角色规则：applyCharacter 按配置初始化灵医、炎术师、调律师与刃行者的初始能量", () => {
-  for (const [id, expectedEnergy] of [["spirit-medic", 1], ["ember-magus", 1], ["resonance-tuner", 1], ["blade-walker", 0]]) {
+test("角色规则：applyCharacter 按配置初始化灵医、影客、炎术师、调律师与刃行者的初始能量", () => {
+  for (const [id, expectedEnergy] of [["spirit-medic", 1], ["shade-agent", 2], ["ember-magus", 1], ["resonance-tuner", 0], ["blade-walker", 0]]) {
     const character = CHARACTER_DEFINITIONS.find((entry) => entry.id === id),
       player = new Player({ id: `init-${id}`, seatIndex: 0, battleTeam: "dawn", controllerType: "ai" });
     assert.equal(player.energy, 0, `${id} 构造后能量为0`);
@@ -15538,11 +15538,11 @@ async function xSkillEnergyCounterfactualContract() {
       }
     }, { next: () => 0 });
     const evaluator = engine.searcher.evaluator;
-    const originalEndOpportunityPoints = evaluator.endOpportunityPoints.bind(evaluator);
+    const originalFinalizeEndTransition = evaluator.finalizeEndTransition.bind(evaluator);
     let capturedSiblingTerms = null;
-    evaluator.endOpportunityPoints = (endTerms, siblingTerms) => {
-      capturedSiblingTerms = siblingTerms;
-      return originalEndOpportunityPoints(endTerms, siblingTerms);
+    evaluator.finalizeEndTransition = (inputs) => {
+      capturedSiblingTerms = inputs.siblingTransitionTerms;
+      return originalFinalizeEndTransition(inputs);
     };
     await engine.searcher.search(
       worldActor,
@@ -15715,10 +15715,10 @@ async function runXSkillNextEnergyStateDeltaContract(nextEnergyStateDelta) {
     const evaluator = engine.searcher.evaluator;
     evaluator.transitionDelta = () => nextEnergyStateDelta;
     let capturedSiblingTerms = null;
-    const endOpportunityPoints = evaluator.endOpportunityPoints.bind(evaluator);
-    evaluator.endOpportunityPoints = (endTerms, siblingTerms) => {
-      capturedSiblingTerms = siblingTerms;
-      return endOpportunityPoints(endTerms, siblingTerms);
+    const finalizeEndTransition = evaluator.finalizeEndTransition.bind(evaluator);
+    evaluator.finalizeEndTransition = (inputs) => {
+      capturedSiblingTerms = inputs.siblingTransitionTerms;
+      return finalizeEndTransition(inputs);
     };
     let selected = null;
     let searchError = null;
@@ -15832,7 +15832,8 @@ function xSkillCounterfactualCooperativeCheckpointContract() {
       baseTransition: 0,
       xSkillNextEnergy: 1,
       discardOpportunityInputs: { beforeOverflow: 0, afterOverflow: 0, stateDelta: 0 },
-      endOpportunityInputs: null
+      endOpportunityInputs: null,
+      endPolicyInputs: null
     }),
     transitionDelta: () => {
       transitionDeltaCalls += 1;
@@ -19047,7 +19048,7 @@ test("AI·核心链路：benchmark helper 默认能量来自 character.initialEn
   const byId = (id) => game.state.players.find((player) => player.id === id);
   assert.equal(byId("bench-pyro").energy, 1, "未指定能量的炎术师默认1");
   assert.equal(byId("bench-medic").energy, 1, "未指定能量的灵医默认1");
-  assert.equal(byId("bench-tuner").energy, 1, "未指定能量的调律师默认1");
+  assert.equal(byId("bench-tuner").energy, 0, "未指定能量的调律师默认0");
   assert.equal(byId("bench-blade").energy, 0, "未指定能量的刃行者默认0");
   assert.equal(byId("bench-zero").energy, 0, "显式 energy:0 不被覆盖");
   assert.equal(byId("bench-two").energy, 2, "显式 energy:2 不被覆盖");
@@ -19356,9 +19357,12 @@ async function captureSymbiosisSearchLedger(game, actorId) {
     });
     return terms;
   };
-  const endOpportunityPoints = evaluator.endOpportunityPoints.bind(evaluator);
-  evaluator.endOpportunityPoints = (endTerms, siblingTerms) => {
-    const total = endOpportunityPoints(endTerms, siblingTerms);
+  const finalizeEndTransition = evaluator.finalizeEndTransition.bind(evaluator);
+  evaluator.finalizeEndTransition = (finalizationInputs) => {
+    const finalized = finalizeEndTransition(finalizationInputs);
+    const endTerms = finalizationInputs.endTransitionTerms;
+    const siblingTerms = finalizationInputs.siblingTransitionTerms;
+    const total = evaluator.endOpportunityPoints(endTerms, siblingTerms);
     const inputs = endTerms.endOpportunityInputs;
     const pf = ENERGY_STATE_WEIGHT * Math.max(
       0,
@@ -19376,7 +19380,7 @@ async function captureSymbiosisSearchLedger(game, actorId) {
       ps: total - pf - pd,
       pd
     };
-    return total;
+    return finalized;
   };
   const finalizeCandidate = searcher.finalizeCandidate.bind(searcher);
   searcher.finalizeCandidate = (candidate, siblings) => {
@@ -19408,7 +19412,7 @@ test("AI·搜索：负收益共生不因技能机会或故障 fallback 被强迫
       },
       { id: "negative-symbiosis-ally", team: "dawn", character: "oath-warden", hp: 3 },
       { id: "negative-symbiosis-enemy-a", team: "dusk", character: "spirit-medic", hp: 2 },
-      { id: "negative-symbiosis-enemy-b", team: "dusk", character: "shade-agent", hp: 2 },
+      { id: "negative-symbiosis-enemy-b", team: "dusk", character: "shade-agent", hp: 2, energy: 0 },
       { id: "negative-symbiosis-enemy-c", team: "dusk", character: "ember-magus", hp: 2 }
     ],
     options: { actorId: "negative-symbiosis-actor", seed: 20260901, nodeBudget: 1000 }
@@ -19466,7 +19470,7 @@ test("AI·搜索：正收益共生仍由完整 Final Utility 正常选中", asyn
       },
       { id: "positive-symbiosis-ally", team: "dawn", character: "oath-warden", hp: 1 },
       { id: "positive-symbiosis-enemy-a", team: "dusk", character: "spirit-medic" },
-      { id: "positive-symbiosis-enemy-b", team: "dusk", character: "shade-agent" },
+      { id: "positive-symbiosis-enemy-b", team: "dusk", character: "shade-agent", energy: 0 },
       { id: "positive-symbiosis-enemy-c", team: "dusk", character: "ember-magus" }
     ],
     options: { actorId: "positive-symbiosis-actor", seed: 20260901, nodeBudget: 1000 }
@@ -20865,10 +20869,14 @@ test("AI·搜索故障恢复：已有装备时 emergency 不覆盖装备", () =>
   }
 });
 
-test("AI·搜索故障恢复：无装备时 emergency 可选择合法装备牌", () => {
+test("AI·搜索故障恢复：空装备槽且强制弃牌时 emergency 在普通安全牌前选择装备", () => {
   const actor = makePlayer("unequipped-emergency-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("unequipped-emergency-enemy", 1, "dusk", "ai", 1);
-  actor.hand.push(instance("energyDevice"), ...Array.from({ length: 7 }, () => instance("block")));
+  actor.hand.push(
+    instance("charge"),
+    instance("energyDevice"),
+    ...Array.from({ length: 6 }, () => instance("block"))
+  );
   const { game } = makeGame([actor, enemy]);
   try {
     const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
@@ -20886,6 +20894,210 @@ test("AI·搜索故障恢复：无装备时 emergency 可选择合法装备牌",
   } finally {
     game.dispose();
   }
+});
+
+/*
+功能
+运行一次完整 16 Action 正常循环并观察 one-shot equipment closure。
+
+调用方
+AI Action 上限 closure 回归测试。
+
+输入
+是否在第 16 个正常 Action 后保留两张合法装备。
+
+输出
+selectAction 次数、真实执行记录、closure 选择记录与最终行动者状态。
+
+读取状态
+独立 TurnWorkflow state 与传入的 canonical closure Action。
+
+写入状态
+独立测试 state 的行动者手牌和装备槽；测试替身只模拟已成功提交的 Action。
+
+调用函数
+createTurnWorkflow、createAction、takeAiPlayPhase。
+
+边界与不变量
+前 16 次由正常 selectAction 提供；closure 不调用 Searcher、不循环，且最多额外执行一张装备。
+*/
+async function runActionCapEquipmentClosureScenario(hasEquipmentCandidates) {
+  const actor = makePlayer(
+    `action-cap-${hasEquipmentCandidates ? "equipment" : "none"}-actor`,
+    0,
+    "dawn",
+    "ai",
+    0
+  );
+  actor.hp = 1;
+  const normalCards = Array.from(
+    { length:AI_RUNTIME_POLICY.maxActionsPerTurn },
+    (_, index) => instance("charge", `action-cap-charge-${index}`)
+  );
+  actor.hand.push(...normalCards);
+  if (hasEquipmentCandidates) {
+    actor.hand.push(instance("energyDevice"), instance("battleDevice"), instance("block"));
+  } else {
+    actor.hand.push(instance("block"), instance("block"));
+  }
+  const state = {
+    gameId:`${actor.id}-game`,
+    phase:"play",
+    players:[actor],
+    isGameOver:false,
+    isDisposed:false
+  };
+  let searchCalls = 0;
+  const executed = [];
+  const closureSelections = [];
+  const workflow = createTurnWorkflow({
+    getState:() => state,
+    isSessionValid:(gameId) => gameId === state.gameId,
+    emitEvent:async () => null,
+    publishFact:() => null,
+    presentation:{
+      setPrompt:() => null,
+      showThinking:() => null,
+      clearThinking:() => null,
+      refresh:() => null
+    },
+    diagnostics:{ reportWorkflowError:() => null },
+    runTurn:async () => null,
+    gainEnergy:async () => 0,
+    drawCards:async () => null,
+    cleanupDefeatedZones:() => null,
+    delay:async () => true,
+    getAiDelay:() => 0,
+    now:() => 0,
+    sampleAiDecisionWindow:() => ({ minimumMs:0, maximumMs:0 }),
+    getRemainingAiDecisionDelay:() => 0,
+    getTeamRules:() => ({}),
+    waitForHumanPlayEnd:async () => true,
+    runAiPlayPhase:async () => null,
+    choiceCoordinator:{},
+    choiceContexts:{},
+    createId:() => "action-cap-choice",
+    selectAction:async () => {
+      searchCalls += 1;
+      const card = actor.hand.find((entry) => entry.definitionId === "charge");
+      if (!card) throw new Error("16 个正常 Action 夹具提前耗尽");
+    return createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:card.definitionId,
+        cardInstanceId:card.id
+      });
+    },
+    selectRuntimeRecoveryEndAction:() => {
+      throw new Error("16 个正常 Action 不应进入 search recovery");
+    },
+    selectRuntimeEmergencyAction:() => {
+      throw new Error("16 个正常 Action 不应进入 emergency recovery");
+    },
+    selectRuntimeActionCapClosureAction:(currentPlayer, { mandatoryDiscardCount }) => {
+      const equipment = hasEquipmentCandidates
+        ? currentPlayer.hand.find(
+            (card) => CARD_DEFINITIONS[card.definitionId]?.category === "equipment"
+          ) ?? null
+        : null;
+      const action = equipment
+        ? createAction({
+            type:"card",
+            actorId:currentPlayer.id,
+            cardId:equipment.definitionId,
+            cardInstanceId:equipment.id
+          })
+        : null;
+      closureSelections.push(action);
+      assert.ok(mandatoryDiscardCount > 0);
+      return action;
+    },
+    playCard:async (source, card) => {
+      const index = source.hand.indexOf(card);
+      if (index < 0) return false;
+      source.hand.splice(index, 1);
+      if (CARD_DEFINITIONS[card.definitionId]?.category === "equipment") {
+        source.equipment = card;
+      }
+      executed.push(card);
+      return true;
+    },
+    useActiveSkill:async () => false,
+    getAiMaxActions:() => AI_RUNTIME_POLICY.maxActionsPerTurn,
+    getActionTargetLabel:() => "",
+    resetActionLocks:() => null,
+    discardCardFromHand:async () => false,
+    cancelPendingInteractions:() => null
+  });
+  await workflow.takeAiPlayPhase(actor, state.gameId);
+  return { actor, closureSelections, executed, searchCalls };
+}
+
+test("AI·搜索故障恢复：16 Action 上限后最多一次装备 closure 且无装备时正常结束", async () => {
+  assert.equal(AI_RUNTIME_POLICY.maxActionsPerTurn, 16);
+  const canonicalActor = makePlayer("action-cap-canonical-actor", 0, "dawn", "ai", 0);
+  const canonicalEnemy = makePlayer("action-cap-canonical-enemy", 1, "dusk", "ai", 1);
+  canonicalActor.hp = 1;
+  canonicalActor.hand.push(instance("charge"), instance("energyDevice"), instance("battleDevice"));
+  const { game:canonicalGame } = makeGame([canonicalActor, canonicalEnemy]);
+  canonicalGame.state.phase = "play";
+  try {
+    const closureAction = canonicalGame.aiController.selectRuntimeActionCapClosureAction(
+      canonicalActor,
+      { mandatoryDiscardCount:2 }
+    );
+    assert.ok(sameAction(
+      closureAction,
+      canonicalGame.aiController.getActionCandidates(canonicalActor).find(
+        (action) => sameAction(action, closureAction)
+      )
+    ));
+    assert.equal(CARD_DEFINITIONS[closureAction.cardId].category, "equipment");
+    canonicalActor.equipment = instance("recycleDevice");
+    assert.equal(canonicalGame.aiController.selectRuntimeActionCapClosureAction(
+      canonicalActor,
+      { mandatoryDiscardCount:2 }
+    ), null, "已有装备时 Action cap closure 不换装");
+    canonicalActor.equipment = null;
+    canonicalActor.hand.splice(
+      0,
+      canonicalActor.hand.length,
+      instance("block"),
+      instance("block")
+    );
+    assert.equal(canonicalGame.aiController.selectRuntimeActionCapClosureAction(
+      canonicalActor,
+      { mandatoryDiscardCount:1 }
+    ), null, "没有合法装备 Action 时正常结束");
+  } finally {
+    canonicalGame.dispose();
+  }
+  const withEquipment = await runActionCapEquipmentClosureScenario(true);
+  assert.equal(withEquipment.searchCalls, 16);
+  assert.equal(withEquipment.closureSelections.length, 1);
+  assert.equal(withEquipment.closureSelections[0].type, "card");
+  assert.equal(
+    CARD_DEFINITIONS[withEquipment.closureSelections[0].cardId].category,
+    "equipment"
+  );
+  assert.equal(withEquipment.executed.length, 17);
+  assert.equal(withEquipment.executed.slice(0, 16).every(
+    (card) => card.definitionId === "charge"
+  ), true);
+  assert.equal(
+    CARD_DEFINITIONS[withEquipment.executed[16].definitionId].category,
+    "equipment"
+  );
+  assert.ok(withEquipment.actor.equipment);
+  assert.equal(withEquipment.actor.hand.filter(
+    (card) => CARD_DEFINITIONS[card.definitionId]?.category === "equipment"
+  ).length, 1, "两张合法装备也只允许 closure 执行一张");
+
+  const withoutEquipment = await runActionCapEquipmentClosureScenario(false);
+  assert.equal(withoutEquipment.searchCalls, 16);
+  assert.deepEqual(withoutEquipment.closureSelections, [null]);
+  assert.equal(withoutEquipment.executed.length, 16);
+  assert.equal(withoutEquipment.actor.equipment, null);
 });
 
 test("AI·搜索故障恢复：可靠 Searcher END 仍正常进入大手牌强制弃牌", async () => {
@@ -21887,6 +22099,9 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
       discardOpportunityInputs: { beforeOverflow: 0, afterOverflow: 0, stateDelta: 0 },
       endOpportunityInputs: action.type === "end"
         ? { energy: 0, turnEnergyGain: 0, maxEnergy: 0, activeSkillCost: 0 }
+        : null,
+      endPolicyInputs: action.type === "end"
+        ? { hasEquipmentBefore: true }
         : null
     }),
     frontierResidual: () => null,
@@ -21898,6 +22113,21 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
     endOpportunityPoints: (endTerms, siblingTerms) => {
       opportunityCalls.push({ endTerms, siblingTerms });
       return 5;
+    },
+    finalizeEndTransition({
+      baseTransition,
+      frontierValue,
+      endTransitionTerms,
+      siblingTransitionTerms
+    }) {
+      return this.composeTransitionValue({
+        baseTransition,
+        frontierValue,
+        endOpportunityPoints:this.endOpportunityPoints(
+          endTransitionTerms,
+          siblingTransitionTerms
+        )
+      });
     },
     composeTransitionValue: ({ baseTransition, frontierValue, endOpportunityPoints }) => (
       baseTransition + frontierValue - statePointsToUtility(endOpportunityPoints)
@@ -22174,6 +22404,9 @@ async function runSearcherFaultBoundaryFixture(mode) {
         discardOpportunityInputs: { beforeOverflow: 0, afterOverflow: 0, stateDelta: 0 },
         endOpportunityInputs: action.type === "end"
           ? { energy: 0, turnEnergyGain: 0, maxEnergy: 0, activeSkillCost: 0 }
+          : null,
+        endPolicyInputs: action.type === "end"
+          ? { hasEquipmentBefore: true }
           : null
       };
       if (mode === "missing-transition-term" && action === assault) {
@@ -22191,6 +22424,13 @@ async function runSearcherFaultBoundaryFixture(mode) {
     },
     resourceSelectionPreference: () => null,
     endOpportunityPoints: () => 0,
+    finalizeEndTransition({ baseTransition, frontierValue }) {
+      return this.composeTransitionValue({
+        baseTransition,
+        frontierValue,
+        endOpportunityPoints:0
+      });
+    },
     composeTransitionValue: ({ baseTransition, frontierValue, endOpportunityPoints }) => {
       if (mode === "before-incumbent-finalize-fault" && baseTransition === 5) {
         throw new Error("synthetic finalize fault before incumbent");
@@ -22517,7 +22757,7 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
     finalizeSource,
     /endDiscardOpportunityRelief|maximumDiscardOpportunityRelief|maximumLegalSkillStateValueOpportunity/u
   );
-  assert.match(finalizeSource, /endOpportunityPoints/u);
+  assert.match(finalizeSource, /finalizeEndTransition/u);
 
   const evaluator = new Evaluator();
   const endTerms = {
@@ -22612,6 +22852,165 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
     > finalizedOverflowEnd.transitionValue,
     "现有 continuation 累计值不得被缺失的 Pd 掩盖"
   );
+});
+
+/*
+功能
+以生产 Generator、Simulator、Evaluator 与 Searcher 运行一次 depth=1 装备 END policy 搜索。
+
+调用方
+空装备槽强制弃牌 END policy 回归测试。
+
+输入
+行动者手牌 definitionIds、生命、可选现有装备。
+
+输出
+canonical roots、完整 root candidates、选择结果、World、Evaluator 与搜索统计。
+
+读取状态
+独立 benchmark Game 的真实角色、卡牌配置与 AI runtime composition。
+
+写入状态
+只记录本测试 Searcher finalize 后的完整 root candidates。
+
+调用函数
+makeBenchmarkGame、createInitialWorld、createSearchEngine、Searcher.search。
+
+边界与不变量
+不改动作顺序、价值或预算；depth=1 使多装备 winner 只由现有 root Final Utility 比较决定。
+*/
+async function runEquipmentEndPolicyRootSearch({
+  cardIds,
+  hp = 4,
+  equipment = null
+}) {
+  const actorId = `equipment-end-policy-${cardIds.join("-")}-${hp}-${equipment ?? "empty"}`;
+  const game = makeBenchmarkGame({
+    players: [
+      {
+        id:actorId,
+        team:"dawn",
+        character:"blade-walker",
+        hp,
+        hand:cardIds.map((definitionId, index) => (
+          makeBenchmarkCard(definitionId, `${actorId}-${index}`)
+        )),
+        equipment:equipment
+          ? makeBenchmarkCard(equipment, `${actorId}-equipped`)
+          : null
+      },
+      { id:`${actorId}-enemy`, team:"dusk", character:"oath-warden", hp:4 }
+    ],
+    options:{ actorId, seed:20260906, nodeBudget:1000 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const roots = game.aiController.getActionCandidates(actor, world);
+    const { searcher } = createSearchEngine({
+      world,
+      searchConfig:{
+        ...game.aiController.buildSearchConfig(),
+        depth:1,
+        nodeBudget:1000,
+        timeBudgetMs:null,
+        enableRandomness:false,
+        randomnessRange:0
+      }
+    }, { next:() => 0 });
+    const finalized = new Map();
+    const finalizeCandidate = searcher.finalizeCandidate.bind(searcher);
+    searcher.finalizeCandidate = (candidate, siblings) => {
+      const result = finalizeCandidate(candidate, siblings);
+      finalized.set(actionSearchKey(result.action), result);
+      return result;
+    };
+    const choice = await searcher.search(
+      world.players.find((entry) => entry.id === actor.id),
+      world,
+      roots,
+      { gameId:world.gameId, rootCandidateCount:roots.length }
+    );
+    return {
+      choice,
+      evaluator:searcher.evaluator,
+      finalized,
+      roots,
+      stats:searcher.lastSearchStats,
+      world
+    };
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test("AI·搜索：空装备槽强制弃牌时完整装备 sibling 使 END 不可竞争且装备仍按 Final Utility 选择", async () => {
+  const single = await runEquipmentEndPolicyRootSearch({
+    cardIds:["energyDevice", "block", "block", "block", "block"]
+  });
+  const singleEndAction = single.roots.find((action) => action.type === "end");
+  assert.ok(singleEndAction, "canonical END 必须继续存在");
+  assert.equal(single.stats.stopReason, "COMPLETE");
+  assert.equal(single.stats.completedRootCandidateCount, single.roots.length);
+  assert.equal(
+    single.finalized.get(actionSearchKey(singleEndAction)).transitionValue,
+    Number.NEGATIVE_INFINITY
+  );
+  assert.equal(single.choice.cardId, "energyDevice");
+
+  const multiple = await runEquipmentEndPolicyRootSearch({
+    cardIds:["energyDevice", "battleDevice", "block", "block", "block", "block"]
+  });
+  const equipmentCandidates = multiple.roots
+    .filter((action) => CARD_DEFINITIONS[action.cardId]?.category === "equipment")
+    .map((action) => multiple.finalized.get(actionSearchKey(action)));
+  assert.equal(equipmentCandidates.length, 2);
+  assert.notEqual(
+    equipmentCandidates[0].transitionValue,
+    equipmentCandidates[1].transitionValue,
+    "夹具必须让两张装备的现有 Final Utility 不同"
+  );
+  const expectedEquipment = equipmentCandidates.reduce((best, candidate) => (
+    multiple.evaluator.compareCandidates(
+      candidate,
+      best,
+      multiple.world.players[0],
+      multiple.world
+    ) > 0 ? candidate : best
+  ));
+  assert.ok(sameAction(multiple.choice, expectedEquipment.action));
+
+  const equipped = await runEquipmentEndPolicyRootSearch({
+    cardIds:["energyDevice", "block", "block", "block", "block"],
+    equipment:"recycleDevice"
+  });
+  const equippedEnd = equipped.roots.find((action) => action.type === "end");
+  assert.ok(Number.isFinite(
+    equipped.finalized.get(actionSearchKey(equippedEnd)).transitionValue
+  ));
+
+  const noOverflow = await runEquipmentEndPolicyRootSearch({
+    cardIds:["energyDevice", "block", "block", "block"]
+  });
+  const noOverflowEnd = noOverflow.roots.find((action) => action.type === "end");
+  assert.ok(Number.isFinite(
+    noOverflow.finalized.get(actionSearchKey(noOverflowEnd)).transitionValue
+  ));
+
+  const noEquipment = await runEquipmentEndPolicyRootSearch({
+    cardIds:["charge", "block", "block", "block", "block"]
+  });
+  assert.equal(noEquipment.roots.some(
+    (action) => CARD_DEFINITIONS[action.cardId]?.category === "equipment"
+  ), false);
+  const noEquipmentEnd = noEquipment.roots.find((action) => action.type === "end");
+  assert.ok(Number.isFinite(
+    noEquipment.finalized.get(actionSearchKey(noEquipmentEnd)).transitionValue
+  ));
 });
 
 /*
@@ -40680,10 +41079,11 @@ test("UI·玩家面板：角色候选卡能量徽标位于生命左侧且直接�
     assert.match(markup, /class="candidate-stat-badge hp-chip"/, character.name);
     assert.doesNotMatch(markup, /能量 \d\/\d|初始能量|开局能量/, character.name);
   }
-  for (const id of ["spirit-medic", "ember-magus", "resonance-tuner"]) {
+  for (const id of ["spirit-medic", "ember-magus"]) {
     assert.match(candidateCardTemplate(byId[id], 0), />能量 1<\/span>/, id);
   }
-  for (const id of ["blade-walker", "oath-warden", "shade-agent", "trail-hunter", "fate-gambler"]) {
+  assert.match(candidateCardTemplate(byId["shade-agent"], 0), />能量 2<\/span>/, "shade-agent");
+  for (const id of ["blade-walker", "oath-warden", "trail-hunter", "fate-gambler", "resonance-tuner"]) {
     assert.match(candidateCardTemplate(byId[id], 0), />能量 0<\/span>/, id);
   }
 });

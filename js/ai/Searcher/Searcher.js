@@ -825,28 +825,33 @@ considerIncumbent 与 prune。
   无；返回新的完整候选记录。
 
   调用函数
-  Evaluator.endOpportunityPoints、composeTransitionValue、isValidFinalUtility。
+  Evaluator.finalizeEndTransition、composeTransitionValue、isValidFinalUtility。
 
   边界与不变量
-  Searcher 不定义数值公式；END 只能接收同 parent 的全部完整 sibling terms；
+  Searcher 不定义数值公式；END 只能接收同 parent 的全部完整 sibling action facts 与 terms；
   非法 Final Utility 是当前 candidate fault，不能登记为 complete candidate。
   */
   finalizeCandidate(candidate, siblingCandidates = []) {
-    const endOpportunityPoints = candidate.action?.type === "end"
-      ? this.evaluator.endOpportunityPoints(
-          candidate.baseTerms,
-          siblingCandidates.map((sibling) => ({
-            actionType:sibling.action?.type ?? null,
-            transitionTerms:sibling.baseTerms,
-            nextEnergyStateDelta:sibling.nextEnergyStateDelta
-          }))
-        )
-      : 0;
-    const transitionValue = this.evaluator.composeTransitionValue({
-      baseTransition:candidate.baseTransition,
-      frontierValue:candidate.frontierValue,
-      endOpportunityPoints
-    });
+    const siblingTransitionTerms = candidate.action?.type === "end"
+      ? siblingCandidates.map((sibling) => ({
+          actionType:sibling.action?.type ?? null,
+          cardId:sibling.action?.cardId ?? null,
+          transitionTerms:sibling.baseTerms,
+          nextEnergyStateDelta:sibling.nextEnergyStateDelta
+        }))
+      : [];
+    const transitionValue = candidate.action?.type === "end"
+      ? this.evaluator.finalizeEndTransition({
+          baseTransition:candidate.baseTransition,
+          frontierValue:candidate.frontierValue,
+          endTransitionTerms:candidate.baseTerms,
+          siblingTransitionTerms
+        })
+      : this.evaluator.composeTransitionValue({
+          baseTransition:candidate.baseTransition,
+          frontierValue:candidate.frontierValue,
+          endOpportunityPoints:0
+        });
     if (!isValidFinalUtility(transitionValue)) {
       throw new TypeError("Evaluator 必须返回合法 Final Utility");
     }

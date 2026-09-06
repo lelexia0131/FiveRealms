@@ -948,6 +948,9 @@ class MatchApplication {
       selectRuntimeEmergencyAction: (player, options) => (
         this.aiController.selectRuntimeEmergencyAction(player, options)
       ),
+      selectRuntimeActionCapClosureAction: (player, options) => (
+        this.aiController.selectRuntimeActionCapClosureAction(player, options)
+      ),
       playCard: (...args) => this.actionWorkflow.playCard(...args),
       useActiveSkill: (...args) => this.actionWorkflow.useActiveSkill(...args),
       getAiMaxActions: () => this.aiMaxActionsPerTurn,
