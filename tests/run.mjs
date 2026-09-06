@@ -43781,27 +43781,43 @@ test("UI·布局样式：上方 AI 思考提示出现时隐藏下方重复提示
   assert.ok(!promptClasses.values.has("is-hidden"));
 });
 
-test("UI·布局样式：装备槽空置和七种装备生成不同可访问 DOM", () => {
+test("UI·装备槽：动态状态保留在槽位且 Tooltip 只显示名称和固定描述", () => {
   const p = makePlayer("a", 0, "dawn");
   const empty = equipmentSlotTemplate(p, true);
   assert.match(empty, /is-empty|装备槽为空/);
-  for (const id of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) {
+  const stateLabels = {
+    energyDevice: "持续供能",
+    recycleDevice: "0/2",
+    defenseDevice: "待判定",
+    battleDevice: "强化中",
+    assaultMagazine: "0/2",
+    telescope: "观测中",
+    barrierDevice: "屏障展开"
+  };
+  for (const [id, stateLabel] of Object.entries(stateLabels)) {
     p.equipment = instance(id);
     const markup = equipmentSlotTemplate(p, true);
     assert.match(markup, new RegExp(CARD_DEFINITIONS[id].name));
     assert.match(markup, new RegExp(CARD_DEFINITIONS[id].description.slice(0, 6)));
+    assert.ok(markup.includes(`<span class="equipment-state">${stateLabel}</span>`));
+    assert.ok(
+      markup.includes(`<span class="equipment-tooltip" role="tooltip"><strong>${CARD_DEFINITIONS[id].name}</strong>${CARD_DEFINITIONS[id].description}</span>`)
+    );
     assert.notEqual(markup, empty);
   }
 });
 
-test("UI·备用弹夹：装备槽只读取权威额外次数并显示0/2到2/2", () => {
-  const player = makePlayer("assault-magazine-ui", 0, "dawn", "human");
-  player.equipment = instance("assaultMagazine");
-  for (const used of [0, 1, 2]) {
-    player.turnFlags.assaultMagazineUsed = used;
-    const markup = equipmentSlotTemplate(player, true);
-    assert.match(markup, new RegExp(`>${used}/2<`));
-    assert.doesNotMatch(markup, /连续供弹/);
+test("UI·装备槽：回收站和备用弹夹保留三档计数且 Tooltip 不显示状态", () => {
+  const player = makePlayer("counted-equipment-ui", 0, "dawn", "human");
+  for (const [definitionId, flagName] of [["recycleDevice", "recycleDeviceUses"], ["assaultMagazine", "assaultMagazineUsed"]]) {
+    player.equipment = instance(definitionId);
+    for (const used of [0, 1, 2]) {
+      player.turnFlags[flagName] = used;
+      const markup = equipmentSlotTemplate(player, true);
+      assert.ok(markup.includes(`<span class="equipment-state">${used}/2</span>`));
+      assert.ok(!markup.includes(`<em>${used}/2</em>`));
+      if (definitionId === "assaultMagazine") assert.doesNotMatch(markup, /连续供弹/);
+    }
   }
 });
 

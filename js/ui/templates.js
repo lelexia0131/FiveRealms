@@ -125,7 +125,7 @@ export function equipmentSlotTemplate(player, isHuman = false) {
     <img class="equipment-icon" src="${escapeHtml(equipment.icon || equipment.art)}" alt="" aria-hidden="true">
     <div class="equipment-copy"><strong>${escapeHtml(equipment.name)}</strong><small>${isHuman ? escapeHtml(equipment.description) : escapeHtml(summaries[equipment.definitionId] ?? equipment.description)}</small></div>
     <span class="equipment-state">${escapeHtml(stateLabel)}</span>
-    <span class="equipment-tooltip" role="tooltip"><strong>${escapeHtml(equipment.name)}</strong>${escapeHtml(equipment.description)}<em>${escapeHtml(stateLabel)}</em></span>
+    <span class="equipment-tooltip" role="tooltip"><strong>${escapeHtml(equipment.name)}</strong>${escapeHtml(equipment.description)}</span>
   </div>`;
 }
 
