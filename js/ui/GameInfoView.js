@@ -147,7 +147,14 @@ export class GameInfoView {
             <p>《五域纷争》是一款以阵营对抗、卡牌博弈与角色能力为核心的策略游戏。</p>
             <p>游戏将根据实际对局体验持续进行规则调整、平衡优化、Bug 修复与界面改进。</p>
             <p>如有对游戏玩法有疑问，可前往首页“入局说明”查看详细游玩介绍。</p>
-            <p>游戏最新安装包链接：http://179.255.156.84:8080/FiveRealms。</p>
+            <p>
+              游戏最新安装包链接：
+              <div class="game-info-links">
+              <a href="http://179.255.156.84:8080/FiveRealms" target="_blank" rel="noopener noreferrer">
+                http://179.255.156.84:8080/FiveRealms
+              </a>
+              </div>
+            </p>
             <p>推荐 Windows Powershell 命令直接下载：</p>
             <p>
               <code class="download-command">
