@@ -597,16 +597,13 @@ $$
 ## 7.4 泡泡机未来护盾价值
 
 `BubbleMachineFuture` 只表示当前装备泡泡机且当前护盾为 0 时，下一次自己的回合开始尚未兑现的第一层普通护盾状态价值。它直接复用上一节的 `ShieldValue` authority：
-
 $$
-\boxed{
 BubbleMachineFuture=
-I(alive)\times I(equipment=bubbleMachine)\times I(Shield=0)\times R_{equipment}
+I(alive)\times I(equipment=bubbleMachine)\times I(Shield=0)\times \\R_{equipment}
 \times[ShieldValue(1)-ShieldValue(0)]
-}
 $$
 
-其中 `R_{equipment}` 直接使用现有 `equipmentRetentionProbability`，并且只在本项乘一次；当前没有额外的公共 equipment-future retention 管线，因此不得再做第二次折损。该公式不引入泡泡机专属价值常数，也不复制 `Reserve`、`HPProtection` 或 `LifeProtection`。
+其中 `R_equipment` 直接使用现有 `equipmentRetentionProbability`，并且只在本项乘一次；当前没有额外的公共 equipment-future retention 管线，因此不得再做第二次折损。该公式不引入泡泡机专属价值常数，也不复制 `Reserve`、`HPProtection` 或 `LifeProtection`。
 
 当前已有护盾时：
 

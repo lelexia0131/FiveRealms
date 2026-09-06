@@ -56,6 +56,55 @@ export function createBubbleMachineTrigger(dependencies) {
 
   /*
   功能
+  处理正式回合开始时的泡泡机护盾触发与事实发布。
+
+  调用方
+  runtime 的 turnStart 事件监听器。
+
+  输入
+  turnStart 事件；player 为当前回合角色。
+
+  输出
+  返回 Promise；处理完成或不满足触发条件时解析为 undefined，下游异常保持传播。
+
+  读取状态
+  事件角色的存活、装备与护盾状态，以及当前 MatchState 的 gameId。
+
+  写入状态
+  通过 changeShield 增加事件角色的普通护盾。
+
+  调用函数
+  getState、canTriggerBubbleMachine、changeShield、emitEvent、isSessionValid、presentation.log。
+
+  边界与不变量
+  仅事件中的回合角色可触发；真实护盾形成后才发布既有 shieldGranted schema，并在发布完成后校验原 session 再记录日志。
+  */
+  async function handleTurnStart(event) {
+    const owner = event?.player;
+    if (!owner) return;
+    const state = runtime.getState();
+    const gameId = state.gameId;
+    if (!canTriggerBubbleMachine({
+      ownerAlive: owner.alive,
+      equipmentDefinitionId: owner.equipment?.definitionId ?? null,
+      currentShield: owner.shield
+    })) return;
+    const shieldBefore = owner.shield;
+    changeShield(state, owner, CARD_DEFINITIONS.bubbleMachine.turnShieldGain);
+    const actualAddedAmount = Math.max(0, owner.shield - shieldBefore);
+    if (actualAddedAmount <= 0) return;
+    await runtime.emitEvent("shieldGranted", {
+      source: owner,
+      target: owner,
+      actualAddedAmount,
+      effectDefinitionId: CARD_DEFINITIONS.bubbleMachine.definitionId
+    });
+    if (!runtime.isSessionValid(gameId)) return;
+    runtime.presentation.log(`${owner.name}的「泡泡机」触发，获得${actualAddedAmount}点护盾。`, "heal");
+  }
+
+  /*
+  功能
   注册 turnStart 泡泡机监听器。
 
   调用方
@@ -68,41 +117,19 @@ export function createBubbleMachineTrigger(dependencies) {
   无。
 
   读取状态
-  正式 turnStart 事件中的 player 与当前 MatchState。
+  无。
 
   写入状态
-  通过 changeShield 增加事件角色的普通护盾。
+  通过 onEvent 写入 runtime 的事件监听器注册表。
 
   调用函数
-  onEvent、canTriggerBubbleMachine、changeShield、emitEvent。
+  onEvent。
 
   边界与不变量
-  key 固定为 global:bubbleMachine；仅事件中的回合角色可触发，真实护盾形成后再发布既有 shieldGranted schema。
+  事件名固定为 turnStart，key 固定为 global:bubbleMachine，handler 固定为 handleTurnStart。
   */
   function register() {
-    runtime.onEvent("turnStart", "global:bubbleMachine", async (event) => {
-      const owner = event?.player;
-      if (!owner) return;
-      const state = runtime.getState();
-      const gameId = state.gameId;
-      if (!canTriggerBubbleMachine({
-        ownerAlive: owner.alive,
-        equipmentDefinitionId: owner.equipment?.definitionId ?? null,
-        currentShield: owner.shield
-      })) return;
-      const shieldBefore = owner.shield;
-      changeShield(state, owner, CARD_DEFINITIONS.bubbleMachine.turnShieldGain);
-      const actualAddedAmount = Math.max(0, owner.shield - shieldBefore);
-      if (actualAddedAmount <= 0) return;
-      await runtime.emitEvent("shieldGranted", {
-        source: owner,
-        target: owner,
-        actualAddedAmount,
-        effectDefinitionId: CARD_DEFINITIONS.bubbleMachine.definitionId
-      });
-      if (!runtime.isSessionValid(gameId)) return;
-      runtime.presentation.log(`${owner.name}的「泡泡机」触发，获得${actualAddedAmount}点护盾。`, "heal");
-    });
+    runtime.onEvent("turnStart", "global:bubbleMachine", handleTurnStart);
   }
 
   return Object.freeze({ register });
