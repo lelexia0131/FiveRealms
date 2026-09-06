@@ -88,7 +88,7 @@ const definitions = [
   { id: "damage_taken_twelve", tier: "legendary", hidden: false, title: "不死之身", description: "重击如雨，你的核心却始终没有熄灭。", criteria: "单场实际承受至少 12 点伤害。", teamScope: "both", order: 6, artwork: artwork("damage_taken_twelve") },
   { id: "card_creator", tier: "legendary", hidden: false, title: "造物主", description: "牌页在你手中汇成壮阔的构造，仿佛一座新世界。", criteria: "单场获取超过 100 张牌。", teamScope: "both", order: 7, artwork: artwork("card_creator") },
   { id: "battle_over_eighteen", tier: "legendary", hidden: false, title: "战斗~爽", description: "战线延伸到第十九道刻度，意志仍在燃烧。", criteria: "存活超过 18 回合。", teamScope: "both", order: 8, artwork: artwork("battle_over_eighteen") },
-  { id: "blazing_encampment", tier: "legendary", hidden: false, title: "火烧联营", description: "赤砂随风越过营墙，整片夜色被焚成黎明。", criteria: "使用炎术士一局游戏通过焚场造成10点伤害", teamScope: "both", order: 9, artwork: artwork("blazing_encampment") },
+  { id: "blazing_encampment", tier: "legendary", hidden: false, title: "火烧联营", description: "赤砂随风越过营墙，整片夜色被焚成黎明。", criteria: "使用炎术师一局游戏通过焚场造成10点伤害", teamScope: "both", order: 9, artwork: artwork("blazing_encampment") },
   { id: "swift_blade", tier: "legendary", hidden: false, title: "快刀斩乱麻", description: "刀光穿过纷乱的战线，尘埃尚未落定，胜负已分。", criteria: "使用刃行者一回合造成8点伤害", teamScope: "both", order: 10, artwork: artwork("swift_blade") },
   { id: "storm_scribe", tier: "hidden", hidden: true, title: "雷神", description: "闪电掠过敌阵，留下两道无法忽视的回声。", criteria: "单场主动打出至少 2 次闪电，且两次都实际对敌人造成闪电伤害。", teamScope: "both", order: 1, artwork: artwork("storm_scribe") },
   { id: "overflowing_grimoire", tier: "hidden", hidden: true, title: "收藏家", description: "你喜欢收藏奇珍异宝，成为了名副其实的大收藏家。", criteria: "自己的一个行动回合中，手牌数量曾不少于 10 张", teamScope: "both", order: 2, artwork: artwork("overflowing_grimoire") },
