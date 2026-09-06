@@ -1391,7 +1391,7 @@ statePointsToUtility(points) = points / HP_VALUE
 1 Final Utility = 1 HP 的状态价值
 ```
 
-`Evaluator.stateUtility` 汇总后仍返回原始 state points，保证 Search/CardValue consumer 不发生单位往返。换算只发生在 `Evaluator` 内明确的 Final Utility 边界：state delta、generic transition option、terminal held option 与 `projectOwnerLedger` 诊断。当前最终公式为：
+`Evaluator.stateUtility` 汇总后仍返回原始 state points，保证 Search/CardValue consumer 不发生单位往返。换算只发生在 `Evaluator` 内明确的 Final Utility 边界：state delta、generic transition option 与 `projectOwnerLedger` 诊断。当前最终公式为：
 
 ```text
 RawStateDelta           = StateValuePoints(after) - StateValuePoints(before)
@@ -1405,7 +1405,7 @@ BaseTransition
   + TransitionOptionUtility
 
 TerminalHeldOptionUtility
-  = terminal ? statePointsToUtility(heldRecycle) : 0
+  = 0
 
 EndOpportunityPoints
   = Pf + Ps + Pd
@@ -1438,7 +1438,7 @@ FinalTransition
   - (action is END ? statePointsToUtility(EndOpportunityPoints) : 0)
 ```
 
-`heldRecycle` 只使用当前 global turn 尚未消费的回收站额度；END 不得把已经用掉的额度按下一回合重置后再次计价。它仍只在 terminal 一次进入 Final Utility，且需要当前手牌中存在可用战术牌。
+回收站尚未兑现的功能价值已经进入所有玩家对称的普通 StateValue；旧 `heldRecycle` terminal 项已删除，避免同一剩余触发权同时经 state delta 与 terminal frontier 重复计价。`frontierResidual` 的攻击库存表示继续只作诊断，`terminalFrontierValue` 恒为零。
 
 `EligibleSibling` 必须来自同一 parent 的完整 canonical sibling 集合：END 确实把正 overflow 结算到零，且 sibling 与 END 具有相同的 `beforeOverflow`，并通过真实 HP/手牌变化满足 `afterOverflow < beforeOverflow`。单个 sibling 不必一次把全部 overflow 清零；只要仍能减少当前强制弃牌量，就代表 END 会丢失的真实继续行动机会。任一 canonical sibling 尚未完整物化时，END 不具备 Final Utility，也不能进入 incumbent/best-seen。`Pd` 仍只比较已物化 World 的 Raw State delta，不读取静态 CardValue、不按 overflow 张数乘固定常量，也不替代 Searcher 已有 continuation `valueScore` 累加。
 
@@ -1679,6 +1679,8 @@ STEP 5.8 不重新设计架构，只在既有 owner 内关闭 value placement、
 
 - `endOpportunityCost`、`economic`、`immediate` 的 production term 和 caller 均为零引用；`resolutionScale` / `effectResolutionScale` 仍为 Scout、MutualBenefit 等 transition option 服务。
 - `BaseTransition = StateDeltaValue + TransitionOptionValue`；Transfer 低于冻结门槛时仍返回 `-Infinity`。
+- `CardValue.staticCardAssetValue()` 唯一表达 `(BaseAiValue + RoleDelta) × RESOURCE_MATERIAL_SCALE`；Equipment StateValue、Destroy/Plunder static normalization、Leverage acquisition、Radar basic gain 与 Recycle future draw gain 使用该同尺度语义。独立 HandRoleDelta、Discard/Transfer policy、Search Prior 与 role synergy 不消费该 primitive，未被全局重标。
+- BattleDevice、RecycleDevice 与 AssaultMagazine 的动态 Future 由 StateValue 唯一拥有，不乘材料尺度；Destroy/Plunder 只通过 before/after RawStateDelta 看见其 denial/acquisition context，不存在装备名 special bonus。
 - SpyGap 由 Simulator 的逐次实际伤害信息事件与 Evaluator 的实际新增未知数量共同决定；已知牌和同一路径已查看槽位不重复计值，结果并入 generic transition option。
 - Searcher generic schema、candidate 与 final composition 中的 SpyGap 具体字段/参数仍为零；通用 adaptive-information API 保留，但当前窥隙不请求完整 hidden-world 专化。
 

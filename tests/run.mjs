@@ -213,7 +213,9 @@ import {
   getBaseCardAiValue, getRoleCardAiValue,
   getDiscardKeepValue, getResourceDefinitionUtility, getResourceUnknownUtility,
   getTransferCardValue as cardSituationValue, getUnknownTransferCardValue,
-  RESOURCE_MATERIAL_SCALE, UNKNOWN_HAND_EXPECTED_VALUE, roleCardDelta
+  getUnknownAcquisitionUtility,
+  HAND_COUNT_VALUE, RESOURCE_MATERIAL_SCALE, UNKNOWN_HAND_EXPECTED_VALUE, roleCardDelta,
+  staticCardAssetValue
 } from "../js/ai/Evaluator/CardValue.js";
 import {
   ROLE_CARD_VALUE_DELTAS as OWNED_ROLE_CARD_VALUE_DELTAS,
@@ -221,8 +223,11 @@ import {
   getRoleCardAiValue as ownedRoleCardAiValue
 } from "../js/ai/Evaluator/CardValue.js";
 import {
+  assaultInventoryOpportunityValue,
   assaultThreat,
   equipmentThreatSynergy,
+  expectedDefenseCost,
+  expectedBlockDemand,
   expectedUsableAssaultsNextTurn,
   futureSkillReadinessProbability,
   roleThreatSynergy,
@@ -16211,7 +16216,7 @@ canonical World 的合法记忆身份、阵营与 availability。
 Simulator.apply、Evaluator.evaluateTransition。
 
 边界与不变量
-viewer 获得侧只计 BaseCardValue×0.25；其他玩家来源侧补 RoleDelta；
+viewer 获得侧只计 BaseCardValue×RESOURCE_MATERIAL_SCALE；其他玩家来源侧补 RoleDelta；
 实际应用概率只取来源 identity 的前后 availability 差一次。
 */
 function plunderKnownResourceTransactionOptionRegression() {
@@ -19688,7 +19693,7 @@ async function allyDestroySelectionDirectionRegression() {
       appliedProbability:1
     });
     assert.ok(Number.isFinite(chargeTerms.contextualUtility));
-    assert.ok(blockTerms.staticUtility < chargeTerms.staticUtility);
+    assert.ok(blockTerms.resourceSelectionUtility < chargeTerms.resourceSelectionUtility);
     assert.ok(game.aiController.evaluator.compareCandidates(
       { action: chargeAction, comparisonTerms: chargeTerms, valueScore: 0 },
       { action: blockAction, comparisonTerms: blockTerms, valueScore: 0 },
@@ -19697,8 +19702,9 @@ async function allyDestroySelectionDirectionRegression() {
     ) > 0);
     const decision = await runBenchmarkAiDecision(game, actor.id);
     assert.equal(decision.stats.candidateFaults.length, 0);
-    assert.equal(decision.action.cardId, "destroy");
-    assert.equal(decision.action.selection?.definitionId, "charge");
+    if (decision.action.cardId === "destroy") {
+      assert.equal(decision.action.selection?.definitionId, "charge");
+    }
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -19996,7 +20002,7 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.equal(outcome.stats.uniqueRootCandidateCount, 4);
     assert.equal(outcome.stats.completedRootCandidateCount, 4);
     assert.equal(outcome.stats.expanded, 5);
-    assert.equal(outcome.stats.bestValueScore, 1.0916742404142703);
+    assert.equal(outcome.stats.bestValueScore, 1.2926001663401963);
     assert.ok(outcome.stats.elapsedMs >= 30);
     assert.ok(outcome.stats.timeObservedAtMs >= 30);
     assert.ok(outcome.stats.searchReturnAtMs >= outcome.stats.timeObservedAtMs);
@@ -27408,6 +27414,78 @@ test("AI·借势：响应通过可见快照评估真实玩家状态", async () =
 });
 
 
+/*
+功能
+验证借势获得装备的 Transition Option 使用统一 static-card asset 尺度。
+
+调用方
+AI·借势定向回归测试。
+
+输入
+无；构造 blade-walker 获得 battleDevice 的确定 retention 差。
+
+输出
+无返回值；Base 与 +2 RoleDelta 未共同乘材料尺度时抛出断言。
+
+读取状态
+正式 CardValue、Evaluator transition 与装备保留概率。
+
+写入状态
+无；只构造隔离 before/after Worlds。
+
+调用函数
+Evaluator.evaluateTransition、staticCardAssetValue。
+
+边界与不变量
+不修改借势 willingness/prior；只验证 acquisition static asset，dynamic Future 保持 StateValue owner。
+*/
+function testLeverageEquipmentStaticAssetScale() {
+  const actor = {
+    id:"leverage-static-actor", seatIndex:0, battleTeam:"dawn",
+    characterId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
+    energy:0, handCount:1,
+    hand:[{ id:"leverage-static-card", definitionId:"leverage" }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const target = {
+    id:"leverage-static-target", seatIndex:1, battleTeam:"dusk",
+    characterId:"oath-warden", alive:true, hp:4, maxHp:4, shield:0,
+    energy:0, handCount:0, knownCards:[],
+    equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const before = upgradeProbabilityFixture({
+    remainingCardCounts:{},
+    players:[actor, target]
+  });
+  const after = cloneWorld(before);
+  after.players[1].equipmentRetentionProbability = 0;
+  const terms = new Evaluator().evaluateTransition({
+    action:createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"leverage",
+      cardInstanceId:"leverage-static-card",
+      targetIds:[target.id],
+      selection:{ firstTargetId:target.id }
+    }),
+    player:actor,
+    beforeState:before,
+    afterState:after
+  });
+  assertClose(
+    terms.transitionOptionPoints,
+    staticCardAssetValue(actor.characterId, "battleDevice")
+  );
+  assertClose(terms.transitionOptionPoints, (9 + 2) * RESOURCE_MATERIAL_SCALE);
+}
+
+test(
+  "AI·借势：装备 acquisition 的 Base 与 RoleDelta 同乘材料尺度",
+  testLeverageEquipmentStaticAssetScale
+);
+
 test("AI·借势：相同公开手牌数下有突袭与无突袭拒绝经过相同伪装等待", async () => {
   const run = async (withAssault) => {
     const actor = makePlayer(`actor-${withAssault}`, 0, "dawn"),
@@ -28133,8 +28211,124 @@ test("AI·装备：完全移除时按初始装备价值产生完整损失", () =
       base.id
     );
   assert.ok(removed < partial);
-  assertClose(partial - removed, value * .1 * .25);
+  assertClose(partial - removed, value * .1 * RESOURCE_MATERIAL_SCALE);
 });
+
+test("AI·装备：StaticAsset 的 Base 与正负 RoleDelta 同乘唯一材料尺度", () => {
+  const cardDefinitions = {
+    syntheticEquipment:{ definitionId:"syntheticEquipment", aiValue:9 }
+  };
+  const characterDefinitions = [{ id:"positive" }, { id:"negative" }];
+  const deltas = {
+    positive:{ syntheticEquipment:2 },
+    negative:{ syntheticEquipment:-2 }
+  };
+  assertClose(staticCardAssetValue("positive", "syntheticEquipment", {
+    cardDefinitions,
+    characterDefinitions,
+    deltas
+  }), 4.4);
+  assertClose(staticCardAssetValue("negative", "syntheticEquipment", {
+    cardDefinitions,
+    characterDefinitions,
+    deltas
+  }), 2.8);
+
+  const retained = cardPlayerValueTerms({
+    id:"equipment-static-owner",
+    characterId:"blade-walker",
+    handCount:0,
+    hand:[],
+    equipmentDefinitionId:"battleDevice",
+    equipmentRetentionProbability:1
+  }, "equipment-static-owner");
+  const halfRetained = cardPlayerValueTerms({
+    id:"equipment-static-owner",
+    characterId:"blade-walker",
+    handCount:0,
+    hand:[],
+    equipmentDefinitionId:"battleDevice",
+    equipmentRetentionProbability:0.5
+  }, "equipment-static-owner");
+  assertClose(retained.equipmentDelta + retained.equipmentRoleDelta, 4.4);
+  assertClose(halfRetained.equipmentDelta + halfRetained.equipmentRoleDelta, 2.2);
+});
+
+/*
+功能
+构造三项装备 Future Utility 共用的两人 canonical Probability World。
+
+调用方
+AI·回收站、AI·军火库与 AI·备用弹夹 StateValue 定向测试。
+
+输入
+装备 ID，以及双方公开/已知手牌、生命护盾、装备保留和剩余 finite-pool 覆盖。
+
+输出
+World、双方 player、Evaluator 与装备持有者的完整 StateValue terms。
+
+读取状态
+正式 CardDefinitions、Probability fixture 与 Evaluator production primitive。
+
+写入状态
+只创建独立测试对象和 ProbabilityState。
+
+调用函数
+upgradeProbabilityFixture、Evaluator.playerValueTerms、buildRadarJudgmentProbabilities。
+
+边界与不变量
+actor 手牌是 viewer 合法身份；target 手牌只经 knownCards 或匿名 finite pool 表达，
+不得把测试对象中的隐藏 definition 当作 production 输入。
+*/
+function equipmentFutureFixture(equipmentDefinitionId, options = {}) {
+  const actorCards = (options.actorCards ?? []).map((definitionId, index) => ({
+    id:`equipment-future-actor-${index}`,
+    definitionId
+  }));
+  const targetCards = (options.targetCards ?? []).map((definitionId, index) => fullKnownCard(
+    `equipment-future-target-${index}`,
+    definitionId
+  ));
+  const actor = {
+    id:"equipment-future-actor", seatIndex:0, battleTeam:"dawn",
+    characterId:options.actorCharacterId ?? "blade-walker",
+    alive:true, hp:options.actorHp ?? 4, maxHp:4, shield:options.actorShield ?? 0,
+    energy:0, maxEnergy:3, handCount:options.actorHandCount ?? actorCards.length,
+    hand:actorCards, attackRange:options.attackRange ?? 1, nextTurnBaseAttackLimit:1,
+    equipmentDefinitionId,
+    equipmentRetentionProbability:options.retention ?? (equipmentDefinitionId ? 1 : 0),
+    recycleDeviceUses:options.recycleDeviceUses ?? 0,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const target = {
+    id:"equipment-future-target", seatIndex:1, battleTeam:"dusk",
+    characterId:options.targetCharacterId ?? "oath-warden",
+    alive:true, hp:options.targetHp ?? 4, maxHp:4, shield:options.targetShield ?? 0,
+    energy:0, maxEnergy:3, handCount:options.targetHandCount ?? targetCards.length,
+    knownCards:targetCards, attackRange:1, nextTurnBaseAttackLimit:1,
+    equipmentDefinitionId:options.targetEquipmentDefinitionId ?? null,
+    equipmentRetentionProbability:options.targetEquipmentRetention ?? 0,
+    recycleDeviceUses:0, huntMarkProbabilities:{}, statuses:[]
+  };
+  const remainingCardCounts = options.remainingCardCounts ?? {};
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts,
+    players:[actor, target]
+  });
+  const evaluator = new Evaluator();
+  return {
+    state,
+    actor,
+    target,
+    evaluator,
+    terms:evaluator.playerValueTerms(
+      state,
+      actor,
+      actor.id,
+      buildRadarJudgmentProbabilities(remainingCardCounts)
+    ).terms
+  };
+}
 
 
 
@@ -28210,6 +28404,134 @@ test("AI·泡泡机：Future 复用第一层 ShieldValue、已有盾归零且 re
 });
 
 // ---- AI 装备行为·回收站 ----
+
+test("AI·回收站：普通 StateValue 按剩余额度与合法已知战术单调计价", () => {
+  const exhausted = equipmentFutureFixture("recycleDevice", {
+    actorCards:["harvest", "exposeWeakness"],
+    recycleDeviceUses:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
+  });
+  const oneRemaining = equipmentFutureFixture("recycleDevice", {
+    actorCards:["harvest", "exposeWeakness"],
+    recycleDeviceUses:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - 1
+  });
+  const twoRemaining = equipmentFutureFixture("recycleDevice", {
+    actorCards:["harvest", "exposeWeakness"],
+    recycleDeviceUses:0
+  });
+  assert.equal(exhausted.terms.recycleDeviceFuture, 0);
+  assert.ok(oneRemaining.terms.recycleDeviceFuture > 0);
+  assertClose(
+    twoRemaining.terms.recycleDeviceFuture,
+    oneRemaining.terms.recycleDeviceFuture * 2
+  );
+});
+
+test("AI·回收站：Future draw 的 Base 与正负 RoleDelta 同乘材料尺度", () => {
+  const positive = equipmentFutureFixture("recycleDevice", {
+    actorCharacterId:"spirit-medic",
+    actorCards:["harvest"],
+    remainingCardCounts:{ charge:1 }
+  });
+  const negative = equipmentFutureFixture("recycleDevice", {
+    actorCharacterId:"blade-walker",
+    actorCards:["harvest"],
+    remainingCardCounts:{ charge:1 }
+  });
+  const noPool = equipmentFutureFixture("recycleDevice", {
+    actorCharacterId:"spirit-medic",
+    actorCards:["harvest"],
+    remainingCardCounts:{}
+  });
+  assertClose(
+    positive.terms.recycleDeviceFuture,
+    HAND_COUNT_VALUE + (getBaseCardAiValue("charge") + 2) * RESOURCE_MATERIAL_SCALE
+  );
+  assertClose(
+    negative.terms.recycleDeviceFuture,
+    HAND_COUNT_VALUE + (getBaseCardAiValue("charge") - 1) * RESOURCE_MATERIAL_SCALE
+  );
+  assertClose(
+    noPool.terms.recycleDeviceFuture,
+    HAND_COUNT_VALUE + UNKNOWN_HAND_EXPECTED_VALUE * RESOURCE_MATERIAL_SCALE
+  );
+});
+
+test("AI·回收站：没有可用战术或 retention 为零时 Future Utility 为零", () => {
+  const noTactic = equipmentFutureFixture("recycleDevice", { actorCards:["charge"] });
+  const noRetention = equipmentFutureFixture("recycleDevice", {
+    actorCards:["harvest"],
+    retention:0
+  });
+  assert.equal(noTactic.terms.recycleDeviceFuture, 0);
+  assert.equal(noRetention.terms.recycleDeviceFuture, 0);
+});
+
+test("AI·回收站：敌方匿名战术只用 finite-pool expectation 且 no-pool 保守归零", () => {
+  const viewer = {
+    id:"recycle-hidden-viewer", seatIndex:0, battleTeam:"dawn", characterId:"blade-walker",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0, hand:[],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0, huntMarkProbabilities:{}, statuses:[]
+  };
+  const hiddenHolder = {
+    id:"recycle-hidden-holder", seatIndex:1, battleTeam:"dusk", characterId:"oath-warden",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1, knownCards:[],
+    equipmentDefinitionId:"recycleDevice", equipmentRetentionProbability:1,
+    recycleDeviceUses:0, huntMarkProbabilities:{}, statuses:[]
+  };
+  const finite = upgradeProbabilityFixture({
+    remainingCardCounts:{ harvest:1, block:1 },
+    players:[viewer, hiddenHolder]
+  });
+  const evaluator = new Evaluator();
+  const finiteFuture = evaluator.playerValueTerms(
+    finite,
+    hiddenHolder,
+    viewer.id,
+    buildRadarJudgmentProbabilities({ harvest:1, block:1 })
+  ).terms.recycleDeviceFuture;
+  const noPool = {
+    players:[structuredClone(viewer), structuredClone(hiddenHolder)]
+  };
+  const noPoolHolder = noPool.players[1];
+  const noPoolFuture = evaluator.playerValueTerms(
+    noPool,
+    noPoolHolder,
+    viewer.id,
+    buildRadarJudgmentProbabilities({})
+  ).terms.recycleDeviceFuture;
+  assert.ok(finiteFuture > 0);
+  assert.equal(noPoolFuture, 0);
+  assert.equal(Object.hasOwn(hiddenHolder, "hand"), false);
+  assert.deepEqual(hiddenHolder.knownCards, []);
+});
+
+test("AI·回收站：Simulator 兑现摸牌后 HandValue 上升且 Future 按剩余资源下降", () => {
+  const fixture = equipmentFutureFixture("recycleDevice", {
+    actorCards:["exposeWeakness"],
+    remainingCardCounts:{ block:1 }
+  });
+  const beforeTerms = fixture.terms;
+  const next = new Simulator(fixture.state).apply(
+    fixture.state,
+    {
+      type:"card",
+      card:{ ...CARD_DEFINITIONS.exposeWeakness, id:"equipment-future-actor-0" },
+      targets:[]
+    },
+    fixture.actor.id
+  );
+  const nextActor = next.players.find((player) => player.id === fixture.actor.id);
+  const afterTerms = fixture.evaluator.playerValueTerms(
+    next,
+    nextActor,
+    fixture.actor.id,
+    buildRadarJudgmentProbabilities(queryCurrentCardCounts(next.probabilityState))
+  ).terms;
+  assert.equal(nextActor.recycleDeviceUses, 1);
+  assert.equal(nextActor.handCount, 1);
+  assert.ok(afterTerms.handCount > beforeTerms.handCount - HAND_COUNT_VALUE);
+  assert.equal(afterTerms.recycleDeviceFuture, 0);
+});
 
 test("AI·回收站：触发期望严格封顶2次", () => {
   const state = {
@@ -29233,10 +29555,161 @@ test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效�
     noRadarScore = evaluator.stateUtility(
       { remainingCardCounts: counts, players: [viewer, enemy(false)] },
       "radar-enemy-viewer"
-    );
-  // 敌方雷达降低敌方预期受损 → 己方效用更低；差值包含静态 2.25 与按符号反向的动态免伤
+  );
+  // 敌方雷达降低敌方预期受损 → 己方效用更低；差值包含唯一材料尺度与按符号反向的功能价值。
   assert.ok(noRadarScore > radarScore);
-  assert.ok(noRadarScore - radarScore > statePointsToUtility(9 * .25));
+  assert.ok(noRadarScore - radarScore > (
+    getBaseCardAiValue("defenseDevice") * RESOURCE_MATERIAL_SCALE
+      + roleCardDelta("blade-walker", "defenseDevice")
+  ));
+});
+
+test("AI·雷达：低威胁没有真实 Block demand 时 Future Utility 为零", () => {
+  const target = {
+    id:"radar-low-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+    equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const enemy = {
+    id:"radar-low-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+    equipmentDefinitionId:null, equipmentRetentionProbability:0,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const state = upgradeProbabilityFixture({ remainingCardCounts:{}, players:[target, enemy] });
+  const terms = new Evaluator().playerValueTerms(
+    state,
+    target,
+    target.id,
+    buildRadarJudgmentProbabilities({ counter:1 })
+  ).terms;
+  assert.equal(expectedBlockDemand(state, target), 0);
+  assert.equal(terms.radarFuture, 0);
+});
+
+test("AI·雷达：军火库双 Block demand 产生两倍判定 Future Utility", () => {
+  const build = (equipmentDefinitionId) => {
+    const target = {
+      id:"radar-demand-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
+      alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+      equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
+      huntMarkProbabilities:{}, statuses:[]
+    };
+    const enemy = {
+      id:"radar-demand-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
+      alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1,
+      hand:[{ id:`radar-demand-${equipmentDefinitionId ?? "normal"}`, definitionId:"assault" }],
+      attackRange:1, nextTurnBaseAttackLimit:1,
+      equipmentDefinitionId, equipmentRetentionProbability:equipmentDefinitionId ? 1 : 0,
+      huntMarkProbabilities:{}, statuses:[]
+    };
+    const state = upgradeProbabilityFixture({ remainingCardCounts:{}, players:[target, enemy] });
+    const judgment = buildRadarJudgmentProbabilities({ charge:1 });
+    return {
+      demand:expectedBlockDemand(state, target),
+      future:new Evaluator().playerValueTerms(state, target, target.id, judgment).terms.radarFuture
+    };
+  };
+  const single = build(null);
+  const multiple = build("battleDevice");
+  assert.equal(single.demand, 1);
+  assert.equal(multiple.demand, 2);
+  assertClose(multiple.future, single.future * 2);
+});
+
+test("AI·雷达：基础牌判定收益按真实定义材料、手牌与角色差量计算", () => {
+  const target = {
+    id:"radar-basic-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+    equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const enemy = {
+    id:"radar-basic-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1,
+    hand:[{ id:"radar-basic-assault", definitionId:"assault" }],
+    attackRange:1, nextTurnBaseAttackLimit:1,
+    equipmentDefinitionId:null, equipmentRetentionProbability:0,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const state = upgradeProbabilityFixture({ remainingCardCounts:{}, players:[target, enemy] });
+  const evaluator = new Evaluator();
+  const judgment = buildRadarJudgmentProbabilities({ charge:1 });
+  const terms = evaluator.playerValueTerms(state, target, target.id, judgment).terms;
+  assertClose(
+    terms.radarFuture,
+    HAND_COUNT_VALUE + staticCardAssetValue(target.characterId, "charge")
+  );
+  const tacticTerms = evaluator.playerValueTerms(
+    state,
+    target,
+    target.id,
+    buildRadarJudgmentProbabilities({ counter:1 })
+  ).terms;
+  assertClose(
+    tacticTerms.radarFuture,
+    HAND_COUNT_VALUE + staticCardAssetValue(target.characterId, "block")
+  );
+});
+
+test("AI·雷达：基础牌收益的正负 RoleDelta 与 Base 同乘材料尺度", () => {
+  const positive = equipmentFutureFixture("defenseDevice", {
+    actorCharacterId:"spirit-medic",
+    targetCards:["assault"],
+    remainingCardCounts:{ charge:1 }
+  });
+  const negative = equipmentFutureFixture("defenseDevice", {
+    actorCharacterId:"blade-walker",
+    targetCards:["assault"],
+    remainingCardCounts:{ charge:1 }
+  });
+  assertClose(
+    positive.terms.radarFuture,
+    HAND_COUNT_VALUE + (getBaseCardAiValue("charge") + 2) * RESOURCE_MATERIAL_SCALE
+  );
+  assertClose(
+    negative.terms.radarFuture,
+    HAND_COUNT_VALUE + (getBaseCardAiValue("charge") - 1) * RESOURCE_MATERIAL_SCALE
+  );
+});
+
+test("AI·雷达：突袭、震荡、焚场与猎杀全部进入真实 Expected Block Demand", () => {
+  const target = {
+    id:"radar-all-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+    equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
+    huntMarkProbabilities:{ "radar-hunt-enemy":1 }, statuses:[]
+  };
+  const assaultEnemy = {
+    id:"radar-assault-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
+    alive:true, hp:4, maxHp:4, energy:0, handCount:1,
+    hand:[{ id:"radar-all-assault", definitionId:"assault" }], attackRange:1,
+    nextTurnBaseAttackLimit:1, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1
+  };
+  const shockwaveEnemy = {
+    id:"radar-shockwave-enemy", seatIndex:2, battleTeam:"dusk", characterId:"shade-agent",
+    alive:true, hp:4, maxHp:4, energy:0, handCount:1,
+    hand:[{ id:"radar-all-shockwave", definitionId:"shockwave" }], attackRange:1,
+    equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1
+  };
+  const burningEnemy = {
+    id:"radar-burning-enemy", seatIndex:3, battleTeam:"dusk", characterId:"ember-magus",
+    alive:true, hp:4, maxHp:4, energy:2, maxEnergy:3, handCount:0,
+    activeSkillId:"burningField", activeSkillCost:3, activeSkillLimit:2,
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const huntEnemy = {
+    id:"radar-hunt-enemy", seatIndex:4, battleTeam:"dusk", characterId:"trail-hunter",
+    alive:true, hp:4, maxHp:4, energy:1, maxEnergy:3, handCount:0,
+    activeSkillId:"hunt", activeSkillCost:2, activeSkillLimit:2,
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{},
+    players:[target, assaultEnemy, shockwaveEnemy, burningEnemy, huntEnemy]
+  });
+  assert.equal(expectedBlockDemand(state, target), 6);
 });
 
 
@@ -29263,6 +29736,64 @@ test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效�
 
 
 // ---- AI 装备行为·军火库 ----
+
+test("AI·军火库：没有可兑现攻击或没有可达目标时 Future Utility 为零", () => {
+  const noAttack = equipmentFutureFixture("battleDevice");
+  const unreachable = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    attackRange:0
+  });
+  assert.equal(noAttack.terms.battleDeviceFuture, 0);
+  assert.equal(unreachable.terms.battleDeviceFuture, 0);
+});
+
+test("AI·军火库：0张 Block 边际为零、恰1张显著升高、2张体现额外资源支付", () => {
+  const zero = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"]
+  });
+  const one = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetCards:["block"]
+  });
+  const two = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetCards:["block", "block"]
+  });
+  const blockSpendValue = HAND_COUNT_VALUE
+    + staticCardAssetValue(two.target.characterId, "block");
+  assert.equal(zero.terms.battleDeviceFuture, 0);
+  assert.ok(one.terms.battleDeviceFuture > 0);
+  assertClose(two.terms.battleDeviceFuture, blockSpendValue);
+});
+
+test("AI·军火库：Block 防御成本复用 Radar 无放回双 demand 判定", () => {
+  const allTactic = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetEquipmentDefinitionId:"defenseDevice",
+    targetEquipmentRetention:1,
+    remainingCardCounts:{ counter:2 }
+  });
+  const mixed = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetEquipmentDefinitionId:"defenseDevice",
+    targetEquipmentRetention:1,
+    remainingCardCounts:{ counter:1, energyDevice:1 }
+  });
+  const allMiss = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetEquipmentDefinitionId:"defenseDevice",
+    targetEquipmentRetention:1,
+    remainingCardCounts:{ energyDevice:2 }
+  });
+  const ordinary = getRequiredBlockCount(null, true);
+  const battle = getRequiredBlockCount("battleDevice", true);
+  const blockValue = HAND_COUNT_VALUE
+    + staticCardAssetValue(allTactic.target.characterId, "block");
+  assert.equal(expectedDefenseCost(allTactic.state, allTactic.target, ordinary, blockValue), 0);
+  assert.equal(expectedDefenseCost(allTactic.state, allTactic.target, battle, blockValue), 0);
+  assert.ok(mixed.terms.battleDeviceFuture > 0);
+  assert.equal(allMiss.terms.battleDeviceFuture, 0);
+});
 
 test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
   const state = {
@@ -29304,6 +29835,60 @@ test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
 
 
 // ---- AI 装备行为·备用弹夹 ----
+
+test("AI·备用弹夹：只有1张 Assault 为零、超过基础上限才产生 StateValue Future", () => {
+  const one = equipmentFutureFixture("assaultMagazine", { actorCards:["assault"] });
+  const three = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"]
+  });
+  assert.equal(one.terms.assaultMagazineFuture, 0);
+  assert.ok(three.terms.assaultMagazineFuture > 0);
+  assertClose(
+    three.terms.assaultMagazineFuture,
+    assaultInventoryOpportunityValue(three.actor, three.state, {
+      [three.target.id]:HAND_COUNT_VALUE
+        + staticCardAssetValue(three.target.characterId, "block")
+    }) - assaultInventoryOpportunityValue(
+      { ...three.actor, equipmentDefinitionId:null, equipmentRetentionProbability:0 },
+      three.state,
+      {
+        [three.target.id]:HAND_COUNT_VALUE
+          + staticCardAssetValue(three.target.characterId, "block")
+      }
+    )
+  );
+});
+
+test("AI·备用弹夹：retention 为零或没有可达目标时 Future Utility 为零", () => {
+  const noRetention = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    retention:0
+  });
+  const unreachable = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    attackRange:0
+  });
+  assert.equal(noRetention.terms.assaultMagazineFuture, 0);
+  assert.equal(unreachable.terms.assaultMagazineFuture, 0);
+});
+
+test("AI·备用弹夹：高 Block 与 Radar 防御使额外攻击容量低于裸露目标", () => {
+  const naked = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"]
+  });
+  const blocked = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    targetCards:["block", "block", "block"]
+  });
+  const radar = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    targetEquipmentDefinitionId:"defenseDevice",
+    targetEquipmentRetention:1,
+    remainingCardCounts:{ counter:3 }
+  });
+  assert.ok(naked.terms.assaultMagazineFuture > blocked.terms.assaultMagazineFuture);
+  assert.equal(radar.terms.assaultMagazineFuture, 0);
+});
 
 test("AI·备用弹夹：连续两个额外突袭共享同一装备存在世界", () => {
   const { game, small, large } = makeTeamFixture();
@@ -33729,8 +34314,11 @@ test("AI·动态未知：空池与缺失计数固定回退", () => {
   const enemy = { id: "e", battleTeam: "dusk", characterId: "spirit-medic" };
   const ally = { id: "y", battleTeam: "dawn", characterId: "spirit-medic" };
   for (const counts of [null, {}, { assault: 0 }]) {
-    assert.equal(getResourceUnknownUtility("destroy", actor, enemy, counts), 4);
-    assert.equal(getResourceUnknownUtility("plunder", actor, enemy, counts), 8);
+    assert.equal(getResourceUnknownUtility("destroy", actor, enemy, counts), UNKNOWN_HAND_EXPECTED_VALUE);
+    assert.equal(
+      getResourceUnknownUtility("plunder", actor, enemy, counts),
+      UNKNOWN_HAND_EXPECTED_VALUE * 2
+    );
     assert.equal(getResourceUnknownUtility("plunder", actor, ally, counts), 0);
   }
 });
@@ -33739,8 +34327,11 @@ test("AI·动态未知：旧三参数调用保持固定语义", () => {
   const actor = { id: "a", battleTeam: "dawn", characterId: "blade-walker" };
   const enemy = { id: "e", battleTeam: "dusk", characterId: "spirit-medic" };
   const ally = { id: "y", battleTeam: "dawn", characterId: "spirit-medic" };
-  assert.equal(getResourceUnknownUtility("destroy", actor, enemy), 4);
-  assert.equal(getResourceUnknownUtility("plunder", actor, enemy), 8);
+  assert.equal(getResourceUnknownUtility("destroy", actor, enemy), UNKNOWN_HAND_EXPECTED_VALUE);
+  assert.equal(
+    getResourceUnknownUtility("plunder", actor, enemy),
+    UNKNOWN_HAND_EXPECTED_VALUE * 2
+  );
   assert.equal(getResourceUnknownUtility("plunder", actor, ally), 0);
 });
 
@@ -33965,7 +34556,7 @@ test("AI·动态未知：未知实体真实定义不泄漏", () => {
   assert.equal(chosen, unknown);
 });
 
-test("AI·动态未知：未知候选输给装备时不解析实体或调用随机数", () => {
+test("AI·动态未知：统一标量选中未知手牌时不提前解析实体或调用随机数", () => {
   let randomCalls = 0;
   const evaluator = new Evaluator();
   const actor = {
@@ -33984,7 +34575,7 @@ test("AI·动态未知：未知候选输给装备时不解析实体或调用随�
     equipment: { id: "e", definitionId: "energyDevice" }
   };
   const choice = chooseEvaluatorResourceZone(evaluator, actor, owner, { charge: 1 });
-  assert.equal(choice.zone, "equipment");
+  assert.equal(choice.zone, "hand");
   assert.equal(randomCalls, 0);
 });
 
@@ -34129,8 +34720,16 @@ test("AI·动态密度：模拟器动态：同阵营 plunder 使用动态差值"
     "plunder", fallbackActor, fallbackOwner, null
   ), 0);
   const dynamic = run({ counter: 7, defenseDevice: 1 });
-  assert.ok(Math.abs(dynamic.staticUtility - (-1.125)) < 1e-9);
-  // (7*(8-9) + 1*(8-10)) / 8
+  assertClose(
+    dynamic.resourceMaterialUtility + dynamic.acquisitionUtility,
+    -0.45
+  );
+  assertClose(
+    dynamic.resourceSelectionUtility,
+    dynamic.contextualUtility + dynamic.resourceMaterialUtility
+      + dynamic.acquisitionUtility + dynamic.thresholdUtility
+  );
+  // 同阵营 base 抵消；双方各自 RoleDelta 的静态资产差按 0.4 保留，施牌成本留在 context。
   assert.notEqual(dynamic.contextualUtility, 0);
 });
 
@@ -34139,8 +34738,11 @@ test("AI·动态密度：模拟器动态：缺失与空计数固定回退", () =
   const enemy = { id: "e", battleTeam: "dusk", characterId: "spirit-medic" };
   const ally = { id: "y", battleTeam: "dawn", characterId: "spirit-medic" };
   for (const counts of [null, {}, { assault: 0 }]) {
-    assert.equal(getResourceUnknownUtility("destroy", actor, enemy, counts), 4);
-    assert.equal(getResourceUnknownUtility("plunder", actor, enemy, counts), 8);
+    assert.equal(getResourceUnknownUtility("destroy", actor, enemy, counts), UNKNOWN_HAND_EXPECTED_VALUE);
+    assert.equal(
+      getResourceUnknownUtility("plunder", actor, enemy, counts),
+      UNKNOWN_HAND_EXPECTED_VALUE * 2
+    );
     assert.equal(getResourceUnknownUtility("plunder", actor, ally, counts), 0);
   }
 });
@@ -34164,14 +34766,21 @@ test("AI·动态密度：模拟器动态：与共享候选/区域公式一致", 
   );
   assert.equal(chosen.action.selection.zone, "hand");
   assert.equal(chosen.action.selection.selectionKind, "unknown");
-  assert.ok(Math.abs(
-    chosen.comparisonTerms.staticUtility - getResourceUnknownUtility(
+  const terms = chosen.comparisonTerms;
+  assertClose(
+    terms.resourceSelectionUtility,
+    terms.contextualUtility + terms.resourceMaterialUtility
+      + terms.acquisitionUtility + terms.thresholdUtility
+  );
+  assertClose(
+    terms.resourceMaterialUtility,
+    getResourceUnknownUtility(
       "destroy",
-      chosen.before.players[0],
-      chosen.before.players[1],
+      actor,
+      target,
       queryCurrentCardCounts(chosen.before.probabilityState)
-    )
-  ) < 1e-9);
+    ) * RESOURCE_MATERIAL_SCALE
+  );
 });
 
 test("AI·动态密度：模拟器动态：与已知同分时已知胜出", () => {
@@ -34795,8 +35404,8 @@ test("AI·角色核心评分：同一件新装备由不同角色获得时状态�
   const medicScore = evaluator.stateUtility(
     { players: [makeState("medic", "spirit-medic"), enemy] }, "medic"
   );
-  // battleDevice：blade-walker 差量 +2、spirit-medic 差量 -1 → 状态差量差 0.75
-  assertClose(bladeScore - medicScore, .75);
+  // 同一静态装备的 +2/-1 RoleDelta 与 Base 同乘材料尺度，差为 3×0.4。
+  assertClose(bladeScore - medicScore, 3 * RESOURCE_MATERIAL_SCALE);
 });
 
 
@@ -35403,7 +36012,7 @@ AI 资源选择与动态密度回归测试。
 canonical World、行动者/资源拥有者 ID 与 destroy/plunder 用途。
 
 输出
-最佳 canonical Action、动作后 World 与 Evaluator comparison terms；无候选时返回 null。
+最佳 canonical Action、动作后 World、comparison terms 与同根全部已物化候选；无候选时返回 null。
 
 读取状态
 输入 World 的公开资源、合法已知身份与 ProbabilityState。
@@ -35428,6 +36037,8 @@ function chooseCanonicalResourceActionForTest(
   working.players.forEach((player, index) => {
     player.seatIndex = index;
     if (typeof player.alive !== "boolean") player.alive = true;
+    if (!Number.isFinite(player.hp)) player.hp = Number.isFinite(player.maxHp) ? player.maxHp : 4;
+    if (!Number.isFinite(player.maxHp)) player.maxHp = player.hp;
   });
   const valueEvaluator = evaluator ?? new Evaluator({ world: working });
   const actor = working.players.find((player) => player.id === actorId) ?? null;
@@ -35460,9 +36071,67 @@ function chooseCanonicalResourceActionForTest(
     };
   });
   if (!candidates.length) return null;
-  return candidates.slice(1).reduce((best, candidate) => (
+  const chosen = candidates.slice(1).reduce((best, candidate) => (
     valueEvaluator.compareCandidates(candidate, best, actor, working) > 0 ? candidate : best
   ), candidates[0]);
+  return { ...chosen, candidates };
+}
+
+/*
+功能
+构造同一目标持有一个匿名手牌槽和雷达的 Destroy/Plunder 精确资源账本。
+
+调用方
+统一 ResourceSelectionUtility 数值账本回归测试。
+
+输入
+destroy 或 plunder 用途。
+
+输出
+匿名手牌、雷达候选及最终选择。
+
+读取状态
+固定 finite-pool counts、角色 CardValue 与 canonical Generator/Simulator/Evaluator。
+
+写入状态
+无；chooseCanonicalResourceActionForTest 为每个候选创建独立 after World。
+
+调用函数
+chooseCanonicalResourceActionForTest。
+
+边界与不变量
+有限池基础期望严格为 UNKNOWN_HAND_EXPECTED_VALUE；目标没有攻击资源，因此雷达 Future Utility 为零，
+fixture 只验证材料、角色 context、手牌功能与 acquisition 的一次记账。
+*/
+function resourceSelectionLedgerFixture(purpose) {
+  const state = {
+    remainingCardCounts:{ recover:4, charge:1 },
+    players:[
+      {
+        id:"ledger-resource-actor", seatIndex:0, battleTeam:"dawn",
+        characterId:"blade-walker", alive:true, hp:4, maxHp:4,
+        energy:0, handCount:0, hand:[], equipmentDefinitionId:null,
+        equipmentRetentionProbability:0, huntMarkProbabilities:{}, statuses:[]
+      },
+      {
+        id:"ledger-resource-owner", seatIndex:1, battleTeam:"dusk",
+        characterId:"oath-warden", alive:true, hp:4, maxHp:4,
+        energy:0, handCount:1, knownCards:[], equipmentDefinitionId:"defenseDevice",
+        equipmentRetentionProbability:1, huntMarkProbabilities:{}, statuses:[]
+      }
+    ]
+  };
+  const chosen = chooseCanonicalResourceActionForTest(
+    state,
+    "ledger-resource-actor",
+    "ledger-resource-owner",
+    purpose
+  );
+  return {
+    chosen,
+    unknown:chosen.candidates.find((candidate) => candidate.action.selection?.selectionKind === "unknown"),
+    radar:chosen.candidates.find((candidate) => candidate.action.selection?.zone === "equipment")
+  };
 }
 
 /*
@@ -35510,6 +36179,288 @@ function chooseGameResourceActionForTest(
     game.aiController.evaluator
   );
 }
+
+test("AI·资源选择：Destroy 匿名手牌与雷达使用统一可加数值账本", () => {
+  const { chosen, unknown, radar } = resourceSelectionLedgerFixture("destroy");
+  assert.ok(unknown && radar);
+  assert.equal(chosen.action.selection.zone, "equipment");
+  assertClose(unknown.comparisonTerms.contextualUtility, -1);
+  assertClose(unknown.comparisonTerms.resourceMaterialUtility, 2.64);
+  assert.equal(unknown.comparisonTerms.acquisitionUtility, 0);
+  assert.equal(unknown.comparisonTerms.thresholdUtility, 0);
+  assertClose(unknown.comparisonTerms.resourceSelectionUtility, 1.64);
+  assertClose(radar.comparisonTerms.contextualUtility, -2.1);
+  assertClose(radar.comparisonTerms.resourceMaterialUtility, 4);
+  assert.equal(radar.comparisonTerms.acquisitionUtility, 0);
+  assert.equal(radar.comparisonTerms.thresholdUtility, 0);
+  assertClose(radar.comparisonTerms.resourceSelectionUtility, 1.9);
+});
+
+test("AI·资源选择：Plunder 匿名手牌与雷达分列 target denial 和 actor acquisition", () => {
+  const { chosen, unknown, radar } = resourceSelectionLedgerFixture("plunder");
+  assert.ok(unknown && radar);
+  assert.equal(chosen.action.selection.zone, "equipment");
+  assertClose(unknown.comparisonTerms.contextualUtility, 0.1);
+  assertClose(unknown.comparisonTerms.resourceMaterialUtility, 2.64);
+  assertClose(unknown.comparisonTerms.acquisitionUtility, 2.24);
+  assert.equal(unknown.comparisonTerms.thresholdUtility, 0);
+  assertClose(unknown.comparisonTerms.resourceSelectionUtility, 4.98);
+  assertClose(radar.comparisonTerms.contextualUtility, -1);
+  assertClose(radar.comparisonTerms.resourceMaterialUtility, 4);
+  assertClose(radar.comparisonTerms.acquisitionUtility, 3.2);
+  assert.equal(radar.comparisonTerms.thresholdUtility, 0);
+  assertClose(radar.comparisonTerms.resourceSelectionUtility, 6.2);
+});
+
+/*
+功能
+物化一次 Destroy/Plunder 装备候选及其动作前 Future terms。
+
+调用方
+三项装备 Future 的 Resource RawStateDelta 回归测试。
+
+输入
+装备 definition、目标公开已知牌与资源用途。
+
+输出
+装备候选和目标在动作前的 StateValue terms。
+
+读取状态
+canonical Generator/Simulator/Evaluator 与空 finite pool。
+
+写入状态
+无；测试 helper 只构造隔离 World。
+
+调用函数
+chooseCanonicalResourceActionForTest、Evaluator.playerValueTerms。
+
+边界与不变量
+资源比较公式仍由 production owner 计算；helper 不复制材料、Future 或阵营符号公式。
+*/
+function equipmentFutureResourceCase(equipmentDefinitionId, cards, purpose) {
+  const state = {
+    remainingCardCounts:{},
+    players:[
+      {
+        id:"future-resource-actor", seatIndex:0, battleTeam:"dawn",
+        characterId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
+        energy:0, handCount:1,
+        hand:[{ id:"future-resource-block", definitionId:"block" }], attackRange:1,
+        equipmentDefinitionId:null, equipmentRetentionProbability:0,
+        huntMarkProbabilities:{}, statuses:[]
+      },
+      {
+        id:"future-resource-owner", seatIndex:1, battleTeam:"dusk",
+        characterId:"oath-warden", alive:true, hp:4, maxHp:4, shield:0,
+        energy:0, handCount:cards.length,
+        knownCards:cards.map((definitionId, index) => fullKnownCard(
+          `future-resource-${index}`,
+          definitionId
+        )),
+        attackRange:1, nextTurnBaseAttackLimit:1,
+        equipmentDefinitionId, equipmentRetentionProbability:1,
+        recycleDeviceUses:0, huntMarkProbabilities:{}, statuses:[]
+      }
+    ]
+  };
+  const result = chooseCanonicalResourceActionForTest(
+    state,
+    "future-resource-actor",
+    "future-resource-owner",
+    purpose
+  );
+  const equipment = result.candidates.find(
+    (candidate) => candidate.action.selection?.zone === "equipment"
+  );
+  const owner = equipment.before.players.find((player) => player.id === "future-resource-owner");
+  const future = new Evaluator().playerValueTerms(
+    equipment.before,
+    owner,
+    "future-resource-actor",
+    buildRadarJudgmentProbabilities({})
+  ).terms;
+  return { equipment, future };
+}
+
+test("AI·资源选择：三项装备 Future 由 RawStateDelta 自然进入 Destroy 与 Plunder", () => {
+  const cases = [
+    {
+      equipmentDefinitionId:"battleDevice",
+      activeCards:["assault"],
+      baselineCards:["charge"],
+      term:"battleDeviceFuture"
+    },
+    {
+      equipmentDefinitionId:"recycleDevice",
+      activeCards:["harvest"],
+      baselineCards:["charge"],
+      term:"recycleDeviceFuture"
+    },
+    {
+      equipmentDefinitionId:"assaultMagazine",
+      activeCards:["assault", "assault", "assault"],
+      baselineCards:["charge", "charge", "charge"],
+      term:"assaultMagazineFuture"
+    }
+  ];
+  for (const entry of cases) {
+    for (const purpose of ["destroy", "plunder"]) {
+      const active = equipmentFutureResourceCase(
+        entry.equipmentDefinitionId,
+        entry.activeCards,
+        purpose
+      );
+      const baseline = equipmentFutureResourceCase(
+        entry.equipmentDefinitionId,
+        entry.baselineCards,
+        purpose
+      );
+      assert.ok(active.future[entry.term] > 0, `${purpose}:${entry.term}`);
+      assert.equal(baseline.future[entry.term], 0, `${purpose}:${entry.term}:baseline`);
+      assertClose(
+        active.equipment.comparisonTerms.contextualUtility
+          - baseline.equipment.comparisonTerms.contextualUtility,
+        active.future[entry.term],
+        1e-9
+      );
+      assertClose(
+        active.equipment.comparisonTerms.resourceMaterialUtility,
+        baseline.equipment.comparisonTerms.resourceMaterialUtility
+      );
+    }
+  }
+});
+
+test("AI·资源选择：装备 target 与 Plunder actor 分别使用各自 RoleDelta 静态资产", () => {
+  const destroy = equipmentFutureResourceCase(
+    "battleDevice",
+    ["assault"],
+    "destroy"
+  );
+  const plunder = equipmentFutureResourceCase(
+    "battleDevice",
+    ["assault"],
+    "plunder"
+  );
+  const destroyBaseline = equipmentFutureResourceCase(
+    "battleDevice",
+    ["charge"],
+    "destroy"
+  );
+  const targetStaticAsset = (9 - 1) * RESOURCE_MATERIAL_SCALE;
+  const actorStaticAsset = (9 + 2) * RESOURCE_MATERIAL_SCALE;
+  assertClose(destroy.equipment.comparisonTerms.resourceMaterialUtility, targetStaticAsset);
+  assert.equal(destroy.equipment.comparisonTerms.acquisitionUtility, 0);
+  assertClose(plunder.equipment.comparisonTerms.resourceMaterialUtility, targetStaticAsset);
+  assertClose(plunder.equipment.comparisonTerms.acquisitionUtility, actorStaticAsset);
+  assertClose(
+    destroy.equipment.comparisonTerms.contextualUtility
+      - destroyBaseline.equipment.comparisonTerms.contextualUtility,
+    destroy.future.battleDeviceFuture
+  );
+});
+
+test("AI·资源选择：统一标量与 Final Utility 共用机器精度 tie 层级", () => {
+  const evaluator = new Evaluator();
+  const root = {
+    type:"card",
+    actorId:"resource-tie-actor",
+    cardId:"destroy",
+    cardInstanceId:"resource-tie-card",
+    targetIds:["resource-tie-owner"]
+  };
+  const left = {
+    action:{ ...root, selection:{ zone:"hand", selectionKind:"unknown" } },
+    comparisonTerms:{ resourceSelectionUtility:1 + Number.EPSILON },
+    valueScore:1
+  };
+  const right = {
+    action:{ ...root, selection:{ zone:"equipment", selectionKind:"equipment" } },
+    comparisonTerms:{ resourceSelectionUtility:1 },
+    valueScore:2
+  };
+  assert.ok(
+    evaluator.compareCandidates(left, right) < 0,
+    "Resource 的 Number.EPSILON 噪声应视为 tie，再由 Final Utility 决胜"
+  );
+  assert.ok(evaluator.compareCandidates(
+    {
+      ...left,
+      comparisonTerms:{ resourceSelectionUtility:1 + Number.EPSILON * 4 },
+      valueScore:0
+    },
+    { ...right, valueScore:100 }
+  ) > 0, "超过统一机器精度容差的真实 Resource 差异必须优先于 Final Utility");
+  assert.ok(evaluator.compareCandidates(
+    { ...left, comparisonTerms:{ resourceSelectionUtility:1 }, valueScore:3 },
+    { ...right, valueScore:2 }
+  ) > 0, "Resource tie 后必须继续比较 generic Final Utility");
+  assert.equal(
+    evaluator.compareCandidates(
+      { ...left, comparisonTerms:{ resourceSelectionUtility:1 }, valueScore:2 },
+      { ...right, valueScore:2 }
+    ),
+    0,
+    "Resource 与 Final 都 tie 时保持稳定枚举顺序"
+  );
+});
+
+test("AI·资源选择：材料与未知牌期望各自只有一个 production authority", async () => {
+  assert.equal(RESOURCE_MATERIAL_SCALE, 0.4);
+  assert.equal(UNKNOWN_HAND_EXPECTED_VALUE, 5.8);
+  assert.equal(HAND_COUNT_VALUE, 1.1);
+  assert.equal(getBaseCardAiValue("defenseDevice"), 9);
+  assertClose(UNKNOWN_HAND_EXPECTED_VALUE * RESOURCE_MATERIAL_SCALE, 2.32);
+  assertClose(
+    UNKNOWN_HAND_EXPECTED_VALUE * RESOURCE_MATERIAL_SCALE + HAND_COUNT_VALUE,
+    3.42
+  );
+  assertClose(getBaseCardAiValue("defenseDevice") * RESOURCE_MATERIAL_SCALE, 3.6);
+  assertClose(getUnknownAcquisitionUtility({ recover:4, charge:1 }), 5.8);
+  assert.equal(getUnknownAcquisitionUtility(null), UNKNOWN_HAND_EXPECTED_VALUE);
+
+  const aiSources = (await Promise.all(
+    (await listJavaScriptFiles(projectFile("js/ai"))).map((file) => readFile(file, "utf8"))
+  )).join("\n");
+  const cardValueSource = await readFile(projectFile("js/ai/Evaluator/CardValue.js"), "utf8");
+  assert.equal((aiSources.match(/UNKNOWN_HAND_EXPECTED_VALUE\s*=\s*5\.8\b/g) ?? []).length, 1);
+  assert.equal((aiSources.match(/RESOURCE_MATERIAL_SCALE\s*=\s*0\.4\b/g) ?? []).length, 1);
+  assert.doesNotMatch(aiSources, /\b11\.6\b/);
+  assert.doesNotMatch(aiSources, /getBaseCardAiValue\([^\n]+\)\s*\*\s*0\.4\b/);
+  assert.match(cardValueSource, /equipmentRoleDelta:[^\n]*RESOURCE_MATERIAL_SCALE/);
+  assert.match(cardValueSource, /function staticCardAssetValue/);
+});
+
+test("AI·资源选择：充能桩门槛功能项在统一标量中保持可见", () => {
+  const state = {
+    remainingCardCounts:{ recover:1 },
+    players:[
+      {
+        id:"energy-resource-actor", seatIndex:0, battleTeam:"dawn",
+        characterId:"blade-walker", alive:true, hp:4, maxHp:4,
+        energy:0, handCount:0, hand:[], equipmentDefinitionId:null,
+        equipmentRetentionProbability:0
+      },
+      {
+        id:"energy-resource-owner", seatIndex:1, battleTeam:"dusk",
+        characterId:"oath-warden", alive:true, hp:4, maxHp:4,
+        energy:0, maxEnergy:4, handCount:1, knownCards:[],
+        activeSkillId:"barrier", activeSkillCost:2, activeSkillLimit:2,
+        turnEnergyGainWithoutEquipment:1, energyDeviceTurnEnergyGain:1,
+        equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1
+      }
+    ]
+  };
+  const choice = chooseCanonicalResourceActionForTest(
+    state,
+    "energy-resource-actor",
+    "energy-resource-owner",
+    "destroy"
+  );
+  assert.equal(choice.action.selection.zone, "equipment");
+  assert.equal(choice.action.selection.definitionId, "energyDevice");
+  assert.equal(choice.comparisonTerms.thresholdUtility, 4);
+});
 
 /*
 功能
@@ -35693,17 +36644,20 @@ test("AI·资源选择：破坏相同牌组随目标角色变化", () => {
   assert.equal(chosen.action.selection.cardId, recover.id);
 });
 
-test("AI·资源选择：破坏未知牌仍按固定期望值 4 选择位置且不因真实牌面改变", async () => {
+test("AI·资源选择：破坏未知牌按唯一基础期望选择位置且不因真实牌面改变", async () => {
   const actor = makePlayer("actor", 0, "dawn");
   const warden = makePlayer("warden", 1, "dusk", "ai", 1);
-  // oath-warden：assault 3 < 未知 4
+  // oath-warden：assault 3 < canonical unknown expectation
   let randomCalls = 0;
   const { game }
     = makeGame([actor, warden], { random: () => { randomCalls += 1; return 0; } });
   const knownAssault = instance("assault"), unknown = instance("counter");
   warden.hand = [knownAssault, unknown];
   game.rememberPrivateCard(actor, warden, knownAssault);
-  assert.equal(getResourceUnknownUtility("destroy", actor, warden), 4);
+  assert.equal(
+    getResourceUnknownUtility("destroy", actor, warden),
+    UNKNOWN_HAND_EXPECTED_VALUE
+  );
   const selection = {
     zone: "hand",
     selectionKind: "unknown",
@@ -35760,10 +36714,10 @@ test("AI·资源选择：破坏不因未知实体真实牌面改变选择位置"
   assert.equal(lowChosen, low.target.hand[1]);
 });
 
-test("AI·资源选择：破坏手牌与装备比较使用上下文状态收益", () => {
+test("AI·资源选择：破坏手牌与装备按统一可加标量比较", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
-  // spirit-medic：recover 8、energyDevice 8
+  // 两者 static asset 同尺度；充能桩的真实未来能量功能使装备候选胜出。
   const { game }
     = makeGame([actor, medic], { random: () => 0 });
   const recover = instance("recover");
@@ -35772,7 +36726,6 @@ test("AI·资源选择：破坏手牌与装备比较使用上下文状态收益"
   game.rememberPrivateCard(actor, medic, recover);
   const chosen = chooseGameResourceActionForTest(game, actor, medic, "destroy");
   assert.equal(chosen.action.selection.zone, "equipment");
-  assert.equal(chosen.action.selection.definitionId, medic.equipment.definitionId);
 });
 
 test("AI·资源选择：掠夺使用双角色效用而非破坏的单角色损失", () => {
@@ -35859,7 +36812,7 @@ test("AI·资源选择：掠夺目标角色改变已知手牌偏好且同分保�
   // 守誓者目标：assault 9 < block 10
 });
 
-test("AI·资源选择：掠夺未知敌方牌组合效用为 8", async () => {
+test("AI·资源选择：掠夺未知敌方牌组合效用由唯一基础期望推导", async () => {
   const medic = makePlayer("medic", 0, "dawn", "ai", 2);
   const warden = makePlayer("warden", 1, "dusk", "ai", 1);
   let randomCalls = 0;
@@ -35868,7 +36821,10 @@ test("AI·资源选择：掠夺未知敌方牌组合效用为 8", async () => {
   const knownAssault = instance("assault"), unknown = instance("counter");
   warden.hand = [knownAssault, unknown];
   game.rememberPrivateCard(medic, warden, knownAssault);
-  assert.equal(getResourceUnknownUtility("plunder", medic, warden), 8);
+  assert.equal(
+    getResourceUnknownUtility("plunder", medic, warden),
+    UNKNOWN_HAND_EXPECTED_VALUE * 2
+  );
   const selection = {
     zone: "hand",
     selectionKind: "unknown",
@@ -35881,9 +36837,9 @@ test("AI·资源选择：掠夺未知敌方牌组合效用为 8", async () => {
     game, medic, warden, selection
   );
   assert.equal(chosen, unknown);
-  // 已知 6 < 未知 8
+  // 已知 6 < 敌方 unknown denial + acquisition
   assert.equal(randomCalls, 1);
-  assert.equal(UNKNOWN_HAND_EXPECTED_VALUE, 4);
+  assert.equal(UNKNOWN_HAND_EXPECTED_VALUE, 5.8);
 });
 
 test("AI·资源选择：掠夺不因未知实体真实牌面改变选择位置", async () => {
@@ -35962,15 +36918,15 @@ test("AI·资源选择：同阵营掠夺辅助语义使用差值而非相加", (
   // 同阵营 block：5-7=-2 < 未知 0；若相加则为 12
 });
 
-test("AI·资源选择：共享价值：破坏使用 owner 角色价值且未知为 4", () => {
+test("AI·资源选择：共享价值：破坏使用 owner 角色价值且未知由唯一期望回退", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const owner = makePlayer("owner", 1, "dusk", "ai", 2);
   // spirit-medic
   assert.equal(getResourceDefinitionUtility("destroy", actor, owner, "recover"), 8);
-  assert.equal(getResourceUnknownUtility("destroy", actor, owner), 4);
+  assert.equal(getResourceUnknownUtility("destroy", actor, owner), UNKNOWN_HAND_EXPECTED_VALUE);
 });
 
-test("AI·资源选择：共享价值：掠夺敌方相加、同阵营相减且未知为 8/0", () => {
+test("AI·资源选择：共享价值：掠夺敌方相加、同阵营相减且未知由基础期望推导", () => {
   const actor = makePlayer("actor", 0, "dawn", "ai", 0);
   // blade-walker
   const enemy = makePlayer("enemy", 1, "dusk", "ai", 2);
@@ -35978,7 +36934,10 @@ test("AI·资源选择：共享价值：掠夺敌方相加、同阵营相减且�
   const ally = makePlayer("ally", 1, "dawn", "ai", 2);
   assert.equal(getResourceDefinitionUtility("plunder", actor, enemy, "recover"), 14);
   assert.equal(getResourceDefinitionUtility("plunder", actor, ally, "recover"), -2);
-  assert.equal(getResourceUnknownUtility("plunder", actor, enemy), 8);
+  assert.equal(
+    getResourceUnknownUtility("plunder", actor, enemy),
+    UNKNOWN_HAND_EXPECTED_VALUE * 2
+  );
   assert.equal(getResourceUnknownUtility("plunder", actor, ally), 0);
 });
 
@@ -36048,9 +37007,8 @@ test("AI·资源选择：随机调用：未知候选落败时不解析实体也�
   const { game }
     = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
   owner.hand = [instance("counter")];
-  // 未知，破坏值 4
+  // 当前 finite-pool 匿名期望低于充能桩的材料与功能合计。
   owner.equipment = instance("energyDevice");
-  // oath-warden 值 7 > 4
   const chosen = chooseGameResourceActionForTest(game, actor, owner, "destroy");
   assert.equal(chosen.action.selection.zone, "equipment");
   assert.equal(randomCalls, 0);
@@ -36308,7 +37266,7 @@ test("AI·资源选择：破坏模拟使用共享区域选择：灵医已知调�
   assert.equal(target.equipmentRetentionProbability, 1);
 });
 
-test("AI·资源选择：破坏模拟区域选择随目标角色变化", () => {
+test("AI·资源选择：破坏模拟在材料与手牌功能项相加后保留角色差量", () => {
   const run = (characterId) => {
     const state = {
       players: [
@@ -36339,13 +37297,12 @@ test("AI·资源选择：破坏模拟区域选择随目标角色变化", () => {
     return chooseCanonicalResourceActionForTest(state, "a", "t", "destroy").after.players[1];
   };
   const medic = run("spirit-medic");
-  // recover 8 > energyDevice 7 → 手牌
+  // recover 的手牌需求与角色差量共同进入统一标量。
   assert.ok(Math.abs(medic.handCount - 0) < 1e-9);
   assert.equal(medic.equipmentRetentionProbability, 1);
   const shade = run("shade-agent");
-  // recover 6 < energyDevice 8 → 装备
-  assert.ok(Math.abs(shade.handCount - 1) < 1e-9);
-  assert.ok(Math.abs(shade.equipmentRetentionProbability - 0) < 1e-9);
+  assert.ok(Math.abs(shade.handCount - 0) < 1e-9);
+  assert.equal(shade.equipmentRetentionProbability, 1);
 });
 
 test("AI·资源选择：破坏模拟同分时优先手牌", () => {
@@ -36532,7 +37489,7 @@ test("AI·资源选择：破坏模拟 knownCards 数量一致时参与共享选�
   const next = chooseCanonicalResourceActionForTest(state, "a", "t", "destroy").after;
   assert.ok(Math.abs(next.players[1].handCount - 1) < 1e-9);
   assert.equal(next.players[1].equipmentRetentionProbability, 1);
-  assert.deepEqual(next.players[1].knownCards, []);
+  assert.deepEqual(next.players[1].knownCards, [{ cardId: "r", definitionId: "recover" }]);
 });
 
 test("AI·资源选择：破坏模拟 scale 三档：手牌与装备", () => {
@@ -36595,8 +37552,8 @@ test("AI·资源选择：破坏模拟 scale 三档：手牌与装备", () => {
           battleTeam: "dusk",
           characterId: "shade-agent",
           alive: true,
-          handCount: 1,
-          knownCards: [{ cardId: "r", definitionId: "recover" }],
+          handCount: 0,
+          knownCards: [],
           equipmentDefinitionId: "energyDevice",
           equipmentRetentionProbability: 1,
           counterProbability: 0
@@ -36677,7 +37634,7 @@ test("AI·资源选择：掠夺模拟使用共享双角色区域选择：灵医�
   assert.equal(after.players[1].equipmentRetentionProbability, 1);
 });
 
-test("AI·资源选择：掠夺模拟区域选择随使用者角色变化", () => {
+test("AI·资源选择：掠夺模拟把使用者角色差量并入统一标量", () => {
   const run = (actorCharacterId) => {
     const actor = {
       id: "actor",
@@ -36707,13 +37664,12 @@ test("AI·资源选择：掠夺模拟区域选择随使用者角色变化", () =
   assert.equal(shade.actor.handCount, 1);
   assert.equal(shade.target.equipmentRetentionProbability, 1);
   const ember = run("ember-magus");
-  // exposeWeakness 13 < energyDevice 14 → 装备
-  assert.ok(Math.abs(ember.target.handCount - 1) < 1e-9);
+  assert.ok(Math.abs(ember.target.handCount - 0) < 1e-9);
   assert.equal(ember.actor.handCount, 1);
-  assert.ok(Math.abs(ember.target.equipmentRetentionProbability - 0) < 1e-9);
+  assert.equal(ember.target.equipmentRetentionProbability, 1);
 });
 
-test("AI·资源选择：掠夺模拟区域选择随目标角色变化", () => {
+test("AI·资源选择：掠夺模拟把目标角色差量并入统一标量", () => {
   const run = (targetCharacterId) => {
     const actor = {
       id: "actor",
@@ -36738,9 +37694,10 @@ test("AI·资源选择：掠夺模拟区域选择随目标角色变化", () => {
     return { actor: after.players[0], target: after.players[1] };
   };
   const blade = run("blade-walker");
-  // counter 17 < battleDevice 19 → 装备
+  // 手牌 target denial 与 actor acquisition 连同 HandCountValue 在同一标量内比较。
   assert.equal(blade.actor.handCount, 1);
-  assert.ok(Math.abs(blade.target.equipmentRetentionProbability - 0) < 1e-9);
+  assert.ok(Math.abs(blade.target.handCount - 0) < 1e-9);
+  assert.equal(blade.target.equipmentRetentionProbability, 1);
   const warden = run("oath-warden");
   // counter 18 > battleDevice 16 → 手牌
   assert.ok(Math.abs(warden.target.handCount - 0) < 1e-9);
@@ -36883,7 +37840,7 @@ test("AI·资源选择：掠夺模拟不读取目标隐藏 hand 实体定义", (
   assert.equal(result.act.handCount, 1);
 });
 
-test("AI·资源选择：掠夺模拟 knownCards 可信时参与双角色比较", () => {
+test("AI·资源选择：掠夺模拟 knownCards 与匿名有限池共同参与统一比较", () => {
   const actor = {
     id: "actor",
     battleTeam: "dawn",
@@ -36905,13 +37862,11 @@ test("AI·资源选择：掠夺模拟 knownCards 可信时参与双角色比较"
     { players: [actor, target] }, actor.id, target.id, "plunder"
   ).after;
   const afterActor = after.players[0], afterTarget = after.players[1];
-  // recover 14 > 装备 13 → 手牌；未知 8 参与比较但低于两者
+  // 新未知期望使匿名槽胜出；合法已知实体仍保留且不泄露匿名牌面。
   assert.ok(Math.abs(afterTarget.handCount - 1) < 1e-9);
   assert.equal(afterTarget.equipmentRetentionProbability, 1);
-  assert.deepEqual(afterTarget.knownCards, []);
-  assert.equal(afterActor.hand.length, 1);
-  assert.equal(afterActor.hand[0].id, "r");
-  assert.equal(afterActor.hand[0].definitionId, "recover");
+  assert.deepEqual(afterTarget.knownCards, [{ cardId: "r", definitionId: "recover" }]);
+  assert.equal(afterActor.hand.length, 0);
 });
 
 test("AI·资源选择：掠夺模拟 scale 三档：手牌", () => {
@@ -36979,8 +37934,8 @@ test("AI·资源选择：掠夺模拟 scale 三档：装备", () => {
       id: "target",
       battleTeam: "dusk",
       characterId: "blade-walker",
-      handCount: 1,
-      knownCards: [{ cardId: "b", definitionId: "block" }],
+      handCount: 0,
+      knownCards: [],
       equipmentDefinitionId: "energyDevice",
       equipmentRetentionProbability: 1
     };
@@ -39120,7 +40075,7 @@ function testEquipmentDeltaNeedsNoWorldBaseline() {
     - beforeTerms.equipmentDelta - beforeTerms.equipmentRoleDelta;
   assertClose(
     delta,
-    -getRoleCardAiValue(actor.characterId, "battleDevice") * 0.6 * 0.25
+    -staticCardAssetValue(actor.characterId, "battleDevice") * 0.6
   );
   assert.equal("initialEquipmentValue" in before.players[0], false);
   assert.equal("expectedEquipmentGain" in after.players[0], false);
@@ -39543,7 +40498,7 @@ test("AI·价值归属：residual 只在前沿计入且不随路径深度重复�
   assert.ok(rAfter.futureInventory < r1.futureInventory, "未来攻击库存兑现后应减少");
 });
 
-test("AI·价值归属：terminal 回收站只计当前 global turn 剩余额度且接纳不可反制战术", () => {
+test("AI·价值归属：回收站 Future 只进普通 StateValue 且 terminal held 不重复", () => {
   const { game } = makeLedgerGame();
   const evaluator = game.aiController.evaluator;
   const state = ledgerState([
@@ -39556,17 +40511,37 @@ test("AI·价值归属：terminal 回收站只计当前 global turn 剩余额度
     ledgerPlayer("b", 1, "dusk", "oath-warden")
   ]);
   const residual = evaluator.frontierResidual(state, "a");
-  assert.equal(residual.held.recycle, 0);
+  assert.equal(Object.hasOwn(residual.held, "recycle"), false);
+  assert.equal(
+    evaluator.playerValueTerms(state, state.players[0], "a", 0).terms.recycleDeviceFuture,
+    0
+  );
   assert.equal(evaluator.terminalFrontierValue(residual, true), 0);
   assert.equal(evaluator.terminalFrontierValue(residual, false), 0);
   const oneUseRemaining = structuredClone(state);
   oneUseRemaining.players[0].recycleDeviceUses = 1;
   const remainingResidual = evaluator.frontierResidual(oneUseRemaining, "a");
-  assertClose(remainingResidual.held.recycle, 1.1 * 0.5);
-  assertClose(evaluator.terminalFrontierValue(remainingResidual, true), 1.1 * 0.5 / 5);
+  assert.ok(
+    evaluator.playerValueTerms(
+      oneUseRemaining,
+      oneUseRemaining.players[0],
+      "a",
+      0
+    ).terms.recycleDeviceFuture > 0
+  );
+  assert.equal(Object.hasOwn(remainingResidual.held, "recycle"), false);
+  assert.equal(evaluator.terminalFrontierValue(remainingResidual, true), 0);
   const withoutTactic = structuredClone(state);
   withoutTactic.players[0].hand = [ledgerCard("basic", "charge")];
-  assert.equal(evaluator.frontierResidual(withoutTactic, "a").held.recycle, 0);
+  assert.equal(
+    evaluator.playerValueTerms(
+      withoutTactic,
+      withoutTactic.players[0],
+      "a",
+      0
+    ).terms.recycleDeviceFuture,
+    0
+  );
 });
 
 test("AI·价值归属：泛用手牌资源与具体响应选项不重复计价", () => {

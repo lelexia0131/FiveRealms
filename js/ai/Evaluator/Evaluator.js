@@ -43,6 +43,7 @@ import {
   tacticJudgmentProbability
 } from "../Event/Probability/Probability.js";
 import {
+  HAND_COUNT_VALUE,
   RESOURCE_MATERIAL_SCALE,
   assessGlobalBenefit,
   cardPlayerValueTerms,
@@ -57,6 +58,7 @@ import {
   getUnknownAcquisitionUtility,
   mutualBenefitDraftValues,
   roleCardDelta,
+  staticCardAssetValue,
   skillThresholdOptionPolicyValue
 } from "./CardValue.js";
 import {
@@ -99,6 +101,40 @@ null 表示未完成，不属于 Final Utility；NaN、+Infinity、undefined 与
 */
 export function isValidFinalUtility(value) {
   return Number.isFinite(value) || value === Number.NEGATIVE_INFINITY;
+}
+
+/*
+功能
+按 Evaluator 唯一机器精度语义比较两个 Utility 标量。
+
+调用方
+Evaluator.compareCandidates 的 ResourceSelectionUtility 与 generic Final Utility 两层比较。
+
+输入
+两个满足 Evaluator value contract 的数值。
+
+输出
+left 更优返回正数，right 更优返回负数，机器精度噪声内返回零。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+Number.isFinite、Math.abs、Math.max。
+
+边界与不变量
+容差唯一为 Number.EPSILON × max(1, |left|, |right|)；不得复用 Probability epsilon，
+也不得让本比较改变 Probability、SearchBudget 或其它领域容差。
+*/
+function compareUtilityValues(left, right) {
+  if (left === right) return 0;
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return left > right ? 1 : -1;
+  const difference = left - right;
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right));
+  return Math.abs(difference) > tolerance ? difference : 0;
 }
 
 /*
@@ -704,9 +740,10 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
     const beforeRetention = clampProbability(beforeFirst.equipmentRetentionProbability ?? 1);
     const afterRetention = clampProbability(afterFirst.equipmentRetentionProbability ?? 0);
     const acquired = Math.max(0, beforeRetention - afterRetention);
-    return spyGapInformationPoints + (getBaseCardAiValue(equipmentDefinitionId)
-      + roleCardDelta(beforeActor.characterId, equipmentDefinitionId))
-      * acquired * RESOURCE_MATERIAL_SCALE;
+    return spyGapInformationPoints + staticCardAssetValue(
+      beforeActor.characterId,
+      equipmentDefinitionId
+    ) * acquired;
   }
   if (cardId === "mutualBenefit") {
     const draftValues = mutualBenefitDraftValues(
@@ -721,6 +758,154 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
     }, 0);
   }
   return spyGapInformationPoints;
+}
+
+/*
+功能
+把 canonical Radar Probability outcome 转为持有者每次判定的资源价值输入。
+
+调用方
+Evaluator.playerValueTerms。
+
+输入
+雷达持有者与 buildRadarJudgmentProbabilities 的只读结果。
+
+输出
+一次战术牌免除 Block demand 的价值，以及按基础牌定义概率加权的摸牌价值。
+
+读取状态
+稳定 CardValue 基础材料尺度、角色差量与手牌数量价值。
+
+写入状态
+无。
+
+调用函数
+getBaseCardAiValue、roleCardDelta。
+
+边界与不变量
+Probability 只由上游 canonical authority 提供；基础值与 RoleDelta 共同组成静态卡牌资产，
+经 staticCardAssetValue 同尺度换算恰好一次。
+*/
+function radarJudgmentValueInputs(player, radarJudgment) {
+  if (!radarJudgment || typeof radarJudgment !== "object") return null;
+  return {
+    avoidedBlockDemandValue:radarBasicCardGainValue(player, "block"),
+    expectedBasicCardGainValue:Object.entries(radarJudgment.basic ?? {}).reduce(
+      (sum, [definitionId, probability]) => (
+        sum + clampProbability(probability) * radarBasicCardGainValue(player, definitionId)
+      ),
+      0
+    )
+  };
+}
+
+/*
+功能
+计算雷达判得一张指定基础牌并收入持有者手牌的完整资源价值。
+
+调用方
+radarJudgmentValueInputs。
+
+输入
+雷达持有者与基础牌 definition ID。
+
+输出
+手牌数量、基础材料与角色 context delta 的可加 State points。
+
+读取状态
+HAND_COUNT_VALUE、RESOURCE_MATERIAL_SCALE 与稳定 CardValue 定义。
+
+写入状态
+无。
+
+调用函数
+getBaseCardAiValue、roleCardDelta。
+
+边界与不变量
+基础值与 RoleDelta 共同表示判得牌的静态资产，并经唯一 material scale 同尺度换算一次。
+*/
+function radarBasicCardGainValue(player, definitionId) {
+  return HAND_COUNT_VALUE
+    + staticCardAssetValue(player?.characterId, definitionId);
+}
+
+/*
+功能
+计算当前 finite pool 下一张匿名牌进入指定持有者手牌的完整期望价值。
+
+调用方
+equipmentFutureValueInputs。
+
+输入
+持有者与 Probability authority 投影的当前 definition counts。
+
+输出
+手牌数量、基础材料与角色差量组成的 State points。
+
+读取状态
+HAND_COUNT_VALUE、RESOURCE_MATERIAL_SCALE、UNKNOWN fallback 与稳定角色差量。
+
+写入状态
+无。
+
+调用函数
+getUnknownAcquisitionUtility、staticCardAssetValue。
+
+边界与不变量
+无有效 finite pool 时基础材料使用唯一 unknown authority、RoleDelta 回退零；
+finite pool 中 Base 与 RoleDelta 共同经唯一材料尺度换算；
+不绑定或读取任何隐藏实体 definitionId。
+*/
+function expectedDrawGainValue(player, remainingCardCounts) {
+  const entries = Object.entries(remainingCardCounts ?? {}).filter(
+    ([definitionId, count]) => CARD_DEFINITIONS[definitionId]
+      && Number.isFinite(Number(count))
+      && Number(count) > 0
+  );
+  const total = entries.reduce((sum, [, count]) => sum + Number(count), 0);
+  const expectedStaticAsset = total > 0
+    ? entries.reduce((sum, [definitionId, count]) => (
+        sum + Number(count) * staticCardAssetValue(player?.characterId, definitionId)
+      ), 0) / total
+    : getUnknownAcquisitionUtility(null) * RESOURCE_MATERIAL_SCALE;
+  return HAND_COUNT_VALUE + expectedStaticAsset;
+}
+
+/*
+功能
+为 StateValue 组装三类装备 Future 共用的 CardValue 资源输入。
+
+调用方
+Evaluator.playerValueTerms。
+
+输入
+canonical World、当前 owner 与已由 Probability authority 计算的 Radar judgment。
+
+输出
+Radar 单次收益、回收站单次摸牌期望，以及各目标单张 Block 的完整资源价值。
+
+读取状态
+当前 finite-pool counts、公开角色 ID 与稳定 CardValue 定义。
+
+写入状态
+无。
+
+调用函数
+queryCurrentCardCounts、radarJudgmentValueInputs、radarBasicCardGainValue、expectedDrawGainValue。
+
+边界与不变量
+只传递 plain numeric data；StateValue 不反向依赖 CardValue，材料与 RoleDelta 均只按各自 authority 计算一次。
+*/
+function equipmentFutureValueInputs(state, player, radarJudgment) {
+  const remainingCardCounts = queryCurrentCardCounts(state?.probabilityState);
+  return {
+    radar:radarJudgmentValueInputs(player, radarJudgment),
+    expectedDrawGain:expectedDrawGainValue(player, remainingCardCounts),
+    blockSpendValueByPlayerId:Object.fromEntries((state?.players ?? []).map((target) => [
+      target.id,
+      radarBasicCardGainValue(target, "block")
+    ]))
+  };
 }
 
 /*
@@ -3179,7 +3364,7 @@ export class Evaluator {
   canonical Action、行动者与动作前后 World。
 
   输出
-  contextualUtility、staticUtility 与稳定 selection identity；非资源动作返回 null。
+  可加的 context/functional、target material、acquisition、threshold 与统一资源选择值；非资源动作返回 null。
 
   读取状态
   Action.selection、双方公开 World、Probability current counts 与 CardValue primitive。
@@ -3192,10 +3377,10 @@ export class Evaluator {
   getResourceUnknownUtility、getUnknownAcquisitionUtility、skillThresholdOptionPolicyValue。
 
   边界与不变量
-  不构造或克隆 World；复用 Searcher 已完成的唯一 transition。contextual 公式保持既有
-  state delta、装备材料、掠夺获得材料与充能桩门槛项的单位和顺序；手牌资源按选中实体/匿名槽的实际移动判断，
-  不能被协调等同一结算中的后续摸牌抵消；
-  destroy 的静态 owner 卡值必须按敌方收益、己方损失投影，不能把队友高价值牌当成更优破坏目标。
+  不构造或克隆 World；复用 Searcher 已完成的唯一 transition。StateValue 中的装备 Base/Role static asset
+  同时剥离，再与手牌一致地按各自 holder 的 `(Base + RoleDelta) × material scale` 加回一次。
+  Dynamic Future 留在 context；Plunder 的 target denial 与 actor acquisition 分列且各计一次；手牌按已记录的实际移动判断，
+  不能被协调等同一结算中的后续摸牌抵消；同一材料事实不得漏算或双算。
   */
   resourceSelectionPreference(action, player, beforeState, afterState) {
     const purpose = action?.cardId;
@@ -3225,30 +3410,42 @@ export class Evaluator {
     if (appliedProbability <= PROBABILITY_EPSILON) {
       return Object.freeze({
         contextualUtility:Number.NEGATIVE_INFINITY,
-        staticUtility:Number.NEGATIVE_INFINITY,
+        resourceMaterialUtility:0,
+        acquisitionUtility:0,
+        thresholdUtility:0,
+        resourceSelectionUtility:Number.NEGATIVE_INFINITY,
         zone:selection.zone,
         selectionKind:selection.selectionKind,
         cardId:selection.cardId ?? null
       });
     }
     const remainingCardCounts = queryCurrentCardCounts(beforeState.probabilityState);
-    const unsignedStaticUtility = selection.selectionKind === "unknown"
-      ? getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts)
-      : getResourceDefinitionUtility(purpose, actor, owner, selection.definitionId);
-    const staticUtility = purpose === "destroy"
-      && owner.battleTeam === actor.battleTeam
-      ? -unsignedStaticUtility
-      : unsignedStaticUtility;
-    const acquisitionUtility = purpose !== "plunder"
-      ? 0
-      : (selection.selectionKind === "unknown"
-          ? getUnknownAcquisitionUtility(remainingCardCounts)
-          : getBaseCardAiValue(selection.definitionId));
+    const targetUtility = selection.selectionKind === "unknown"
+      ? getResourceUnknownUtility("destroy", actor, owner, remainingCardCounts)
+      : getResourceDefinitionUtility("destroy", actor, owner, selection.definitionId);
+    const targetSign = owner.battleTeam === actor.battleTeam ? -1 : 1;
+    const signedTargetUtility = targetUtility * targetSign;
+    const plunderUtility = purpose === "plunder"
+      ? (selection.selectionKind === "unknown"
+          ? getResourceUnknownUtility(purpose, actor, owner, remainingCardCounts)
+          : getResourceDefinitionUtility(purpose, actor, owner, selection.definitionId))
+      : signedTargetUtility;
+    const baseMaterial = selection.selectionKind === "unknown"
+      ? getUnknownAcquisitionUtility(remainingCardCounts)
+      : getBaseCardAiValue(selection.definitionId);
+    const actorStaticUtility = purpose === "plunder"
+      ? plunderUtility - signedTargetUtility
+      : 0;
+    const actorRoleUtility = purpose === "plunder"
+      ? actorStaticUtility - baseMaterial
+      : 0;
     const thresholdOption = selection.zone === "equipment"
       ? skillThresholdOptionPolicyValue(actor, owner, selection.definitionId)
       : 0;
     const beforePlayers = new Map(beforeState.players.map((entry) => [entry.id, entry]));
-    const equipmentMaterialDelta = afterState.players.reduce((sum, afterPlayer) => {
+    // 装备 Base 与 RoleDelta 是同一 static asset；从 RawStateDelta 一起剥离后，
+    // 由 target/acquisition 项按各自 holder 的角色价值同尺度加回。
+    const equipmentStaticAssetDelta = afterState.players.reduce((sum, afterPlayer) => {
       const beforePlayer = beforePlayers.get(afterPlayer.id);
       if (!beforePlayer) return sum;
       const beforeTerms = cardPlayerValueTerms(beforePlayer, beforePlayer.id);
@@ -3260,11 +3457,30 @@ export class Evaluator {
       return sum + (afterPlayer.battleTeam === actor.battleTeam ? localDelta : -localDelta);
     }, 0);
     const rawStateDelta = this.transitionDelta(beforeState, afterState, actor.id);
+    // Known hand/equipment Plunder 会让 viewer 的 HandRoleDelta 在 RawStateDelta 中按 context 尺度出现；
+    // 先移除它，再由 acquisition static asset 按材料尺度加入。匿名 acquisition 没有该已兑现身份项。
+    const realizedActorHandRoleUtility = purpose === "plunder"
+      && selection.selectionKind !== "unknown"
+      ? actorRoleUtility * appliedProbability
+      : 0;
+    const contextualUtility = rawStateDelta
+      - equipmentStaticAssetDelta
+      - realizedActorHandRoleUtility;
+    const resourceMaterialUtility = signedTargetUtility
+      * RESOURCE_MATERIAL_SCALE * appliedProbability;
+    const acquisitionUtility = purpose === "plunder"
+      ? actorStaticUtility * RESOURCE_MATERIAL_SCALE * appliedProbability
+      : 0;
+    const thresholdUtility = thresholdOption * appliedProbability;
     return Object.freeze({
-      contextualUtility:rawStateDelta - equipmentMaterialDelta
-        + acquisitionUtility * RESOURCE_MATERIAL_SCALE * appliedProbability
-        + thresholdOption * appliedProbability,
-      staticUtility,
+      contextualUtility,
+      resourceMaterialUtility,
+      acquisitionUtility,
+      thresholdUtility,
+      resourceSelectionUtility:contextualUtility
+        + resourceMaterialUtility
+        + acquisitionUtility
+        + thresholdUtility,
       zone:selection.zone,
       selectionKind:selection.selectionKind,
       cardId:selection.cardId ?? null
@@ -4176,7 +4392,7 @@ export class Evaluator {
   stateUtility、diagnostic terms 与闪电生命周期查询。
 
   输入
-  canonical World、玩家、viewer ID 与雷达战术判定概率。
+  canonical World、玩家、viewer ID 与雷达判定概率结果；数值输入保留直接 primitive 测试语义。
 
   输出
   death 与完整但不重复的 terms 分解。
@@ -4188,18 +4404,22 @@ export class Evaluator {
   无。
 
   调用函数
-  statePlayerValueTerms、cardPlayerValueTerms。
+  statePlayerValueTerms、cardPlayerValueTerms、radarJudgmentValueInputs。
 
   边界与不变量
   Final aggregation 只在 Evaluator；hand/equipment intrinsic 不得进入 StateValue，非卡牌后果不得进入 CardValue。
   */
-  playerValueTerms(state, player, viewerId, radarTacticProbability) {
+  playerValueTerms(state, player, viewerId, radarJudgment) {
+    const radarTacticProbability = typeof radarJudgment === "number"
+      ? radarJudgment
+      : radarJudgment?.tactic ?? 0;
     const stateTerms = statePlayerValueTerms(
       state,
       player,
       viewerId,
       radarTacticProbability,
-      this.energyRules
+      this.energyRules,
+      equipmentFutureValueInputs(state, player, radarJudgment)
     );
     if (stateTerms.death) return stateTerms;
     return {
@@ -4219,7 +4439,7 @@ export class Evaluator {
   闪电生命周期 simulation query。
 
   输入
-  状态、owner、viewer ID 与雷达概率。
+  状态、owner、viewer ID 与 canonical 雷达判定结果。
 
   输出
   未施加团队符号的 owner material value。
@@ -4236,12 +4456,12 @@ export class Evaluator {
   边界与不变量
   不包含封印与闪电自身 burden，避免生命周期查询递归调用 stateUtility。
   */
-  ownerMaterialValue(state, player, viewerId, radarTacticProbability) {
+  ownerMaterialValue(state, player, viewerId, radarJudgment) {
     const { death, terms } = this.playerValueTerms(
       state,
       player,
       viewerId,
-      radarTacticProbability
+      radarJudgment
     );
     return death + Object.values(terms).reduce((sum, value) => sum + value, 0);
   }
@@ -4276,8 +4496,8 @@ export class Evaluator {
     after,
     ownerId,
     viewerId,
-    beforeRadarTacticProbability,
-    afterRadarTacticProbability
+    beforeRadarJudgment,
+    afterRadarJudgment
   ) {
     const beforeOwner = before.players.find((player) => player.id === ownerId);
     const afterOwner = after.players.find((player) => player.id === ownerId);
@@ -4286,12 +4506,12 @@ export class Evaluator {
       after,
       afterOwner,
       viewerId,
-      afterRadarTacticProbability
+      afterRadarJudgment
     ) - this.ownerMaterialValue(
       before,
       beforeOwner,
       viewerId,
-      beforeRadarTacticProbability
+      beforeRadarJudgment
     );
   }
 
@@ -4327,14 +4547,14 @@ export class Evaluator {
     if (!viewer) {
       return { statePoints:Number.NEGATIVE_INFINITY, teamDanger:1 };
     }
-    const radarTacticProbability = buildRadarJudgmentProbabilities(
+    const radarJudgment = buildRadarJudgmentProbabilities(
       queryCurrentCardCounts(state.probabilityState)
-    ).tactic;
+    );
     let statePoints = 0;
     let teamDanger = 0;
     const playerValues = state.players.map((player) => ({
       player,
-      ...this.playerValueTerms(state, player, viewerId, radarTacticProbability)
+      ...this.playerValueTerms(state, player, viewerId, radarJudgment)
     }));
     const hp2RiskByPlayer = new Map(playerValues.map(({ player, terms }) => (
       [player.id, terms.hp2Risk ?? 0]
@@ -4845,7 +5065,7 @@ export class Evaluator {
 
   /*
   功能
-  按根 Transfer 冻结偏好、Final Utility 与限定同分规则比较两个完整候选。
+  按根 Transfer 偏好、统一 ResourceSelectionUtility、Final Utility 与限定同分规则比较完整候选。
 
   调用方
   Searcher incumbent、beam protection 与 final selection。
@@ -4857,16 +5077,18 @@ export class Evaluator {
   left 更优返回正数，right 更优返回负数，完全等价返回零。
 
   读取状态
-  候选根 Transfer preference、Final Utility 与 canonical root Action/selection。
+  候选根 Transfer preference、ResourceSelectionUtility、Final Utility 与 canonical root Action/selection。
 
   写入状态
   无。
 
   调用函数
-  无。
+  compareUtilityValues。
 
   边界与不变量
-  两个根 Transfer 先保持旧 contextual winner；Transfer 与其它动作仍比较 Final Utility；
+  两个根 Transfer 先保持既有 preference winner；同一 Destroy/Plunder 根资源先比较统一可加标量，
+  机器精度同分时继续比较 Final Utility；两层都同分才由后续稳定规则或 Generator 枚举顺序决胜；
+  Transfer 与其它动作仍比较 Final Utility；
   Final Utility 已在 tolerance 内同分且目标相同时，Scout 只按实际新增揭示数确定顺序，随后才稳定优先 skill-root；
   Searcher、Pattern、search-prior terms 与随机数不得定义另一套偏好。
   */
@@ -4885,25 +5107,16 @@ export class Evaluator {
       && left.action.cardInstanceId === right.action.cardInstanceId
       && left.action.targetIds?.[0] === right.action.targetIds?.[0];
     if (sameResourceChoice && left.comparisonTerms && right.comparisonTerms) {
-      const contextualDifference = left.comparisonTerms.contextualUtility
-        - right.comparisonTerms.contextualUtility;
-      if (Math.abs(contextualDifference) > 1e-9) return contextualDifference;
-      const staticDifference = left.comparisonTerms.staticUtility
-        - right.comparisonTerms.staticUtility;
-      if (staticDifference) return staticDifference;
+      const resourceOrder = compareUtilityValues(
+        left.comparisonTerms.resourceSelectionUtility,
+        right.comparisonTerms.resourceSelectionUtility
+      );
+      if (resourceOrder) return resourceOrder;
     }
     const leftValue = Number(left?.valueScore ?? left?.transitionValue);
     const rightValue = Number(right?.valueScore ?? right?.transitionValue);
-    if (leftValue !== rightValue && (!Number.isFinite(leftValue) || !Number.isFinite(rightValue))) {
-      return leftValue > rightValue ? 1 : -1;
-    }
-    const difference = leftValue - rightValue;
-    const tolerance = Number.EPSILON * Math.max(
-      1,
-      Math.abs(leftValue),
-      Math.abs(rightValue)
-    );
-    if (Math.abs(difference) > tolerance) return difference;
+    const finalOrder = compareUtilityValues(leftValue, rightValue);
+    if (finalOrder) return finalOrder;
     const sameScoutTarget = left?.action?.cardId === "scout"
       && right?.action?.cardId === "scout"
       && left.action.targetIds?.[0] === right.action.targetIds?.[0];
@@ -4976,7 +5189,7 @@ export class Evaluator {
   World 与 viewer ID。
 
   输出
-  futureInventory、held.recycle 与 total；viewer 无效时返回 null。
+  futureInventory、空 held 表示与 total；viewer 无效时返回 null。
 
   读取状态
   viewer 自身生命、手牌、装备与公开威胁摘要。
@@ -4985,36 +5198,20 @@ export class Evaluator {
   无。
 
   调用函数
-  exposureComponents、cardAvailability、CardDefinitions。
+  exposureComponents。
 
   边界与不变量
-  futureInventory 只作诊断；held option 只允许 terminal 一次进入 Final Utility；
-  回收站只按当前 global turn 的剩余额度估值，已消费额度不得在 END 时重置后重复计价。
+  futureInventory 只作诊断；回收站 Future 已进入普通 StateValue，terminal 不得保留第二份 held option。
   */
   frontierResidual(state, viewerId) {
     const viewer = state.players.find((player) => player.id === viewerId);
     if (!viewer || !viewer.alive) return null;
     const { futureInventory, energyPressure } = exposureComponents(state, viewer);
-    const tacticGate = (viewer.hand ?? []).some((card) => (
-      cardAvailability(card) > PROBABILITY_EPSILON
-      && (CARD_DEFINITIONS[card.definitionId] ?? card).category === "tactic"
-    )) ? 1 : 0;
-    const remainingRecycleUses = Math.max(
-      0,
-      CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
-        - Math.max(0, Number(viewer.recycleDeviceUses) || 0)
-    );
-    const recycle = viewer.equipmentDefinitionId === "recycleDevice"
-      ? remainingRecycleUses
-        * tacticGate
-        * 1.1
-        * Math.max(0, Number(viewer.equipmentRetentionProbability ?? 1))
-      : 0;
     const futureInventoryTotal = futureInventory + energyPressure;
     return {
       futureInventory:futureInventoryTotal,
-      held:{ recycle },
-      total:futureInventoryTotal + recycle
+      held:{},
+      total:futureInventoryTotal
     };
   }
 
@@ -5029,7 +5226,7 @@ export class Evaluator {
   frontierResidual 返回的表示与是否 terminal。
 
   输出
-  terminal 时 recycle 的 HP-equivalent utility，否则为零。
+  恒为零；保留 API 供 Searcher 的通用 terminal composition 使用。
 
   读取状态
   residual held fields。
@@ -5038,14 +5235,13 @@ export class Evaluator {
   无。
 
   调用函数
-  statePointsToUtility。
+  无。
 
   边界与不变量
-  futureInventory 已在 State Value 中表达，不能在此重复进入 Final Utility。
+  futureInventory 与回收站 Future 都已在 State Value 中表达，不能在此重复进入 Final Utility。
   */
-  terminalFrontierValue(residual, terminal) {
-    if (!terminal || !residual) return 0;
-    return statePointsToUtility(residual.held?.recycle ?? 0);
+  terminalFrontierValue(_residual, _terminal) {
+    return 0;
   }
 
   /*
@@ -5083,12 +5279,12 @@ export class Evaluator {
     if (!outcomeSet || outcomeSet.presence <= 0) return deltas;
     const beforeRadar = buildRadarJudgmentProbabilities(
       queryCurrentCardCounts(state.probabilityState)
-    ).tactic;
+    );
     for (const outcome of outcomeSet.outcomes ?? []) {
       const after = outcome.world;
       const afterRadar = buildRadarJudgmentProbabilities(
         queryCurrentCardCounts(after.probabilityState)
-      ).tactic;
+      );
       for (const afterPlayer of after.players) {
         const delta = this.ownerMaterialDelta(
           state,
@@ -5477,9 +5673,9 @@ export class Evaluator {
     beforeLightningOutcomeSets = [],
     afterLightningOutcomeSets = []
   ) {
-    const radarTactic = buildRadarJudgmentProbabilities(
+    const radarJudgment = buildRadarJudgmentProbabilities(
       queryCurrentCardCounts(after.probabilityState)
-    ).tactic;
+    );
     const viewer = after.players.find((player) => player.id === viewerId)
       ?? before.players.find((player) => player.id === viewerId);
     const beforePlayers = new Map(before.players.map((player) => [player.id, player]));
@@ -5496,13 +5692,13 @@ export class Evaluator {
         before,
         beforePlayer,
         viewerId,
-        radarTactic
+        radarJudgment
       );
       const afterTerms = this.playerValueTerms(
         after,
         afterPlayer,
         viewerId,
-        radarTactic
+        radarJudgment
       );
       beforeHp2RiskByPlayer.set(beforePlayer.id, beforeTerms.terms.hp2Risk ?? 0);
       afterHp2RiskByPlayer.set(afterPlayer.id, afterTerms.terms.hp2Risk ?? 0);
@@ -5549,6 +5745,9 @@ export class Evaluator {
           equipmentDelta: fields.equipmentDelta ?? 0,
           energyDeviceFuture: fields.energyDeviceFuture ?? 0,
           bubbleMachineFuture: fields.bubbleMachineFuture ?? 0,
+          battleDeviceFuture: fields.battleDeviceFuture ?? 0,
+          recycleDeviceFuture: fields.recycleDeviceFuture ?? 0,
+          assaultMagazineFuture: fields.assaultMagazineFuture ?? 0,
           death: fields.death ?? 0
         },
         threat: {

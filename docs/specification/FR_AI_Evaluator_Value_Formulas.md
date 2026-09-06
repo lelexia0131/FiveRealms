@@ -33,7 +33,7 @@ $$
 \boxed{u=\frac{SP}{5}}
 $$
 
-源码：`StateValue.js:29,58`。
+源码：`StateValue.HP_VALUE`、`StateValue.statePointsToUtility()`。
 
 核心常量：
 
@@ -46,6 +46,9 @@ $$
 | `SHIELD_RESERVE_WEIGHT`    | `2`   | 第一层护盾的储备价值                                |
 | `SHIELD_PROTECTION_WEIGHT` | `0.5` | 护盾对当前威胁/生命阈值保护的折算系数               |
 | `HP_RISK_OPTION_WEIGHT`    | `0.3` | HP=2 风险项权重                                     |
+| `RESOURCE_MATERIAL_SCALE`  | `0.4` | card/equipment base material 的唯一 SP 换算 authority |
+| `UNKNOWN_HAND_EXPECTED_VALUE` | `5.8` | 无有效 finite-pool 时 unknown base expectation 的唯一 authority |
+| `HAND_COUNT_VALUE`         | `1.1` | 每张手牌的数量状态价值                              |
 
 ## 0.2 最终候选的最高层公式
 
@@ -270,7 +273,7 @@ $$
 玩家存活时：
 
 $$
-\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+HP2Risk\\ &+ShieldValue\\ &+BubbleMachineFuture\\ &+EnergyDeviceFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentValue\\ &+EquipmentRoleDelta \end{aligned}
+\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+RadarFutureUtility\\ &+HP2Risk\\ &+ShieldValue\\ &+BubbleMachineFuture\\ &+EnergyDeviceFuture\\ &+BattleDeviceFuture\\ &+RecycleDeviceFuture\\ &+AssaultMagazineFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentBaseMaterial\\ &+EquipmentRoleDelta \end{aligned}
 $$
 
 其中前半由 `StateValue.js` 唯一拥有，手牌/装备 intrinsic asset 由 `CardValue.js` 唯一拥有。
@@ -393,7 +396,7 @@ $$
 
 # 6. Exposure 原始暴露度公式
 
-源码：`StateValue.js:569 assaultRangeAllocation()`、`622 exposureComponents()`。
+源码：`StateValue.assaultRangeAllocation()`、`StateValue.exposureComponents()`。
 
 ## 6.1 联合距离世界中的边际可达率与突袭分配质量
 
@@ -486,7 +489,9 @@ $$
 
 # 7. Radar / HP2 Risk / Shield
 
-## 7.1 防御装置 Radar 减免
+## 7.1 防御装置 Radar 减免与 Future Utility
+
+源码：`StateValue.radarMitigationUtility()`、`StateValue.expectedBlockDemand()`、`StateValue.radarFutureUtility()`、`Evaluator.radarJudgmentValueInputs()`。
 
 仅 `equipmentDefinitionId == defenseDevice`：
 
@@ -504,9 +509,52 @@ $$
 
 `P_tacticJudgment` 来自 Event/Probability 的雷达判定池。
 
-进入玩家 StateValue 的剩余暴露价值：  \boxed{ResidualExposureValue=-ResidualExposure}
+进入玩家 StateValue 的剩余暴露价值：  
+$$
+ResidualExposureValue=-ResidualExposure
+$$
+即：  
+$$
+ResidualExposureValue=-\max(0,Exposure-RadarMitigation)
+$$
+该 exposure 风险减免之外，Radar 还拥有独立的真实判定资源 Future Utility。它不是固定雷达补分，而是只在存在真实 Block demand 时产生：
 
-即：  \boxed{ResidualExposureValue=-\max(0,Exposure-RadarMitigation)}
+$$
+RadarFutureUtility=ExpectedBlockDemand\times Retention\times ExpectedUtilityPerJudgment 
+$$
+
+$$
+ ExpectedUtilityPerJudgment=\\P(Tactic)\times AvoidedBlockDemandValue+\sum_{d\in Basic}P(d)\times BasicCardGainValue(d) 
+$$
+
+一次战术牌判定免除对应的一次 Block demand。一次基础牌判定把该牌收入 Radar holder 手牌：
+
+$$
+BasicCardGainValue(d)=HAND\_COUNT\_VALUE+\\(BaseAiValue(d)+RoleDelta(holder,d))\times RESOURCE\_MATERIAL\_SCALE
+$$
+
+当前 `HAND_COUNT_VALUE=1.1`，`RESOURCE_MATERIAL_SCALE=0.4`。`AvoidedBlockDemandValue` 复用同一公式对 `block` 的结果，不新增雷达专属数值。
+
+`ExpectedBlockDemand` 由 `StateValue.expectedBlockDemand()` 从真实 production source 汇总：
+
+$$
+\begin{aligned}
+ExpectedBlockDemand={}&ExpectedUsableAssaults\times AssaultAllocation\times DeviceAttackRequirement\\
+&+E[ShockwaveCount]\times DeviceAttackRequirement\\
+&+P(BurningFieldReady)\\
+&+P(HuntReady)\times P(HuntMarkPresent)
+\end{aligned}
+$$
+
+其中：
+
+$$
+DeviceAttackRequirement=NormalRequirement+\\BattleDeviceRetention\times(BattleRequirement-NormalRequirement)
+$$
+
+`NormalRequirement` 与 `BattleRequirement` 均读取 Domain `getRequiredBlockCount()`；军火库双需求因此自然产生两次独立 Radar judgment opportunity。普通 Assault、Shockwave、Burning Field 与 Hunt/hunt-mark 都按真实规则进入，不存在 `if radar then +X` 特判。
+
+判定类别与每个基础牌定义的概率全部来自 Event/Probability 的 `buildRadarJudgmentProbabilities()` 和当前 remaining finite pool；Evaluator/StateValue 不建立第二套概率系统。Radar `aiValue=9` 保持不变，其 base material 与上述功能 Future Utility 分开记账。
 
 ## 7.2 HP=2 风险与附加剩余暴露度
 
@@ -651,7 +699,7 @@ $$
 
 # 9. Card / Equipment Asset State Value
 
-源码：`CardValue.js:744 cardPlayerValueTerms()`。
+源码：`CardValue.cardPlayerValueTerms()`。
 
 ## 9.1 手牌数量
 
@@ -698,22 +746,140 @@ $$
 材料尺度：
 
 $$
-RESOURCE\_MATERIAL\_SCALE=0.25
+RESOURCE\_MATERIAL\_SCALE=0.4
 $$
 
 装备基础资产：
 
 $$
-\boxed{ EquipmentValue=B_e\times R_e\times0.25 }
+ EquipmentBaseMaterial=B_e\times R_e\times RESOURCE\_MATERIAL\_SCALE 
 $$
 
-角色装备差量：
+角色装备差量与 BaseAiValue 共同组成装备静态资产，并使用同一材料尺度：
 
 $$
-\boxed{ EquipmentRoleDelta=RoleDelta(character,equipment)\times R_e\times0.25 }
+ EquipmentRoleDelta=RoleDelta(character,equipment)\times R_e\times RESOURCE\_MATERIAL\_SCALE 
 $$
 
-装备产生的真实状态后果（Radar、能量等）不在这里重复计价。
+因此也可统一写为：
+
+$$
+EquipmentStaticAsset=(BaseAiValue+RoleDelta)\times R_e\times RESOURCE\_MATERIAL\_SCALE
+$$
+
+`RoleCardValue = BaseAiValue + RoleDelta`；在“静态卡牌/资源资产”语义下二者同级、同尺度。现有 `HandRoleDelta` 是 viewer 自己已知手牌的独立 contextual State term，本轮没有全局重标。装备产生的真实状态后果（RadarFuture、EnergyDeviceFuture、BubbleMachineFuture、BattleDeviceFuture、RecycleDeviceFuture、AssaultMagazineFuture、distance/exposure）不属于静态资产，不乘材料尺度。
+
+## 9.4 通用 Block 防御成本
+
+源码：`StateValue.expectedDefenseCost()`、`StateValue.expectedDamageStateLoss()`。
+
+单张 Block 的完整资源价值由 CardValue authority 组成：
+
+$$
+BlockSpendValue(holder)=HAND\_COUNT\_VALUE+(BaseAiValue(block)+RoleDelta(holder,block))\times RESOURCE\_MATERIAL\_SCALE
+$$
+
+设目标当前 Block 数量分布为 $P(N=n)$，真实 Domain demand 为 $r$，一次未格挡伤害造成的现有生命、Danger、HP2Risk 与 ShieldValue 边际为 $DamageStateLoss$。没有 Radar 时：
+
+$$
+\boxed{DefenseCost(r)=\sum_nP(N=n)\begin{cases}r\times BlockSpendValue,&n\ge r\\DamageStateLoss,&n<r\end{cases}}
+$$
+
+该分段严格保留真实规则：数量不足时不浪费 Block。$DamageStateLoss$ 复用现有生命/危险/护盾 authority，不等同于固定 `HP_VALUE`。
+
+目标持有 Radar 时，每个 demand 复用 `buildRadarJudgmentSequenceProbabilities()` 的无放回顺序结果。设一次 sequence 免除 $w$ 个 demand、判得 $b$ 张 Block：
+
+$$
+DefenseCost_{radar}(r)=\sum_sP(s)\times DefenseCost(r-w_s, N+b_s)
+$$
+
+最终按 Radar retention 混合有/无装备世界。战术判定只免除对应 demand，判得 Block 可参与同次防御；其它基础牌判定摸牌收益仍由 `RadarFutureUtility` 唯一拥有，不进入攻击方的 `DefenseCost`。
+
+## 9.5 军火库 Future Utility
+
+源码：`StateValue.expectedDeviceAttackCount()`、`battleDeviceFutureUtility()`。
+
+受军火库影响的攻击来源不在 Evaluator 按名称列举，而是从正式 CardDefinitions 派生：拥有 `assault` subtype、正伤害字段，且目标语义为单目标距离攻击或全体敌人的定义。单目标库存复用 `expectedUsableAssaultsNextTurn()` 与共享距离世界分配；全体攻击复用当前 `queryPlayerHandProbability()` inventory。
+
+普通与军火库需求都读取 Domain `getRequiredBlockCount()`：
+
+$$
+r_0=getRequiredBlockCount(null,true)
+$$
+
+$$
+r_B=getRequiredBlockCount(battleDevice,true)
+$$
+
+因此：
+
+$$
+BattleDeviceFuture=R_B\sum_tExpectedDeviceAttacks(holder,t)\times[DefenseCost_t(r_B)-DefenseCost_t(r_0)]
+$$
+
+这自然给出：0 Block 时两个需求通常都命中，边际接近 0；恰 1 Block 时从可挡变为命中；2+ Block 时多支付一张 Block。装备 retention 只在本式乘一次；目标 Radar 增加的判定摸牌收益留在目标自身 `RadarFutureUtility`，不在军火库方重复加入。
+
+## 9.6 回收站 Future Utility
+
+源码：`StateValue.expectedActiveTacticCount()`、`expectedResponseTacticCount()`、`recycleDeviceFutureUtility()`、`Evaluator.expectedDrawGainValue()`。
+
+剩余额度严格读取 Definition：
+
+$$
+RemainingUses=\max(0,MaxUsesPerTurn-recycleDeviceUses)
+$$
+
+主动战术逐定义通过 Domain `canPlayCard()` 检查未来正常 play phase 的真实合法性，再用 `queryPlayerHandProbability()` 读取 known/finite-pool 数量。响应型战术库存只与其他存活玩家当前合法且可反制的主动战术机会配对；响应链必须由主动战术作为根，不能凭空递归 Counter-against-Counter。
+
+$$
+ExpectedUsableTactics=ExpectedLegalActiveTactics+\min(ExpectedResponseTactics,ExpectedCounterableOpportunities)
+$$
+
+$$
+ExpectedTriggerCount=\min(RemainingUses,ExpectedUsableTactics)
+$$
+
+finite pool 有效时，每次摸牌价值为：
+
+$$
+ExpectedDrawGain=HAND\_COUNT\_VALUE+\sum_dP(d)(BaseAiValue(d)+RoleDelta(holder,d))\times RESOURCE\_MATERIAL\_SCALE
+$$
+
+无有效 pool 时，基础材料使用 `UNKNOWN_HAND_EXPECTED_VALUE`，RoleDelta 回退 0。最终：
+
+$$
+RecycleDeviceFuture=R_R\times ExpectedTriggerCount\times TriggerDrawCount\times ExpectedDrawGain
+$$
+
+本式只估计当前 World 已拥有或概率拥有的战术，不把预计摸到的新牌递归成下一次触发。Simulator 已实际触发后，handCount 增加且 `recycleDeviceUses` 同步增加，因此已兑现手牌价值与剩余 Future 自然一升一降。
+
+## 9.7 备用弹夹 Future Utility
+
+源码：`StateValue.assaultInventoryOpportunityValue()`、`assaultMagazineFutureUtility()`、`expectedUsableAssaultsNextTurn()`。
+
+对同一个 World 构造只移除备用弹夹效果的配对玩家。每个世界的可兑现突袭数都直接复用 `expectedUsableAssaultsNextTurn()`；该 primitive 已包含 inventory、Domain 有效 attack limit、装备 retention 与破军合法额外容量。
+
+$$
+AssaultInventoryOpportunityValue(p)=ExpectedUsableAssaults(p)\times\sum_tAssaultAllocation(p,t)\times DefenseCost_t(r_0)
+$$
+
+其中 `AssaultAllocation` 来自共享距离条件世界，`DefenseCost` 包含 Block 分布、Radar 无放回判定、Shield 与 survivability 边际。
+
+$$
+AssaultMagazineFuture=\max(0,OpportunityValue(withMagazine)-OpportunityValue(withoutMagazine))
+$$
+
+只有 1 张 Assault 时两世界均只能兑现 1 次，Future 为 0；库存超过基础上限时才出现正边际。retention 已在 `expectedUsableAssaultsNextTurn(withMagazine)` 内混合，外层不得再次相乘。
+
+## 9.8 装备 Future 防重复账本
+
+| term | StateValue | Resource special bonus | 已兑现 transition | retention |
+| --- | --- | --- | --- | --- |
+| BattleDeviceFuture | 一次 | 无 | 实际伤害/Block 支付只在 after state | 外层一次 |
+| RecycleDeviceFuture | 一次 | 无；旧 RecycleHeld 已删除 | 实际摸牌进入 HandCount，剩余额度同步下降 | 外层一次 |
+| AssaultMagazineFuture | 一次 | 无 | 实际 Assault 后果只在 after state | `expectedUsableAssaultsNextTurn()` 内一次 |
+
+三项均属于正式 StateValue 的 `RawStateDelta / ContextualFunctional`，不属于 Search Prior，也不属于 `resourceSelectionPreference()` 的装备名称 bonus。`BubbleMachineFuture` 的既有公式、规则与数值本轮未修改。
 
 # 10. 静态卡牌价值常量
 
@@ -986,6 +1152,9 @@ EquipmentRoleDelta
 ExposeStackValue
 EnergyDeviceFuture
 BubbleMachineFuture
+BattleDeviceFuture
+RecycleDeviceFuture
+AssaultMagazineFuture
 ```
 
 ## 14.2 单玩家风险度 R_i
@@ -1242,21 +1411,25 @@ $$
 
 ## 16.2 Leverage 装备获得选择权
 
+源码：`Evaluator.deriveTransitionOptionPoints()` 的 `leverage` 分支。
+
 原目标装备前后保留概率：
 
 $$
 Acquired =\max(0,Retention_{before}-Retention_{after})
 $$
 
-装备对 actor 的静态价值：
+装备对 actor 的静态资产：
 
 $$
-EquipActorValue =BaseEquipValue+RoleDelta(actor,equipment)
+EquipActorStaticAsset=(BaseEquipValue+RoleDelta(actor,equipment))\times RESOURCE\_MATERIAL\_SCALE
 $$
 
 $$
-\boxed{ LeverageOption =EquipActorValue\times Acquired\times0.25 }
+\boxed{ LeverageOption =EquipActorStaticAsset\times Acquired }
 $$
+
+Base 与 RoleDelta 经同一 static-asset scale；`LeverageOption` 是 Transition Option，会经 `statePointsToUtility()` 进入 Final Utility。借势其它 willingness 与 Search Prior 公式不受影响。
 
 ## 16.3 Mutual Benefit Option
 
@@ -1308,16 +1481,18 @@ $$
 
 ## 16.4 Resource Transaction Option
 
+源码：`Evaluator.resourceTransactionForDefinition()`、`resourceTransactionOptionPoints()`。
+
 该项只评价 Destroy、Plunder、Transfer 已实际移除或转移的手牌身份价值；装备区资源不进入本项。设观察者为 `viewer`，玩家 `p` 持有定义 `c` 时：
 
 $$
-\boxed{ IdentityValue(p,c)=\\BaseCardValue(c)\times RESOURCE\_MATERIAL\_SCALE+MissingRoleDelta(p,c) }
+\boxed{ IdentityValue(p,c)=BaseCardValue(c)\times RESOURCE\_MATERIAL\_SCALE+MissingHandRoleContext(p,c) }
 $$
 
 其中：
 
 $$
-MissingRoleDelta(p,c)=
+MissingHandRoleContext(p,c)=
 \begin{cases}
 0,&p=viewer\\
 RoleDelta(p,c),&p\ne viewer
@@ -1327,10 +1502,10 @@ $$
 当前：
 
 $$
-RESOURCE\_MATERIAL\_SCALE=0.25
+RESOURCE\_MATERIAL\_SCALE=0.4
 $$
 
-viewer 自己的 `HandRoleDelta` 已进入 StateValue，因此本项只补具体手牌身份的基础材料价值，以及其他玩家在 StateValue 中缺失的 `RoleDelta`。
+viewer 自己的 `HandRoleDelta` 已作为独立 contextual State term 进入 StateValue，因此本项只补具体手牌身份的基础材料价值，以及其他玩家缺失的同一 HandRole context。这里不是把 `Base + RoleDelta` 组合为 static resource asset，故不得单独把该补偿改成 `staticCardAssetValue()`；否则会与未重标的 viewer `HandRoleDelta` 产生视角不对称。Destroy/Plunder 候选的静态资源规范化另由第 22 节负责。
 
 阵营符号统一为：
 
@@ -1417,39 +1592,15 @@ Searcher 只负责物化 hidden worlds / follow-up；公式 owner 仍是 Evaluat
 
 
 
-# 17. Terminal Frontier Held Option
+# 17. Frontier Utility
 
 源码：`Evaluator.js frontierResidual()`、`terminalFrontierValue()`。
 
-## 17.1 Recycle held option
-
-若仍持有 `recycleDevice`，terminal 后进入新的角色回合时额度会刷新，因此：
-
 $$
-FutureUses=2
+\boxed{ V_{frontier}=0 }
 $$
 
-若手中至少存在一张可在未来使用的 tactic，则：
-
-$$
-TacticGate=1
-$$
-
-否则 0。
-
-$$
-\boxed{ RecycleHeld =FutureUses\times TacticGate\times1.1\times Retention }
-$$
-
-## 17.2 Frontier Utility
-
-只在 terminal 时：
-
-$$
-\boxed{ V_{frontier} =\frac{RecycleHeld}{5} }
-$$
-
-`futureInventory + energyPressure` 虽被 `frontierResidual()` 输出用于诊断，但已经存在于 State Value，**不得再次进入 Final Utility**。
+`futureInventory + energyPressure` 仍被 `frontierResidual()` 输出用于诊断，但已经存在于 State Value，**不得再次进入 Final Utility**。回收站剩余功能同样只通过 StateValue after-before 进入一次。
 
 # 18. END Opportunity Penalty
 
@@ -1632,16 +1783,16 @@ $$
 
 # 19. Candidate 比较语义
 
-源码：`Evaluator.js:3922 compareCandidates()`。
+源码：`Evaluator.compareCandidates()`、`Evaluator.js compareUtilityValues()`。
 
 比较优先级：
 
 1. 两个都是根 Transfer：先比较 Transfer contextual preference；
 2. 同一 Destroy/Plunder card + target 的不同 resource choice：
-   - `contextualUtility`
-   - `staticUtility`
+   - 先比较 `ResourceSelectionUtility`；
+   - Resource 在统一机器精度 tolerance 内同分时，继续比较 generic Final Utility；
 3. 通用比较：`valueScore`（搜索累计值）或 `transitionValue`；
-4. 浮点 tolerance 内视为同分；
+4. Resource 与 Final 都在同一机器精度 tolerance 内时才进入稳定同分规则；
 5. 若两者都是同一目标的 Scout，则优先实际新增揭示数 `actualNewRevealCount` 更多的候选；
 6. 仍完全同分时：`skill root > card root`；
 7. 其它完全等价返回 0。
@@ -1651,6 +1802,22 @@ $$
 $$
 \boxed{ Tolerance=Number.EPSILON\times\max(1,|V_L|,|V_R|) }
 $$
+
+该 tolerance 由 `Evaluator.js compareUtilityValues()` 唯一实现，并同时服务 ResourceSelectionUtility 与 generic Final Utility。它不是 Event/Probability 的 `PROBABILITY_EPSILON`，不会改变概率合并、AppliedProbability 或 SearchBudget 语义。
+
+同根 Destroy/Plunder 的完整层级为：
+
+```text
+ResourceSelectionUtility
+    ↓ machine-precision tie
+Generic Final Utility
+    ↓ machine-precision tie
+Scout/skill-root 已有稳定规则（适用时）
+    ↓ tie
+Generator stable enumeration
+```
+
+Resource 非 tie 时 Final Utility 无权覆盖资源选择 authority；Resource tie 时也不得提前返回 0 跳过 Final Utility。
 
 # 20. Card / Resource Policy Value 公式
 
@@ -1722,8 +1889,10 @@ $$
 否则：
 
 $$
-UNKNOWN\_HAND\_EXPECTED\_VALUE=4
+UNKNOWN\_HAND\_EXPECTED\_VALUE=5.8
 $$
+
+这只是无有效 finite-pool 时的 unknown base expectation，不会作为每张普通手牌的永久 World StateValue。
 
 ## 20.3 装备替换 Keep Deduction
 
@@ -1809,9 +1978,9 @@ $$
 
 无有效池：
 
-- destroy：`4`
+- destroy：`UNKNOWN_HAND_EXPECTED_VALUE`
 - plunder 己方：`0`
-- plunder 敌方：`8`
+- plunder 敌方：`2 × UNKNOWN_HAND_EXPECTED_VALUE`
 
 ## 20.7 匿名获得资源 Utility
 
@@ -1819,7 +1988,7 @@ $$
 \boxed{ E[BaseCardValue] =\frac{\sum_dn_dBaseValue_d}{\sum_dn_d} }
 $$
 
-无池时回退 `4`。
+无池时回退 `UNKNOWN_HAND_EXPECTED_VALUE = 5.8`。
 
 ## 20.8 Energy Device 技能门槛 Policy Value
 
@@ -1924,7 +2093,7 @@ $$
 
 # 22. Destroy / Plunder Resource Selection Comparator
 
-源码：`Evaluator.js:2526 resourceSelectionPreference()`。
+源码：`Evaluator.resourceSelectionPreference()`、`Evaluator.compareCandidates()`。
 
 动作真实应用概率：
 
@@ -1945,42 +2114,69 @@ $$
 
 则该 selection preference 为 `-∞`。
 
-静态资源值：
-
-$$
-StaticUtility=Known/UnknownResourceUtility
-$$
-
-掠夺获得方材料值：
-
-$$
-AcquisitionUtility= \begin{cases} 0,&destroy\\ UnknownAcquisition,&plunder\;unknown\\ BaseCardValue,&plunder\;known \end{cases}
-$$
-
 先计算真实状态差：
 
 $$
 RawStateDelta=V_{state}(Y)-V_{state}(X)
 $$
 
-再把装备 intrinsic material 的前后变化单独抽掉，避免 contextual preference 里重复受其影响：
+`RawStateDelta` 已包含场上装备的 Base/Role static asset、装备功能变化、hand `1.1 × HandCount`，以及 viewer 已知手牌的独立 `HandRoleDelta`。为了让 hand/equipment 静态资产同尺度比较，先把装备 Base 与 Role 的静态部分一起剥离：
 
 $$
-EquipmentMaterialDelta
+EquipmentStaticAssetDelta=\Delta(EquipmentBaseMaterial+EquipmentRoleDelta)
 $$
 
-最终：
+已知手牌或公开装备经 Plunder 进入 actor 手牌时，viewer 的独立 `HandRoleDelta` 已在 `RawStateDelta` 兑现；为了改由 acquisition static asset 同尺度表示，先移除这一项。匿名 acquisition 没有已兑现身份，因此该项为 0：
 
 $$
- ContextualUtility =RawStateDelta -EquipmentMaterialDelta\\ +AcquisitionUtility\times0.25\times P_{applied} +ThresholdOption\times P_{applied} 
+ContextualFunctional=RawStateDelta-EquipmentStaticAssetDelta-RealizedActorHandRoleDelta 
 $$
 
-同一个 Destroy/Plunder 根资源选择比较顺序：
+动态装备 Future、distance/exposure、HandCount 与动作卡自身的 HandRoleDelta 全部留在 context。设 `ExpectedBaseAiValue` 与 `ExpectedRoleDelta(holder)` 为确定 definition 的值，或当前 remaining finite pool 的合法条件期望；无有效 pool 时 Base 回退 `UNKNOWN_HAND_EXPECTED_VALUE`，Role 回退 0。目标阵营方向：
 
-1. `contextualUtility`
-2. `staticUtility`
+$$
+TargetSign=\begin{cases}+1,&owner\ enemy\\-1,&owner\ ally\end{cases}
+$$
 
-然后才回到通用 Final Utility 比较。
+目标资源静态资产：
+
+$$
+TargetStaticAsset=TargetSign\times(ExpectedBaseAiValue+ExpectedRoleDelta(owner))\times RESOURCE\_MATERIAL\_SCALE\times P_{applied} 
+$$
+
+Plunder 获得方静态资产独立使用 actor 的 RoleDelta：
+
+$$
+ActorAcquisition=\begin{cases}(ExpectedBaseAiValue+ExpectedRoleDelta(actor))\times RESOURCE\_MATERIAL\_SCALE\times P_{applied},&plunder\\0,&destroy\end{cases}
+$$
+
+充能桩技能门槛项继续使用 20.8 的既有 policy authority：
+
+$$
+ThresholdUtility=ThresholdOption\times P_{applied}
+$$
+
+最终唯一资源选择标量：
+
+$$
+ResourceSelectionUtility=\\ContextualFunctional\\+TargetStaticAsset\\+ActorAcquisition\\+ThresholdUtility
+$$
+
+`EquipmentStaticAssetDelta` 先从 `RawStateDelta` 同时剥离装备 Base/Role，再由 `TargetStaticAsset` 以同一语义加回一次；hand static asset 原本不永久进入普通 StateValue，只在本次具体 resource policy 中进入。Plunder 的 target denial 与 actor acquisition 使用各自角色的 RoleDelta，是同一实体的两个不同所有权后果，各计一次，不是重复计值。
+
+对军火库、回收站与备用弹夹，Destroy/Plunder 没有任何装备名特判：
+
+$$
+ContextualFunctional\supset\Delta BattleDeviceFuture+\Delta RecycleDeviceFuture+\Delta AssaultMagazineFuture
+$$
+
+Destroy 移除敌方装备时，目标 Future denial 由 `RawStateDelta` 自然成为正 context；Plunder 同时保留目标 denial，并按既有 `ActorAcquisition` 记取得的静态资产。若实际 after World 让获得方装备生效，其新 StateValue Future 同样由 after-before 自然进入；当前真实 Plunder 把装备牌收入手牌时则不会虚构装备已生效。三项 Future 都不会被 `EquipmentStaticAssetDelta` 剥离，也不会再次进入 `TargetStaticAsset`、`ActorAcquisition` 或 threshold。
+
+`ResourceSelectionUtility` 只负责同一 Destroy/Plunder 根资源选择，不再作为额外项加进 Final Utility。比较层级与机器精度 tie contract 见第 19 节：
+
+```text
+ResourceSelectionUtility → tie → Generic Final Utility → tie → stable order
+```
 
 # 23. 全体受益：Mutual Benefit / Symbiosis
 
@@ -3237,13 +3433,16 @@ Evaluator 用于：Scout entropy、Leverage block risk、rescue density 等。
 
 救援未知 Recover 数量计算使用的无放回超几何尾概率。
 
-## 46.8 `buildRadarJudgmentProbabilities(...).tactic`
+## 46.8 `buildRadarJudgmentProbabilities(...)`
 
-返回当前判定池下“Radar 判为 tactic”的概率，用于：
+从当前 remaining finite pool 返回：
 
-- defenseDevice radar mitigation；
-- owner/state material value；
-- diagnostics。
+- `.tactic`：Radar 判为 tactic 的概率；
+- `.equipment`：判为 equipment 的概率；
+- `.basic[definitionId]`：每个基础牌定义的判定概率；
+- `.hasJudgmentPool`：当前是否存在有效判定池。
+
+Evaluator 使用 `.tactic` 计算 exposure mitigation 与 avoided Block demand，并使用 `.basic` 计算 expected basic judgment draw value；StateValue 不复制类别概率或 finite-pool 算法。
 
 ## 46.9 `tacticJudgmentProbability(...)`
 
@@ -3301,6 +3500,10 @@ X 技能反事实只使用 canonical World 的 `energy/maxEnergy` 与真实 Simu
 
 只用于 Seal 的座次 timing prior。
 
+## 47.6 `getRequiredBlockCount()`
+
+Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取普通需求与军火库需求；每个独立需求对应一次 judgment opportunity，StateValue 不硬编码军火库数量。
+
 # 48. 全部模块级数值常量总表
 
 ## 48.1 StateValue.js
@@ -3319,11 +3522,26 @@ X 技能反事实只使用 canonical World 的 `energy/maxEnergy` 与真实 Simu
 
 | **常量值类型**                   |      |                             |
 | -------------------------------- | ---- | --------------------------- |
-| `RESOURCE_MATERIAL_SCALE`        | 0.25 | Card/resource material      |
-| `UNKNOWN_HAND_EXPECTED_VALUE`    | 4    | anonymous resource fallback |
+| `RESOURCE_MATERIAL_SCALE`        | 0.4  | static card/equipment asset 唯一换算尺度 |
+| `UNKNOWN_HAND_EXPECTED_VALUE`    | 5.8  | no-pool unknown base expectation 唯一 authority |
+| `HAND_COUNT_VALUE`               | 1.1  | hand-count StateValue       |
 | `RESPONSE_SURVIVAL_BONUS_DANGER` | 1    | discard policy              |
 | `RESPONSE_SURVIVAL_BONUS_LETHAL` | 2    | discard policy              |
 | `SKILL_THRESHOLD_POLICY_BONUS`   | 4    | resource policy             |
+
+`RESOURCE_MATERIAL_SCALE` 的 production 消费点与职责：
+
+| owner / function | material fact | classification |
+| --- | --- | --- |
+| `CardValue.staticCardAssetValue()` | `(Base + RoleDelta) × scale` | static card/resource asset 唯一 primitive |
+| `CardValue.cardPlayerValueTerms()` | equipment Base/Role static asset | State Value；只经 state delta 进入 Final |
+| `Evaluator.resourceTransactionForDefinition()` | hand identity base material + 非 viewer 缺失 HandRole context | Transition Option；Role context 保持 HandRoleDelta 现有尺度，不属于 static-asset 重标 |
+| `Evaluator.deriveTransitionOptionPoints()` leverage 分支 | 获得装备的 actor static asset | Transition Option；经 `/5` 进入 Final |
+| `Evaluator.radarBasicCardGainValue()` | Radar 判得基础牌的 static asset | Radar Future State Value |
+| `Evaluator.expectedDrawGainValue()` | Recycle 未来摸牌的 expected static asset | Recycle Future State Value |
+| `Evaluator.resourceSelectionPreference()` | Destroy/Plunder target/acquisition static asset | Resource Policy；不额外加入 Final |
+
+`UNKNOWN_HAND_EXPECTED_VALUE` 只由 `getUnknownTransferCardValue()`、`getResourceUnknownUtility()` 与 `getUnknownAcquisitionUtility()` 在无有效 finite-pool 时消费；enemy Plunder 通过 `2 × UNKNOWN_HAND_EXPECTED_VALUE` 推导，不存在 `11.6` 第二 authority。
 
 ## 48.3 Evaluator.js
 

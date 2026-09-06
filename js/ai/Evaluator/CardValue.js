@@ -23,8 +23,11 @@ import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillD
 import { calculateHealAmount } from "../../domain/rules/combat/CombatRules.js";
 import { cardAvailability } from "../Event/Probability/Probability.js";
 
-export const RESOURCE_MATERIAL_SCALE = 0.25;
-export const UNKNOWN_HAND_EXPECTED_VALUE = 4;
+// BaseAiValue 与 RoleDelta 共同表达静态卡牌资产时，只能由本常量统一换算为 State points。
+export const RESOURCE_MATERIAL_SCALE = 0.4;
+// 没有有效 finite-pool 信息时，匿名牌基础价值只能回退到本期望。
+export const UNKNOWN_HAND_EXPECTED_VALUE = 5.8;
+export const HAND_COUNT_VALUE = 1.1;
 const RESPONSE_SURVIVAL_BONUS_DANGER = 1;
 const RESPONSE_SURVIVAL_BONUS_LETHAL = 2;
 // 该值只表示资源选择中的技能门槛策略选择权，不是概率、State/Final Utility 或单位换算。
@@ -406,7 +409,7 @@ Evaluator 的匿名转移候选评估。
 过滤后的玩家公开状态与可选 remaining-card counts。
 
 输出
-有效剩余池的加权单卡值；缺少有效计数时返回 canonical 固定期望四。
+有效剩余池的加权单卡值；缺少有效计数时返回 canonical 未知手牌基础期望。
 
 读取状态
 只读聚合 finite-pool counts 与单卡转移资源值。
@@ -505,6 +508,38 @@ getRoleCardAiValue、getBaseCardAiValue。
 export function roleCardDelta(characterId, definitionId) {
   if (!characterId || !definitionId) return 0;
   return getRoleCardAiValue(characterId, definitionId) - getBaseCardAiValue(definitionId);
+}
+
+/*
+功能
+把一张具体牌对指定持有者的静态角色价值换算为 State points 资产价值。
+
+调用方
+Evaluator 的装备、资源获得、Radar 判定与回收站未来摸牌静态资产路径，以及直接公式测试。
+
+输入
+可选角色 ID、卡牌 definition ID 与仅供现有 CardValue 测试注入的定义/差量配置。
+
+输出
+`(BaseAiValue + RoleDelta) × RESOURCE_MATERIAL_SCALE` 的有限 State points。
+
+读取状态
+稳定 CardDefinitions、RoleCardValue delta 与唯一材料尺度。
+
+写入状态
+无。
+
+调用函数
+getRoleCardAiValue、getBaseCardAiValue。
+
+边界与不变量
+只用于静态 card/resource asset；HandRoleDelta、Discard、Transfer、Search Prior 与动态装备 Future 不消费本函数。
+*/
+export function staticCardAssetValue(characterId, definitionId, options = {}) {
+  const roleValue = characterId
+    ? getRoleCardAiValue(characterId, definitionId, options)
+    : getBaseCardAiValue(definitionId, options.cardDefinitions ?? CARD_DEFINITIONS);
+  return roleValue * RESOURCE_MATERIAL_SCALE;
 }
 
 /*
@@ -751,7 +786,8 @@ Evaluator.playerValueTerms。
 getBaseCardAiValue、roleCardDelta、cardAvailability。
 
 边界与不变量
-装备 intrinsic asset 只在这里计价；距离、雷达、能量收益等装备后果由 StateValue 另行计算。
+装备 Base 与 RoleDelta 同属 static asset，分别在这里乘 RESOURCE_MATERIAL_SCALE 恰好一次。
+距离、雷达、能量收益等装备后果由 StateValue 另行计算。
 */
 export function cardPlayerValueTerms(player, viewerId) {
   const equipmentValue = player.equipmentDefinitionId
@@ -767,7 +803,7 @@ export function cardPlayerValueTerms(player, viewerId) {
       ), 0)
     : 0;
   return {
-    handCount:player.handCount * 1.1,
+    handCount:player.handCount * HAND_COUNT_VALUE,
     handRoleDelta,
     equipmentDelta:equipmentValue * retention * RESOURCE_MATERIAL_SCALE,
     equipmentRoleDelta:currentEquipmentRoleDelta * retention * RESOURCE_MATERIAL_SCALE
