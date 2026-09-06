@@ -50,7 +50,6 @@ import {
   getAvailabilityStateBranches,
   getRangeConditionBranches,
   independentUnionProbability,
-  mutateProbability,
   intersectProbabilityStateBranchesCooperatively,
   mergeProbabilityStateBranchesCooperatively,
   probabilityEventPartition,
@@ -818,7 +817,7 @@ class SimulatorCore {
   只写一次完整 World clone。
 
   调用函数
-  clone、mutateProbability。
+  clone、mutateHandProbability。
 
   边界与不变量
   不回读真实未知手牌；viewer 手牌保持原样；确定 known 占位按原顺序保留。
@@ -833,7 +832,7 @@ class SimulatorCore {
         cardAvailability(entry) >= 1 - PROBABILITY_EPSILON
       )).length;
       for (const definitionId of definitions.slice(certainKnownCount)) {
-        mutateProbability(specialized.probabilityState, {
+        this.mutateHandProbability(specialized, {
           type:"REMOVE",
           sourceBucketId:player.id,
           definitionId
@@ -2680,7 +2679,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
             .filter((entry) => entry.definitionId === "assault")
             .reduce((sum, entry) => sum + cardAvailability(entry), 0);
           const anonymousSpent = Math.max(0, spent - (knownBefore - knownAfter));
-          if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(next.probabilityState, {
+          if (anonymousSpent > PROBABILITY_EPSILON) this.mutateHandProbability(next, {
             type:"REMOVE",
             sourceBucketId:player.id,
             definitionId:"assault",
@@ -2741,7 +2740,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
           .filter((entry) => entry.definitionId === "assault")
           .reduce((sum, entry) => sum + cardAvailability(entry), 0);
         const anonymousSpent = Math.max(0, assaultSpent - (knownBefore - knownAfter));
-        if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(next.probabilityState, {
+        if (anonymousSpent > PROBABILITY_EPSILON) this.mutateHandProbability(next, {
           type:"REMOVE",
           sourceBucketId:first.id,
           definitionId:"assault",
@@ -3042,13 +3041,13 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
       [target, targetAnonymousSpent]
     ]) {
       const whole = Math.floor(spent);
-      if (whole > 0) mutateProbability(state.probabilityState, {
+      if (whole > 0) this.mutateHandProbability(state, {
         type:"REMOVE",
         sourceBucketId:player.id,
         definitionId:"assault",
         count:whole
       });
-      if (spent - whole > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
+      if (spent - whole > PROBABILITY_EPSILON) this.mutateHandProbability(state, {
         type:"REMOVE",
         sourceBucketId:player.id,
         definitionId:"assault",
@@ -3859,7 +3858,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   边界与不变量
   每次实际生命伤害都可触发；空手、队友、已死亡或已无未知牌时不产生新增信息，
-  同一模拟路径已经查看的数量不得再次计值。
+  同一模拟路径仍在目标手中的已查看数量不得再次计值；匿名离手时由 Resource 按当前容量衰减摘要。
   */
   simulateSpyGapAfterLifeDamage(
     state,

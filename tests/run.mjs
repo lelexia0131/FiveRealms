@@ -11884,6 +11884,28 @@ test("影客：窥隙在致命伤害获救后触发且不会在救援前提前�
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length, 2);
 });
 
+test("影客：窥隙 pending 缺失时濒死监听建立 Set 且救援后清理", async () => {
+  const shade = makePlayer("peek-missing-pending", 0, "dawn", "human", 3);
+  const target = makePlayer("peek-missing-target", 1, "dusk");
+  target.hand.push(instance("charge"));
+  const { game, ui } = makeGame([shade, target]);
+  registerPassiveSkills(game);
+  delete shade.turnFlags.spyGapPendingTargetIds;
+  target.hp = 0;
+  const version = game.state.stateVersion;
+
+  await game.eventDispatcher.emit("afterDamage", { source: shade, target, actualAmount: 1 });
+
+  assert.ok(shade.turnFlags.spyGapPendingTargetIds instanceof Set);
+  assert.deepEqual([...shade.turnFlags.spyGapPendingTargetIds], [target.id]);
+  assert.equal(game.state.stateVersion, version + 1);
+  assert.equal(ui.reveals.length, 0);
+  target.hp = 1;
+  await game.eventDispatcher.emit("playerRescued", { target });
+  assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
+  assert.equal(ui.reveals.length, 1);
+});
+
 test("影客：窥隙救援清理待处理目标并按 transition 语义推进状态版本", async () => {
   const shade = makePlayer("peek-version-shade", 0, "dawn", "human", 3),
     target = makePlayer("peek-version-target", 1, "dusk");
@@ -30002,6 +30024,134 @@ test("AI·影客：窥隙每次实际伤害记录新增未知信息且已知牌�
 
 
 
+
+/*
+功能
+构造窥隙资源流动回归的隔离 World，并禁止后续访问真实未知手牌身份。
+
+调用方
+AI 影客窥隙资源流动测试。
+
+输入
+无。
+
+输出
+真实游戏、根 World、可变 World、模拟器与对应玩家。
+
+读取状态
+合法公开状态与观察者记忆。
+
+写入状态
+仅测试夹具和隔离 World。
+
+调用函数
+makeGame、createInitialWorld。
+
+边界与不变量
+未知牌的 id 和 definitionId 在投影后改为抛错 getter，模拟不得回读隐藏实体。
+*/
+function makeSpyGapMovementFixture() {
+  const shade = makePlayer("spy-flow-shade", 0, "dawn", "ai", 3);
+  const target = makePlayer("spy-flow-target", 1, "dusk", "ai");
+  const receiver = makePlayer("spy-flow-receiver", 2, "dusk", "ai");
+  target.hand.push(instance("charge"), instance("harvest"));
+  const { game } = makeGame([shade, target, receiver]);
+  const root = createInitialWorld(shade.id, game.state, { assault: 4, block: 4 });
+  for (const card of target.hand) {
+    for (const field of ["id", "definitionId"]) {
+      Object.defineProperty(card, field, { get() { throw new Error(`隐藏实体读取：${field}`); } });
+    }
+  }
+  const state = structuredClone(root);
+  return {
+    game, root, state, simulator: new Simulator(),
+    shade: state.players[0], target: state.players[1], receiver: state.players[2]
+  };
+}
+
+test("AI·影客：窥隙已查看资源离手后补入未知牌且总数不变仍新增一张信息", () => {
+  for (const movement of ["destroy", "random", "move", "payment"]) {
+    const { game, root, state, simulator, shade, target, receiver } = makeSpyGapMovementFixture();
+    simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+    assert.equal(shade.spyGapRevealedCountsByTarget[target.id], 2);
+    if (movement === "destroy") {
+      simulator.destroyResource(state, shade, target, 1, "spy-flow", {
+        zone: "hand", selectionKind: "unknown", availableUnknownCount: 2
+      });
+    } else if (movement === "random") {
+      simulator.consumeRandomHandCards(state, target, 1);
+    } else if (movement === "move") {
+      simulator.transferUnknownCardIdentity(state, target, receiver,
+        simulator.getEventWorlds(state, 1, null, "spy-flow"), 2);
+    } else {
+      simulator.consumeKnownDefinitionPayment(state, target, "assault", 1);
+    }
+    assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1);
+    simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+    assert.equal(shade.spyGapInformationEvents.length, 1, "留在手里的已查看资源不得重复计值");
+    simulator.gainUnknownCardsWithCounterState(state, target, 1);
+    assertClose(target.handCount, root.players[1].handCount);
+    const before = structuredClone(state);
+    simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+    assert.deepEqual(shade.spyGapInformationEvents, [
+      { targetId: target.id, actualNewRevealCount: 2 },
+      { targetId: target.id, actualNewRevealCount: 1 }
+    ], "信息事件只能携带目标与新增数量，不得持有未知牌面或实体身份");
+    assertClose(shade.spyGapRevealedCountsByTarget[target.id], 2);
+    assert.deepEqual(target.knownCards, []);
+    assert.equal(target.hand, undefined);
+    assert.deepEqual(root.players[0].spyGapRevealedCountsByTarget, {}, "不得污染根或兄弟 World");
+
+    const terms = game.aiController.evaluator.evaluateTransition({
+      action: createAction({ type: "end", actorId: shade.id }),
+      player: before.players[0], beforeState: before, afterState: state
+    });
+    const oneCardValue = privatePeekInformationValue(before, before.players[0], before.players[1], 1);
+    assert.ok(oneCardValue > 0);
+    assertClose(terms.transitionOptionPoints, oneCardValue);
+    const noNewBefore = structuredClone(state);
+    simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+    assert.equal(game.aiController.evaluator.evaluateTransition({
+      action: createAction({ type: "end", actorId: shade.id }),
+      player: noNewBefore.players[0], beforeState: noNewBefore, afterState: state
+    }).transitionOptionPoints, 0);
+  }
+});
+
+test("AI·影客：窥隙保留合法已知牌及未离手摘要且新增牌不重置已有信息", () => {
+  const { state, simulator, shade, target } = makeSpyGapMovementFixture();
+  simulator.addSimulatedKnownCard(state, target,
+    { definitionId: "block", cardId: "legal-known-block" },
+    simulator.getEventWorlds(state, 1, null, "spy-known-gain"));
+  simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+  simulator.consumeUnknownResourceCard(state, target, 1, 2);
+  assert.equal(target.knownCards[0].definitionId, "block");
+  assertClose(target.knownCards[0].availability, 1);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1);
+  simulator.destroyResource(state, shade, target, 1, "spy-known-loss", {
+    zone: "hand", selectionKind: "known", cardId: "legal-known-block", definitionId: "block"
+  });
+  assert.deepEqual(target.knownCards, []);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1, 1e-9);
+  simulator.gainUnknownCardsWithCounterState(state, target, 1);
+  simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+  assert.deepEqual(shade.spyGapInformationEvents.map((event) => event.actualNewRevealCount), [2, 1]);
+});
+
+test("AI·影客：窥隙部分查看摘要按匿名流出比例保留且死亡清空", () => {
+  const { state, simulator, shade, target } = makeSpyGapMovementFixture();
+  simulator.gainUnknownCardsWithCounterState(state, target, 2);
+  simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+  simulator.consumeUnknownResourceCard(state, target, 1, 4);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1.5);
+  simulator.gainUnknownCardsWithCounterState(state, target, 1);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1.5);
+  const deathState = structuredClone(state);
+  simulator.clearSimulatedPlayerResources(deathState, deathState.players[1]);
+  assertClose(deathState.players[0].spyGapRevealedCountsByTarget[target.id], 0);
+  simulator.consumeUnknownResourceCard(state, target, .5, 4);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1.5 * 3.5 / 4);
+});
 
 test("AI·影客：确定击杀与能量机会成本优先于窃取", async () => {
   const shade = makePlayer("steal-kill-shade", 0, "dawn", "ai", 3),

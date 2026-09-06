@@ -137,6 +137,7 @@ function createWorldPlayer(factPlayer, knownCards, viewerId, derivedPlayer) {
     nextTurnBaseAttackLimit:derivedPlayer.nextTurnBaseAttackLimit,
     guardianAidUsed:Boolean(derivedPlayer.guardianAidUsed),
     spyGapInformationEvents:[],
+    // 只累计仍占据目标匿名手牌容量的已查看期望数量；资源离手由 Resource 同步衰减。
     spyGapRevealedCountsByTarget:{},
     activeSkillCost:derivedPlayer.activeSkillCost,
     hand:factPlayer.id === viewerId ? factPlayer.hand.map(createWorldCard) : undefined,

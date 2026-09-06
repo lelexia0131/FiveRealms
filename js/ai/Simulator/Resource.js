@@ -61,6 +61,54 @@ Simulator.js 文件末尾的组合表达式：在模块加载时把卡牌效果�
 export const withResource = (Base) => class Resource extends Base {
   /*
   功能
+  推进匿名手牌资源流动，并保留仍在来源手中的窥隙已查看期望数量。
+
+  调用方
+  Resource 资源获得、支付、移除、转移与 Simulator 匿名身份结算入口。
+
+  输入
+  可变 World 与传给 Probability 的资源 mutation。
+
+  输出
+  Probability mutation 的返回值。
+
+  读取状态
+  Probability 来源桶当前匿名容量与各观察者对该目标的窥隙摘要。
+
+  写入状态
+  ProbabilityState 与观察者的 spyGapRevealedCountsByTarget；不改变已产生的信息事件。
+
+  调用函数
+  mutateProbability、expectedAnonymousSlots。
+
+  边界与不变量
+  已查看匿名槽可交换，按实际流出后的容量比例保留期望覆盖，不猜测离手实体或保存身份。
+  部分查看与概率流动采用数量摘要近似，不表达查看和支付之间的身份相关性；
+  合法 knownCards 继续由既有 availability 管理，新增未知槽不得继承来源的查看资格。
+  */
+  mutateHandProbability(state, mutation) {
+    const sourceId = mutation.sourceBucketId;
+    const observers = (state.players ?? []).filter((player) => (
+      (player.spyGapRevealedCountsByTarget?.[sourceId] ?? 0) > 0
+    ));
+    const beforeSlots = observers.length
+      ? expectedAnonymousSlots(state.probabilityState, sourceId) : 0;
+    const result = mutateProbability(state.probabilityState, mutation);
+    if (!observers.length) return result;
+    const afterSlots = expectedAnonymousSlots(state.probabilityState, sourceId);
+    // 使用资源 mutation 前后容量，才能识别先离手后补牌而总手牌数不变的流动。
+    const retention = beforeSlots > PROBABILITY_EPSILON
+      ? Math.min(1, afterSlots / beforeSlots) : 0;
+    for (const observer of observers) {
+      observer.spyGapRevealedCountsByTarget[sourceId] = Math.min(
+        beforeSlots, observer.spyGapRevealedCountsByTarget[sourceId]
+      ) * retention;
+    }
+    return result;
+  }
+
+  /*
+  功能
   逐张推进未知资源获得、剩余牌池密度与响应容量。
 
   调用方
@@ -131,7 +179,7 @@ export const withResource = (Base) => class Resource extends Base {
         const cardGain = this.eventProbability(cardWorlds);
         if (cardGain <= PROBABILITY_EPSILON) break;
         player.handCount = (player.handCount ?? 0) + cardGain;
-        mutateProbability(state.probabilityState, {
+        this.mutateHandProbability(state, {
           type: "ADD",
           targetBucketId: player.id,
           probability: cardGain
@@ -155,7 +203,7 @@ export const withResource = (Base) => class Resource extends Base {
       const cardGain = this.eventProbability(cardWorlds);
       if (cardGain <= PROBABILITY_EPSILON) break;
       player.handCount = (player.handCount ?? 0) + cardGain;
-      mutateProbability(state.probabilityState, {
+      this.mutateHandProbability(state, {
         type: "ADD",
         targetBucketId: player.id,
         probability: cardGain
@@ -271,7 +319,7 @@ export const withResource = (Base) => class Resource extends Base {
   格挡 identity availability、hand/knownCards、handCount 与匿名 block factor。
 
   调用函数
-  consumeBlockIdentities、getAvailabilityStateBranches、mutateProbability 与概率运行时 primitive。
+  consumeBlockIdentities、getAvailabilityStateBranches、mutateHandProbability 与概率运行时 primitive。
 
   边界与不变量
   只执行传入请求，不重新决定是否格挡；判定牌和判定前身份使用同一条件世界，
@@ -342,14 +390,14 @@ export const withResource = (Base) => class Resource extends Base {
     target.handCount = Math.max(0, (target.handCount ?? 0) - expectedBlockSpend);
     const anonymousSpend = Math.max(0, expectedBlockSpend - (knownBefore - knownAfter));
     const wholeAnonymousSpend = Math.floor(anonymousSpend);
-    if (wholeAnonymousSpend > 0) mutateProbability(state.probabilityState, {
+    if (wholeAnonymousSpend > 0) this.mutateHandProbability(state, {
       type: "REMOVE",
       sourceBucketId: target.id,
       definitionId: "block",
       count: wholeAnonymousSpend
     });
     if (anonymousSpend - wholeAnonymousSpend > PROBABILITY_EPSILON) {
-      mutateProbability(state.probabilityState, {
+      this.mutateHandProbability(state, {
         type: "REMOVE",
         sourceBucketId: target.id,
         definitionId: "block",
@@ -379,7 +427,7 @@ export const withResource = (Base) => class Resource extends Base {
   Counter identity availability、hand/knownCards、handCount 与匿名 counter factor。
 
   调用函数
-  cardAvailability、totalBranchProbability 与 mutateProbability。
+  cardAvailability、totalBranchProbability 与 mutateHandProbability。
 
   边界与不变量
   不重新运行响应顺序或 willingness；已知与匿名身份互斥，单次请求最多消费一张 Counter。
@@ -409,7 +457,7 @@ export const withResource = (Base) => class Resource extends Base {
       (sum, candidate) => sum + cardAvailability(candidate.card), 0
     );
     const anonymousSpend = Math.max(0, attemptedProbability - (knownBefore - knownAfter));
-    if (anonymousSpend > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
+    if (anonymousSpend > PROBABILITY_EPSILON) this.mutateHandProbability(state, {
       type: "REMOVE",
       sourceBucketId: target.id,
       definitionId: "counter",
@@ -439,7 +487,7 @@ export const withResource = (Base) => class Resource extends Base {
   已知 identity、匿名 factor 和 handCount。
 
   调用函数
-  consumeKnownCardsFromHand、cardAvailability、mutateProbability。
+  consumeKnownCardsFromHand、cardAvailability、mutateHandProbability。
 
   边界与不变量
   只执行调用方已解析的 payment，不决定救援意愿；已知与匿名消费之和等于请求量。
@@ -455,7 +503,7 @@ export const withResource = (Base) => class Resource extends Base {
       .filter((entry) => entry.definitionId === definitionId)
       .reduce((sum, entry) => sum + cardAvailability(entry), 0);
     const anonymousSpent = Math.max(0, spend - (knownBefore - knownAfter));
-    if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
+    if (anonymousSpent > PROBABILITY_EPSILON) this.mutateHandProbability(state, {
       type: "REMOVE",
       sourceBucketId: player.id,
       definitionId,
@@ -485,7 +533,7 @@ export const withResource = (Base) => class Resource extends Base {
   handCount、hand/knownCards、anonymous factors 与 equipment。
 
   调用函数
-  expectedAnonymousSlots、mutateProbability、setSimulatedEquipment。
+  expectedAnonymousSlots、mutateHandProbability、setSimulatedEquipment。
 
   边界与不变量
   不修改 HP、alive 或状态效果；只执行 Simulator 已决定的死亡资源清理一次。
@@ -497,13 +545,13 @@ export const withResource = (Base) => class Resource extends Base {
     player.knownCards = [];
     const anonymousSlots = expectedAnonymousSlots(state.probabilityState, player.id);
     const wholeSlots = Math.floor(anonymousSlots);
-    if (wholeSlots > 0) mutateProbability(state.probabilityState, {
+    if (wholeSlots > 0) this.mutateHandProbability(state, {
       type: "REMOVE",
       sourceBucketId: player.id,
       count: wholeSlots
     });
-    if (anonymousSlots - wholeSlots > PROBABILITY_EPSILON) mutateProbability(
-      state.probabilityState,
+    if (anonymousSlots - wholeSlots > PROBABILITY_EPSILON) this.mutateHandProbability(
+      state,
       {
         type: "REMOVE",
         sourceBucketId: player.id,
@@ -999,13 +1047,13 @@ export const withResource = (Base) => class Resource extends Base {
     );
     if (transferred <= PROBABILITY_EPSILON) return 0;
     const whole = Math.floor(transferred);
-    if (whole > 0) mutateProbability(state.probabilityState, {
+    if (whole > 0) this.mutateHandProbability(state, {
       type: "MOVE",
       sourceBucketId: source.id,
       targetBucketId: receiver.id,
       count: whole
     });
-    if (transferred - whole > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
+    if (transferred - whole > PROBABILITY_EPSILON) this.mutateHandProbability(state, {
       type: "MOVE",
       sourceBucketId: source.id,
       targetBucketId: receiver.id,
@@ -1192,12 +1240,12 @@ export const withResource = (Base) => class Resource extends Base {
     );
     if (spent <= PROBABILITY_EPSILON) return 0;
     const whole = Math.floor(spent);
-    if (whole > 0) mutateProbability(state.probabilityState, {
+    if (whole > 0) this.mutateHandProbability(state, {
       type: "REMOVE",
       sourceBucketId: player.id,
       count: whole
     });
-    if (spent - whole > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
+    if (spent - whole > PROBABILITY_EPSILON) this.mutateHandProbability(state, {
       type: "REMOVE",
       sourceBucketId: player.id,
       probability: spent - whole
@@ -1227,7 +1275,7 @@ export const withResource = (Base) => class Resource extends Base {
   牌/匿名 availability、响应数量分布、handCount 与可选结果世界。
 
   调用函数
-  queryAnonymousSlotDistribution、Probability 连接/投影/合并、mutateProbability 与 SearchBudget checkpoint。
+  queryAnonymousSlotDistribution、Probability 连接/投影/合并、mutateHandProbability 与 SearchBudget checkpoint。
 
   边界与不变量
   W 个触发/匿名数量世界与 H 个当前身份直接生成至多 W×(H+1) 个选择结果，
@@ -1362,7 +1410,7 @@ export const withResource = (Base) => class Resource extends Base {
     const anonymousRemoved = totalBranchProbability(
       selectionPartition.filter((branch) => branch.anonymousSelected)
     );
-    if (anonymousRemoved > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
+    if (anonymousRemoved > PROBABILITY_EPSILON) this.mutateHandProbability(state, {
       type: options.anonymousTargetBucketId ? "MOVE" : "REMOVE",
       sourceBucketId: player.id,
       ...(options.anonymousTargetBucketId

@@ -325,7 +325,6 @@ const PASSIVE_SKILLS = {
         return;
       }
       if (!shouldQueueSpyGapOnDying(owner, event)) return;
-      if (!owner.turnFlags.spyGapPendingTargetIds) setSpyGapPendingTargetIds(runtime.getState(), owner, new Set());
       addSpyGapPendingTarget(runtime.getState(), owner, event.target.id);
     });
 
