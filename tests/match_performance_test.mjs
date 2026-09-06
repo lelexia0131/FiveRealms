@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { EventDispatcher } from "../js/application/messaging/EventDispatcher.js";
 import { createSkillEffectRuntime } from "../js/application/action/SkillEffectRuntime.js";
-import { ACTIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js";
+import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js";
 import {
   calculatePerformance,
   getPerformanceThresholds,
@@ -653,7 +653,7 @@ export function registerMatchPerformanceTests(test) {
     assert.equal(tracker.finalizeMatch().players[0].totals.skillEnergySpent, 0);
   });
 
-  test("UI·MVP：控制只计敌方目标且转移友方分流到贡献", async () => {
+  test("UI·MVP：非窥牌控制只计敌方目标且转移友方分流到贡献", async () => {
     const actor = trackerPlayer("actor", 0, "dawn");
     const ally = trackerPlayer("ally", 1, "dawn");
     const enemy = trackerPlayer("enemy", 2, "dusk");
@@ -664,16 +664,99 @@ export function registerMatchPerformanceTests(test) {
       resolved: true,
       effectiveTargets
     });
-    await use("scout", [enemy]);
-    await use("scout", [ally]);
     await use("transfer", [enemy, ally]);
     await use("transfer", [actor, ally]);
     await use("seal", [enemy]);
     const actorResult = tracker.finalizeMatch().players[0];
-    assert.equal(actorResult.totals.enemyControls, 2);
+    assert.equal(actorResult.totals.enemyControls, 1);
     assert.equal(actorResult.contributionFacts.sealContribution, 0);
     assert.equal(actorResult.contributionFacts.allyCardsGranted, 2);
     assert.equal(actorResult.contributionFacts.enemyCardsTransferred, 1);
+  });
+
+  test("UI·MVP：窥隙只按每次实际新增未知牌累计控制", async () => {
+    const shade = trackerPlayer("shade", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const { dispatcher, tracker } = trackerFixture([shade, enemy]);
+    const reveal = (actualNewCount) => dispatcher.publishFact("privateCardsRevealed", {
+      source: shade,
+      target: enemy,
+      effectDefinitionId: "spyGap",
+      actualNewCount
+    });
+
+    await reveal(1);
+    assert.equal(tracker.recordFor(shade).totals.enemyControls, 0.25);
+    await reveal(2);
+    assert.equal(tracker.recordFor(shade).totals.enemyControls, 0.75);
+    await reveal(2);
+    assert.equal(tracker.finalizeMatch().players[0].totals.enemyControls, 1.25);
+  });
+
+  test("UI·MVP：窥探按实际新增未知牌数乘零点二五累计控制", async () => {
+    const actor = trackerPlayer("scout", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const ally = trackerPlayer("ally", 2, "dawn");
+    const { dispatcher, tracker } = trackerFixture([actor, enemy, ally]);
+    await dispatcher.publishFact("privateCardsRevealed", {
+      source: actor,
+      target: enemy,
+      effectDefinitionId: "scout",
+      actualNewCount: 2
+    });
+    await dispatcher.publishFact("privateCardsRevealed", {
+      source: actor,
+      target: ally,
+      effectDefinitionId: "scout",
+      actualNewCount: 2
+    });
+    await dispatcher.publishFact("privateCardsRevealed", {
+      source: actor,
+      target: enemy,
+      effectDefinitionId: "scout",
+      actualNewCount: 0
+    });
+    assert.equal(tracker.finalizeMatch().players[0].totals.enemyControls, 0.5);
+  });
+
+  test("UI·MVP：窃取只按实际从敌人获得的牌累计控制", async () => {
+    const shade = trackerPlayer("shade", 0, "dawn");
+    const enemy = trackerPlayer("enemy", 1, "dusk");
+    const ally = trackerPlayer("ally", 2, "dawn");
+    const { dispatcher, tracker } = trackerFixture([shade, enemy, ally]);
+    await dispatcher.publishFact("cardsStolen", {
+      source: shade,
+      skill: ACTIVE_SKILL_DEFINITIONS.stealSkill,
+      steals: [{ target: enemy, actualAmount: 1 }]
+    });
+    await dispatcher.publishFact("cardsStolen", {
+      source: shade,
+      skill: ACTIVE_SKILL_DEFINITIONS.stealSkill,
+      steals: [
+        { target: enemy, actualAmount: 0 },
+        { target: ally, actualAmount: 1 }
+      ]
+    });
+    assert.equal(tracker.finalizeMatch().players[0].totals.enemyControls, 1);
+  });
+
+  test("UI·MVP：协调只把队友实际摸牌计入调律师贡献", async () => {
+    const tuner = trackerPlayer("tuner", 0, "dawn");
+    const ally = trackerPlayer("ally", 1, "dawn");
+    const enemy = trackerPlayer("enemy", 2, "dusk");
+    const { dispatcher, tracker } = trackerFixture([tuner, ally, enemy]);
+    await dispatcher.publishFact("cardsGranted", {
+      source: tuner,
+      skill: PASSIVE_SKILL_DEFINITIONS.coordination,
+      grants: [
+        { target: tuner, actualAmount: 1 },
+        { target: ally, actualAmount: 1 },
+        { target: ally, actualAmount: 0 }
+      ]
+    });
+    const result = tracker.finalizeMatch().players[0];
+    assert.equal(result.contributionFacts.allyCardsGranted, 1);
+    assert.equal(result.totals.enemyControls, 0);
   });
 
   test("UI·MVP：多层反制按当前被反制 action owner 分别归属控制", async () => {

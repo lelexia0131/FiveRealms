@@ -651,7 +651,8 @@ Guard 必须从解析到的 import、路径层和明确语法事实得出结论�
 | `attackUseSlots` | AiVisibleState，Simulator 消费 | Generator、Evaluator、Simulator | 概率世界中的攻击次数资源 | SEARCH | Search clone 可写 | BELIEF/SEARCH 条件世界 | MOVE 初始化到 SearchState |
 | `momentum/categoriesUsed/gambleTriggered/coordinationTriggered/rejuvenationTriggerCount` | AiVisibleState ← turn flags | Simulator、Evaluator、Policy | 根节点已确定的技能/回合事实 | VISIBLE | Visible 不可变；Search mirror 可写 | LEGAL OBSERVATION | MOVE 确定事实到 VisibleState |
 | `momentumBranches/categoryUsedProbabilities/categoryUsedStateBranchesByCategory` | AiVisibleState，Simulator 规范化/消费 | Simulator | 分支相关的连势与类别使用状态 | SEARCH | Search clone 可写 | SEARCH | MOVE 初始化到 SearchState |
-| `guardianAidUsedProbability/spyGapTriggeredProbability/gambleTriggeredProbability/coordinationTriggeredProbability` | AiVisibleState，Simulator 更新 | Simulator | 技能触发额度在概率分支中的剩余质量 | SEARCH | Search clone 可写 | SEARCH | MOVE 初始化到 SearchState |
+| `guardianAidUsedProbability/gambleTriggeredProbability/coordinationTriggeredProbability` | AiVisibleState，Simulator 更新 | Simulator | 有次数限制技能的触发额度在概率分支中的剩余质量 | SEARCH | Search clone 可写 | SEARCH | MOVE 初始化到 SearchState |
+| `spyGapInformationEvents/spyGapRevealedCountsByTarget` | Simulator 更新 | Evaluator | 每次实际伤害产生的新增未知信息与同一路径目标已查看数量 | SEARCH | Search clone 可写 | LEGAL PRIVATE INFORMATION DERIVATION | 保留有界事实；不建立每回合额度 |
 | `exposeWeaknessStacks/assaultBonus` 根事实 | AiVisibleState ← statuses | Planner、Evaluator、Generator、Policy、Simulator | 公开状态的确定初值 | VISIBLE | Visible 不可变 | LEGAL OBSERVATION | MOVE 初值到 VisibleState；后续分支值属于 Search |
 | `activeSkillId/activeSkillUses/activeSkillLimit/activeSkillUsed` | AiVisibleState ← general/turn flags | Generator、Evaluator、Simulator、Seal/Transfer | 确定技能身份与当前使用次数 | VISIBLE | Visible 不可变；Search mirror 可写 | LEGAL OBSERVATION | MOVE 到 VisibleState |
 | `activeSkillAvailabilityBranches/activeSkillUseSlots` | AiVisibleState，Simulator 消费 | Generator、Simulator | 技能次数在概率世界中的资源槽 | SEARCH | Search clone 可写 | SEARCH | MOVE 初始化到 SearchState |
@@ -1036,7 +1037,7 @@ AI-ARCH-6 结束时仍记录了 `getLegalActions` 命名、`sealScoring` adapter
 | `simulateCategoryUse`、`simulateGamble`、`simulateCoordination`、`simulateTracking`、`clearHuntMarksBySource` | STATUS_EFFECT | 镜像 cardUsed/targetSelected/turn 生命周期被动状态与触发 | category、targets、turn/game flags | momentum/gamble/coordination/huntMark/unknown draw | apply、combat fatal、测试 | `skillRegistry` EventBus listeners、Game turn lifecycle | 无 | 无 | 无 | `simulation/StatusSimulation` | ARCH-8 status | 被阻止/部分生效/死亡清理下的触发次数与概率 parity | 高：监听器顺序和有效目标语义 |
 | `seatOrderFrom` | DOMAIN_LEAK | 在 SearchState 上投影 source-first/after-source 座次 | players、seatIndex | 新数组 | combat/card/status | `Game.seatOrderFrom`、`RuleEngine.nextLightningReceiver` | 无 | GlobalBenefit/Lightning 也有 ID 级派生 | 无 | `simulation/Simulator` shared rule projection | ARCH-7 facade | 死亡/环回座次固定测试 | 低 |
 | `simulateGuardianAid` | RESPONSE_SIMULATION | 按真实 beforeDamage 监听顺序执行一次合法护援并支付资源 | players、incoming damage、flags、effect worlds | guardian used、hand/distributions、damage amount | applyDamage、测试 | `skillRegistry.guardianAid` + EventBus 注册顺序 | discard candidate 来自 ResourceSelectionPolicy | Probability algebra | keep value 只作策略输入 | `simulation/ResponseSimulation`，Combat 负责调用位置 | ARCH-7 response before combat | 多护援者、零伤害、已用/死亡、部分概率 parity | 极高：护援顺序与消费世界 |
-| `simulateAfterLifeDamage`、`simulateSpyGapAfterLifeDamage`、`simulateAssaultAfterDamage` | STATUS_EFFECT | 镜像 afterDamage 的余烬、窥隙、连势/孤注消费 | life-damage branches、resolution flags | energy、spy flags、momentum/allIn | applyDamage | `skillRegistry` afterDamage listeners + DyingSystem rescue events | 无 | Probability algebra | 无 | `simulation/StatusSimulation`，Combat 负责调用位置 | ARCH-8 status（ARCH-7 先由 Combat 保持调用） | afterDamage→fatal→spyGap 的顺序与次数 parity | 极高：濒死前后监听语义 |
+| `simulateAfterLifeDamage`、`simulateSpyGapAfterLifeDamage`、`simulateAssaultAfterDamage` | STATUS_EFFECT | 镜像 afterDamage 的余烬、窥隙、连势/孤注消费 | life-damage branches、resolution flags | energy、spy information events、momentum/allIn | applyDamage | `skillRegistry` afterDamage listeners + DyingSystem rescue events | 无 | Probability algebra | 无 | `simulation/StatusSimulation`，Combat 负责调用位置 | ARCH-8 status（ARCH-7 先由 Combat 保持调用） | afterDamage→fatal→spyGap 的顺序与次数 parity | 极高：濒死前后监听语义 |
 | `simulateAssault`、`applyDuel` | COMBAT_SIMULATION | 镜像突袭/决斗的响应、伤害与轮流支付 | attacker/target、response distributions | combat/resource/status fields | apply/card effects、测试 | `cardRegistry.assault/duel`、ResponseSystem、Game.damage | counter/block desire 来自 ResponsePolicy | Probability algebra、RadarModel | 无 | `simulation/CombatSimulation` | ARCH-7 combat | 普通/战斗装置/雷达/决斗完整状态 parity | 极高：嵌套响应与伤害顺序 |
 | `takeResourceToHand`、`destroyResource`、`stealResourceToHand` | CARD_EFFECT | 镜像掠夺、破坏、窃取的实体/未知资源移动 | selection、identity、worlds | hand/equipment/distributions | apply、applySkill、测试 | `cardRegistry`、`ACTIVE_SKILLS.stealSkill`、Game move APIs | ResourceSelectionPolicy | Probability algebra | CardValue 由 Policy 消费 | CardEffectSimulation；窃取 orchestration 在 SkillEffectSimulation | ARCH-8 card/skill | hand/equipment/known identity 与旧结果一致 | 高 |
 | `tacticResolutionChance`、`evaluateCardScopeCounterResponses`、`consumeCountersForCardScope`、`consumeExpectedCounters`、`targetResolutionChance` | RESPONSE_SIMULATION | 计算并消费 card-scope/target-scope 反制的首个成功响应世界 | responders、counter distributions、desire | counter capacity/distribution | apply/card/combat、测试 | `ResponseSystem.askForCounter` 响应顺序与递归结果 | ResponsePolicy 决定 desire | Probability algebra | 无 | `simulation/ResponseSimulation` | ARCH-7 response | scope 顺序、边际和、容量消费、概率质量 parity | 极高：首个响应者归属和重复消费 |
@@ -1081,7 +1082,7 @@ AI-ARCH-6 结束时仍记录了 `getLegalActions` 命名、`sealScoring` adapter
 | 7 | actual HP damage | 只汇总穿过 response、modifier、guardian、shield 的生命伤害 | `Game.damage` | CombatSimulation |
 | 8 | after-damage hooks | 余烬、连势/孤注消费按 actual life damage 世界推进 | skillRegistry afterDamage listeners | StatusSimulation，由 Combat 在 fatal 前调用 |
 | 9 | dying/rescue/death | HP<=0 时本人优先、再顺时针存活队友循环调息；失败清状态/资源/装备并给合法击杀者奖励 | `DyingSystem.enter/resolve/kill` | CombatSimulation；Response capacity 只消费一次 |
-| 10 | rescued spy gap | 目标最终存活才推进窥隙；死亡则不残留触发资格 | skillRegistry spyGap + playerRescued/playerDead | StatusSimulation，由 Combat 在 fatal 后调用 |
+| 10 | rescued spy gap | 目标最终存活才追加本次窥隙信息；死亡则清理 pending 目标 | skillRegistry spyGap + playerRescued/playerDead | StatusSimulation，由 Combat 在 fatal 后调用 |
 
 真实 `Game.damage` 的宏观顺序为 Radar → Block → beforeDamage（含护援）→ Shield/HP → afterDamage → Dying。Simulation 对条件世界的细化没有改变该顺序。`applyHpLoss` 继续绕过 Radar、Block、Guardian 和 Shield，只扣 HP 后进入同一 fatal lifecycle；不得与 damage 合并。
 
@@ -1162,7 +1163,7 @@ CardEffect 不生成或评分 selection。`chooseSimulatedResourceSelection` 只
 | spirit-medic | symbiosis | active | SkillEffect：energy/slot + Combat heal | per turn skill slots | ACTIVE_SKILLS.symbiosis | selected ally / repeated use |
 | spirit-medic | rejuvenation | passive | Combat heal/fatal rescue：draw + trigger count | every global turn, cap 2 | skillRegistry.rejuvenation | heal/rescue/probability |
 | shade-agent | stealSkill | active | SkillEffect orchestration + Card resource transfer | per turn skill slots | ACTIVE_SKILLS.stealSkill | hand/equipment/distance |
-| shade-agent | spyGap | passive | Status after actual damage and post-rescue | every global turn, once | skillRegistry.spyGap | normal/lethal/rescued/dead |
+| shade-agent | spyGap | passive | Status after actual damage and post-rescue | every actual enemy life damage; no per-turn quota | skillRegistry.spyGap | normal/lethal/rescued/dead/repeated |
 | ember-magus | burningField | active | SkillEffect target loop + Combat damage | per turn skill slots | ACTIVE_SKILLS.burningField | cost 3/multi-target/block |
 | ember-magus | ember | passive | Status after-damage energy by resolution | once per card resolution ID | skillRegistry.ember | multi-target same resolution |
 | trail-hunter | hunt | active | SkillEffect mark consume + Combat damage/draw on block | per turn skill slots | ACTIVE_SKILLS.hunt | block/hit/mark cleanup |
@@ -1445,7 +1446,7 @@ FinalTransition
 
 X 技能不使用 `S(E)` / `D(X)`。Evaluator 识别该分类并给出 `E(next)=min(E+1,Emax)`；Searcher 只用 Simulator 在同一当前 World clone 上替换行动者能量并结算同一技能，不模拟下一回合、摸牌或敌方行动。Evaluator 比较已准备的 `RawStateDelta(X,E)` 与 `RawStateDelta(X,E(next))`，用现有 `ENERGY_STATE_WEIGHT=1.2` 计算 `Ps(X)`。满能量时两个 delta 相等，`Ps(X)=1.2`；该项不做非负截断。
 
-Adaptive information 仍保持 `E[max U] - max E[U]`：Searcher 只执行 hidden-world/follow-up traversal，Evaluator 只拥有具体角色/技能识别、公式与价值分类。物化结果作为 generic `TransitionOptionPoints` 进入 `evaluateTransition`；Searcher candidate schema 与 `composeTransitionValue` 不再知道 SpyGap。
+通用 Adaptive information API 仍保持 `E[max U] - max E[U]`，但当前窥隙不再把至多两张的新观察近似成完整 hidden-world 专化。Simulator 为每次实际伤害记录实际新增未知数量，Evaluator 复用私密查看信息公式，把对应 value 作为 generic `TransitionOptionPoints` 进入 `evaluateTransition`；Searcher candidate schema 与 `composeTransitionValue` 仍不知道 SpyGap。
 
 `responseNet`、raw owner ledger、static CardValue、Search Prior 以及 expose/assault 的有限 beam 前瞻只用于诊断或搜索排序，不进入 final composition。强制弃牌机会只通过上述完整 sibling 的 `Pd` 进入 END，不能复制为另一份牌值或 fallback 评分。`STATE_UTILITY_PRIOR_WEIGHT=0.4` 只是为保持 beam 相对排序的 heuristic：它可消费按 HP 基线归一化的输入，但不是 Final Utility 换算，也不是 `0.08` 的替代。Raw State delta 在路径上严格 telescoping；depth 不缩放动作价值。
 
@@ -1678,8 +1679,8 @@ STEP 5.8 不重新设计架构，只在既有 owner 内关闭 value placement、
 
 - `endOpportunityCost`、`economic`、`immediate` 的 production term 和 caller 均为零引用；`resolutionScale` / `effectResolutionScale` 仍为 Scout、MutualBenefit 等 transition option 服务。
 - `BaseTransition = StateDeltaValue + TransitionOptionValue`；Transfer 低于冻结门槛时仍返回 `-Infinity`。
-- SpyGap adaptive information 的 hidden-world traversal 仍在 Searcher，领域识别和 `E[max U] - max E[U]` 仍在 Evaluator；结果已并入 generic transition option。
-- Searcher generic schema、candidate 与 final composition 中的 SpyGap 具体字段/参数为零。Simulator/Evaluator 内部仍可识别真实 SpyGap 领域规则。
+- SpyGap 由 Simulator 的逐次实际伤害信息事件与 Evaluator 的实际新增未知数量共同决定；已知牌和同一路径已查看槽位不重复计值，结果并入 generic transition option。
+- Searcher generic schema、candidate 与 final composition 中的 SpyGap 具体字段/参数仍为零；通用 adaptive-information API 保留，但当前窥隙不请求完整 hidden-world 专化。
 
 ### Test debt closure
 

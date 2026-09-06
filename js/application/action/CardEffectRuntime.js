@@ -30,7 +30,7 @@ const REQUIRED_DEPENDENCIES = [
   "discardCardFromHand", "rememberPrivateCard", "cardLabelForHuman", "seatOrderFrom",
   "getEnemies", "responseWorkflow", "publicCardPool", "resolveLeverage",
   "getCardTargets", "getTransferSources", "getTransferReceivers", "diagnostics",
-  "random", "createId", "emitEvent"
+  "random", "createId", "emitEvent", "publishFact"
 ];
 
 /*
@@ -319,13 +319,13 @@ scout 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+观察者私密知识；MVP 事实只携带实际新增未知张数。
 
 调用函数
-下游 collaborator。
+rememberPrivateCard、publishFact 与私密展示 collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+不重复 Domain rule 决定；已知牌可再次查看但不得重复产生信息价值。
 */
     async scout(source, card, targets, context) {
       const gameId = runtime.getState().gameId;
@@ -333,7 +333,19 @@ runtime/card/skill facts。
       const intent = resolvePrivateSelectionIntent(source, card, target, context, "hand");
       const chosen = intent?.cards.slice(0, getScoutMaxRevealCount()) ?? [];
       if (!chosen.length) return { resolved: false };
-      for (const seen of chosen) runtime.rememberPrivateCard(source, target, seen);
+      const newlyKnownCount = chosen.reduce(
+        (count, seen) => count + (runtime.rememberPrivateCard(source, target, seen) ? 1 : 0),
+        0
+      );
+      if (newlyKnownCount > 0) {
+        await runtime.publishFact("privateCardsRevealed", {
+          source,
+          target,
+          effectDefinitionId: card.definitionId,
+          actualNewCount: newlyKnownCount
+        });
+      }
+      if (!runtime.isSessionValid(gameId)) return { resolved: false };
       if (source.controllerType === "human") await runtime.presentation.showPrivateReveal({ title: `${target.name}的手牌情报`, cardIds: chosen.map((card) => card.id) });
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
       runtime.presentation.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);

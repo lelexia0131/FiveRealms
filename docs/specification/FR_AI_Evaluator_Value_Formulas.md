@@ -1062,7 +1062,7 @@ $$
 
 其中：
 
-$$ P_{derivedOption}= \begin{cases} ScoutOption,&Scout\\ LeverageOption,&Leverage\\ MutualBenefitOption,&MutualBenefit\\ResourceTransactionOption,&Destroy/Plunder/Transfer\\ 0,&otherwise \end{cases} $$ 
+$$ P_{derivedOption}= \begin{cases} ScoutOption,&Scout\\ SpyGapOption,&SpyGap\ information\ event\\ LeverageOption,&Leverage\\ MutualBenefitOption,&MutualBenefit\\ResourceTransactionOption,&Destroy/Plunder/Transfer\\ 0,&otherwise \end{cases} $$
 
 最终：
 $$
@@ -1071,7 +1071,7 @@ $$
 
 `materializedTransitionOptionPoints` 是上游已经完成的通用 option 结果，例如 adaptive-information 结果；Evaluator 不反向调用 Searcher。
 
-## 16.1 Scout 私密信息价值
+## 16.1 Scout / SpyGap 私密信息价值
 
 ### 16.1.1 已知/未知牌数量
 
@@ -1086,6 +1086,9 @@ $$
 $$
 ActualNewRevealCount = \min(RevealLimit,\max(0,selection.unknownCount))
 $$
+
+Scout 从 canonical selection 读取该值。SpyGap 则由 Simulator 在每次实际生命伤害后记录本次新增未知槽位数；
+它会扣除合法已知实体与同一模拟路径已经查看的槽位，因此重复伤害只为仍未知的新牌产生 value。
 
 $$
 Revealed=\min(ActualNewRevealCount,UnknownCount)
@@ -1357,7 +1360,7 @@ $$
 
 该概率来自 `queryProbability(..., bucketId=source.id).slotProbability`。
 
-`EffectScale` 直接读取 Simulator 已完成的实际资源变化。
+`EffectScale` 优先读取 Simulator 为当前 transition 记录的单项实际资源移动事实；这使协调等后置摸牌不会用净手牌数掩盖已经发生的破坏、掠夺或转移。旧夹具或独立公式调用没有该事实时，才回退到以下身份/匿名槽差：
 
 known identity 使用：
 $$
@@ -1372,7 +1375,7 @@ $$
 
 这个差值已经表达该资源真实发生移除或转移的概率。
 
-## 16.5 Adaptive Information（当前用于影客窥隙等通用自适应信息）
+## 16.5 Adaptive Information（保留的通用 option API）
 
 Evaluator 公式：
 
@@ -1386,7 +1389,7 @@ $$
 \boxed{E[\max U]-\max E[U]}
 $$
 
-Searcher 只负责物化 hidden worlds / follow-up；公式 owner 仍是 Evaluator。
+Searcher 只负责物化 hidden worlds / follow-up；公式 owner 仍是 Evaluator。当前窥隙使用 16.1 的实际新增未知数量，不请求把至多两张观察扩大成完整 hidden-world 专化。
 
 源码：`Evaluator.js:2236 adaptiveInformationOptionPoints()`。
 

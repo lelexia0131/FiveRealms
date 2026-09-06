@@ -467,38 +467,6 @@ export function setRejuvenationTriggerCount(state, player, value) {
 
 /*
 功能
-写入 spyGapTriggered 标记。
-
-调用方
-spyGap passive。
-
-输入
-state、Player 与布尔值。
-
-输出
-写入值。
-
-读取状态
-state.stateVersion 与 spyGapTriggered。
-
-写入状态
-spyGapTriggered；变化时 bump。
-
-调用函数
-bumpStateVersion。
-
-边界与不变量
-不决定触发规则。
-*/
-export function setSpyGapTriggered(state, player, value) {
-  if (player.turnFlags.spyGapTriggered === value) return value;
-  player.turnFlags.spyGapTriggered = value;
-  bumpStateVersion(state);
-  return value;
-}
-
-/*
-功能
 替换 spyGapPendingTargetIds 集合引用。
 
 调用方

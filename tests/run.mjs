@@ -1172,7 +1172,7 @@ test("角色规则：README 记录八名角色初始能量且焚场固定消耗3
 });
 
 test("角色规则：调律师协调的配置、技能详情与README统一使用有效作用目标文案", async () => {
-  const expected = "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌。",
+  const expected = "每回合首次令另一名队友成为卡牌的有效作用目标后，你与该队友各摸1张牌。",
     tuner = presentCharacter("resonance-tuner"),
     player = makePlayer("description-tuner", 0, "dawn", "human", 7),
     readme = await readFile(projectFile("README.md"), "utf8"),
@@ -6535,8 +6535,10 @@ test("窥探：只向真人私密层展示并把该实体牌标记为已知", as
   const a = makePlayer("a", 0, "dawn", "human"), b = makePlayer("b", 1, "dusk");
   const { game, ui }
     = makeGame([a, b]);
-  const scout = instance("scout"), secret = instance("counter");
-  a.hand.push(scout);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  const scout = instance("scout"), secondScout = instance("scout"),
+    secret = instance("counter");
+  a.hand.push(scout, secondScout);
   b.hand.push(secret);
   b.bumpHandVersion(TEST_VERSION_STATE);
   const hidden = game.hiddenCardSelection.createHiddenSelection(b);
@@ -6546,6 +6548,19 @@ test("窥探：只向真人私密层展示并把该实体牌标记为已知", as
   assert.equal(ui.reveals[0].cards[0], secret);
   assert.equal(createOpponentHandView(a, b)[0].name, secret.name);
   assert.ok(!game.state.logs.at(-1).message.includes(secret.name));
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(a).totals.enemyControls, 0.25);
+  const secondHidden = game.hiddenCardSelection.createHiddenSelection(b);
+  await game.playCard(
+    a,
+    secondScout,
+    [b],
+    { tokens: [secondHidden.tokens[0].token], selectionId: secondHidden.selectionId }
+  );
+  assert.equal(
+    game.matchPerformanceSidecar.tracker.recordFor(a).totals.enemyControls,
+    0.25,
+    "重复查看已知实体不得再次累计控制"
+  );
 });
 
 test("窥探：真人目标有两张手牌时只选择一张仍成功", async () => {
@@ -11511,6 +11526,7 @@ test("影客：为4点生命且窥隙经实际伤害与隐藏选择查看至多2
   enemy.hand.push(instance("assault"), instance("recover"), instance("charge"));
   const { game, ui }
     = makeGame([shade, enemy], { random: () => 0 });
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   registerPassiveSkills(game);
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(shade.maxHp, 4);
@@ -11521,9 +11537,10 @@ test("影客：为4点生命且窥隙经实际伤害与隐藏选择查看至多2
   assert.equal(ui.reveals.length, 1);
   assert.equal(ui.reveals[0].cards.length, 2);
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length, 2);
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 0.5);
 });
 
-test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装备", async () => {
+test("影客：窃取无视距离把敌方装备收入手牌且不替换原装备", async () => {
   const shade = makePlayer("shade", 0, "dawn", "ai", 3),
     near = makePlayer("near", 1, "dawn"),
     target = makePlayer("target", 2, "dusk"),
@@ -11533,6 +11550,7 @@ test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装�
     original = instance("battleDevice");
   const { game }
     = makeGame([shade, near, target, other, tail], { random: () => 0 });
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   shade.energy = 2;
   shade.equipment = original;
   target.equipment = equipment;
@@ -11542,6 +11560,7 @@ test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装�
   assert.equal(shade.equipment, original);
   assert.ok(shade.hand.includes(equipment));
   assert.ok(!game.state.deck.discardPile.includes(equipment));
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 1);
   const blockedShade = makePlayer("blocked-shade", 0, "dawn", "ai", 3),
     blockedNear = makePlayer("blocked-near", 1, "dawn"),
     blocked = makePlayer("blocked", 2, "dusk"),
@@ -11550,10 +11569,14 @@ test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装�
   blocked.equipment = instance("barrierDevice");
   const { game: blockedGame }
     = makeGame([blockedShade, blockedNear, blocked, blockedOther, blockedTail]);
+  blockedShade.energy = 2;
   assert.equal(ActionLegality.getDistance(blockedGame, blockedShade, blocked), 3);
-  assert.ok(
-    !ActionLegality.getSkillTargets(blockedGame, blockedShade, ACTIVE_SKILLS.stealSkill).includes(blocked)
-  );
+  assert.ok(ActionLegality.getSkillTargets(
+    blockedGame, blockedShade, ACTIVE_SKILLS.stealSkill
+  ).includes(blocked));
+  assert.ok(blockedGame.aiController.getActionCandidates(blockedShade).some(
+    (action) => action.skillId === "stealSkill" && action.targetIds?.[0] === blocked.id
+  ));
 });
 
 test("影客：窃取把3张手牌与1张装备组成单一等概率实体集合", async () => {
@@ -11592,7 +11615,7 @@ test("影客：窃取把3张手牌与1张装备组成单一等概率实体集合
   }
 });
 
-test("影客：真人窃取先选择距离2内敌人再只从该目标随机获得资源", async () => {
+test("影客：真人窃取可选择任意距离敌人且只从该目标随机获得资源", async () => {
   const shade = makePlayer("human-steal-shade", 0, "dawn", "human", 3),
     allyA = makePlayer("human-steal-ally-a", 1, "dawn"),
     chosen = makePlayer("human-steal-chosen", 2, "dusk"),
@@ -11616,9 +11639,7 @@ test("影客：真人窃取先选择距离2内敌人再只从该目标随机获�
   assert.ok(offered.includes(otherEnemy));
   assert.ok(
     offered.every(
-      (player) => player.battleTeam !== shade.battleTeam && ActionLegality.getDistance(
-        game, shade, player
-      ) <= 2
+      (player) => player.battleTeam !== shade.battleTeam
     )
   );
   assert.match(prompt, /窃取.*选择目标/);
@@ -11675,19 +11696,20 @@ test("影客：窃取1能量非法、每次消耗2点且每回合最多发动2�
   assert.doesNotMatch(presentCharacter(CHARACTER_DEFINITIONS[3]).activeDescription, /直接进入.*装备区|直接装备/);
 });
 
-test("影客：窃取说明与README均使用收入手牌的新规则", async () => {
+test("影客：窃取说明与README均使用不限距离的收入手牌规则", async () => {
   const readme = await readFile(projectFile("README.md"), "utf8"),
     description = presentCharacter(CHARACTER_DEFINITIONS[3]).activeDescription;
   assert.equal(ACTIVE_SKILLS.stealSkill.cost, 2);
   assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn, 2);
   assert.equal(ACTIVE_SKILLS.stealSkill.cost, 2);
   assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn, 2);
-  assert.match(description, /消耗2点能量.*选择距离2内.*敌人作为目标/);
+  assert.match(description, /消耗2点能量.*选择一名.*敌人/);
+  assert.doesNotMatch(description, /距离\s*2\s*内/);
   assert.match(description, /统一候选集合.*等概率随机获得.*收入手牌/);
   assert.match(description, /每回合最多发动2次/);
   assert.doesNotMatch(`${description}\n${readme}`, /装备牌直接进入.*装备区|窃取.*直接装备/);
   assert.match(
-    readme, /主动·窃取[^\n]*消耗 2 点能量[^\n]*选择距离 2 内[^\n]*敌人作为目标[^\n]*统一候选集合[^\n]*等概率随机获得[^\n]*一回合最多使用 2 次/
+    readme, /主动·窃取[^\n]*消耗 2 点能量[^\n]*选择一名[^\n]*敌人[^\n]*统一候选集合[^\n]*等概率随机获得[^\n]*每回合最多发动 2 次/
   );
 });
 
@@ -11740,10 +11762,38 @@ test("影客：窥隙目标仅1张手牌时最多选择并展示1张", async () 
   target.hand.push(only);
   const { game, ui }
     = makeGame([shade, target]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   registerPassiveSkills(game);
   await game.damage(shade, target, 1, { canBlock: false });
   assert.equal(ui.hiddenRequests[0].count, 1);
   assert.deepEqual(ui.reveals[0].cards, [only]);
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 0.25);
+});
+
+test("影客：窥隙连续实际伤害分别累计本次新增未知牌控制", async () => {
+  const shade = makePlayer("peek-control-repeat", 0, "dawn", "human", 3);
+  const target = makePlayer("peek-control-repeat-target", 1, "dusk", "ai", 1);
+  target.hand.push(
+    instance("counter"),
+    instance("harvest"),
+    instance("duel"),
+    instance("charge")
+  );
+  const { game, ui } = makeGame([shade, target]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  let requestIndex = 0;
+  ui.requestHiddenCards = async (selection) => {
+    const start = requestIndex * 2;
+    requestIndex += 1;
+    return selection.tokens.slice(start, start + 2).map((entry) => entry.token);
+  };
+  registerPassiveSkills(game);
+
+  await game.damage(shade, target, 1, { canBlock: false });
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 0.5);
+  await game.damage(shade, target, 1, { canBlock: false });
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 1);
+  assert.equal(ui.reveals.length, 2);
 });
 
 test("影客：窥隙等待期间已选牌离手时只展示仍在原手牌的实体", async () => {
@@ -11770,16 +11820,16 @@ test("影客：窥隙等待期间已选牌离手时只展示仍在原手牌的�
   assert.equal(game.hiddenCardSelection.selections.size, 0);
 });
 
-test("影客：窥隙同回合仅触发一次且格挡、护盾、队友和空手牌均不触发", async () => {
-  const shade = makePlayer("peek-once", 0, "dawn", "human", 3),
-    target = makePlayer("peek-once-target", 1, "dusk");
+test("影客：窥隙每次实际伤害均触发且格挡、护盾、队友和空手牌均不触发", async () => {
+  const shade = makePlayer("peek-repeat", 0, "dawn", "human", 3),
+    target = makePlayer("peek-repeat-target", 1, "dusk");
   target.hand.push(instance("charge"), instance("harvest"), instance("duel"));
   const { game, ui }
     = makeGame([shade, target]);
   registerPassiveSkills(game);
   await game.damage(shade, target, 1, { canBlock: false });
   await game.damage(shade, target, 1, { canBlock: false });
-  assert.equal(ui.hiddenRequests.length, 1);
+  assert.equal(ui.hiddenRequests.length, 2);
   const shieldShade = makePlayer("peek-shield", 0, "dawn", "human", 3),
     shieldTarget = makePlayer("peek-shield-target", 1, "dusk");
   shieldTarget.shield = 1;
@@ -11824,12 +11874,10 @@ test("影客：窥隙在致命伤害获救后触发且不会在救援前提前�
   registerPassiveSkills(game);
   game.eventDispatcher.on("playerDying", "test:peek-rescue-no-early", () => {
     assert.equal(ui.hiddenRequests.length, 0);
-    assert.equal(shade.turnFlags.spyGapTriggered, false);
   });
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.alive, true);
   assert.equal(enemy.hp, 1);
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 1);
   assert.equal(ui.reveals[0].cards.length, 2);
@@ -11848,7 +11896,7 @@ test("影客：窥隙救援清理待处理目标并按 transition 语义推进�
   await game.eventDispatcher.emit("playerRescued", { target });
 
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.has(target.id), false);
-  assert.equal(game.state.stateVersion, versionBeforeRescue + 2, "删除 pending 与提交触发额度各推进一次版本");
+  assert.equal(game.state.stateVersion, versionBeforeRescue + 1, "只删除 pending 目标并推进一次版本");
   const versionAfterRescue = game.state.stateVersion;
   assert.equal(transitionRemoveSpyGapPendingTarget(game.state, shade, target.id), false);
   assert.equal(game.state.stateVersion, versionAfterRescue, "no-op 删除不得推进状态版本");
@@ -11867,7 +11915,6 @@ test("影客：窥隙在致命伤害由队友救援成功后触发", async () =>
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.alive, true);
   assert.equal(enemy.hp, 1);
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 1);
   assert.equal(ui.reveals[0].cards.length, 2);
@@ -11885,29 +11932,31 @@ test("影客：窥隙在致命伤害救援失败阵亡时不触发且不残留�
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.alive, false);
   assert.equal(enemy.hp, 0);
-  assert.equal(shade.turnFlags.spyGapTriggered, false);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 0);
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id] ?? {}).length, 0);
 });
 
-test("影客：窥隙经濒死获救触发后同回合对其他敌人不再触发", async () => {
+test("影客：窥隙经濒死获救触发后同回合伤害其他敌人仍再次触发", async () => {
   const shade = makePlayer("peek-twice-shade", 0, "dawn", "human", 3),
-    first = makePlayer("peek-twice-first", 1, "dusk"),
+    first = makePlayer("peek-twice-first", 1, "dusk", "ai", 0),
     second = makePlayer("peek-twice-second", 2, "dusk");
   first.hp = 1;
   first.hand.push(instance("recover"), instance("counter"), instance("harvest"));
-  second.hp = 2;
+  second.hp = 3;
   second.hand.push(instance("charge"), instance("duel"));
   const { game, ui }
     = makeGame([shade, first, second]);
   registerPassiveSkills(game);
+  const actualAmounts = [];
+  game.eventDispatcher.on("afterDamage", "test:spy-gap-repeat-after-rescue", (event) => {
+    if (event.source === shade) actualAmounts.push(event.actualAmount);
+  });
   await game.damage(shade, first, 1, { canBlock: false });
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
   assert.equal(ui.hiddenRequests.length, 1);
   await game.damage(shade, second, 1, { canBlock: false });
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
-  assert.equal(ui.hiddenRequests.length, 1);
+  assert.deepEqual(actualAmounts, [1, 1]);
+  assert.equal(ui.hiddenRequests.length, 2);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
 });
 
@@ -11922,7 +11971,6 @@ test("影客：非伤害失去生命获救不得触发窥隙", async () => {
   await game.combatWorkflow.loseHp(enemy, 1, { source: shade, reason: "测试失去生命" });
   assert.equal(enemy.alive, true);
   assert.equal(enemy.hp, 1);
-  assert.equal(shade.turnFlags.spyGapTriggered, false);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 0);
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id] ?? {}).length, 0);
@@ -11938,13 +11986,12 @@ test("影客：护盾完全吸收伤害时窥隙不触发且不写入待处理�
   registerPassiveSkills(game);
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.hp, enemy.maxHp);
-  assert.equal(shade.turnFlags.spyGapTriggered, false);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 0);
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id] ?? {}).length, 0);
 });
 
-test("影客：窥隙额度每个全局回合开始重置且回合外伤害可再次触发", async () => {
+test("影客：窥隙连续实际伤害无需等待全局回合重置", async () => {
   const a = makePlayer("spy-gap-global-turn-a", 0, "dusk", "ai"),
     shade = makePlayer("spy-gap-global-turn-shade", 1, "dawn", "human", 3),
     b = makePlayer("spy-gap-global-turn-b", 2, "dusk", "ai"),
@@ -11953,20 +12000,16 @@ test("影客：窥隙额度每个全局回合开始重置且回合外伤害可�
   const { game, ui } = makeGame([a, shade, b, target]);
   registerPassiveSkills(game);
   game.aiController.selectAction = async () => ({ type: "end" });
-  // A 回合：影客在他人回合造成实际伤害触发窥隙。
+  // A 回合：影客在他人回合连续造成实际伤害，窥隙逐次触发。
   await game.damage(shade, target, 1, { canBlock: false });
   assert.equal(ui.hiddenRequests.length, 1);
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
-  // 同一回合第二次实际伤害不再触发。
-  await game.damage(shade, target, 1, { canBlock: false });
-  assert.equal(ui.hiddenRequests.length, 1);
-  // B 新回合开始：窥隙额度与待处理目标状态重置。
-  await game.takeTurn(b, game.state.gameId);
-  assert.equal(shade.turnFlags.spyGapTriggered, false);
-  assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
-  // B 回合再次造成实际伤害可重新触发。
   await game.damage(shade, target, 1, { canBlock: false });
   assert.equal(ui.hiddenRequests.length, 2);
+  // B 新回合开始只清理 pending 目标，不提供或消耗窥隙额度。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
+  await game.damage(shade, target, 1, { canBlock: false });
+  assert.equal(ui.hiddenRequests.length, 3);
 });
 
 // ---- 炎术师 ----
@@ -12633,30 +12676,58 @@ test("赌命者：冒险额度每个全局回合开始重置且跨回合可再�
 
 // ---- 调律师 ----
 
-test("调律师：协调每回合只触发一次且摸牌日志不重复", async () => {
+test("调律师：协调每回合只触发一次且自己与实际触发队友各摸一张", async () => {
   const tuner = makePlayer("tuner", 0, "dawn", "ai", 7),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game } = makeGame([tuner, ally, enemy]),
     first = instance("shield"),
     second = instance("shield");
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   tuner.hand.push(first, second);
   const drawReasons = [];
   game.eventDispatcher.on("afterCardMove", "test:tuner-standard-draw", (event) => {
     if (event.from === "deck" && event.to === "hand") drawReasons.push(event.reason);
   });
   registerPassiveSkills(game);
-  game.state.deck.cards.push(instance("assault"));
+  game.state.deck.cards.push(instance("assault"), instance("charge"));
   assert.equal(await game.playCard(tuner, first, [ally]), true);
   assert.equal(await game.playCard(tuner, second, [ally]), true);
   assert.equal(tuner.hand.length, 1);
+  assert.equal(ally.hand.length, 1);
   assert.equal(ally.shield, 2);
   assert.equal(
-    game.state.logs.filter((entry) => entry.message === `${tuner.name}触发「协调」，摸1张牌。`).length,
+    game.state.logs.filter((entry) => entry.message
+      === `${tuner.name}触发「协调」，自己摸1张牌，${ally.name}摸1张牌。`).length,
     1
   );
   assert.equal(game.state.logs.filter((entry) => entry.message.includes("摸了")).length, 0);
-  assert.deepEqual(drawReasons, ["协调"]);
+  assert.deepEqual(drawReasons, ["协调", "协调"]);
+  const performance = game.matchPerformanceSidecar.tracker.recordFor(tuner);
+  assert.equal(performance.contributionFacts.allyCardsGranted, 1);
+  assert.equal(performance.totals.enemyControls, 0);
+});
+
+test("调律师：协调牌堆仅够自己摸牌时队友未获牌且贡献为零", async () => {
+  const tuner = makePlayer("short-deck-tuner", 0, "dawn", "ai", 7);
+  const ally = makePlayer("short-deck-ally", 1, "dawn");
+  const enemy = makePlayer("short-deck-enemy", 2, "dusk");
+  const { game } = makeGame([tuner, ally, enemy]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+
+  await game.eventDispatcher.emit("cardUsed", {
+    source: tuner,
+    card: instance("shield"),
+    resolved: true,
+    effectiveTargets: [ally]
+  });
+  assert.equal(tuner.hand.length, 1);
+  assert.equal(ally.hand.length, 0);
+  const performance = game.matchPerformanceSidecar.tracker.recordFor(tuner);
+  assert.equal(performance.contributionFacts.allyCardsGranted, 0);
+  assert.equal(performance.totals.enemyControls, 0);
 });
 
 test("调律师：护盾以自己为有效目标时不触发协调", async () => {
@@ -12910,17 +12981,18 @@ test("调律师：破坏预选资源在结算前失效时不触发协调", async
 
 test("调律师：协调已由护盾触发后破坏队友资源不重复摸牌", async () => {
   const tuner = makePlayer("once-destroy-tuner", 0, "dawn", "ai", 7),
-    ally = makePlayer("once-destroy-ally", 1, "dawn"),
-    enemy = makePlayer("once-destroy-enemy", 2, "dusk"),
+    triggerAlly = makePlayer("once-destroy-trigger-ally", 1, "dawn"),
+    ally = makePlayer("once-destroy-ally", 2, "dawn"),
+    enemy = makePlayer("once-destroy-enemy", 3, "dusk"),
     shield = instance("shield"),
     destroy = instance("destroy"),
     equipment = instance("energyDevice"),
-    { game } = makeGame([tuner, ally, enemy]);
+    { game } = makeGame([tuner, triggerAlly, ally, enemy]);
   tuner.hand.push(shield, destroy);
   ally.equipment = equipment;
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
-  assert.equal(await game.playCard(tuner, shield, [ally]), true);
+  assert.equal(await game.playCard(tuner, shield, [triggerAlly]), true);
   const hidden = game.hiddenCardSelection.createHiddenSelection(ally);
   assert.equal(await game.playCard(tuner, destroy, [ally], {
     zone: "equipment",
@@ -13138,12 +13210,15 @@ test("调律师：互利包含多个队友时每次用牌仍只触发一次协�
   const { game }
     = makeGame([tuner, allyA, enemy, allyB]);
   game.state.deck.cards.push(
-    instance("assault"), instance("block"), instance("charge"), instance("shield"), instance("harvest")
+    instance("assault"), instance("block"), instance("charge"), instance("shield"),
+    instance("harvest"), instance("duel")
   );
   registerPassiveSkills(game);
   await game.playCard(tuner, use, []);
   assert.equal(tuner.turnFlags.coordinationTriggered, true);
   assert.equal(tuner.hand.length, 2);
+  assert.equal(allyA.hand.length, 2);
+  assert.equal(allyB.hand.length, 1);
 });
 
 test("调律师：掠夺实际作用于队友时触发协调", async () => {
@@ -13408,16 +13483,16 @@ test("调律师：协调额度每个全局回合开始重置且跨两个玩家�
   // A 回合：调律师通过成功反制使队友成为有效目标并触发协调。
   await validEvent();
   assert.equal(tuner.turnFlags.coordinationTriggered, true);
-  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 1);
+  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 2);
   // 同一回合第二次合法事件不再触发。
   await validEvent();
-  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 1);
+  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 2);
   // B 新回合开始：协调额度重置。
   await game.takeTurn(b, game.state.gameId);
   assert.equal(tuner.turnFlags.coordinationTriggered, false);
   // B 回合再次形成合法协调事件可再次触发。
   await validEvent();
-  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 2);
+  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 4);
 });
 
 // ---------- 响应、伤害与濒死 ----------
@@ -15809,13 +15884,13 @@ test(
 AI 架构与价值归属回归测试。
 
 输入
-无；函数内构造影客根突袭的 before/after World。
+无；函数内构造 generic transition option 的 before/after World。
 
 输出
 Promise；公式、owner 或 generic final composition 边界回归时抛出断言。
 
 读取状态
-canonical World、Evaluator 领域识别和 Searcher 生产源码。
+canonical World、Evaluator generic option 公式和 Searcher 生产源码。
 
 写入状态
 仅独立 after World clone。
@@ -15847,9 +15922,6 @@ async function adaptiveInformationTransitionOptionClosure() {
       deriveCurrentCardCounts(actor, game.state)
     );
     const after = structuredClone(world);
-    const afterActor = after.players.find((player) => player.id === actor.id);
-    afterActor.spyGapTriggeredProbability = 1;
-    afterActor.lastSpyGapTargetId = "adaptive-target";
     const action = createAction({
       type: "card",
       actorId: actor.id,
@@ -15858,10 +15930,7 @@ async function adaptiveInformationTransitionOptionClosure() {
       targetIds: ["adaptive-target"]
     });
     const evaluator = game.aiController.evaluator;
-    assert.equal(
-      evaluator.adaptiveInformationTarget(world, after, action, actor.id),
-      "adaptive-target"
-    );
+    assert.equal(evaluator.adaptiveInformationTarget(world, after, action, actor.id), null);
     const optionPoints = evaluator.adaptiveInformationOptionPoints(1, [2, 4]);
     assert.equal(optionPoints, 2);
     const terms = evaluator.evaluateTransition({
@@ -15899,7 +15968,7 @@ async function adaptiveInformationTransitionOptionClosure() {
 }
 
 test(
-  "AI·价值归属：V02 自适应信息只经 generic TransitionOption 进入最终价值",
+  "AI·价值归属：V02 generic 信息选项只经 TransitionOption 进入最终价值",
   adaptiveInformationTransitionOptionClosure
 );
 
@@ -19401,7 +19470,7 @@ test("AI·搜索：正收益共生仍由完整 Final Utility 正常选中", asyn
 
 /*
 功能
-验证破坏队友已知牌时静态 selection 比较按己方损失方向工作。
+验证破坏队友已知牌时静态 selection 方向与协调后的实际资源移动事实保持正确。
 
 调用方
 AI 搜索资源 selection 回归测试。
@@ -19422,7 +19491,8 @@ canonical World、Generator destroy selections、Simulator after Worlds 与 Eval
 makeBenchmarkGame、createInitialWorld、deriveCurrentCardCounts、Simulator.apply、runBenchmarkAiDecision。
 
 边界与不变量
-队友高价值格挡的静态值必须比低价值聚能更不适合被破坏；完整搜索仍可由 END 击败全部负值 destroy roots。
+队友高价值格挡必须比低价值聚能更不适合被破坏；协调后置摸牌即使抵消目标手牌净差，
+Evaluator 仍须识别实际资源移动且不得回退为无效候选。
 */
 async function allyDestroySelectionDirectionRegression() {
   const game = makeBenchmarkGame({
@@ -19477,18 +19547,32 @@ async function allyDestroySelectionDirectionRegression() {
     assert.ok(blockAction && chargeAction);
     const simulator = new Simulator(world);
     const worldActor = world.players.find((player) => player.id === actor.id);
+    const blockAfter = simulator.apply(world, blockAction);
+    const chargeAfter = simulator.apply(world, chargeAction);
     const blockTerms = game.aiController.evaluator.resourceSelectionPreference(
       blockAction,
       worldActor,
       world,
-      simulator.apply(world, blockAction)
+      blockAfter
     );
     const chargeTerms = game.aiController.evaluator.resourceSelectionPreference(
       chargeAction,
       worldActor,
       world,
-      simulator.apply(world, chargeAction)
+      chargeAfter
     );
+    assert.equal(
+      chargeAfter.players.find((player) => player.id === "ally-destroy-target").handCount,
+      world.players.find((player) => player.id === "ally-destroy-target").handCount,
+      "协调后置摸牌会抵消目标手牌净数量差"
+    );
+    assert.deepEqual(chargeAfter.lastResourceTransaction, {
+      cardId:"destroy",
+      cardInstanceId:"ally-destroy-use",
+      sourceId:"ally-destroy-target",
+      appliedProbability:1
+    });
+    assert.ok(Number.isFinite(chargeTerms.contextualUtility));
     assert.ok(blockTerms.staticUtility < chargeTerms.staticUtility);
     assert.ok(game.aiController.evaluator.compareCandidates(
       { action: chargeAction, comparisonTerms: chargeTerms, valueScore: 0 },
@@ -19498,7 +19582,8 @@ async function allyDestroySelectionDirectionRegression() {
     ) > 0);
     const decision = await runBenchmarkAiDecision(game, actor.id);
     assert.equal(decision.stats.candidateFaults.length, 0);
-    assert.equal(decision.action.type, "end");
+    assert.equal(decision.action.cardId, "destroy");
+    assert.equal(decision.action.selection?.definitionId, "charge");
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -19666,21 +19751,21 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
       action,
       "最终 root 必须由完整未来价值决定，而不是照搬首个调度动作");
     assert.equal("scheduledRootOrder" in stats, false);
-    assert.equal(stats.expanded, 102);
+    assert.equal(stats.expanded, 101);
     assert.equal(stats.depth, 3);
     assert.equal(stats.hiddenSamples, 10);
     assert.equal(stats.bestValueScore, 2.49588542851475);
     assert.equal(stats.stopReason, "COMPLETE");
-    assert.equal(stats.simulationCalls, 186);
-    assert.equal(stats.cloneCalls, 196);
-    assert.equal(stats.probabilityOperations, 1812);
+    assert.equal(stats.simulationCalls, 101);
+    assert.equal(stats.cloneCalls, 101);
+    assert.equal(stats.probabilityOperations, 971);
     assert.equal(stats.rootCandidateCount, 9);
     assert.equal(stats.completedRootCandidateCount, 9);
     assert.equal(stats.timeoutObserved, false);
     assert.equal(stats.matchedPatternCount, 1);
     assert.equal(stats.patternProposalCount, 1);
     assert.equal(stats.completedPatternCount, 1);
-    assert.equal(stats.patternIncumbentUpdateCount, 3);
+    assert.equal(stats.patternIncumbentUpdateCount, 2);
     assert.equal(stats.selectedPatternId, "SEAL_LAST");
   } finally {
     disposeBenchmarkGame(game);
@@ -29869,6 +29954,50 @@ test("AI·影客：窥隙按未知位置选择且只更新自己的私密记忆"
   assert.equal(ui.reveals.length, 0);
 });
 
+test("AI·影客：窥隙每次实际伤害记录新增未知信息且已知牌不重复计值", () => {
+  const shade = makePlayer("sim-spy-gap-shade", 0, "dawn", "ai", 3);
+  const target = makePlayer("sim-spy-gap-target", 1, "dusk", "ai");
+  target.hand.push(instance("charge"), instance("harvest"), instance("duel"));
+  const { game } = makeGame([shade, target]);
+  const before = createInitialWorld(
+    shade.id,
+    game.state,
+    deriveCurrentCardCounts(shade, game.state)
+  );
+  const after = structuredClone(before);
+  const simulator = new Simulator(after);
+  const simulatedShade = after.players.find((player) => player.id === shade.id);
+  const simulatedTarget = after.players.find((player) => player.id === target.id);
+
+  simulator.simulateSpyGapAfterLifeDamage(after, simulatedShade, simulatedTarget, 1);
+  simulator.simulateSpyGapAfterLifeDamage(after, simulatedShade, simulatedTarget, 1);
+  simulator.simulateSpyGapAfterLifeDamage(after, simulatedShade, simulatedTarget, 1);
+
+  assert.deepEqual(
+    simulatedShade.spyGapInformationEvents.map((event) => event.actualNewRevealCount),
+    [2, 1]
+  );
+  assert.equal(simulatedShade.spyGapRevealedCountsByTarget[target.id], 3);
+  const evaluator = game.aiController.evaluator;
+  const optionTerms = evaluator.evaluateTransition({
+    action: createAction({ type: "end", actorId: shade.id }),
+    player: before.players.find((player) => player.id === shade.id),
+    beforeState: before,
+    afterState: after
+  });
+  assert.ok(optionTerms.transitionOptionPoints > 0);
+
+  const noNewBefore = structuredClone(after);
+  simulator.simulateSpyGapAfterLifeDamage(after, simulatedShade, simulatedTarget, 1);
+  const noNewTerms = evaluator.evaluateTransition({
+    action: createAction({ type: "end", actorId: shade.id }),
+    player: noNewBefore.players.find((player) => player.id === shade.id),
+    beforeState: noNewBefore,
+    afterState: after
+  });
+  assert.equal(noNewTerms.transitionOptionPoints, 0);
+});
+
 
 
 
@@ -30281,6 +30410,7 @@ test("AI·调律师：共生只按实际治疗的队友触发协调", () => {
   const allyHealed = simulate(3, 4);
   assert.equal(allyHealed.players[0].coordinationTriggered, true);
   assert.equal(allyHealed.players[0].handCount, 1);
+  assert.equal(allyHealed.players[1].handCount, 1);
   assert.equal(allyHealed.players[1].hp, 4);
 
   const enemyOnly = simulate(4, 3);
@@ -30349,11 +30479,56 @@ test("AI·调律师：破坏队友资源成功时触发协调且无资源时不�
   const destroyed = simulate(true);
   assert.equal(destroyed.players[0].coordinationTriggered, true);
   assert.equal(destroyed.players[0].handCount, 1);
+  assert.equal(destroyed.players[1].handCount, 1);
   assert.equal(destroyed.players[1].equipmentDefinitionId, null);
 
   const missing = simulate(false);
   assert.equal(missing.players[0].coordinationTriggered, false);
   assert.equal(missing.players[0].handCount, 0);
+});
+
+test("AI·调律师：协调多目标只让首名实际触发队友与自己各摸一张", () => {
+  const actor = {
+    id: "ai-coordination-tuner",
+    seatIndex: 0,
+    battleTeam: "dawn",
+    characterId: "resonance-tuner",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    handCount: 0,
+    coordinationTriggered: false
+  };
+  const allyA = {
+    id: "ai-coordination-ally-a",
+    seatIndex: 1,
+    battleTeam: "dawn",
+    characterId: "blade-walker",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    handCount: 0
+  };
+  const allyB = {
+    id: "ai-coordination-ally-b",
+    seatIndex: 2,
+    battleTeam: "dawn",
+    characterId: "oath-warden",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    handCount: 0
+  };
+  const state = {
+    remainingCardCounts: { counter: 0 },
+    players: [actor, allyA, allyB]
+  };
+  new Simulator(state).simulateCoordination(state, actor, [allyA, allyB], 1);
+  assert.deepEqual(
+    state.players.map((player) => player.handCount),
+    [1, 1, 0]
+  );
+  assert.equal(actor.coordinationTriggered, true);
 });
 
 
@@ -39511,7 +39686,6 @@ async function privateRevealSpyGapBlocksDispatcher() {
     return payload;
   });
   await waitForPrivateRevealBoundaryCondition(() => revealCalls === 1, "窥隙应已进入 showPrivateReveal");
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
   assert.equal(sentinelRuns, 0);
   assert.equal(order.includes("spygap-log"), false);
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -40480,7 +40654,7 @@ test("UI·玩家面板：八名角色使用结构化被动触发条件与限制�
     "blade-walker": "每回合按不同卡牌类别分别触发",
     "oath-warden": "每回合限触发1次",
     "spirit-medic": "每回合限触发2次",
-    "shade-agent": "每回合限触发1次",
+    "shade-agent": "不限制触发次数",
     "ember-magus": "每次卡牌结算最多触发1次",
     "trail-hunter": "每回合限触发2次；同一敌人每回合限1次",
     "fate-gambler": "每回合限触发1次",
@@ -46702,13 +46876,15 @@ test("集成：互利规则目标包含所有存活角色且调律师只触发�
     ActionLegality.getCardTargets(game, tuner, CARD_DEFINITIONS.mutualBenefit), [tuner, ally, enemy]
   );
   game.state.deck.cards.push(
-    instance("assault"), instance("block"), instance("charge"), instance("shield")
+    instance("assault"), instance("block"), instance("charge"), instance("shield"),
+    instance("harvest")
   );
   const use = instance("mutualBenefit");
   tuner.hand.push(use);
   await game.playCard(tuner, use, []);
   assert.equal(tuner.turnFlags.coordinationTriggered, true);
   assert.equal(tuner.hand.length, 2);
+  assert.equal(ally.hand.length, 2);
 });
 
 test("集成：调律师转移把来源与接收者都作为有效目标并只触发一次协调", async () => {
@@ -46718,7 +46894,7 @@ test("集成：调律师转移把来源与接收者都作为有效目标并只�
   const { game }
     = makeGame([tuner, enemy, ally]);
   registerPassiveSkills(game);
-  game.state.deck.cards.push(instance("charge"));
+  game.state.deck.cards.push(instance("charge"), instance("shield"));
   let usedEvent = null;
   game.eventDispatcher.on("cardUsed", "test:successful-transfer", (event) => {
     usedEvent = event;
@@ -46741,6 +46917,7 @@ test("集成：调律师转移把来源与接收者都作为有效目标并只�
     }
   );
   assert.ok(ally.hand.includes(moved));
+  assert.equal(ally.hand.length, 2);
   assert.equal(tuner.turnFlags.coordinationTriggered, true);
   assert.equal(tuner.hand.length, 1);
   assert.equal(usedEvent.cancelled, false);

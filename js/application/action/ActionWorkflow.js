@@ -642,7 +642,8 @@ export function createActionWorkflow(dependencies) {
   createActionTransaction、recordActiveSkillUse、skillRuntime、getSkillTargets、publishFact。
 
   边界与不变量
-  技能规则由 skill runtime 决定，transition 只提交；使用、支付与给牌事实只在 transaction commit 后发布，回滚不得污染旁路统计。
+  技能规则由 skill runtime 决定，transition 只提交；使用、支付、给牌与窃取事实只在 transaction commit 后发布，
+  回滚不得污染旁路统计。
   */
   async function useActiveSkill(source, skillId, targets = []) {
     const state = runtime.getState();
@@ -660,6 +661,7 @@ export function createActionWorkflow(dependencies) {
     let completed = false;
     let actualEnergyPaid = 0;
     let cardGrants = [];
+    let cardSteals = [];
     try {
       recordActiveSkillUse(state, source, skill.id);
       const targetLabel = runtime.getActionTargetLabel(source, skill, targets);
@@ -674,7 +676,8 @@ export function createActionWorkflow(dependencies) {
         resolutionId: runtime.createId("skill-resolution"), energyCost
       });
       actualEnergyPaid = skillResult.actualEnergyPaid;
-      cardGrants = skillResult.cardGrants;
+      cardGrants = skillResult.cardGrants ?? [];
+      cardSteals = skillResult.cardSteals ?? [];
       if (!runtime.isSessionValid(gameId)) return false;
       completed = true;
     } finally {
@@ -738,6 +741,17 @@ export function createActionWorkflow(dependencies) {
         runtime.diagnostics.reportWorkflowError(
           "Action",
           `${source.name}的技能给牌统计事实发布失败`,
+          error
+        );
+      }
+    }
+    if (cardSteals.length) {
+      try {
+        await runtime.publishFact("cardsStolen", { source, skill, steals: cardSteals });
+      } catch (error) {
+        runtime.diagnostics.reportWorkflowError(
+          "Action",
+          `${source.name}的技能窃取统计事实发布失败`,
           error
         );
       }

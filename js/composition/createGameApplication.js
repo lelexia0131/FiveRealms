@@ -769,6 +769,7 @@ class MatchApplication {
       preparePrivateHandPeekIntent: (...args) => this.cardIntentRuntime.preparePrivateHandPeekIntent(...args),
       resolvePrivateHandPeekIntent: (...args) => this.cardIntentRuntime.resolvePrivateHandPeekIntent(...args),
       rememberPrivateCard: (...args) => this.rememberPrivateCard(...args),
+      publishFact: (type, payload) => this.eventDispatcher.publishFact(type, payload),
       choiceCoordinator: this.choiceCoordinator,
       choiceContexts: this.choiceContexts,
       createId
@@ -813,7 +814,8 @@ class MatchApplication {
       diagnostics: this.diagnosticsPort,
       random: () => this.random(),
       createId,
-      emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload)
+      emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload),
+      publishFact: (type, payload) => this.eventDispatcher.publishFact(type, payload)
     });
     this.cardIntentRuntime = createCardIntentRuntime({
       getState: () => this.state,

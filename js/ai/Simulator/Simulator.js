@@ -1098,6 +1098,7 @@ class SimulatorCore {
   */
   apply(state, action, controls = {}) {
     const next = this.clone(state);
+    next.lastResourceTransaction = null;
     if (next.playPhaseEnded) return next;
     const actor = next.players.find((player) => player.id === action.actorId);
     if (action.type === "end") {
@@ -1991,7 +1992,8 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       state,
       attacker,
       target,
-      damageResult.lifeDamageChance
+      damageResult.lifeDamageChance,
+      damageResult.lifeDamageBranches
     );
     return damageResult.actualDamage;
   }
@@ -2517,6 +2519,42 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
 
   /*
   功能
+  记录一项卡牌资源移动在当前模拟 transition 中实际发生的概率。
+
+  调用方
+  applyCardEffect 的破坏、掠夺与转移分支。
+
+  输入
+  动作后的 World、canonical Action、资源来源与实际应用概率。
+
+  输出
+  无返回值；正概率事实追加到行动者的 transition ledger。
+
+  读取状态
+  Action identity 与资源来源 ID。
+
+  写入状态
+  state.lastResourceTransaction。
+
+  调用函数
+  clampProbability。
+
+  边界与不变量
+  只记录 Simulator 已成功推进的资源事实；后续摸牌不得通过手牌净差掩盖这次移动。
+  */
+  recordResourceTransaction(state, action, source, appliedProbability) {
+    const probability = clampProbability(appliedProbability);
+    if (!state || !source || probability <= PROBABILITY_EPSILON) return;
+    state.lastResourceTransaction = {
+      cardId: action?.cardId ?? null,
+      cardInstanceId: action?.cardInstanceId ?? null,
+      sourceId: source.id,
+      appliedProbability: probability
+    };
+  }
+
+  /*
+  功能
   执行一张已完成动作支付、commit trigger 与 card-scope 响应门控的卡牌效果。
 
   调用方
@@ -2734,6 +2772,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
             )
           : 0;
         if (plundered > PROBABILITY_EPSILON) {
+          this.recordResourceTransaction(next, abstractAction, target, plundered);
           coordinationProbability = plundered;
           coordinationTargets = [target];
         }
@@ -2760,6 +2799,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
                   : this.availableUnknownCountFor(source, excludedTransferCard));
           coordinationProbability = transferred;
           coordinationTargets = [source, receiver];
+          this.recordResourceTransaction(next, abstractAction, source, transferred);
         }
         break;
       }
@@ -2781,6 +2821,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
             )
           : 0;
         if (destroyed > PROBABILITY_EPSILON) {
+          this.recordResourceTransaction(next, abstractAction, target, destroyed);
           coordinationProbability = destroyed;
           coordinationTargets = [target];
         }
@@ -3572,7 +3613,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   /*
   功能
-  按协同生效世界为有效目标结算团队资源增益。
+  按协调生效世界为调律师与唯一触发队友结算资源增益。
 
   调用方
   Simulator、Damage 与 Simulator：在有效目标世界结算协同收益。
@@ -3581,24 +3622,25 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   World、来源、有效目标列表与结算概率。
 
   输出
-  无返回值；团队目标资源与协同触发摘要已更新。
+  本次新增触发概率；双方手牌资源与协调触发摘要已更新。
 
   读取状态
   来源/目标阵营、存活状态与 coordinationTriggeredProbability。
 
   写入状态
-  目标手牌/响应摘要、能量或协同触发字段。
+  调律师和唯一触发队友的手牌/响应摘要，以及协调触发字段。
 
   调用函数
   gainUnknownCardsWithCounterState、changeEnergy。
 
   边界与不变量
-  只作用于调用方确认的有效目标；同一触发质量不得对同一目标重复发放。
+  按 effectiveTargets 顺序只选择第一名合法队友；同一触发质量给双方各一张且每回合只结算一次。
   */
   simulateCoordination(state, actor, effectiveTargets, resolutionProbability) {
     if (!hasPassiveSkill(actor, "coordination")) return 0;
-    if (!(effectiveTargets ?? []).some((target) => target?.alive && target.id !== actor.id
-      && target.battleTeam === actor.battleTeam)) return 0;
+    const teammate = (effectiveTargets ?? []).find((target) => target?.alive
+      && target.id !== actor.id && target.battleTeam === actor.battleTeam);
+    if (!teammate) return 0;
     const oldProbability = clampProbability(actor.coordinationTriggeredProbability
       ?? (actor.coordinationTriggered ? 1 : 0));
     const newProbability = independentUnionProbability(oldProbability, resolutionProbability);
@@ -3609,6 +3651,9 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
       const coordinationWorlds = this.getEventWorlds(state, triggerProbability, null, "coordination-draw");
       this.gainUnknownCardsWithCounterState(
         state, actor, triggerProbability, coordinationWorlds, "coordination-draw"
+      );
+      this.gainUnknownCardsWithCounterState(
+        state, teammate, triggerProbability, coordinationWorlds, "coordination-teammate-draw"
       );
     }
     return triggerProbability;
@@ -3792,49 +3837,70 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   /*
   功能
-  根据生命伤害概率结算影客窥隙：推进一次性额度并把新观察身份写入后续可消费状态。
+  根据每次生命伤害结算影客窥隙，并记录本次实际新增未知信息。
 
   调用方
   Damage.applyDamage：在生命伤害与濒死结果落地后触发。
 
   输入
-  World、伤害来源、受伤目标与生命伤害概率。
+  World、伤害来源、受伤目标、生命伤害概率与同一伤害条件世界。
 
   输出
-  无返回值；满足触发条件时推进窥隙额度与目标私密信息。
+  无返回值；满足触发条件时追加本次窥隙信息事件并推进目标已查看数量摘要。
 
   读取状态
-  来源 characterId/既有触发概率、目标阵营/生命/手牌与剩余牌先验。
+  来源 characterId、目标阵营/生命/手牌、已有合法知识与本模拟路径已查看数量。
 
   写入状态
-  spyGapTriggeredProbability、spyGapTriggered、lastSpyGapTargetId，以及委托记录的目标已知牌与摘要。
+  spyGapInformationEvents 与 spyGapRevealedCountsByTarget。
 
   调用函数
   recordSimulatedPrivatePeek。
 
   边界与不变量
-  只有本回合尚未触发的边际生命伤害世界会揭示新牌；空手、队友、已死亡或已触发时不会产生信息价值。
+  每次实际生命伤害都可触发；空手、队友、已死亡或已无未知牌时不产生新增信息，
+  同一模拟路径已经查看的数量不得再次计值。
   */
-  simulateSpyGapAfterLifeDamage(state, source, target, lifeDamageProbability) {
+  simulateSpyGapAfterLifeDamage(
+    state,
+    source,
+    target,
+    lifeDamageProbability,
+    lifeDamageBranches = null
+  ) {
     const chance = clampProbability(lifeDamageProbability);
     if (!chance || !source?.alive || !target?.alive || target.hp <= 0
       || target.battleTeam === source.battleTeam || (target.handCount ?? 0) <= 0
       || !hasPassiveSkill(source, "spyGap")) return;
-    const oldTriggeredProbability = clampProbability(source.spyGapTriggeredProbability
-      ?? (source.spyGapTriggered ? 1 : 0));
-    const triggerProbability = (1 - oldTriggeredProbability) * chance;
-    source.spyGapTriggeredProbability = independentUnionProbability(oldTriggeredProbability, chance);
-    source.spyGapTriggered = source.spyGapTriggeredProbability >= 1 - Number.EPSILON;
-    if (triggerProbability <= PROBABILITY_EPSILON) return;
-    source.lastSpyGapTargetId = target.id;
-    const triggerWorlds = probabilityEventPartition(
+    const alreadyRevealed = Math.max(
+      0,
+      Number(source.spyGapRevealedCountsByTarget?.[target.id]) || 0
+    );
+    const knownOccupancy = (target.knownCards ?? []).reduce(
+      (sum, entry) => sum + cardAvailability(entry),
+      0
+    );
+    const maxRevealCount = Math.min(
+      PASSIVE_SKILL_DEFINITIONS.spyGap.maxRevealCount,
+      Math.max(0, (Number(target.handCount) || 0) - knownOccupancy - alreadyRevealed)
+    );
+    if (maxRevealCount <= PROBABILITY_EPSILON) return;
+    const triggerWorlds = lifeDamageBranches ?? probabilityEventPartition(
       this.currentProbabilityEventKey(state, `spy-gap:${source.id}:${target.id}`),
-      triggerProbability,
+      chance,
       "occurs"
     );
-    this.recordSimulatedPrivatePeek(
-      state, source, target, PASSIVE_SKILL_DEFINITIONS.spyGap.maxRevealCount, triggerWorlds
+    const actualNewRevealCount = this.recordSimulatedPrivatePeek(
+      state, source, target, maxRevealCount, triggerWorlds
     );
+    if (actualNewRevealCount <= PROBABILITY_EPSILON) return;
+    source.spyGapRevealedCountsByTarget ??= {};
+    source.spyGapRevealedCountsByTarget[target.id] = alreadyRevealed + actualNewRevealCount;
+    source.spyGapInformationEvents ??= [];
+    source.spyGapInformationEvents.push({
+      targetId: target.id,
+      actualNewRevealCount
+    });
   }
 
 

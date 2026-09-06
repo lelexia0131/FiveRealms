@@ -87,7 +87,7 @@ export function createCardKnowledgeAdapter(getPlayers) {
   viewer、owner 与已被合法揭示的 Card 实体。
 
   输出
-  无返回值。
+  该实体定义此前未知时返回 true；已经知道时返回 false。
 
   读取状态
   viewer.aiMemory 与 card.definitionId。
@@ -103,7 +103,10 @@ export function createCardKnowledgeAdapter(getPlayers) {
   */
   const remember = (viewer, owner, card) => {
     const bucket = viewer.aiMemory.knownCardsByPlayer[owner.id] ??= {};
-    bucket[card.id] = card.definitionId;
+    const definitionId = card.definitionId;
+    const newlyKnown = bucket[card.id] !== definitionId;
+    bucket[card.id] = definitionId;
+    return newlyKnown;
   };
   /*
   功能

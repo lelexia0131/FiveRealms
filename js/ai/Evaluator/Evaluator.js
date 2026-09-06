@@ -465,6 +465,39 @@ function resourceTransactionEffectScale(
 
 /*
 功能
+读取 Simulator 为当前资源卡 transition 记录的实际应用概率。
+
+调用方
+resourceTransactionOptionPoints 与 resourceSelectionPreference。
+
+输入
+canonical Action、动作后的 World 与资源来源 ID。
+
+输出
+匹配事实的零到一概率；没有事实时返回 null。
+
+读取状态
+afterState.lastResourceTransaction。
+
+写入状态
+无。
+
+调用函数
+clampProbability。
+
+边界与不变量
+按卡牌实体、定义与来源共同匹配；该事实只表示真实模拟移动，不包含协调或其它后置资源价值。
+*/
+function recordedResourceTransactionScale(action, afterState, sourceId) {
+  const event = afterState?.lastResourceTransaction ?? null;
+  const matches = event?.cardId === action?.cardId
+    && event.cardInstanceId === (action?.cardInstanceId ?? null)
+    && event.sourceId === sourceId;
+  return matches ? clampProbability(event.appliedProbability) : null;
+}
+
+/*
+功能
 计算 Destroy、Plunder 与 Transfer 对具体手牌身份价值造成的派生 Transition Option。
 
 调用方
@@ -483,11 +516,12 @@ Action selection、玩家阵营/角色、身份 availability 与 canonical Proba
 无。
 
 调用函数
-resourceTransactionEffectScale、resourceTransactionForDefinition、queryProbability。
+recordedResourceTransactionScale、resourceTransactionEffectScale、resourceTransactionForDefinition、queryProbability。
 
 边界与不变量
 known 只使用合法 selection identity；unknown 对来源匿名桶的 P(C=d) 求期望，不读取真实隐藏牌；
-EffectScale 只来自已经完成的资源变化，StateValue 的 HandCount 与 viewer HandRoleDelta 不在此重复。
+EffectScale 优先来自 Simulator 已记录的实际移动；旧/独立夹具才回退到身份或匿名槽差，
+StateValue 的 HandCount 与 viewer HandRoleDelta 不在此重复。
 */
 function resourceTransactionOptionPoints(action, viewer, beforeState, afterState) {
   const cardId = action?.cardId ?? null;
@@ -506,13 +540,14 @@ function resourceTransactionOptionPoints(action, viewer, beforeState, afterState
     ? beforeState.players.find((player) => player.id === receiverId) ?? null
     : null;
   if (!source || !afterSource || (receiverId && !receiver)) return 0;
-  const effectScale = resourceTransactionEffectScale(
-    beforeState,
-    afterState,
-    source,
-    afterSource,
-    selection
-  );
+  const effectScale = recordedResourceTransactionScale(action, afterState, sourceId)
+    ?? resourceTransactionEffectScale(
+      beforeState,
+      afterState,
+      source,
+      afterSource,
+      selection
+    );
   if (effectScale <= PROBABILITY_EPSILON) return 0;
   if (selection.selectionKind === "known" && selection.definitionId) {
     return resourceTransactionForDefinition(
@@ -542,6 +577,50 @@ function resourceTransactionOptionPoints(action, viewer, beforeState, afterState
 
 /*
 功能
+从 Simulator 新追加的窥隙信息事件计算本次 transition 的实际新增未知信息价值。
+
+调用方
+deriveTransitionOptionPoints。
+
+输入
+行动者以及动作前后的 Worlds。
+
+输出
+所有本次窥隙事件的非负 raw information option points 总和。
+
+读取状态
+行动者 spyGapInformationEvents、目标手牌数量、合法已知牌与 Probability 当前有限池。
+
+写入状态
+无。
+
+调用函数
+privatePeekInformationValue。
+
+边界与不变量
+只读取 after 相对 before 新增的事件；事件数量已由 Simulator 扣除既有知识与同路径已查看数量，
+不得按伤害次数或角色身份追加固定奖励。
+*/
+function spyGapTransitionInformationPoints(player, beforeState, afterState) {
+  if (!player) return 0;
+  const beforeActor = beforeState.players.find((entry) => entry.id === player.id) ?? player;
+  const afterActor = afterState.players.find((entry) => entry.id === player.id) ?? null;
+  const beforeCount = beforeActor.spyGapInformationEvents?.length ?? 0;
+  const newEvents = (afterActor?.spyGapInformationEvents ?? []).slice(beforeCount);
+  return newEvents.reduce((sum, event) => {
+    const target = beforeState.players.find((entry) => entry.id === event?.targetId);
+    if (!target) return sum;
+    return sum + privatePeekInformationValue(
+      beforeState,
+      beforeActor,
+      target,
+      event.actualNewRevealCount
+    );
+  }, 0);
+}
+
+/*
+功能
 从 before/after World 与 canonical Action 直接派生不属于物理 State Value 的转移选项点数。
 
 调用方
@@ -551,7 +630,7 @@ Evaluator.evaluateTransition。
 动作、行动者、before/after World 与战术结算比例。
 
 输出
-窥探信息、资源身份交易、借势获得装备和互利座次选择的 raw State points 总和。
+窥探/窥隙信息、资源身份交易、借势获得装备和互利座次选择的 raw State points 总和。
 
 读取状态
 动作前后装备保留、合法手牌、Probability 当前有限池与团队关系。
@@ -560,19 +639,24 @@ Evaluator.evaluateTransition。
 无。
 
 调用函数
-privatePeekInformationValue、resourceTransactionOptionPoints、CardValue、mutualBenefitDraftValues。
+spyGapTransitionInformationPoints、privatePeekInformationValue、resourceTransactionOptionPoints、CardValue、mutualBenefitDraftValues。
 
 边界与不变量
 只评价 Action 已明确的 transition；借势获得量必须由真实装备保留差反推，
-不得把 value 写回 World；Scout/互利只乘一次卡牌可用性与结算比例；
+不得把 value 写回 World；窥隙只读取 Simulator 已确认的实际新增未知数量；Scout/互利只乘一次卡牌可用性与结算比例；
 资源交易直接读取 after World 的实际应用概率，不得再次乘 resolutionScale。
 */
 function deriveTransitionOptionPoints(action, player, beforeState, afterState, resolutionScale) {
+  const spyGapInformationPoints = spyGapTransitionInformationPoints(
+    player,
+    beforeState,
+    afterState
+  );
   const cardId = action?.cardId ?? null;
-  if (!cardId || !player) return 0;
+  if (!cardId || !player) return spyGapInformationPoints;
   const beforeActor = beforeState.players.find((entry) => entry.id === player.id) ?? player;
   if (["destroy", "plunder", "transfer"].includes(cardId)) {
-    return resourceTransactionOptionPoints(
+    return spyGapInformationPoints + resourceTransactionOptionPoints(
       action,
       beforeActor,
       beforeState,
@@ -586,13 +670,13 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
   const effectScale = clampProbability(executionProbability * resolutionScale);
   if (cardId === "scout") {
     const target = beforeState.players.find((entry) => entry.id === action.targetIds?.[0]);
-    if (!target?.alive) return 0;
+    if (!target?.alive) return spyGapInformationPoints;
     const revealLimit = CARD_DEFINITIONS.scout.maxRevealCount;
     const actualNewRevealCount = Math.min(
       revealLimit,
       Math.max(0, action.selection?.unknownCount ?? 0)
     );
-    return privatePeekInformationValue(
+    return spyGapInformationPoints + privatePeekInformationValue(
       beforeState,
       beforeActor,
       target,
@@ -604,11 +688,13 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
     const beforeFirst = beforeState.players.find((entry) => entry.id === firstId);
     const afterFirst = afterState.players.find((entry) => entry.id === firstId);
     const equipmentDefinitionId = beforeFirst?.equipmentDefinitionId ?? null;
-    if (!equipmentDefinitionId || afterFirst?.equipmentDefinitionId !== equipmentDefinitionId) return 0;
+    if (!equipmentDefinitionId || afterFirst?.equipmentDefinitionId !== equipmentDefinitionId) {
+      return spyGapInformationPoints;
+    }
     const beforeRetention = clampProbability(beforeFirst.equipmentRetentionProbability ?? 1);
     const afterRetention = clampProbability(afterFirst.equipmentRetentionProbability ?? 0);
     const acquired = Math.max(0, beforeRetention - afterRetention);
-    return (getBaseCardAiValue(equipmentDefinitionId)
+    return spyGapInformationPoints + (getBaseCardAiValue(equipmentDefinitionId)
       + roleCardDelta(beforeActor.characterId, equipmentDefinitionId))
       * acquired * RESOURCE_MATERIAL_SCALE;
   }
@@ -618,13 +704,13 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
       beforeActor,
       queryCurrentCardCounts(beforeState.probabilityState)
     );
-    return beforeState.players.reduce((sum, recipient) => {
+    return spyGapInformationPoints + beforeState.players.reduce((sum, recipient) => {
       if (!recipient.alive) return sum;
       const sign = recipient.battleTeam === beforeActor.battleTeam ? 1 : -1;
       return sum + sign * (draftValues[recipient.id] ?? 0) * effectScale;
     }, 0);
   }
-  return 0;
+  return spyGapInformationPoints;
 }
 
 /*
@@ -2757,7 +2843,7 @@ export class Evaluator {
 
   /*
   功能
-  识别一次 transition 是否需要自适应信息搜索，并返回被观察者。
+  保留通用自适应信息查询边界；当前窥隙价值已由实际新增信息事件直接结算。
 
   调用方
   Searcher 的 generic adaptive-information orchestration。
@@ -2766,10 +2852,10 @@ export class Evaluator {
   before/after Worlds、canonical Action 与 actor ID。
 
   输出
-  需要物化自适应信息时返回目标 ID，否则返回 null。
+  需要物化延迟信息时返回目标 ID，否则返回 null。
 
   读取状态
-  Action identity、双方窥隙概率、角色与最后目标字段。
+  当前没有延迟物化字段。
 
   写入状态
   无。
@@ -2778,19 +2864,10 @@ export class Evaluator {
   clampProbability。
 
   边界与不变量
-  具体角色与技能识别只能封装在 Evaluator；重复触发始终返回 null。
+  Searcher contract 保持稳定；窥隙不得再依赖一次性额度或把已经知道的牌完整重揭示。
   */
-  adaptiveInformationTarget(beforeState, afterState, action, actorId) {
-    if (action?.cardId !== "assault") return null;
-    const beforeActor = beforeState?.players?.find((player) => player.id === actorId);
-    const afterActor = afterState?.players?.find((player) => player.id === actorId);
-    if (afterActor?.characterId !== "shade-agent") return null;
-    const beforeProbability = clampProbability(beforeActor?.spyGapTriggeredProbability
-      ?? (beforeActor?.spyGapTriggered ? 1 : 0));
-    const afterProbability = clampProbability(afterActor?.spyGapTriggeredProbability
-      ?? (afterActor?.spyGapTriggered ? 1 : 0));
-    if (afterProbability - beforeProbability <= PROBABILITY_EPSILON) return null;
-    return afterActor.lastSpyGapTargetId ?? null;
+  adaptiveInformationTarget(_beforeState, _afterState, _action, _actorId) {
+    return null;
   }
 
   /*
@@ -3101,12 +3178,13 @@ export class Evaluator {
   无。
 
   调用函数
-  transitionDelta、cardPlayerValueTerms、getResourceDefinitionUtility、
+  transitionDelta、recordedResourceTransactionScale、cardPlayerValueTerms、getResourceDefinitionUtility、
   getResourceUnknownUtility、getUnknownAcquisitionUtility、skillThresholdOptionPolicyValue。
 
   边界与不变量
   不构造或克隆 World；复用 Searcher 已完成的唯一 transition。contextual 公式保持既有
-  state delta、装备材料、掠夺获得材料与充能桩门槛项的单位和顺序；
+  state delta、装备材料、掠夺获得材料与充能桩门槛项的单位和顺序；手牌资源按选中实体/匿名槽的实际移动判断，
+  不能被协调等同一结算中的后续摸牌抵消；
   destroy 的静态 owner 卡值必须按敌方收益、己方损失投影，不能把队友高价值牌当成更优破坏目标。
   */
   resourceSelectionPreference(action, player, beforeState, afterState) {
@@ -3126,10 +3204,13 @@ export class Evaluator {
           - (afterOwner.equipmentRetentionProbability ?? 0)
       );
     } else if (selection.zone === "hand") {
-      appliedProbability = clampProbability(
+      const netHandLoss = clampProbability(
         Math.max(0, Number(owner.handCount) || 0)
           - Math.max(0, Number(afterOwner.handCount) || 0)
       );
+      appliedProbability = netHandLoss > PROBABILITY_EPSILON
+        ? netHandLoss
+        : recordedResourceTransactionScale(action, afterState, owner.id) ?? 0;
     }
     if (appliedProbability <= PROBABILITY_EPSILON) {
       return Object.freeze({

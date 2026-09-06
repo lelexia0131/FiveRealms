@@ -307,6 +307,8 @@ export class MatchPerformanceTracker {
       cardCommitted: (event) => this.handleCardCommitted(event),
       cardUsed: (event) => this.handleCardUsed(event),
       cardsGranted: (event) => this.handleCardsGranted(event),
+      privateCardsRevealed: (event) => this.handlePrivateCardsRevealed(event),
+      cardsStolen: (event) => this.handleCardsStolen(event),
       sealSettled: (event) => this.handleSealSettled(event),
       skillEnergyPaid: (event) => this.handleSkillEnergyPaid(event),
       activeSkillUsed: (event) => this.handleActiveSkillUsed(event),
@@ -1305,6 +1307,78 @@ export class MatchPerformanceTracker {
 
   /*
   功能
+  按实际新增未知牌数量累计窥探与窥隙的敌方控制事实。
+
+  调用方
+  privateCardsRevealed fact listener。
+
+  输入
+  含 source、target、effectDefinitionId 与 actualNewCount 的已提交私密查看事实。
+
+  输出
+  无返回值。
+
+  读取状态
+  source/target 阵营与 source record。
+
+  写入状态
+  source record 的 enemyControls。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  只接受窥探或窥隙对敌方实际新增的未知牌；每张固定计 0.25，不读取牌面或 AI 信息价值。
+  */
+  handlePrivateCardsRevealed(event) {
+    if (!["scout", "spyGap"].includes(event?.effectDefinitionId)
+      || !event.source || !event.target
+      || event.target.battleTeam === event.source.battleTeam) return;
+    const actualNewCount = Math.max(0, Math.floor(Number(event.actualNewCount) || 0));
+    const record = this.recordFor(event.source);
+    if (record && actualNewCount > 0) record.totals.enemyControls += actualNewCount * 0.25;
+  }
+
+  /*
+  功能
+  按主动窃取成功后的实际获得数量累计敌方控制事实。
+
+  调用方
+  cardsStolen fact listener。
+
+  输入
+  含 source、skill 与 steals 的事务提交后事实。
+
+  输出
+  无返回值。
+
+  读取状态
+  source/target 阵营与 source record。
+
+  写入状态
+  source record 的 enemyControls。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  只接受窃取技能从敌方实际获得的正数牌；每张计一分，空结果和其它技能不计。
+  */
+  handleCardsStolen(event) {
+    if (event?.skill?.id !== "stealSkill" || !event.source || !Array.isArray(event.steals)) return;
+    const record = this.recordFor(event.source);
+    if (!record) return;
+    for (const steal of event.steals) {
+      if (!steal?.target || steal.target.battleTeam === event.source.battleTeam) continue;
+      record.totals.enemyControls += Math.max(
+        0,
+        Math.floor(Number(steal.actualAmount) || 0)
+      );
+    }
+  }
+
+  /*
+  功能
   按互利前后权威手牌差值结算友方正贡献与敌方负贡献。
 
   调用方
@@ -1382,7 +1456,7 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  累计已提交主动牌，并从最终 cardUsed 语义派生控制、资源贡献与保护事实。
+  累计已提交主动牌，并从最终 cardUsed 语义派生非窥牌控制、资源贡献与保护事实。
 
   调用方
   cardUsed listener。
@@ -1403,7 +1477,8 @@ export class MatchPerformanceTracker {
   recordFor、areAllies、settleMutualBenefitContribution、settleProtectedAllyResourceAction。
 
   边界与不变量
-  Activity 只计 play phase 中当前行动者没有 response usageContext 的主动牌，是否被反制不影响计数；响应牌仍可进入 Control/Contribution。
+  Activity 只计 play phase 中当前行动者没有 response usageContext 的主动牌，是否被反制不影响计数；
+  窥探/窥隙按实际新增未知张数由 privateCardsRevealed 唯一计分，响应牌仍可进入 Control/Contribution。
   */
   handleCardUsed(event) {
     const source = event.source;

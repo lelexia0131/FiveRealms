@@ -222,19 +222,19 @@ stealSkill 的 direct callers。
 按 signature 传入的 runtime facts。
 
 输出
-按 signature 返回。
+无返回值；成功窃取时把真实来源与数量写入 execution-local ledger。
 
 读取状态
 runtime/card/skill facts。
 
 写入状态
-source.energy；牌移动经 zone collaborator。
+source.energy；牌移动经 zone collaborator；成功事实写入 context.cardSteals。
 
 调用函数
 paySkillEnergy、randomChoice 与 zone/presentation collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+不重复 Domain rule 决定；只有移动成功才记录一张，事实由 Action commit 后发布。
 */
     async stealSkill(skill, source, targets, context) {
       const state = runtime.getState();
@@ -249,7 +249,10 @@ paySkillEnergy、randomChoice 与 zone/presentation collaborator。
         ? await runtime.moveEquipmentToHand(target, source, chosen.card, "窃取")
         : await runtime.moveCardBetweenHands(target, source, chosen.card, "窃取");
       if (!runtime.isSessionValid(gameId)) return;
-      if (stolen) runtime.presentation.log(`${source.name}发动「窃取」，从${target.name}处获得${runtime.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
+      if (stolen) {
+        context.cardSteals.push(Object.freeze({ target, actualAmount: 1 }));
+        runtime.presentation.log(`${source.name}发动「窃取」，从${target.name}处获得${runtime.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
+      }
     },
 /*
 功能
@@ -416,13 +419,13 @@ paySkillEnergy、drawCards 与 presentation collaborator。
   skill、source、targets 与 context。
 
   输出
-  Promise<{ actualEnergyPaid, cardGrants }>，返回本次 execution 的真实支付量与实际给牌事实。
+  Promise<{ actualEnergyPaid, cardGrants, cardSteals }>，返回本次 execution 的真实支付、给牌与窃取事实。
 
   读取状态
   skill.id、runtime state 与 execution-local payment ledger。
 
   写入状态
-  经 EFFECTS 写入真实技能效果；payment 与 cardGrants ledger 只在本次调用内可写。
+  经 EFFECTS 写入真实技能效果；payment、cardGrants 与 cardSteals ledger 只在本次调用内可写。
 
   调用函数
   EFFECTS。
@@ -433,11 +436,17 @@ paySkillEnergy、drawCards 与 presentation collaborator。
   async function execute(skill, source, targets, context = {}) {
     const resolver = EFFECTS[skill.id];
     if (!resolver) throw new Error(`未注册主动技能效果：${skill.id}`);
-    const executionContext = { ...context, payment: { actualAmount: 0 }, cardGrants: [] };
+    const executionContext = {
+      ...context,
+      payment: { actualAmount: 0 },
+      cardGrants: [],
+      cardSteals: []
+    };
     await resolver(skill, source, targets, executionContext);
     return Object.freeze({
       actualEnergyPaid: executionContext.payment.actualAmount,
-      cardGrants: Object.freeze([...executionContext.cardGrants])
+      cardGrants: Object.freeze([...executionContext.cardGrants]),
+      cardSteals: Object.freeze([...executionContext.cardSteals])
     });
   }
 

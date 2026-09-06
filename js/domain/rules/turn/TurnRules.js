@@ -59,7 +59,6 @@ export function createTurnUsageState(teamRules = null) {
     coordinationTriggered: false,
     gambleTriggered: false,
     rejuvenationTriggerCount: 0,
-    spyGapTriggered: false,
     spyGapPendingTargetIds: new Set(),
     trackingTargetIds: new Set(),
     skipActionPhase: false
@@ -100,7 +99,6 @@ export function createGlobalTurnReactiveState() {
     coordinationTriggered: false,
     gambleTriggered: false,
     rejuvenationTriggerCount: 0,
-    spyGapTriggered: false,
     spyGapPendingTargetIds: new Set(),
     trackingTargetIds: new Set()
   };
