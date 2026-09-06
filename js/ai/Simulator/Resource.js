@@ -313,27 +313,28 @@ export const withResource = (Base) => class Resource extends Base {
   实际期望格挡支付量。
 
   读取状态
-  支付请求中的条件世界、判定牌引用及玩家当前已知格挡身份。
+  支付请求中的条件世界、带判定槽位的牌引用及玩家当前已知格挡身份。
 
   写入状态
   格挡 identity availability、hand/knownCards、handCount 与匿名 block factor。
 
   调用函数
-  consumeBlockIdentities、getAvailabilityStateBranches、mutateHandProbability 与概率运行时 primitive。
+  consumeBlockIdentities、mutateHandProbability 与概率运行时 primitive。
 
   边界与不变量
-  只执行传入请求，不重新决定是否格挡；判定牌和判定前身份使用同一条件世界，
+  只执行传入请求，不重新决定是否格挡；判定牌按原判定槽位与判定前容量使用同一条件世界，
   同一 payment request 只能由 Simulator 编排一次。
   */
   consumeBlockPayment(state, target, payment) {
     if (!target || !payment) return 0;
     const {
       identityWorlds,
-      judgmentBlockCards = [],
+      judgmentBlockEntries = [],
       preJudgmentPartition = null,
       joined = [],
       expectedBlockSpend = 0
     } = payment;
+    const judgmentBlockCards = judgmentBlockEntries.map((entry) => entry.card);
     const excludedCardIds = judgmentBlockCards.length
       ? new Set(judgmentBlockCards.map((card) => card.id ?? card.cardId))
       : null;
@@ -345,42 +346,28 @@ export const withResource = (Base) => class Resource extends Base {
     this.consumeBlockIdentities(state, target, identityWorlds, excludedCardIds);
     const knownAfter = knownBlockCards.reduce((sum, card) => sum + cardAvailability(card), 0);
     this.checkpointSearchWork();
-    if (judgmentBlockCards.length && preJudgmentPartition) {
-      let joinedJudgments = joined;
-      for (let index = 0; index < judgmentBlockCards.length; index += 1) {
+    if (judgmentBlockEntries.length && preJudgmentPartition) {
+      for (let index = 0; index < judgmentBlockEntries.length; index += 1) {
         this.checkpointSearchWork();
-        const availabilityField = `judgmentBlockAvailable${index}`;
-        const availability = getAvailabilityStateBranches(
-          judgmentBlockCards[index],
-          1
-        ).map((branch) => ({
-          probability: branch.probability,
-          conditions: branch.conditions,
-          [availabilityField]: Boolean(branch.available)
-        }));
-        joinedJudgments = this.intersectProbabilityWork([joinedJudgments, availability]);
-      }
-      for (let index = 0; index < judgmentBlockCards.length; index += 1) {
-        this.checkpointSearchWork();
-        const judgmentBlockCard = judgmentBlockCards[index];
-        const availabilityField = `judgmentBlockAvailable${index}`;
-        const judgmentConsumedWorlds = this.projectProbabilityWork(
-          joinedJudgments,
-          (branch) => {
-            let earlierAvailable = 0;
-            for (let prior = 0; prior < index; prior += 1) {
-              if (branch[`judgmentBlockAvailable${prior}`]) earlierAvailable += 1;
+        const { card:judgmentBlockCard, slot } = judgmentBlockEntries[index];
+        let retainedProbability = 0;
+        for (const branch of joined) {
+          const acquired = branch.radarOutcomes?.[slot] === "basic:block";
+          if (!acquired) continue;
+          let earlierJudgmentBlocks = 0;
+          for (let priorSlot = 0; priorSlot < slot; priorSlot += 1) {
+            if (branch.radarOutcomes?.[priorSlot] === "basic:block") {
+              earlierJudgmentBlocks += 1;
             }
-            const neededFromJudgments = Math.max(0, branch.requiredCount - branch.preBlockCount);
-            return {
-              available: Boolean(branch[availabilityField]
-                && !(branch.blockUsed && earlierAvailable < neededFromJudgments))
-            };
           }
-        );
-        judgmentBlockCard.availability = totalBranchProbability(
-          judgmentConsumedWorlds.filter((branch) => branch.available)
-        );
+          const neededFromJudgments = Math.max(
+            0,
+            branch.requiredCount - branch.preBlockCount
+          );
+          const consumed = branch.blockUsed && earlierJudgmentBlocks < neededFromJudgments;
+          if (!consumed) retainedProbability += Math.max(0, Number(branch.probability) || 0);
+        }
+        judgmentBlockCard.availability = retainedProbability;
         if (judgmentBlockCard.availability <= PROBABILITY_EPSILON) {
           if (Array.isArray(target.hand)) target.hand = target.hand.filter((card) => card !== judgmentBlockCard);
           if (Array.isArray(target.knownCards)) target.knownCards = target.knownCards.filter((entry) => entry !== judgmentBlockCard);

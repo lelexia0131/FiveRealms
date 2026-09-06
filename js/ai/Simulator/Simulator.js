@@ -1773,9 +1773,9 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       ).distribution.map((branch, index) => ({
         probability:branch.probability,
         conditions:{ ...branch.conditions, [preJudgmentKey]:`v${index}` },
-        blockCount:branch.blockCount
+        blockCount:branch.count
       }));
-      const judgmentBlockCards = [];
+      const judgmentBlockEntries = [];
       for (let slot = 0; slot < maximumRequirement; slot += 1) {
         for (const definitionId of RADAR_BASIC_DEFINITION_IDS) {
           if (baseWorlds.length >= 32) this.checkpointSearchWork();
@@ -1800,7 +1800,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
             );
             if (definitionId === "block") {
               const judgedBlock = target.hand.find((card) => card.id === simulatedId) ?? null;
-              if (judgedBlock) judgmentBlockCards.push(judgedBlock);
+              if (judgedBlock) judgmentBlockEntries.push({ card:judgedBlock, slot });
             }
           } else {
             this.addSimulatedKnownCard(
@@ -1811,14 +1811,14 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
             );
             if (definitionId === "block") {
               const judgedBlock = target.knownCards.find((entry) => entry.cardId === simulatedId) ?? null;
-              if (judgedBlock) judgmentBlockCards.push(judgedBlock);
+              if (judgedBlock) judgmentBlockEntries.push({ card:judgedBlock, slot });
             }
           }
         }
       }
       const response = this.consumeBlockResponseWorlds(state, target, baseWorlds, {
         preJudgmentBlockState,
-        judgmentBlockCards,
+        judgmentBlockEntries,
         incomingDamage:amount
       });
       attackOutcomeWorlds = response.outcomeWorlds;

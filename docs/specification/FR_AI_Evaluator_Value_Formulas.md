@@ -9,7 +9,7 @@
 > 为避免把不同层级混在一起，本文把所有公式分为：
 >
 > 1. **FINAL / State Value**：真正进入候选最终 Utility 的值；
-> 2. **Transition Option / END / Frontier**：最终 Utility 的补充项；
+> 2. **Transition Option / END**：最终 Utility 的补充项；
 > 3. **Card / Resource Policy Value**：卡牌、资源、转移等局部选择值；
 > 4. **Search Prior / Scheduling**：只决定搜索顺序，绝不进入最终 Utility；
 > 5. **Response Policy Value**：格挡、反制、救援、护援等响应意愿；
@@ -55,7 +55,7 @@ $$
 当前 Final Transition Utility 的唯一组合公式是：
 
 $$
-\boxed{ V_{final} = V_{baseTransition} + V_{frontier} - U(P_{END}) }
+\boxed{ V_{final} = V_{baseTransition} - U(P_{END}) }
 $$
 
 其中：
@@ -129,9 +129,6 @@ StateValue(Y)
   ↓ /5
 BaseTransition
 
-若 terminal：
-  + Recover/Recycle held option frontier
-
 若 A = END：
   - Energy overflow Pf
   - Legal skill state-value opportunity Ps
@@ -143,7 +140,7 @@ BaseTransition
 数学总式：
 
 $$
-\boxed{ V_{final}(A) = \frac{V_{state}(Y)-V_{state}(X)+P_{option}}{5} +V_{frontier} -I[A=END]\frac{P_f+P_s+P_d}{5} }
+\boxed{ V_{final}(A) = \frac{V_{state}(Y)-V_{state}(X)+P_{option}}{5} -I[A=END]\frac{P_f+P_s+P_d}{5} }
 $$
 
 其中：
@@ -524,16 +521,16 @@ RadarFutureUtility=ExpectedBlockDemand\times Retention\times ExpectedUtilityPerJ
 $$
 
 $$
- ExpectedUtilityPerJudgment=\\P(Tactic)\times AvoidedBlockDemandValue+\sum_{d\in Basic}P(d)\times BasicCardGainValue(d) 
+ ExpectedUtilityPerJudgment=P(Tactic)\times AvoidedBlockDemandValue+\sum_{d\in Basic\setminus\{Block\}}P(d)\times RetainedBasicHandValue(d)
 $$
 
-一次战术牌判定免除对应的一次 Block demand。一次基础牌判定把该牌收入 Radar holder 手牌：
+一次战术牌判定免除对应的一次 Block demand，其价值等于避免支付一张已有 Block 的真实 Hand StateValue。一次非 Block 基础牌判定把该牌保留在 Radar holder 手牌：
 
 $$
-BasicCardGainValue(d)=HAND\_COUNT\_VALUE+\\(BaseAiValue(d)+RoleDelta(holder,d))\times RESOURCE\_MATERIAL\_SCALE
+RetainedBasicHandValue(d)=HAND\_COUNT\_VALUE+I[holder=viewer]\times RoleDelta(holder,d)
 $$
 
-当前 `HAND_COUNT_VALUE=1.1`，`RESOURCE_MATERIAL_SCALE=0.4`。`AvoidedBlockDemandValue` 复用同一公式对 `block` 的结果，不新增雷达专属数值。
+其中 RoleDelta 不乘材料尺度；`holder != viewer` 时该项为 0。判得 Block 若用于当前防御，会立即进入同一 Block payment，因此不先记一张保留牌收益再扣一次成本。`AvoidedBlockDemandValue` 使用同一真实手牌公式对现有 `block` 计算，不新增雷达专属数值。
 
 `ExpectedBlockDemand` 由 `StateValue.expectedBlockDemand()` 从真实 production source 汇总：
 
@@ -773,11 +770,13 @@ $$
 
 源码：`StateValue.expectedDefenseCost()`、`StateValue.expectedDamageStateLoss()`。
 
-单张 Block 的完整资源价值由 CardValue authority 组成：
+单张 Block 的实际手牌 StateValue 由 CardValue authority 组成：
 
 $$
-BlockSpendValue(holder)=HAND\_COUNT\_VALUE+(BaseAiValue(block)+RoleDelta(holder,block))\times RESOURCE\_MATERIAL\_SCALE
+BlockSpendValue(holder,viewer)=HAND\_COUNT\_VALUE+I[holder=viewer]\times RoleDelta(holder,block)
 $$
+
+普通手牌不持有 Base material，且只有 viewer 自己的合法已知 Block 才包含未缩放 RoleDelta。
 
 设目标当前 Block 数量分布为 $P(N=n)$，真实 Domain demand 为 $r$，一次未格挡伤害造成的现有生命、Danger、HP2Risk 与 ShieldValue 边际为 $DamageStateLoss$。没有 Radar 时：
 
@@ -790,10 +789,14 @@ $$
 目标持有 Radar 时，每个 demand 复用 `buildRadarJudgmentSequenceProbabilities()` 的无放回顺序结果。设一次 sequence 免除 $w$ 个 demand、判得 $b$ 张 Block：
 
 $$
-DefenseCost_{radar}(r)=\sum_sP(s)\times DefenseCost(r-w_s, N+b_s)
+DefenseCost_{radar}(r)=\sum_sP(s)\times
+\begin{cases}
+\max(0,r-w_s-b_s)\times BlockSpendValue,&N+b_s\ge r-w_s\\
+DamageStateLoss,&N+b_s<r-w_s
+\end{cases}
 $$
 
-最终按 Radar retention 混合有/无装备世界。战术判定只免除对应 demand，判得 Block 可参与同次防御；其它基础牌判定摸牌收益仍由 `RadarFutureUtility` 唯一拥有，不进入攻击方的 `DefenseCost`。
+最终按 Radar retention 混合有/无装备世界。战术判定只免除对应 demand；判得 Block 可参与同次防御，其获得会抵消同次支付中的等量 HandState loss。其它基础牌判定摸牌收益仍由 `RadarFutureUtility` 唯一拥有，不进入攻击方的 `DefenseCost`。
 
 ## 9.5 军火库 Future Utility
 
@@ -839,13 +842,13 @@ $$
 ExpectedTriggerCount=\min(RemainingUses,ExpectedUsableTactics)
 $$
 
-finite pool 有效时，每次摸牌价值为：
+回收站通过 `gainUnknownCardsWithCounterState()` 获得匿名牌，不产生合法已知 definition，因此每次摸牌只兑现 HandCount：
 
 $$
-ExpectedDrawGain=HAND\_COUNT\_VALUE+\sum_dP(d)(BaseAiValue(d)+RoleDelta(holder,d))\times RESOURCE\_MATERIAL\_SCALE
+ExpectedDrawGain=HAND\_COUNT\_VALUE
 $$
 
-无有效 pool 时，基础材料使用 `UNKNOWN_HAND_EXPECTED_VALUE`，RoleDelta 回退 0。最终：
+该 Future 不读取 finite-pool Base expectation，也不使用 `UNKNOWN_HAND_EXPECTED_VALUE`。最终：
 
 $$
 RecycleDeviceFuture=R_R\times ExpectedTriggerCount\times TriggerDrawCount\times ExpectedDrawGain
@@ -1592,16 +1595,6 @@ Searcher 只负责物化 hidden worlds / follow-up；公式 owner 仍是 Evaluat
 
 
 
-# 17. Frontier Utility
-
-源码：`Evaluator.js frontierResidual()`、`terminalFrontierValue()`。
-
-$$
-\boxed{ V_{frontier}=0 }
-$$
-
-`futureInventory + energyPressure` 仍被 `frontierResidual()` 输出用于诊断，但已经存在于 State Value，**不得再次进入 Final Utility**。回收站剩余功能同样只通过 StateValue after-before 进入一次。
-
 # 18. END Opportunity Penalty
 
 源码：`Evaluator.js:3865 endOpportunityPoints()`。
@@ -1767,12 +1760,12 @@ $$
 P_d=0
 $$
 
-该项使用 Raw StateDelta，不重复加入 terminal frontier，也不识别 Recover、装备或具体卡牌类型。
+该项使用 Raw StateDelta，不识别 Recover、装备或具体卡牌类型。
 
 ## 18.6 END 最终公式
 
 $$
-\boxed{ V_{END} =V_{baseTransition} +V_{frontier} -\frac{P_f+P_s+P_d}{5} }
+\boxed{ V_{END} =V_{baseTransition} -\frac{P_f+P_s+P_d}{5} }
 $$
 
 以 Utility 直接表示：
@@ -3535,10 +3528,9 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 | --- | --- | --- |
 | `CardValue.staticCardAssetValue()` | `(Base + RoleDelta) × scale` | static card/resource asset 唯一 primitive |
 | `CardValue.cardPlayerValueTerms()` | equipment Base/Role static asset | State Value；只经 state delta 进入 Final |
+| `CardValue.realizedHandCardStateValue()` | `HandCount + viewer-own HandRoleDelta` | 普通手牌 StateValue 与装备 Future resource 唯一 primitive |
 | `Evaluator.resourceTransactionForDefinition()` | hand identity base material + 非 viewer 缺失 HandRole context | Transition Option；Role context 保持 HandRoleDelta 现有尺度，不属于 static-asset 重标 |
 | `Evaluator.deriveTransitionOptionPoints()` leverage 分支 | 获得装备的 actor static asset | Transition Option；经 `/5` 进入 Final |
-| `Evaluator.radarBasicCardGainValue()` | Radar 判得基础牌的 static asset | Radar Future State Value |
-| `Evaluator.expectedDrawGainValue()` | Recycle 未来摸牌的 expected static asset | Recycle Future State Value |
 | `Evaluator.resourceSelectionPreference()` | Destroy/Plunder target/acquisition static asset | Resource Policy；不额外加入 Final |
 
 `UNKNOWN_HAND_EXPECTED_VALUE` 只由 `getUnknownTransferCardValue()`、`getResourceUnknownUtility()` 与 `getUnknownAcquisitionUtility()` 在无有效 finite-pool 时消费；enemy Plunder 通过 `2 × UNKNOWN_HAND_EXPECTED_VALUE` 推导，不存在 `11.6` 第二 authority。
@@ -3608,7 +3600,7 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 | ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | `StateValue.js`              | HP、生存、能量、护盾、威胁、封印机会等非卡牌 state primitives | 卡牌资产、最终候选比较                                       |
 | `CardValue.js`               | 卡牌/资源静态值、角色差量、保留/转移/弃牌 policy primitives  | World transition、最终 Utility                               |
-| `Evaluator.js`               | 唯一 State/Card 聚合、Transition、END、Frontier、Response、Search Prior、价值聚合与比较语义 | Simulator/Generator/Searcher 的状态构造                      |
+| `Evaluator.js`               | 唯一 State/Card 聚合、Transition、END、Response、Search Prior、价值聚合与比较语义 | Simulator/Generator/Searcher 的状态构造                      |
 | `Event/Probability`          | 概率、有限池、availability、来源匿名 bucket 的 identity slot probability、判定、range probability | 价值权重                                                     |
 | `Domain Rules`               | 能量上限、能量获取、治疗量、座次等游戏规则事实               | AI value                                                     |
 | `Searcher`                   | 搜索、sibling 完整性、候选集合、beam、budget 与 incumbent 维护；调用 Evaluator 获取价值结果 | State/Card 价值、sibling 价值聚合、END/Final Utility、最终偏好公式 |

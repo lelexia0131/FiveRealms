@@ -382,11 +382,13 @@ export const withResponse = (Base) => class Response extends Base {
         blockUsed:responseMatches(branch)
       };
     });
-    const judgmentBlockCards = Array.isArray(options.judgmentBlockCards)
-      ? options.judgmentBlockCards.filter(Boolean)
-      : options.judgmentBlockCard
-        ? [options.judgmentBlockCard]
-        : [];
+    const judgmentBlockEntries = Array.isArray(options.judgmentBlockEntries)
+      ? options.judgmentBlockEntries.filter((entry) => entry?.card)
+      : Array.isArray(options.judgmentBlockCards)
+        ? options.judgmentBlockCards.filter(Boolean).map((card, slot) => ({ card, slot }))
+        : options.judgmentBlockCard
+          ? [{ card:options.judgmentBlockCard, slot:0 }]
+          : [];
     const outcomeWorlds = this.projectProbabilityWork(
       resolved,
       (branch) => ({
@@ -406,7 +408,7 @@ export const withResponse = (Base) => class Response extends Base {
       expectedBlockSpend,
       payment:{
         identityWorlds,
-        judgmentBlockCards,
+        judgmentBlockEntries,
         preJudgmentPartition,
         joined:resolved.map(({ blockWilling, ...branch }) => ({
           ...branch,

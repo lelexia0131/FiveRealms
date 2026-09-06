@@ -43,7 +43,6 @@ import {
   tacticJudgmentProbability
 } from "../Event/Probability/Probability.js";
 import {
-  HAND_COUNT_VALUE,
   RESOURCE_MATERIAL_SCALE,
   assessGlobalBenefit,
   cardPlayerValueTerms,
@@ -57,6 +56,7 @@ import {
   getUnknownTransferCardValue,
   getUnknownAcquisitionUtility,
   mutualBenefitDraftValues,
+  realizedHandCardStateValue,
   roleCardDelta,
   staticCardAssetValue,
   skillThresholdOptionPolicyValue
@@ -762,37 +762,40 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
 
 /*
 功能
-把 canonical Radar Probability outcome 转为持有者每次判定的资源价值输入。
+把 canonical Radar Probability outcome 转为持有者每次判定的真实手牌状态价值输入。
 
 调用方
 Evaluator.playerValueTerms。
 
 输入
-雷达持有者与 buildRadarJudgmentProbabilities 的只读结果。
+雷达持有者、StateValue viewer ID 与 buildRadarJudgmentProbabilities 的只读结果。
 
 输出
-一次战术牌免除 Block demand 的价值，以及按基础牌定义概率加权的摸牌价值。
+一次战术牌免除 Block demand 的价值，以及按基础牌定义概率加权的保留手牌价值。
 
 读取状态
-稳定 CardValue 基础材料尺度、角色差量与手牌数量价值。
+普通手牌 HandCount/HandRoleDelta authority 与 canonical Radar 概率。
 
 写入状态
 无。
 
 调用函数
-getBaseCardAiValue、roleCardDelta。
+radarBasicCardGainValue、clampProbability。
 
 边界与不变量
-Probability 只由上游 canonical authority 提供；基础值与 RoleDelta 共同组成静态卡牌资产，
-经 staticCardAssetValue 同尺度换算恰好一次。
+Probability 只由上游 canonical authority 提供；战术只保存一张现有 Block 的真实手牌状态价值；
+判得 Block 会在同一次防御中立即消费，不得再作为保留手牌收益。
 */
-function radarJudgmentValueInputs(player, radarJudgment) {
+function radarJudgmentValueInputs(player, viewerId, radarJudgment) {
   if (!radarJudgment || typeof radarJudgment !== "object") return null;
   return {
-    avoidedBlockDemandValue:radarBasicCardGainValue(player, "block"),
+    avoidedBlockDemandValue:radarBasicCardGainValue(player, viewerId, "block"),
     expectedBasicCardGainValue:Object.entries(radarJudgment.basic ?? {}).reduce(
       (sum, [definitionId, probability]) => (
-        sum + clampProbability(probability) * radarBasicCardGainValue(player, definitionId)
+        definitionId === "block"
+          ? sum
+          : sum + clampProbability(probability)
+            * radarBasicCardGainValue(player, viewerId, definitionId)
       ),
       0
     )
@@ -801,74 +804,61 @@ function radarJudgmentValueInputs(player, radarJudgment) {
 
 /*
 功能
-计算雷达判得一张指定基础牌并收入持有者手牌的完整资源价值。
+计算雷达判得一张指定基础牌并保留在持有者手牌中的实际 StateValue。
 
 调用方
-radarJudgmentValueInputs。
+radarJudgmentValueInputs、equipmentFutureValueInputs。
 
 输入
-雷达持有者与基础牌 definition ID。
+雷达持有者、StateValue viewer ID 与基础牌 definition ID。
 
 输出
-手牌数量、基础材料与角色 context delta 的可加 State points。
+手牌数量与合法可见角色 context delta 的可加 State points。
 
 读取状态
-HAND_COUNT_VALUE、RESOURCE_MATERIAL_SCALE 与稳定 CardValue 定义。
+普通手牌 HandCount/HandRoleDelta authority。
 
 写入状态
 无。
 
 调用函数
-getBaseCardAiValue、roleCardDelta。
+realizedHandCardStateValue。
 
 边界与不变量
-基础值与 RoleDelta 共同表示判得牌的静态资产，并经唯一 material scale 同尺度换算一次。
+普通手牌不持有 BaseAiValue 材料；非 viewer 手牌不得因已知定义获得 RoleDelta。
 */
-function radarBasicCardGainValue(player, definitionId) {
-  return HAND_COUNT_VALUE
-    + staticCardAssetValue(player?.characterId, definitionId);
+function radarBasicCardGainValue(player, viewerId, definitionId) {
+  return realizedHandCardStateValue(player, viewerId, definitionId);
 }
 
 /*
 功能
-计算当前 finite pool 下一张匿名牌进入指定持有者手牌的完整期望价值。
+计算下一张匿名牌进入指定持有者手牌后实际留下的 StateValue。
 
 调用方
 equipmentFutureValueInputs。
 
 输入
-持有者与 Probability authority 投影的当前 definition counts。
+持有者与 StateValue viewer ID。
 
 输出
-手牌数量、基础材料与角色差量组成的 State points。
+匿名牌的 HandCount State points。
 
 读取状态
-HAND_COUNT_VALUE、RESOURCE_MATERIAL_SCALE、UNKNOWN fallback 与稳定角色差量。
+普通匿名手牌 StateValue authority。
 
 写入状态
 无。
 
 调用函数
-getUnknownAcquisitionUtility、staticCardAssetValue。
+realizedHandCardStateValue。
 
 边界与不变量
-无有效 finite pool 时基础材料使用唯一 unknown authority、RoleDelta 回退零；
-finite pool 中 Base 与 RoleDelta 共同经唯一材料尺度换算；
-不绑定或读取任何隐藏实体 definitionId。
+匿名摸牌不绑定或读取任何隐藏实体 definitionId，因此只产生 HandCount，
+不消费 static resource asset 或 UNKNOWN_HAND_EXPECTED_VALUE。
 */
-function expectedDrawGainValue(player, remainingCardCounts) {
-  const entries = Object.entries(remainingCardCounts ?? {}).filter(
-    ([definitionId, count]) => CARD_DEFINITIONS[definitionId]
-      && Number.isFinite(Number(count))
-      && Number(count) > 0
-  );
-  const total = entries.reduce((sum, [, count]) => sum + Number(count), 0);
-  const expectedStaticAsset = total > 0
-    ? entries.reduce((sum, [definitionId, count]) => (
-        sum + Number(count) * staticCardAssetValue(player?.characterId, definitionId)
-      ), 0) / total
-    : getUnknownAcquisitionUtility(null) * RESOURCE_MATERIAL_SCALE;
-  return HAND_COUNT_VALUE + expectedStaticAsset;
+function expectedDrawGainValue(player, viewerId) {
+  return realizedHandCardStateValue(player, viewerId);
 }
 
 /*
@@ -879,31 +869,31 @@ function expectedDrawGainValue(player, remainingCardCounts) {
 Evaluator.playerValueTerms。
 
 输入
-canonical World、当前 owner 与已由 Probability authority 计算的 Radar judgment。
+canonical World、当前 owner、StateValue viewer ID 与已由 Probability authority 计算的 Radar judgment。
 
 输出
-Radar 单次收益、回收站单次摸牌期望，以及各目标单张 Block 的完整资源价值。
+Radar 单次真实手牌收益、回收站匿名 HandCount 收益，以及各目标单张 Block 的实际 StateValue。
 
 读取状态
-当前 finite-pool counts、公开角色 ID 与稳定 CardValue 定义。
+公开 hand owner、viewer 边界与现有 Hand StateValue primitive。
 
 写入状态
 无。
 
 调用函数
-queryCurrentCardCounts、radarJudgmentValueInputs、radarBasicCardGainValue、expectedDrawGainValue。
+radarJudgmentValueInputs、radarBasicCardGainValue、expectedDrawGainValue。
 
 边界与不变量
-只传递 plain numeric data；StateValue 不反向依赖 CardValue，材料与 RoleDelta 均只按各自 authority 计算一次。
+只传递 plain numeric data；StateValue 不反向依赖 CardValue；普通手牌 Base material 始终不进入 Future，
+且只有 owner 等于 viewer 时才兑现未缩放 HandRoleDelta。
 */
-function equipmentFutureValueInputs(state, player, radarJudgment) {
-  const remainingCardCounts = queryCurrentCardCounts(state?.probabilityState);
+function equipmentFutureValueInputs(state, player, viewerId, radarJudgment) {
   return {
-    radar:radarJudgmentValueInputs(player, radarJudgment),
-    expectedDrawGain:expectedDrawGainValue(player, remainingCardCounts),
+    radar:radarJudgmentValueInputs(player, viewerId, radarJudgment),
+    expectedDrawGain:expectedDrawGainValue(player, viewerId),
     blockSpendValueByPlayerId:Object.fromEntries((state?.players ?? []).map((target) => [
       target.id,
-      radarBasicCardGainValue(target, "block")
+      radarBasicCardGainValue(target, viewerId, "block")
     ]))
   };
 }
@@ -4419,7 +4409,7 @@ export class Evaluator {
       viewerId,
       radarTacticProbability,
       this.energyRules,
-      equipmentFutureValueInputs(state, player, radarJudgment)
+      equipmentFutureValueInputs(state, player, viewerId, radarJudgment)
     );
     if (stateTerms.death) return stateTerms;
     return {
@@ -4601,7 +4591,7 @@ export class Evaluator {
 把状态与调用层已计算的闪电、封印值转换为唯一团队 State Value。
 
   调用方
-  Evaluator transition/frontier/diagnostic 方法与纯边界测试。
+  Evaluator transition/END/diagnostic 方法与纯边界测试。
 
   输入
 过滤后的状态、viewer ID，以及按 holder 顺序排列的闪电与可选封印纯数值。
@@ -4954,7 +4944,7 @@ export class Evaluator {
   Searcher.finalizeCandidate。
 
   输入
-  END 的 base/frontier value、transition terms 与完整 canonical sibling facts。
+  END 的 base value、transition terms 与完整 canonical sibling facts。
 
   输出
   空装备槽且强制弃牌并存在完整装备 sibling 时返回 -Infinity，否则返回既有 Final Utility。
@@ -4973,7 +4963,6 @@ export class Evaluator {
   */
   finalizeEndTransition({
     baseTransition,
-    frontierValue = 0,
     endTransitionTerms,
     siblingTransitionTerms = []
   }) {
@@ -4988,7 +4977,6 @@ export class Evaluator {
     }
     return this.composeTransitionValue({
       baseTransition,
-      frontierValue,
       endOpportunityPoints:facts.endOpportunityPoints
     });
   }
@@ -5139,13 +5127,13 @@ export class Evaluator {
 
   /*
   功能
-  把基础转移与 terminal held option 组合为唯一 Final Transition Utility。
+  把基础转移与 END opportunity 组合为唯一 Final Transition Utility。
 
   调用方
   Searcher sibling finalization；END opportunity 已由 endOpportunityPoints 完整聚合。
 
   输入
-  HP-equivalent base/frontier value 与 Evaluator 计算的 END opportunity State points。
+  HP-equivalent base value 与 Evaluator 计算的 END opportunity State points。
 
   输出
   当前候选的 Final Utility。
@@ -5165,83 +5153,14 @@ export class Evaluator {
   */
   composeTransitionValue({
     baseTransition,
-    frontierValue = 0,
     endOpportunityPoints = 0
   }) {
     assertValueContract(baseTransition, "baseTransition", true);
-    assertValueContract(frontierValue, "frontierValue");
     assertValueContract(endOpportunityPoints, "endOpportunityPoints");
     const transitionValue = baseTransition
-      + frontierValue
       - statePointsToUtility(endOpportunityPoints);
     assertValueContract(transitionValue, "Final Utility", true);
     return transitionValue;
-  }
-
-  /*
-  功能
-  计算 terminal/frontier 状态尚未兑现的威胁库存与持有选项表示。
-
-  调用方
-  Searcher candidate evaluation path。
-
-  输入
-  World 与 viewer ID。
-
-  输出
-  futureInventory、空 held 表示与 total；viewer 无效时返回 null。
-
-  读取状态
-  viewer 自身生命、手牌、装备与公开威胁摘要。
-
-  写入状态
-  无。
-
-  调用函数
-  exposureComponents。
-
-  边界与不变量
-  futureInventory 只作诊断；回收站 Future 已进入普通 StateValue，terminal 不得保留第二份 held option。
-  */
-  frontierResidual(state, viewerId) {
-    const viewer = state.players.find((player) => player.id === viewerId);
-    if (!viewer || !viewer.alive) return null;
-    const { futureInventory, energyPressure } = exposureComponents(state, viewer);
-    const futureInventoryTotal = futureInventory + energyPressure;
-    return {
-      futureInventory:futureInventoryTotal,
-      held:{},
-      total:futureInventoryTotal
-    };
-  }
-
-  /*
-  功能
-  把 frontier 表示转换为 terminal held option utility。
-
-  调用方
-  Searcher candidate evaluation path。
-
-  输入
-  frontierResidual 返回的表示与是否 terminal。
-
-  输出
-  恒为零；保留 API 供 Searcher 的通用 terminal composition 使用。
-
-  读取状态
-  residual held fields。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  futureInventory 与回收站 Future 都已在 State Value 中表达，不能在此重复进入 Final Utility。
-  */
-  terminalFrontierValue(_residual, _terminal) {
-    return 0;
   }
 
   /*

@@ -215,7 +215,7 @@ import {
   getTransferCardValue as cardSituationValue, getUnknownTransferCardValue,
   getUnknownAcquisitionUtility,
   HAND_COUNT_VALUE, RESOURCE_MATERIAL_SCALE, UNKNOWN_HAND_EXPECTED_VALUE, roleCardDelta,
-  staticCardAssetValue
+  realizedHandCardStateValue, staticCardAssetValue
 } from "../js/ai/Evaluator/CardValue.js";
 import {
   ROLE_CARD_VALUE_DELTAS as OWNED_ROLE_CARD_VALUE_DELTAS,
@@ -15177,7 +15177,7 @@ async function branchIntersectionCallerBoundednessContract() {
     },
     resource: {
       consumeBlockIdentities: 1,
-      consumeBlockPayment: 1,
+      consumeBlockPayment: 0,
       addSimulatedKnownCard: 1,
       transferKnownCardIdentity: 1,
       consumeKnownCardsFromHand: 1,
@@ -15211,7 +15211,7 @@ async function branchIntersectionCallerBoundednessContract() {
       auditedCooperativeCallers += calls.length;
     }
   }
-  assert.equal(auditedCooperativeCallers, 29);
+  assert.equal(auditedCooperativeCallers, 28);
   assert.equal(
     (source.probability.match(/intersectProbabilityStateBranches\(/g) ?? []).length,
     1,
@@ -15403,11 +15403,11 @@ async function valueResidueClosure() {
     assert.equal(
       evaluator.composeTransitionValue({
         baseTransition: 2,
-        frontierValue: 0.5,
         endOpportunityPoints: dangerFull
       }),
-      2.5 - statePointsToUtility(dangerFull)
+      2 - statePointsToUtility(dangerFull)
     );
+    assert.equal(evaluator.composeTransitionValue({ baseTransition:2 }), 2);
     const productionCode = (await Promise.all([
       "js/ai/Evaluator/Evaluator.js",
       "js/ai/Searcher/Searcher.js"
@@ -15417,6 +15417,10 @@ async function valueResidueClosure() {
     assert.doesNotMatch(
       productionCode,
       /\bendOpportunityCost\b|\beconomic\b|\bimmediate\b/u
+    );
+    assert.doesNotMatch(
+      productionCode,
+      /frontierResidual|terminalFrontierValue|frontierValue/u
     );
     const searcherCode = (await readFile(
       projectFile("js/ai/Searcher/Searcher.js"),
@@ -15435,7 +15439,7 @@ async function valueResidueClosure() {
   }
 }
 
-test("AI·价值归属：END 新机会公式不恢复旧价值 contract", valueResidueClosure);
+test("AI·价值归属：Final contract 不再包含 Vfrontier 或旧机会项", valueResidueClosure);
 
 /*
 功能
@@ -16061,8 +16065,8 @@ async function adaptiveInformationTransitionOptionClosure() {
     assert.equal(terms.transitionOptionValue, statePointsToUtility(2));
     assert.equal(terms.baseTransition, statePointsToUtility(2));
     assert.equal(
-      evaluator.composeTransitionValue({ baseTransition: terms.baseTransition, frontierValue: 0.3 }),
-      statePointsToUtility(2) + 0.3
+      evaluator.composeTransitionValue({ baseTransition: terms.baseTransition }),
+      statePointsToUtility(2)
     );
     const searcherCode = (await readFile(
       projectFile("js/ai/Searcher/Searcher.js"),
@@ -17744,7 +17748,7 @@ test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 ser
     "lightningScoring", "AiGlobalBenefit", "AiPlanner", "AiActionGenerator",
     "AiCardSelector", "AiResponsePolicy", "AiValueSimulationQuery",
     "ResponsePolicy", "ResponseBoundary",
-    "Planner", "SearchPolicy", "TransitionValue", "FrontierValue",
+    "Planner", "SearchPolicy", "TransitionValue",
     "CandidateMaterializer", "SiblingTransitionTerms", "SearchResult"
   ]);
   const componentNames = new Set([
@@ -19479,10 +19483,7 @@ async function captureSymbiosisSearchLedger(game, actorId) {
   const finalizeCandidate = searcher.finalizeCandidate.bind(searcher);
   searcher.finalizeCandidate = (candidate, siblings) => {
     const finalized = finalizeCandidate(candidate, siblings);
-    Object.assign(rowFor(candidate.action), {
-      frontierValue: candidate.frontierValue,
-      finalUtility: finalized.transitionValue
-    });
+    Object.assign(rowFor(candidate.action), { finalUtility: finalized.transitionValue });
     return finalized;
   };
   const choice = await searcher.search(
@@ -19523,7 +19524,6 @@ test("AI·搜索：负收益共生不因技能机会或故障 fallback 被强迫
     assertClose(symbiosis.transitionTerms.transitionOptionPoints, 0);
     assertClose(symbiosis.schedulingScore, .75);
     assertClose(symbiosis.prior.prior, -16);
-    assertClose(symbiosis.frontierValue, 0);
     assertClose(symbiosis.finalUtility, -2.42);
     assertClose(end.transitionTerms.baseTransition, 0);
     assertClose(end.endOpportunity.pf, 1.2);
@@ -19579,7 +19579,6 @@ test("AI·搜索：正收益共生仍由完整 Final Utility 正常选中", asyn
     assertClose(symbiosis.transitionTerms.stateDelta, 22.64);
     assertClose(symbiosis.transitionTerms.transitionOptionPoints, 0);
     assertClose(symbiosis.prior.prior, 15);
-    assertClose(symbiosis.frontierValue, 0);
     assertClose(symbiosis.finalUtility, 4.528);
     assert.equal(ledger.choice.type, "card");
     assert.equal(ledger.choice.cardId, "symbiosis");
@@ -22199,8 +22198,6 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
         ? { hasEquipmentBefore: true }
         : null
     }),
-    frontierResidual: () => null,
-    terminalFrontierValue: () => 0,
     requiresActionLightningOutcomes: () => false,
     requiresHiddenWorldPrior: () => false,
     composeSearchPrior: () => ({ domainPrior: 0, searchCredit: 0, prior: 0 }),
@@ -22211,21 +22208,19 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
     },
     finalizeEndTransition({
       baseTransition,
-      frontierValue,
       endTransitionTerms,
       siblingTransitionTerms
     }) {
       return this.composeTransitionValue({
         baseTransition,
-        frontierValue,
         endOpportunityPoints:this.endOpportunityPoints(
           endTransitionTerms,
           siblingTransitionTerms
         )
       });
     },
-    composeTransitionValue: ({ baseTransition, frontierValue, endOpportunityPoints }) => (
-      baseTransition + frontierValue - statePointsToUtility(endOpportunityPoints)
+    composeTransitionValue: ({ baseTransition, endOpportunityPoints }) => (
+      baseTransition - statePointsToUtility(endOpportunityPoints)
     ),
     compareCandidates: (left, right) => left.valueScore - right.valueScore
   };
@@ -22509,8 +22504,6 @@ async function runSearcherFaultBoundaryFixture(mode) {
       }
       return terms;
     },
-    frontierResidual: () => null,
-    terminalFrontierValue: () => 0,
     requiresActionLightningOutcomes: () => false,
     requiresHiddenWorldPrior: () => false,
     composeSearchPrior: ({ action }) => {
@@ -22519,18 +22512,17 @@ async function runSearcherFaultBoundaryFixture(mode) {
     },
     resourceSelectionPreference: () => null,
     endOpportunityPoints: () => 0,
-    finalizeEndTransition({ baseTransition, frontierValue }) {
+    finalizeEndTransition({ baseTransition }) {
       return this.composeTransitionValue({
         baseTransition,
-        frontierValue,
         endOpportunityPoints:0
       });
     },
-    composeTransitionValue: ({ baseTransition, frontierValue, endOpportunityPoints }) => {
+    composeTransitionValue: ({ baseTransition, endOpportunityPoints }) => {
       if (mode === "before-incumbent-finalize-fault" && baseTransition === 5) {
         throw new Error("synthetic finalize fault before incumbent");
       }
-      return baseTransition + frontierValue - endOpportunityPoints;
+      return baseTransition - endOpportunityPoints;
     },
     compareCandidates: (left, right) => left.valueScore - right.valueScore
   };
@@ -22822,7 +22814,6 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
   const candidate = (action, baseTransition, stateDelta = 0) => ({
     action,
     baseTransition,
-    frontierValue: 0,
     baseTerms: { stateDelta }
   });
 
@@ -22893,12 +22884,10 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
   assert.equal(evaluator.endOpportunityPoints(endTerms, [...siblingTerms].reverse()), 8);
   assertClose(evaluator.composeTransitionValue({
     baseTransition: 10,
-    frontierValue: 2,
     endOpportunityPoints: 8
-  }), 10.4, 1e-12);
+  }), 8.4, 1e-12);
 
   const overflowThreeEnd = candidate(endAction, 0.8);
-  overflowThreeEnd.frontierValue = 0.2;
   overflowThreeEnd.baseTerms = {
     dangerBefore: 0,
     endOpportunityInputs: { maxEnergy: 0 },
@@ -23176,18 +23165,11 @@ async function recoverBeforeMandatoryDiscardRegression() {
         beforeState: world,
         afterState: after
       });
-      const frontierResidual = after.playPhaseEnded
-        ? evaluator.frontierResidual(after, actor.id)
-        : null;
       return {
         action,
         state: after,
         baseTerms,
-        baseTransition: baseTerms.baseTransition,
-        frontierValue: evaluator.terminalFrontierValue(
-          frontierResidual,
-          Boolean(after.playPhaseEnded)
-        )
+        baseTransition: baseTerms.baseTransition
       };
     });
     const searcher = Object.create(Searcher.prototype);
@@ -23322,18 +23304,11 @@ async function multiOverflowDiscardOpportunityRegression() {
         beforeState: world,
         afterState: state
       });
-      const frontierResidual = state.playPhaseEnded
-        ? evaluator.frontierResidual(state, actor.id)
-        : null;
       candidates.push({
         action,
         state,
         baseTerms,
-        baseTransition: baseTerms.baseTransition,
-        frontierValue: evaluator.terminalFrontierValue(
-          frontierResidual,
-          Boolean(state.playPhaseEnded)
-        )
+        baseTransition: baseTerms.baseTransition
       });
     }
     for (const candidate of candidates.filter((entry) => entry.action.type !== "end")) {
@@ -23373,8 +23348,6 @@ async function multiOverflowDiscardOpportunityRegression() {
       ),
       expectedPd
     );
-    assert.equal(endCandidate.frontierValue, 0, "已用满回收站次数时 terminal frontier 不放大 END");
-
     const decision = await runBenchmarkAiDecision(game, actor.id);
     assert.equal(decision.stats.stopReason, "COMPLETE");
     assert.equal(decision.stats.completedRootCandidateCount, actions.length);
@@ -28426,7 +28399,7 @@ test("AI·回收站：普通 StateValue 按剩余额度与合法已知战术单�
   );
 });
 
-test("AI·回收站：Future draw 的 Base 与正负 RoleDelta 同乘材料尺度", () => {
+test("AI·回收站：匿名 Future draw 只持有 HandCount 且不含 Base/RoleDelta", () => {
   const positive = equipmentFutureFixture("recycleDevice", {
     actorCharacterId:"spirit-medic",
     actorCards:["harvest"],
@@ -28444,15 +28417,15 @@ test("AI·回收站：Future draw 的 Base 与正负 RoleDelta 同乘材料尺�
   });
   assertClose(
     positive.terms.recycleDeviceFuture,
-    HAND_COUNT_VALUE + (getBaseCardAiValue("charge") + 2) * RESOURCE_MATERIAL_SCALE
+    HAND_COUNT_VALUE
   );
   assertClose(
     negative.terms.recycleDeviceFuture,
-    HAND_COUNT_VALUE + (getBaseCardAiValue("charge") - 1) * RESOURCE_MATERIAL_SCALE
+    HAND_COUNT_VALUE
   );
   assertClose(
     noPool.terms.recycleDeviceFuture,
-    HAND_COUNT_VALUE + UNKNOWN_HAND_EXPECTED_VALUE * RESOURCE_MATERIAL_SCALE
+    HAND_COUNT_VALUE
   );
 });
 
@@ -28505,32 +28478,58 @@ test("AI·回收站：敌方匿名战术只用 finite-pool expectation 且 no-po
   assert.deepEqual(hiddenHolder.knownCards, []);
 });
 
-test("AI·回收站：Simulator 兑现摸牌后 HandValue 上升且 Future 按剩余资源下降", () => {
+test("AI·回收站：确定 Future 兑现与 anonymous HandCount 增益严格守恒", () => {
   const fixture = equipmentFutureFixture("recycleDevice", {
     actorCards:["exposeWeakness"],
     remainingCardCounts:{ block:1 }
   });
-  const beforeTerms = fixture.terms;
-  const next = new Simulator(fixture.state).apply(
-    fixture.state,
-    {
-      type:"card",
-      card:{ ...CARD_DEFINITIONS.exposeWeakness, id:"equipment-future-actor-0" },
-      targets:[]
-    },
-    fixture.actor.id
-  );
-  const nextActor = next.players.find((player) => player.id === fixture.actor.id);
-  const afterTerms = fixture.evaluator.playerValueTerms(
-    next,
-    nextActor,
-    fixture.actor.id,
-    buildRadarJudgmentProbabilities(queryCurrentCardCounts(next.probabilityState))
-  ).terms;
-  assert.equal(nextActor.recycleDeviceUses, 1);
-  assert.equal(nextActor.handCount, 1);
-  assert.ok(afterTerms.handCount > beforeTerms.handCount - HAND_COUNT_VALUE);
-  assert.equal(afterTerms.recycleDeviceFuture, 0);
+  const withoutDevice = structuredClone(fixture.state);
+  const withoutActor = withoutDevice.players.find((player) => player.id === fixture.actor.id);
+  withoutActor.equipmentDefinitionId = null;
+  withoutActor.equipmentRetentionProbability = 0;
+  const action = {
+    type:"card",
+    card:{ ...CARD_DEFINITIONS.exposeWeakness, id:"equipment-future-actor-0" },
+    targets:[]
+  };
+  const realized = new Simulator(fixture.state).apply(fixture.state, action, fixture.actor.id);
+  const baseline = new Simulator(withoutDevice).apply(withoutDevice, action, fixture.actor.id);
+  const realizedActor = realized.players.find((player) => player.id === fixture.actor.id);
+  const baselineActor = baseline.players.find((player) => player.id === fixture.actor.id);
+  const realizedHandGain = cardPlayerValueTerms(realizedActor, fixture.actor.id).handCount
+    - cardPlayerValueTerms(baselineActor, fixture.actor.id).handCount;
+  assert.equal(fixture.terms.recycleDeviceFuture, HAND_COUNT_VALUE);
+  assert.equal(realizedActor.recycleDeviceUses, 1);
+  assert.equal(realizedActor.handCount, 1);
+  assert.equal(baselineActor.handCount, 0);
+  assertClose(realizedHandGain, fixture.terms.recycleDeviceFuture);
+});
+
+test("AI·回收站：半概率 Future 与 Simulator 半张匿名摸牌线性守恒", () => {
+  const fixture = equipmentFutureFixture("recycleDevice", {
+    actorCards:["exposeWeakness"],
+    remainingCardCounts:{ block:1 },
+    retention:0.5
+  });
+  const withoutDevice = structuredClone(fixture.state);
+  const withoutActor = withoutDevice.players.find((player) => player.id === fixture.actor.id);
+  withoutActor.equipmentDefinitionId = null;
+  withoutActor.equipmentRetentionProbability = 0;
+  const action = {
+    type:"card",
+    card:{ ...CARD_DEFINITIONS.exposeWeakness, id:"equipment-future-actor-0" },
+    targets:[]
+  };
+  const realized = new Simulator(fixture.state).apply(fixture.state, action, fixture.actor.id);
+  const baseline = new Simulator(withoutDevice).apply(withoutDevice, action, fixture.actor.id);
+  const realizedActor = realized.players.find((player) => player.id === fixture.actor.id);
+  const baselineActor = baseline.players.find((player) => player.id === fixture.actor.id);
+  const realizedHandGain = (
+    realizedActor.handCount - baselineActor.handCount
+  ) * HAND_COUNT_VALUE;
+  assertClose(fixture.terms.recycleDeviceFuture, HAND_COUNT_VALUE * 0.5);
+  assertClose(realizedActor.handCount, 0.5);
+  assertClose(realizedHandGain, fixture.terms.recycleDeviceFuture);
 });
 
 test("AI·回收站：触发期望严格封顶2次", () => {
@@ -29618,7 +29617,7 @@ test("AI·雷达：军火库双 Block demand 产生两倍判定 Future Utility",
   assertClose(multiple.future, single.future * 2);
 });
 
-test("AI·雷达：基础牌判定收益按真实定义材料、手牌与角色差量计算", () => {
+test("AI·雷达：保留基础牌收益只按实际 HandCount 与 viewer HandRoleDelta 计算", () => {
   const target = {
     id:"radar-basic-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
     alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
@@ -29639,7 +29638,7 @@ test("AI·雷达：基础牌判定收益按真实定义材料、手牌与角色�
   const terms = evaluator.playerValueTerms(state, target, target.id, judgment).terms;
   assertClose(
     terms.radarFuture,
-    HAND_COUNT_VALUE + staticCardAssetValue(target.characterId, "charge")
+    realizedHandCardStateValue(target, target.id, "charge")
   );
   const tacticTerms = evaluator.playerValueTerms(
     state,
@@ -29649,11 +29648,18 @@ test("AI·雷达：基础牌判定收益按真实定义材料、手牌与角色�
   ).terms;
   assertClose(
     tacticTerms.radarFuture,
-    HAND_COUNT_VALUE + staticCardAssetValue(target.characterId, "block")
+    realizedHandCardStateValue(target, target.id, "block")
   );
+  const enemyViewerTerms = evaluator.playerValueTerms(
+    state,
+    target,
+    enemy.id,
+    judgment
+  ).terms;
+  assertClose(enemyViewerTerms.radarFuture, HAND_COUNT_VALUE);
 });
 
-test("AI·雷达：基础牌收益的正负 RoleDelta 与 Base 同乘材料尺度", () => {
+test("AI·雷达：保留基础牌 RoleDelta 不乘材料尺度且 Base 不进入 StateValue", () => {
   const positive = equipmentFutureFixture("defenseDevice", {
     actorCharacterId:"spirit-medic",
     targetCards:["assault"],
@@ -29666,12 +29672,108 @@ test("AI·雷达：基础牌收益的正负 RoleDelta 与 Base 同乘材料尺�
   });
   assertClose(
     positive.terms.radarFuture,
-    HAND_COUNT_VALUE + (getBaseCardAiValue("charge") + 2) * RESOURCE_MATERIAL_SCALE
+    HAND_COUNT_VALUE + 2
   );
   assertClose(
     negative.terms.radarFuture,
-    HAND_COUNT_VALUE + (getBaseCardAiValue("charge") - 1) * RESOURCE_MATERIAL_SCALE
+    HAND_COUNT_VALUE - 1
   );
+});
+
+test("AI·雷达：保留基础牌 Future 与 viewer 边界下的实际 HandState 增益守恒", () => {
+  const holder = radarFixtureTarget({ characterId:"spirit-medic", hand:[] });
+  const attacker = radarAttacker({
+    handCount:1,
+    hand:[{ id:"radar-conservation-assault", definitionId:"assault" }],
+    attackRange:1,
+    nextTurnBaseAttackLimit:1
+  });
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ charge:1 },
+    players:[attacker, holder]
+  });
+  const beforeHolder = structuredClone(holder);
+  const evaluator = new Evaluator();
+  const judgment = buildRadarJudgmentProbabilities({ charge:1 });
+  const holderPrediction = evaluator.playerValueTerms(
+    state,
+    holder,
+    holder.id,
+    judgment
+  ).terms.radarFuture;
+  const enemyPrediction = evaluator.playerValueTerms(
+    state,
+    holder,
+    attacker.id,
+    judgment
+  ).terms.radarFuture;
+  new Simulator(state).applyDamage(state, attacker, holder, 1, {
+    canBlock:true,
+    deviceAttack:true,
+    radarJudgmentProbabilities:{ block:0, otherBasic:1, equipment:0 }
+  });
+  const holderBeforeTerms = cardPlayerValueTerms(beforeHolder, holder.id);
+  const holderAfterTerms = cardPlayerValueTerms(holder, holder.id);
+  const enemyBeforeTerms = cardPlayerValueTerms(beforeHolder, attacker.id);
+  const enemyAfterTerms = cardPlayerValueTerms(holder, attacker.id);
+  assertClose(
+    holderPrediction,
+    holderAfterTerms.handCount + holderAfterTerms.handRoleDelta
+      - holderBeforeTerms.handCount - holderBeforeTerms.handRoleDelta
+  );
+  assertClose(
+    enemyPrediction,
+    enemyAfterTerms.handCount + enemyAfterTerms.handRoleDelta
+      - enemyBeforeTerms.handCount - enemyBeforeTerms.handRoleDelta
+  );
+  assert.equal(holder.handCount, 1);
+  assert.equal(holder.hand[0].definitionId, "charge");
+});
+
+test("AI·雷达：判得 Block 立即支付不留下手牌或 Future phantom", () => {
+  for (const preExistingCount of [0, 1]) {
+    const holder = radarFixtureTarget({
+      handCount:preExistingCount,
+      hand:Array.from({ length:preExistingCount }, (_, index) => ({
+        id:`radar-existing-block-${index}`,
+        definitionId:"block"
+      }))
+    });
+    const attacker = radarAttacker();
+    const state = upgradeProbabilityFixture({
+      remainingCardCounts:{ block:1 },
+      players:[attacker, holder]
+    });
+    const beforeTerms = cardPlayerValueTerms(holder, holder.id);
+    const evaluator = new Evaluator();
+    const prediction = evaluator.playerValueTerms(
+      state,
+      holder,
+      holder.id,
+      buildRadarJudgmentProbabilities({ block:1 })
+    ).terms.radarFuture;
+    const predictedDefenseCost = expectedDefenseCost(
+      state,
+      holder,
+      getRequiredBlockCount(null, true),
+      realizedHandCardStateValue(holder, attacker.id, "block")
+    );
+    new Simulator(state).applyDamage(state, attacker, holder, 1, {
+      canBlock:true,
+      deviceAttack:true,
+      radarJudgmentProbabilities:{ block:1, otherBasic:0, equipment:0 }
+    });
+    const afterTerms = cardPlayerValueTerms(holder, holder.id);
+    assert.equal(prediction, 0);
+    assert.equal(predictedDefenseCost, 0);
+    assert.equal(holder.hp, 4);
+    assert.equal(holder.handCount, preExistingCount);
+    assert.equal(holder.hand.length, preExistingCount);
+    assertClose(
+      afterTerms.handCount + afterTerms.handRoleDelta,
+      beforeTerms.handCount + beforeTerms.handRoleDelta
+    );
+  }
 });
 
 test("AI·雷达：突袭、震荡、焚场与猎杀全部进入真实 Expected Block Demand", () => {
@@ -29759,11 +29861,51 @@ test("AI·军火库：0张 Block 边际为零、恰1张显著升高、2张体现
     actorCards:["assault"],
     targetCards:["block", "block"]
   });
-  const blockSpendValue = HAND_COUNT_VALUE
-    + staticCardAssetValue(two.target.characterId, "block");
+  const blockSpendValue = realizedHandCardStateValue(two.target, two.actor.id, "block");
   assert.equal(zero.terms.battleDeviceFuture, 0);
   assert.ok(one.terms.battleDeviceFuture > 0);
   assertClose(two.terms.battleDeviceFuture, blockSpendValue);
+});
+
+test("AI·军火库：0/1/2张 Block 的预测防御成本与实际 StateValue 损失守恒", () => {
+  for (const blockCount of [0, 1, 2]) {
+    const fixture = equipmentFutureFixture("battleDevice", {
+      actorCards:["assault"],
+      targetCards:Array.from({ length:blockCount }, () => "block")
+    });
+    const beforeTarget = structuredClone(fixture.target);
+    const predicted = expectedDefenseCost(
+      fixture.state,
+      fixture.target,
+      getRequiredBlockCount("battleDevice", true),
+      realizedHandCardStateValue(fixture.target, fixture.actor.id, "block")
+    );
+    new Simulator(fixture.state).applyDamage(
+      fixture.state,
+      fixture.actor,
+      fixture.target,
+      1,
+      { canBlock:true, deviceAttack:true }
+    );
+    const beforeValue = fixture.evaluator.playerValueTerms(
+      { ...fixture.state, players:[fixture.actor, beforeTarget] },
+      beforeTarget,
+      fixture.actor.id,
+      0
+    );
+    const afterValue = fixture.evaluator.playerValueTerms(
+      fixture.state,
+      fixture.target,
+      fixture.actor.id,
+      0
+    );
+    const beforePoints = beforeValue.death
+      + Object.values(beforeValue.terms).reduce((sum, value) => sum + value, 0);
+    const afterPoints = afterValue.death
+      + Object.values(afterValue.terms).reduce((sum, value) => sum + value, 0);
+    assertClose(predicted, beforePoints - afterPoints);
+    assert.equal(fixture.target.handCount, blockCount >= 2 ? blockCount - 2 : blockCount);
+  }
 });
 
 test("AI·军火库：Block 防御成本复用 Radar 无放回双 demand 判定", () => {
@@ -29787,8 +29929,11 @@ test("AI·军火库：Block 防御成本复用 Radar 无放回双 demand 判定"
   });
   const ordinary = getRequiredBlockCount(null, true);
   const battle = getRequiredBlockCount("battleDevice", true);
-  const blockValue = HAND_COUNT_VALUE
-    + staticCardAssetValue(allTactic.target.characterId, "block");
+  const blockValue = realizedHandCardStateValue(
+    allTactic.target,
+    allTactic.actor.id,
+    "block"
+  );
   assert.equal(expectedDefenseCost(allTactic.state, allTactic.target, ordinary, blockValue), 0);
   assert.equal(expectedDefenseCost(allTactic.state, allTactic.target, battle, blockValue), 0);
   assert.ok(mixed.terms.battleDeviceFuture > 0);
@@ -29846,17 +29991,43 @@ test("AI·备用弹夹：只有1张 Assault 为零、超过基础上限才产生
   assertClose(
     three.terms.assaultMagazineFuture,
     assaultInventoryOpportunityValue(three.actor, three.state, {
-      [three.target.id]:HAND_COUNT_VALUE
-        + staticCardAssetValue(three.target.characterId, "block")
+      [three.target.id]:realizedHandCardStateValue(three.target, three.actor.id, "block")
     }) - assaultInventoryOpportunityValue(
       { ...three.actor, equipmentDefinitionId:null, equipmentRetentionProbability:0 },
       three.state,
       {
-        [three.target.id]:HAND_COUNT_VALUE
-          + staticCardAssetValue(three.target.characterId, "block")
+        [three.target.id]:realizedHandCardStateValue(three.target, three.actor.id, "block")
       }
     )
   );
+});
+
+test("AI·备用弹夹：Block spend 预测与新增攻击的实际 HandState 损失守恒", () => {
+  const fixture = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    targetCards:["block"]
+  });
+  const beforeTarget = structuredClone(fixture.target);
+  const predictedSpend = expectedDefenseCost(
+    fixture.state,
+    fixture.target,
+    getRequiredBlockCount(null, true),
+    realizedHandCardStateValue(fixture.target, fixture.actor.id, "block")
+  );
+  new Simulator(fixture.state).applyDamage(
+    fixture.state,
+    fixture.actor,
+    fixture.target,
+    1,
+    { canBlock:true, deviceAttack:true }
+  );
+  const beforeTerms = cardPlayerValueTerms(beforeTarget, fixture.actor.id);
+  const afterTerms = cardPlayerValueTerms(fixture.target, fixture.actor.id);
+  const actualHandLoss = beforeTerms.handCount + beforeTerms.handRoleDelta
+    - afterTerms.handCount - afterTerms.handRoleDelta;
+  assertClose(predictedSpend, actualHandLoss);
+  assertClose(fixture.terms.assaultMagazineFuture, predictedSpend * 2);
+  assert.equal(actualHandLoss, HAND_COUNT_VALUE);
 });
 
 test("AI·备用弹夹：retention 为零或没有可达目标时 Future Utility 为零", () => {
@@ -40260,7 +40431,7 @@ AI·价值归属测试注册。
 无；构造低血 viewer、团队共享需求及健康团队使用唯一调息的 canonical Worlds。
 
 输出
-无；断言 viewer 排除、团队值、Action 前后边际、ledger owner 与 terminal frontier 契约。
+无；断言 viewer 排除、团队值、Action 前后边际与 ledger owner 契约。
 
 读取状态
 Evaluator 玩家分项、团队 State Value、ProbabilityState 与 Simulator 结果。
@@ -40269,11 +40440,11 @@ Evaluator 玩家分项、团队 State Value、ProbabilityState 与 Simulator 结
 只推进独立测试 World clone。
 
 调用函数
-Evaluator.playerValueTerms/stateUtility/ownerStateLedger/frontierResidual、Simulator.apply、teamRescueReserve。
+Evaluator.playerValueTerms/stateUtility/ownerStateLedger、Simulator.apply、teamRescueReserve。
 
 边界与不变量
 HP2 风险必须复用同次玩家分项；viewer 只从需求排除，不得从团队容量排除；
-RescueReserve 不得回到逐玩家 outcome 或 terminal held option。
+RescueReserve 不得回到逐玩家 outcome 或其它 Final value owner。
 */
 function testTeamRescueReserveStateIntegration() {
   const state = ledgerState([
@@ -40385,10 +40556,6 @@ function testTeamRescueReserveStateIntegration() {
   assert.ok(ledger.owners.every(
     (owner) => !Object.hasOwn(owner.outcome, removedOutlookField)
   ));
-  const residual = evaluator.frontierResidual(state, "reserve-action-self");
-  assert.equal(Object.hasOwn(residual.held, "recover"), false);
-  assert.equal(evaluator.terminalFrontierValue(residual, true), 0);
-
   const threatenedState = ledgerState([
     ledgerHand(
       ledgerPlayer("reserve-action-self", 0, "dawn", "spirit-medic", { hp: 3 }),
@@ -40479,26 +40646,7 @@ test("AI·价值归属：同一 owner ledger 从队友/敌方视角投影符号�
   assert.ok(viewerC.self < 0, "攻击方视角下自身资源消耗为负");
 });
 
-test("AI·价值归属：residual 只在前沿计入且不随路径深度重复累计", () => {
-  const { game } = makeLedgerGame();
-  const evaluator = game.aiController.evaluator;
-  // 敌人持有两张突袭：一张作为响应保留，另一张形成可兑现的未来库存。
-  const state = ledgerState([
-    ledgerPlayer("a", 0, "dawn", "oath-warden"),
-    ledgerHand(ledgerPlayer("c", 1, "dusk", "blade-walker"), ["assault", "assault"])
-  ]);
-  // 同一状态不同到达路径得到同一 residual（路径无关）
-  const r1 = evaluator.frontierResidual(state, "a");
-  const r2 = evaluator.frontierResidual(structuredClone(state), "a");
-  assert.equal(r1.total, r2.total);
-  // 事件已兑现后对应 residual 减少或消失
-  const action = ledgerAction(state, "c", "assault", "a");
-  const after = new Simulator(state).apply(state, action, "c");
-  const rAfter = evaluator.frontierResidual(after, "a");
-  assert.ok(rAfter.futureInventory < r1.futureInventory, "未来攻击库存兑现后应减少");
-});
-
-test("AI·价值归属：回收站 Future 只进普通 StateValue 且 terminal held 不重复", () => {
+test("AI·价值归属：回收站 Future 只由普通 StateValue 持有一次", () => {
   const { game } = makeLedgerGame();
   const evaluator = game.aiController.evaluator;
   const state = ledgerState([
@@ -40510,17 +40658,12 @@ test("AI·价值归属：回收站 Future 只进普通 StateValue 且 terminal h
     },
     ledgerPlayer("b", 1, "dusk", "oath-warden")
   ]);
-  const residual = evaluator.frontierResidual(state, "a");
-  assert.equal(Object.hasOwn(residual.held, "recycle"), false);
   assert.equal(
     evaluator.playerValueTerms(state, state.players[0], "a", 0).terms.recycleDeviceFuture,
     0
   );
-  assert.equal(evaluator.terminalFrontierValue(residual, true), 0);
-  assert.equal(evaluator.terminalFrontierValue(residual, false), 0);
   const oneUseRemaining = structuredClone(state);
   oneUseRemaining.players[0].recycleDeviceUses = 1;
-  const remainingResidual = evaluator.frontierResidual(oneUseRemaining, "a");
   assert.ok(
     evaluator.playerValueTerms(
       oneUseRemaining,
@@ -40529,8 +40672,6 @@ test("AI·价值归属：回收站 Future 只进普通 StateValue 且 terminal h
       0
     ).terms.recycleDeviceFuture > 0
   );
-  assert.equal(Object.hasOwn(remainingResidual.held, "recycle"), false);
-  assert.equal(evaluator.terminalFrontierValue(remainingResidual, true), 0);
   const withoutTactic = structuredClone(state);
   withoutTactic.players[0].hand = [ledgerCard("basic", "charge")];
   assert.equal(
@@ -40789,7 +40930,6 @@ test("AI·价值归属：Search Prior 与 response diagnostics 都不进入 fina
   const evaluator = new Evaluator();
   const common = {
     baseTransition: 2,
-    frontierValue: 0.3,
     exposeMarginal: 1,
     assaultStacksCredit: 2
   };

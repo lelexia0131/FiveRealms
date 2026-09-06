@@ -345,7 +345,6 @@ considerIncumbent 与 prune。
           remainingProvenance:candidate.remainingProvenance,
           remainingHistory:[candidate.remainingProvenance],
           candidateLedger:candidate.candidateLedger,
-          frontierResidual:candidate.frontierResidual,
           completedAtWorkCount:candidate.completedAtWorkCount,
           ...this.advancePatternState(patternProposals, candidate.action, 0, [], world)
       };
@@ -644,7 +643,7 @@ considerIncumbent 与 prune。
 
   调用函数
   materializeValueTerms、Simulator.buildSkillEnergyCounterfactualWorlds、
-  Evaluator.evaluateTransition/transitionDelta/frontierResidual/composeSearchPrior。
+  Evaluator.evaluateTransition/transitionDelta/composeSearchPrior。
 
   边界与不变量
   Searcher 只机械组装各 owner 的结果；X 技能 World clone、能量替换与技能结算全部归 Simulator，
@@ -755,10 +754,6 @@ considerIncumbent 与 prune。
     const responseNet = (candidateLedger?.responses ?? [])
       .reduce((sum, response) => sum + (response.netValue ?? 0), 0);
     const terminal = Boolean(afterState.playPhaseEnded);
-    const frontierResidual = terminal
-      ? this.evaluator.frontierResidual(afterState, player.id)
-      : null;
-    const frontierValue = this.evaluator.terminalFrontierValue(frontierResidual, terminal);
     const lightningOutcomeWorlds = this.evaluator.requiresActionLightningOutcomes(action)
       ? simulator.buildLightningOutcomeWorlds(
           beforeState,
@@ -797,8 +792,6 @@ considerIncumbent 与 prune。
       remainingProvenance:terms.nextProvenance,
       candidateLedger,
       responseNet,
-      frontierResidual,
-      frontierValue,
       domainPrior,
       searchCredit,
       prior
@@ -843,13 +836,11 @@ considerIncumbent 与 prune。
     const transitionValue = candidate.action?.type === "end"
       ? this.evaluator.finalizeEndTransition({
           baseTransition:candidate.baseTransition,
-          frontierValue:candidate.frontierValue,
           endTransitionTerms:candidate.baseTerms,
           siblingTransitionTerms
         })
       : this.evaluator.composeTransitionValue({
           baseTransition:candidate.baseTransition,
-          frontierValue:candidate.frontierValue,
           endOpportunityPoints:0
         });
     if (!isValidFinalUtility(transitionValue)) {
@@ -869,7 +860,7 @@ considerIncumbent 与 prune。
   含 Evaluator 诊断 的完整候选。
 
   输出
-  canonical Action、投影、响应与 frontier 数值。
+  canonical Action、投影与响应数值。
 
   读取状态
   candidateLedger。
@@ -888,8 +879,7 @@ considerIncumbent 与 prune。
       action:candidate.action,
       projected:candidate.candidateLedger.projected,
       responses:candidate.candidateLedger.responses,
-      responseNet:candidate.responseNet,
-      frontierValue:candidate.frontierValue
+      responseNet:candidate.responseNet
     };
   }
 
@@ -1090,7 +1080,6 @@ search 的逐层 beam expansion。
         ...node.remainingHistory,
         candidate.remainingProvenance
       ],
-      frontierResidual:candidate.frontierResidual,
       completedAtWorkCount:candidate.completedAtWorkCount,
       ...patternState
     };

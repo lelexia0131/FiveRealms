@@ -40,7 +40,7 @@ export const ENERGY_STATE_WEIGHT = 1.2;
 把内部 State Value 点数转换为最终 HP-equivalent utility。
 
 调用方
-Evaluator transition/frontier/diagnostics、搜索先验归一化与单位正式测试。
+Evaluator transition/END/diagnostics、搜索先验归一化与单位正式测试。
 
 输入
 以 HP_VALUE 点代表一生命值的有限 State Value 点数。
@@ -782,7 +782,7 @@ expectedDefenseCost。
 Block 数量分布、有效需求、判得的额外 Block 数、单张 Block 价值与命中伤害价值。
 
 输出
-Block 足够时的资源支付价值，或不足时的伤害价值期望。
+Block 足够时扣除同次 Radar 获得量后的净手牌损失，或不足时的伤害价值期望。
 
 读取状态
 无。
@@ -794,7 +794,8 @@ Block 足够时的资源支付价值，或不足时的伤害价值期望。
 无。
 
 边界与不变量
-Block 不足时不会浪费手牌；雷达判得的 Block 与原手牌共同满足同一个真实需求。
+Block 不足时不会浪费手牌；雷达判得的 Block 与原手牌共同满足同一个真实需求，
+其获得与同次支付必须按 before/after HandState 净额计算。
 */
 function defenseCostForRequirement(
   blockDistribution,
@@ -807,7 +808,8 @@ function defenseCostForRequirement(
   if (demand === 0) return 0;
   return blockDistribution.reduce((sum, branch) => {
     const available = Math.max(0, Number(branch.count) || 0) + gainedBlockCount;
-    const cost = available >= demand ? demand * blockSpendValue : damageValue;
+    const realizedHandLoss = Math.max(0, demand - gainedBlockCount);
+    const cost = available >= demand ? realizedHandLoss * blockSpendValue : damageValue;
     return sum + Math.max(0, Number(branch.probability) || 0) * cost;
   }, 0);
 }
@@ -891,7 +893,7 @@ export function expectedDefenseCost(state, target, requiredCount, blockSpendValu
 assaultMagazineFutureUtility 与直接 primitive 测试。
 
 输入
-攻击者、canonical World 与按目标 ID 提供的单张 Block 完整资源价值。
+攻击者、canonical World 与按目标 ID 提供的单张 Block 实际手牌 StateValue。
 
 输出
 距离分配、Block/Radar 和目标生存状态共同形成的非负 State points。
@@ -946,7 +948,7 @@ export function assaultInventoryOpportunityValue(
 statePlayerValueTerms。
 
 输入
-持有者、canonical World 与按目标 ID 提供的单张 Block 完整资源价值。
+持有者、canonical World 与按目标 ID 提供的单张 Block 实际手牌 StateValue。
 
 输出
 按装备保留概率折算的 assault/shockwave 防御成本差。
@@ -1416,7 +1418,7 @@ function radarMitigationUtility(exposure, player, tacticJudgmentProbability) {
 statePlayerValueTerms。
 
 输入
-World、雷达持有者、战术判定概率，以及 Evaluator 提供的单次 Block/基础牌资源价值。
+World、雷达持有者、战术判定概率，以及 Evaluator 提供的单次 Block/基础牌手牌状态价值。
 
 输出
 ExpectedBlockDemand × ExpectedUtilityPerJudgment 的非负 State points。
@@ -1431,7 +1433,8 @@ ExpectedBlockDemand × ExpectedUtilityPerJudgment 的非负 State points。
 expectedBlockDemand、clampProbability。
 
 边界与不变量
-不拥有 CardValue 或第二套概率；战术只免除一次需求，基础牌收益已按定义概率加权，
+不拥有 CardValue 或第二套概率；战术只免除一次需求，保留的非 Block 基础牌收益已按定义概率加权，
+判得 Block 在同一次防御中立即参与支付，不作为保留手牌收益；
 多格挡需求通过 demand 数量自然产生多次判定机会。
 */
 function radarFutureUtility(
@@ -1676,9 +1679,10 @@ death 与不含 hand/equipment intrinsic asset 的 terms。
 Probability、Threat primitives、skillReadinessThreat、各装备 Future Utility。
 
 边界与不变量
-不得拥有手牌或装备资产公式；雷达只消费 Evaluator 已计算的单次资源值与 canonical Probability，
+不得拥有手牌或装备资产公式；雷达只消费 Evaluator 已计算的实际手牌状态值与 canonical Probability，
 skillReadiness 只评价已有技能在当前/下一能量阶段的可用机会；不得恢复按当前能量线性计分；
-所有装备 Future 只表示尚未兑现的独立未来状态后果，材料、RoleDelta 与 Future 各计一次。
+所有装备 Future 只表示尚未兑现的独立未来状态后果；普通手牌 Base material 不属于 StateValue，
+HandCount 与合法 HandRoleDelta 通过 Evaluator 的唯一 primitive 计入 Future。
 */
 export function statePlayerValueTerms(
   state,

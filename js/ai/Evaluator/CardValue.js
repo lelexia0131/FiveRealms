@@ -512,10 +512,42 @@ export function roleCardDelta(characterId, definitionId) {
 
 /*
 功能
+计算一张普通手牌实际进入或离开当前 StateValue 时的存量价值。
+
+调用方
+cardPlayerValueTerms、Evaluator 的装备 Future 资源输入与直接公式测试。
+
+输入
+手牌持有者、StateValue viewer ID，以及可选的合法已知 definition ID。
+
+输出
+一张牌对应的 HandCount 与可见 HandRoleDelta 之和；匿名牌只返回 HandCount。
+
+读取状态
+持有者公开身份与 viewer 对该手牌身份的合法可见性。
+
+写入状态
+无。
+
+调用函数
+roleCardDelta。
+
+边界与不变量
+普通手牌不持有 BaseAiValue 材料项；只有 viewer 自己的合法已知身份可产生未缩放的 RoleDelta。
+*/
+export function realizedHandCardStateValue(player, viewerId, definitionId = null) {
+  const visibleRoleDelta = definitionId && player?.id === viewerId
+    ? roleCardDelta(player.characterId, definitionId)
+    : 0;
+  return HAND_COUNT_VALUE + visibleRoleDelta;
+}
+
+/*
+功能
 把一张具体牌对指定持有者的静态角色价值换算为 State points 资产价值。
 
 调用方
-Evaluator 的装备、资源获得、Radar 判定与回收站未来摸牌静态资产路径，以及直接公式测试。
+Evaluator 的装备与明确静态资源资产路径，以及直接公式测试。
 
 输入
 可选角色 ID、卡牌 definition ID 与仅供现有 CardValue 测试注入的定义/差量配置。
@@ -783,7 +815,7 @@ Evaluator.playerValueTerms。
 无。
 
 调用函数
-getBaseCardAiValue、roleCardDelta、cardAvailability。
+getBaseCardAiValue、roleCardDelta、realizedHandCardStateValue、cardAvailability。
 
 边界与不变量
 装备 Base 与 RoleDelta 同属 static asset，分别在这里乘 RESOURCE_MATERIAL_SCALE 恰好一次。
@@ -799,7 +831,10 @@ export function cardPlayerValueTerms(player, viewerId) {
     : 0;
   const handRoleDelta = player.id === viewerId
     ? (player.hand ?? []).reduce((sum, card) => (
-        sum + roleCardDelta(player.characterId, card?.definitionId) * cardAvailability(card)
+        sum + (
+          realizedHandCardStateValue(player, viewerId, card?.definitionId)
+            - HAND_COUNT_VALUE
+        ) * cardAvailability(card)
       ), 0)
     : 0;
   return {
