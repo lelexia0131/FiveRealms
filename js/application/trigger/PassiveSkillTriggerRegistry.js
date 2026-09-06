@@ -181,7 +181,7 @@ const PASSIVE_SKILLS = {
         .map((cardId) => owner.hand.find((card) => card.id === cardId))
         .find(Boolean) ?? null;
       if (!discard) return;
-      const moved = await runtime.discardCardFromHand(owner, discard, "护援", { logReason:"「护援」" });
+      const moved = await runtime.discardCardFromHand(owner, discard, "护援", { logReason:"「护援」", isDiscard: true });
       if (!runtime.isSessionValid(gameId) || !moved) return;
       setGuardianAidUsed(runtime.getState(), owner, true);
       const reduction = PASSIVE_SKILL_DEFINITIONS.guardianAid.damageReduction;

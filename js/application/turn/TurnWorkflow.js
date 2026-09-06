@@ -550,7 +550,7 @@ export function createTurnWorkflow(dependencies) {
   createDiscardChoiceRequest、choiceCoordinator.request、getAiDelay、delay、discardCardFromHand。
 
   边界与不变量
-  human/AI 分支是 participant mechanism policy；只累计 discardCardFromHand 确认成功的真实弃牌；不迁移 discard semantic。
+  human/AI 分支是 participant mechanism policy；只累计 discardCardFromHand 确认成功的真实弃牌，并显式标记弃牌语义。
   */
   async function handleDiscardPhase(player, gameId) {
     const required = getMandatoryDiscardCount(player);
@@ -599,7 +599,7 @@ export function createTurnWorkflow(dependencies) {
       .slice(0, required);
     let discardedCount = 0;
     for (const card of cards) {
-      if (await runtime.discardCardFromHand(player, card, "弃牌阶段")) discardedCount += 1;
+      if (await runtime.discardCardFromHand(player, card, "弃牌阶段", { isDiscard: true })) discardedCount += 1;
       if (!runtime.isSessionValid(gameId)) return discardedCount;
     }
     // AI 不变量兜底只使用当前手牌顺序，不调用 AI 策略；正常 peer 选择成功时这里为空操作。
@@ -607,7 +607,7 @@ export function createTurnWorkflow(dependencies) {
       while (player.hand.length > Math.max(0, player.hp)) {
         const fallback = player.hand[0];
         if (!fallback) break;
-        const discarded = await runtime.discardCardFromHand(player, fallback, "弃牌阶段");
+        const discarded = await runtime.discardCardFromHand(player, fallback, "弃牌阶段", { isDiscard: true });
         if (discarded) discardedCount += 1;
         if (!runtime.isSessionValid(gameId)) return discardedCount;
         if (!discarded) break;

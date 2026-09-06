@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">天使</title><desc id="desc">残破庭院的斜照晨光中，灵医俯身治疗伤者，生命枝叶在两人身后舒展如翼。</desc>
+  <defs>
+    <linearGradient id="dawn" x2=".2" y2="1"><stop stop-color="#203347"/><stop offset=".55" stop-color="#5f817b"/><stop offset="1" stop-color="#162d37"/></linearGradient>
+    <linearGradient id="ray" x2=".6" y2="1"><stop stop-color="#fff0b6" stop-opacity=".7"/><stop offset="1" stop-color="#f5e8ac" stop-opacity="0"/></linearGradient>
+    <radialGradient id="life"><stop stop-color="#ffffd4"/><stop offset=".2" stop-color="#d2f4b8" stop-opacity=".8"/><stop offset="1" stop-color="#94d5b4" stop-opacity="0"/></radialGradient>
+    <linearGradient id="robe" x2="1" y2=".7"><stop stop-color="#dddec1"/><stop offset=".5" stop-color="#9fbdb5"/><stop offset="1" stop-color="#426374"/></linearGradient>
+    <g id="leaf"><path d="M0 0Q-29-10-27-41 0-30 0 0Z" fill="#aad6b6" stroke="#e4e6ad" stroke-width="2"/><path d="M-3-7-22-34" stroke="#527d7b" stroke-width="2"/></g>
+  </defs>
+  <path d="M0 0h640v640H0Z" fill="url(#dawn)"/>
+  <path d="M13 416V182Q15 45 153 29h87v45h-90q-97 9-99 108v234ZM352 0h44v228h-44ZM547 0h51v357h-51Z" fill="#354d56"/>
+  <path d="M62 194q13-90 101-99h72v31h-75q-60 4-67 75v181H63Z" fill="#557271"/>
+  <path d="m17 177 42 5m16-87 28 28m65-81v40M551 106h44m-45 118h45M358 55h35" stroke="#a0a88d" stroke-width="3" opacity=".6"/>
+  <path d="M395 0h148L380 560 109 556Z" fill="url(#ray)"/>
+  <path d="M0 445 157 392l95 33 136-34 252 46v203H0Z" fill="#24404a"/>
+  <path d="M0 520 213 455 472 478 640 550M36 579l444-39 151 58M190 472l-44 152m225-143 34 159" fill="none" stroke="#718b7f" stroke-width="3"/>
+  <ellipse cx="306" cy="452" rx="227" ry="166" fill="url(#life)" opacity=".5"/>
+  <path d="M295 405Q117 330 127 163M308 414Q402 232 520 212" fill="none" stroke="#c5dea9" stroke-width="6"/>
+  <path d="M168 302 79 265m89 37 5-97m49 150-119-13m137 33 6-95M379 305l-6-88m37 57 62 4m-44-27 7-74" fill="none" stroke="#b7d6a6" stroke-width="4"/>
+  <use href="#leaf" transform="translate(132 207) rotate(-20) scale(1.2)"/><use href="#leaf" transform="translate(169 301) rotate(-70) scale(1.25)"/>
+  <use href="#leaf" transform="translate(172 254) rotate(58)"/><use href="#leaf" transform="translate(218 354) rotate(-68) scale(1.3)"/>
+  <use href="#leaf" transform="translate(374 268) rotate(16)"/><use href="#leaf" transform="translate(413 276) rotate(109) scale(1.2)"/>
+  <use href="#leaf" transform="translate(451 233) rotate(30)"/><use href="#leaf" transform="translate(487 219) rotate(114) scale(1.2)"/>
+  <path d="m215 504 27-132 58-62 46 15 23 86-29 128-41 21Z" fill="url(#robe)" stroke="#d6dec2" stroke-width="3"/>
+  <path d="M267 337q-3-68 40-82 50 4 51 54l-36 41Z" fill="#b7c6b6"/><path d="m286 288 44 3 11 33-19 20-25-19Z" fill="#dec6a1"/>
+  <path d="m280 311 18-40 29 2-8 15-31 17Z" fill="#576d73"/>
+  <path d="m282 368 31 35 65 13-10 29-78-8-34-32" fill="#bcd2ba" stroke="#e3e5bd" stroke-width="3"/>
+  <path d="m365 418 27 6 13 17-8 7-15-12-19 6Z" fill="#f2d5ac"/>
+  <path d="m317 386 8 79-28 89m-44-134-18 82m108-48-27 60" fill="none" stroke="#557e81" stroke-width="4"/>
+  <path d="m358 521 36-64 58-16 47 35 52 29-12 35-104-14-36 21Z" fill="#334354" stroke="#8aa496" stroke-width="3"/>
+  <path d="m401 451-10-31 15-26 31 2 13 32-18 26Z" fill="#b09c91"/><path d="m391 419 14-31 27 4 17 19-24-3-14 20Z" fill="#273a47"/>
+  <path d="m440 470-51 19-31 38m76-5 87 7" fill="none" stroke="#667b82" stroke-width="5"/>
+  <circle cx="382" cy="441" r="96" fill="url(#life)"/>
+  <path d="M362 448q17-28 34-7m-27 15q15-19 25-9" fill="none" stroke="#fff9ce" stroke-width="3"/>
+  <g fill="#e4ecb5"><circle cx="201" cy="237" r="3"/><circle cx="433" cy="341" r="4"/><circle cx="352" cy="188" r="3"/><circle cx="118" cy="416" r="3"/><circle cx="465" cy="392" r="2"/></g>
+  <path d="M0 596q63-52 130-7l74 51H0M494 640q10-72 88-111l-20 42 55-20-13 48 36-20v61" fill="#152f3a"/>
+  <use href="#leaf" transform="translate(73 608) rotate(42) scale(1.35)"/><use href="#leaf" transform="translate(562 592) rotate(65)"/>
+</svg>

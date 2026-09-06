@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">慈善家</title><desc id="desc">鸣风塔的调律师拨动悬弦，金色和弦沿错层桥道流向远近同伴，照亮云海上的城镇。</desc>
+  <defs>
+    <linearGradient id="air" x2="0" y2="1"><stop stop-color="#222b50"/><stop offset=".6" stop-color="#586483"/><stop offset="1" stop-color="#263d4e"/></linearGradient>
+    <linearGradient id="stone" x2="1" y2=".5"><stop stop-color="#7f8993"/><stop offset="1" stop-color="#343f5b"/></linearGradient>
+    <linearGradient id="gold" x2=".3" y2="1"><stop stop-color="#fff0b0"/><stop offset="1" stop-color="#b99578"/></linearGradient>
+    <radialGradient id="tone"><stop stop-color="#f2e9a7" stop-opacity=".7"/><stop offset="1" stop-color="#a8dddc" stop-opacity="0"/></radialGradient>
+    <g id="traveler"><ellipse cy="37" rx="25" ry="8" fill="#142d40"/><path d="m-13-4-8 38 20-6 21 8-9-40Z" fill="#88aaa8" stroke="#c2d5bb" stroke-width="2"/><circle cy="-16" r="10" fill="#beaeaa"/><path d="M-12-17q2-18 15-12l10 20-19-5Z" fill="#34465e"/><path d="m-10 0-22 15m43-13 15 12" stroke="#c0cabc" stroke-width="5"/></g>
+  </defs>
+  <path d="M0 0h640v640H0Z" fill="url(#air)"/>
+  <path d="M0 220q74-65 162-22t173-17 305 25v131H0Z" fill="#858e9b" opacity=".26"/>
+  <path d="M0 324q78-35 147 12t147-8 184 0 162-11v91H0Z" fill="#9ab8b4" opacity=".24"/>
+  <path d="m469 146 43-21 47 25v112l-47 19-43-25Z" fill="#3d506b"/><path d="m463 147 49-59 54 63-53-20Z" fill="#7a8197" stroke="#b3b6ad" stroke-width="2"/>
+  <path d="M510 130v148m15-114v20m17-14v21" stroke="#bbc2ad" stroke-width="2"/>
+  <path d="m77 153 57-26 62 30v238l-62 29-57-39Z" fill="url(#stone)" stroke="#acb4ad" stroke-width="3"/>
+  <path d="m65 154 69-63 73 68-73-29Z" fill="#67718b" stroke="#c2beb2" stroke-width="3"/>
+  <path d="M135 132v290M91 192l27-13v50l-27 12ZM153 184l24 11v46l-24-12ZM89 280l28-14m37 12 27 13m-91 45 26-11" fill="#253e53" stroke="#c3c4ad" stroke-width="2"/>
+  <path d="m0 466 132-77 143 50-98 101L0 502ZM295 485l170-113 175 46v62l-172-15-111 73Z" fill="#2c3b54" stroke="#758f98" stroke-width="3"/>
+  <path d="m133 390 284-132 47 17-297 151ZM229 512l136-41 90 140-58 29Z" fill="#778b93" stroke="#c0c6b1" stroke-width="3"/>
+  <path d="M165 405 434 273M313 493l86 147m-234-218v38m54-64v33m53-59v33m57-60v32m53-59v31" fill="none" stroke="#d1c9aa" stroke-width="3"/>
+  <path d="M0 536q105-44 209 28t226-1 205 20v57H0Z" fill="#102b3d" opacity=".7"/>
+  <path d="m188 363 52-27 75 36 1 156-55 39-73-48Z" fill="url(#stone)" stroke="#a2afb1" stroke-width="3"/>
+  <path d="m177 362 65-36 84 42-65 39Z" fill="#b0b8af" stroke="#e1d3ad" stroke-width="3"/>
+  <path d="m248 413 1 140m-44-144v29m76-9v31" stroke="#53627b" stroke-width="4"/>
+  <circle cx="255" cy="294" r="116" fill="url(#tone)"/>
+  <path d="m215 361 13-88 39-19 33 32-20 93-30 12Z" fill="#514e72" stroke="#d1c6b6" stroke-width="3"/>
+  <path d="m232 267-7-26 20-22 27 8 7 28-15 18Z" fill="#cab4a0"/>
+  <path d="m224 244 5-25 24-13 28 36-31-11Z" fill="#292d4b"/>
+  <path d="m237 287-33 30-28-34m91 5 36 22 21-38" fill="none" stroke="#c4c5b2" stroke-width="10"/>
+  <path d="m187 269-6-67 141 4-13 54M201 209l6 89m19-88 3 93m20-92 2 93m20-93-2 92m20-93-5 86m20-83-8 72" fill="none" stroke="url(#gold)" stroke-width="3"/>
+  <g fill="none" stroke-linecap="round"><path d="M236 293C159 310 62 387 50 451M259 289C341 295 400 240 447 281M267 302C368 366 492 407 553 421M252 319C294 398 326 527 384 578" stroke="#c7c593" stroke-width="12" opacity=".14"/><path d="M236 293C159 310 62 387 50 451M259 289C341 295 400 240 447 281M267 302C368 366 492 407 553 421M252 319C294 398 326 527 384 578" stroke="#f3dfa2" stroke-width="3"/></g>
+  <circle cx="50" cy="452" r="67" fill="url(#tone)"/><circle cx="445" cy="280" r="59" fill="url(#tone)"/><circle cx="553" cy="416" r="70" fill="url(#tone)"/><circle cx="384" cy="573" r="67" fill="url(#tone)"/>
+  <use href="#traveler" transform="translate(49 425) scale(.87)"/><use href="#traveler" transform="translate(447 260) scale(.65)"/><use href="#traveler" transform="translate(554 389) scale(.93)"/><use href="#traveler" transform="translate(384 549)"/>
+  <g fill="#fff0b7"><path d="m129 352 4-9 4 9-4 8ZM365 280l4-10 4 10-4 8ZM443 395l4-10 5 10-5 9ZM305 449l4-9 4 9-4 8Z"/></g>
+  <path d="M332 66q23-21 43-10m26 31q18-18 37-9" stroke="#c8d0bc" stroke-width="3" fill="none" opacity=".6"/>
+</svg>

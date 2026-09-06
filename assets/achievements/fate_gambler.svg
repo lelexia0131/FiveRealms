@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">赌徒</title><desc id="desc">倾斜的镜轮赌桌悬在裂隙上，赌命者将最后的筹码推出，烛光映亮翻飞的牌与破碎倒影。</desc>
+  <defs>
+    <linearGradient id="room" x2=".8" y2="1"><stop stop-color="#171528"/><stop offset=".55" stop-color="#443248"/><stop offset="1" stop-color="#131326"/></linearGradient>
+    <linearGradient id="felt" x2="1" y2="1"><stop stop-color="#65505e"/><stop offset=".5" stop-color="#322e46"/><stop offset="1" stop-color="#1d2036"/></linearGradient>
+    <linearGradient id="edge" x2=".2" y2="1"><stop stop-color="#e0b676"/><stop offset="1" stop-color="#5b3847"/></linearGradient>
+    <radialGradient id="flame"><stop stop-color="#fff1be"/><stop offset=".12" stop-color="#ffd483" stop-opacity=".85"/><stop offset="1" stop-color="#df7856" stop-opacity="0"/></radialGradient>
+    <g id="chip"><ellipse cy="5" rx="20" ry="10" fill="#614359" stroke="#d5ad7e" stroke-width="2"/><ellipse rx="20" ry="10" fill="#aa7d73" stroke="#f2dba1" stroke-width="2"/><path d="M-10 0h20m-10-6v12" stroke="#f0d3a0" stroke-width="2"/></g>
+  </defs>
+  <path d="M0 0h640v640H0Z" fill="url(#room)"/>
+  <path d="M0 0h148l-39 182L0 222ZM338 0h46l-13 84 30 57-69 27-13-82ZM583 0h57v640l-81-67 42-90-44-187 22-116Z" fill="#0e1425"/>
+  <path d="M155 0 121 182 160 208 267 168 284 36ZM427 0 402 103l56 72 82-12 26-163Z" fill="#3f3c55" stroke="#8d7d83" stroke-width="3"/>
+  <path d="m221 0-29 118 41 39m206-118 29 36-38 91" fill="none" stroke="#b5a695" stroke-width="2"/>
+  <path d="M0 427 175 385l130 40 129-61 170 121-109 155H0Z" fill="#101426"/>
+  <path d="m313 437 33 53-27 28 39 41-25 81" fill="none" stroke="#ba7185" stroke-width="6"/>
+  <path d="m49 335 357-141 198 113-71 175-374 87L29 423Z" fill="url(#edge)" stroke="#d5b38f" stroke-width="3"/>
+  <path d="m60 329 340-132 187 109-64 146-362 90-116-127Z" fill="url(#felt)" stroke="#a88991" stroke-width="4"/>
+  <path d="m100 338 295-113 149 87-51 113-322 83-90-96Z" fill="none" stroke="#b49b85" stroke-width="2" opacity=".7"/>
+  <path d="m156 384 219-82 69 40-223 82Z" fill="none" stroke="#8c7084" stroke-width="2"/><path d="m273 341 52 57m-91-42 51 56" stroke="#8c7084" stroke-width="2"/>
+  <path d="m89 486 26 113 33-18 9-63m346-57-9 100 26-15 16-90" fill="#32273c" stroke="#806578" stroke-width="3"/>
+  <ellipse cx="463" cy="278" rx="27" ry="12" fill="#7e5360" stroke="#d4b88b" stroke-width="3"/>
+  <path d="M455 215h17v57h-17Z" fill="#e6cf9e"/><path d="M463 216q-25-18 4-53 16 35-4 53Z" fill="#ffe3a0"/>
+  <circle cx="463" cy="200" r="104" fill="url(#flame)"/>
+  <path d="M0 489 81 477l100 163H0Z" fill="#1b1b2e"/><path d="M0 392 85 406l91-18 59-45 35 24-65 67-89 23-83 14Z" fill="#58475f" stroke="#a08692" stroke-width="3"/>
+  <path d="m84 407 18 47m-62-3 19-46" stroke="#d4b486" stroke-width="5"/>
+  <path d="m232 346 37-9 31 13 2 8-28-4 27 15-4 7-31-9 21 18-7 5-42-22Z" fill="#dfb292" stroke="#785068" stroke-width="2"/>
+  <use href="#chip" transform="translate(276 392)"/><use href="#chip" transform="translate(280 380)"/><use href="#chip" transform="translate(283 368)"/>
+  <use href="#chip" transform="translate(319 375)"/><use href="#chip" transform="translate(328 354) rotate(-12)"/><use href="#chip" transform="translate(347 391)"/>
+  <use href="#chip" transform="translate(493 484) rotate(61)"/><use href="#chip" transform="translate(461 568) rotate(-22) scale(.7)"/>
+  <path d="m355 258 51-18 30 44-55 18Z" fill="#e6d5b1" stroke="#fff0bf" stroke-width="2"/><path d="m388 257 19 16-18 14-17-17Z" fill="#8b4962"/>
+  <path d="m362 105 34-23 40 49-36 26Z" fill="#d5bac0" stroke="#f1dcb2" stroke-width="2"/><path d="m388 104 24 26-13 9-24-26Z" fill="#57425d"/>
+  <path d="m161 283 14-36 40 8-16 40Z" fill="#bb99ae" stroke="#ead8b5" stroke-width="2"/>
+  <path d="m202 469 69-22 14 38-73 19Z" fill="#b8a9ad" stroke="#e4c7a2" stroke-width="2"/><path d="m239 460 10 8-4 14-15-6Z" fill="#543650"/>
+  <path d="M95 45 147 15l-21 102-43 17ZM572 538l38 46-62 31Z" fill="#769297" stroke="#b9c7b3" stroke-width="2" opacity=".65"/>
+  <path d="M330 349q47-25 70-19M321 359l93-9" stroke="#f3cd8c" stroke-width="2" opacity=".65"/>
+  <g fill="#e9c795"><circle cx="348" cy="186" r="3"/><circle cx="502" cy="394" r="2"/><circle cx="449" cy="509" r="3"/><circle cx="295" cy="294" r="2"/></g>
+</svg>

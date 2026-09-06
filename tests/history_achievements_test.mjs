@@ -13,6 +13,7 @@ import {
 import { evaluateMatchAchievements } from "../js/ui/history/achievements/AchievementTracker.js";
 import { HistoryStatsManager } from "../js/ui/history/HistoryStatsManager.js";
 import { MatchPerformanceTracker } from "../js/ui/results/MatchPerformanceTracker.js";
+import { calculatePerformance } from "../js/ui/results/MatchPerformanceCalculator.js";
 import { MatchMvpResultView } from "../js/ui/results/MatchMvpResultView.js";
 import { HistoryArchiveView } from "../js/ui/history/HistoryArchiveView.js";
 import { AchievementView } from "../js/ui/history/achievements/AchievementView.js";
@@ -529,10 +530,10 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
       { id: "h", tier: "hidden", order: 1 }
     ];
     assert.deepEqual(sortAchievements(source).map((entry) => entry.id), ["a", "b", "z", "h"]);
-    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 40);
+    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 49);
   });
 
-  test("UI·征途成就：档案页渲染全部四十张卡并保留隐藏卡面", async () => {
+  test("UI·征途成就：档案页渲染全部四十九张卡并保留隐藏卡面", async () => {
     const storage = memoryStorage();
     const manager = new HistoryStatsManager({ storage });
     const root = { innerHTML: "", addEventListener() {} };
@@ -542,8 +543,8 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
       root.innerHTML.indexOf('<section class="history-section history-achievements"'),
       root.innerHTML.indexOf('<section class="history-section" aria-labelledby="history-travelers-title">')
     );
-    assert.equal((achievementMarkup.match(/class="achievement-card /g) ?? []).length, 40);
-    assert.equal((achievementMarkup.match(/journey-progress-segment/g) ?? []).length, 40);
+    assert.equal((achievementMarkup.match(/class="achievement-card /g) ?? []).length, 49);
+    assert.equal((achievementMarkup.match(/journey-progress-segment/g) ?? []).length, 49);
     assert.match(achievementMarkup, /每一道亮起的铭痕，都来自一场真实终局[\s\S]*?achievement-journey-progress/);
     assert.doesNotMatch(achievementMarkup, /achievement-journey-sigil|journey-crest-mark/);
     assert.equal((achievementMarkup.match(/is-hidden-locked/g) ?? []).length, 10);
@@ -565,7 +566,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     assert.match(achievementCss, /\.achievement-modal\s*\{[^}]*border:\s*1px solid var\(--achievement-tier-border\)[^}]*background:\s*var\(--achievement-tier-surface\)/s);
     assert.match(achievementCss, /\.achievement-modal-art > span:not\(\.achievement-crest\)/);
     assert.match(achievementCss, /\.achievement-card\.is-partial\s*\{[^}]*0 0 20px var\(--achievement-tier-glow\)/s);
-    assert.match(achievementCss, /\.journey-progress-track\s*\{[^}]*repeat\(40, minmax\(0, 1fr\)\)/s);
+    assert.match(achievementCss, /\.journey-progress-track\s*\{[^}]*repeat\(49, minmax\(0, 1fr\)\)/s);
     assert.match(achievementCss, /\.achievement-card\.is-partial, \.achievement-modal\.is-partial\s*\{[^}]*--achievement-art-brightness:\s*\.84/s);
     assert.match(achievementCss, /\.achievement-card\.is-complete, \.achievement-modal\.is-complete\s*\{[^}]*--achievement-art-brightness:\s*1\.08/s);
     assert.match(achievementCss, /\.achievement-card > img\s*\{[^}]*filter: saturate\(var\(--achievement-art-saturation\)\) brightness\(var\(--achievement-art-brightness\)\)/s);
@@ -576,7 +577,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
   test("UI·征途成就：标题长度有层次且无人倒下使用战旗插画", () => {
     const titles = ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title);
     const lengths = new Set(titles.map((title) => [...title].length));
-    assert.equal(new Set(titles).size, 40);
+    assert.equal(new Set(titles).size, 49);
     assert.ok(lengths.size >= 3);
     assert.ok(titles.every((title) => !/[。！？]$/.test(title)));
     const flawless = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "flawless_victory");
@@ -637,10 +638,10 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     assert.equal(evaluated.includes("last_stand_trio"), false);
   });
 
-  test("UI·征途成就：四十项定义、ID、艺术资源与模式范围完整", () => {
-    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 40);
-    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id)).size, 40);
-    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title)).size, 40);
+  test("UI·征途成就：四十九项定义、ID、艺术资源与模式范围完整", () => {
+    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 49);
+    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id)).size, 49);
+    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title)).size, 49);
     for (const definition of ACHIEVEMENT_DEFINITIONS) {
       assert.match(definition.id, /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
       assert.ok(existsSync(new URL(`../${definition.artwork.slice(2)}`, import.meta.url)), definition.id);
@@ -671,6 +672,277 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
       ACHIEVEMENT_DEFINITIONS.slice(6, 9).map((definition) => definition.id),
       ["full_health", "heavy_blow", "win_streak_three"]
     );
+  });
+
+  test("UI·征途成就：角色技能与回合条件严格验证阈值和角色", () => {
+    for (const [id, characterId, key, threshold, title, tier] of [
+      ["lavish_discard", "blade-walker", "maxTurnDiscards", 6, "挥金如土", "epic"],
+      ["shadow_collector", "shade-agent", "stolenCards", 6, "拾喽", "epic"],
+      ["healing_angel", "spirit-medic", "symbiosisHealing", 6, "天使", "epic"],
+      ["fate_gambler", "fate-gambler", "allInEntries", 5, "赌徒", "epic"],
+      ["blazing_encampment", "ember-magus", "burningFieldDamage", 10, "火烧联营", "legendary"],
+      ["swift_blade", "blade-walker", "maxTurnDamage", 8, "快刀斩乱麻", "legendary"]
+    ]) {
+      const definition = ACHIEVEMENT_DEFINITIONS.find((entry) => entry.id === id);
+      assert.deepEqual([definition.title, definition.tier, definition.teamScope], [title, tier, "both"]);
+      assert.equal(evaluateAchievementForTest(id, { characterId }, { [key]: threshold - 1 }), false, id);
+      assert.equal(evaluateAchievementForTest(id, { characterId }, { [key]: threshold }), true, id);
+      assert.equal(evaluateAchievementForTest(id, { characterId }, { [key]: threshold + 1 }), true, id);
+      if (id !== "lavish_discard") {
+        assert.equal(evaluateAchievementForTest(id, { characterId: "other" }, { [key]: threshold }), false, id);
+      }
+    }
+    for (const [completedHunts, damagingHunts, expected] of [[2, 2, false], [3, 3, true], [4, 4, true], [4, 3, false]]) {
+      assert.equal(evaluateAchievementForTest("unerring_hunt", { characterId: "trail-hunter" }, {
+        completedHunts, damagingHunts
+      }), expected);
+    }
+    assert.equal(evaluateAchievementForTest("unerring_hunt", { characterId: "shade-agent" }, {
+      completedHunts: 3, damagingHunts: 3
+    }), false);
+    assert.match(ACHIEVEMENT_DEFINITIONS.find((entry) => entry.id === "unerring_hunt").criteria, /3次猎杀/);
+  });
+
+  test("UI·征途成就：贡献和支援直接使用 MVP 单项分数且不乘终局系数", () => {
+    for (const [id, characterId, dimension, title] of [
+      ["generous_resonance", "resonance-tuner", "contribution", "慈善家"],
+      ["steadfast_pillar", "oath-warden", "support", "中流砥柱"]
+    ]) {
+      const definition = ACHIEVEMENT_DEFINITIONS.find((entry) => entry.id === id);
+      assert.deepEqual([definition.title, definition.tier, definition.teamScope], [title, "epic", "both"]);
+      for (const score of [199, 200, 201]) {
+        assert.equal(evaluateAchievementForTest(id, {
+          characterId, scores: { [dimension]: score },
+          raw: { [dimension]: 999 }, finalScore: 9999, roundMultiplier: 2, victoryMultiplier: 2
+        }), score >= 200, `${id}:${score}`);
+      }
+      assert.equal(evaluateAchievementForTest(id, { characterId, scores: { [dimension]: 200 }, finalScore: 0 }), true);
+      assert.equal(evaluateAchievementForTest(id, { characterId: "blade-walker", scores: { [dimension]: 200 } }), false);
+      assert.equal(evaluateAchievementForTest(id, { characterId, scores: {}, raw: { [dimension]: 200 } }), false);
+      const performance = calculatePerformance({
+        characterId, initialTeamSize: 2, effectiveRounds: 5, won: true, aliveAtEnd: true,
+        totals: { enemyHpDamage: 0, enemyKills: 0, allyHealing: 6, allyRescueHealing: 0,
+          allyMitigation: 0, allyShieldAbsorbed: 0, hpDamageTaken: 0, cardsPlayed: 0,
+          skillEnergySpent: 0, enemyControls: 0 },
+        contributionFacts: { allyCardsGranted: 10 }
+      });
+      assert.equal(performance.scores[dimension], 200);
+      assert.notEqual(performance.raw[dimension], 200);
+      assert.notEqual(performance.roundMultiplier, 1);
+      assert.notEqual(performance.victoryMultiplier, 1);
+      assert.equal(evaluateAchievementForTest(id, performance), true);
+    }
+  });
+
+  test("UI·征途成就：真实弃牌即时累计并排除响应、破坏、转移和阵亡清理", async () => {
+    const actor = makePlayer("discard-actor", 0, "dawn", "human", 1);
+    const ally = makePlayer("discard-ally", 1, "dawn");
+    const enemy = makePlayer("discard-enemy", 2, "dusk");
+    const { game } = makeGame([actor, ally, enemy], { response: (request) => request.type === "skill" });
+    game.passiveTriggerRegistry.registerForPlayers([actor]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    await game.eventDispatcher.emit("turnStart", { player: actor });
+    actor.hand.push(...Array.from({ length: 9 }, () => instance("charge")));
+    await game.turnWorkflow.handleDiscardPhase(actor, game.state.gameId);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 5);
+    actor.hand.push(instance("block"));
+    await game.resourceWorkflow.payCardsFromHandAtomically(actor, [actor.hand.at(-1)], "响应支付");
+    await game.discardCardFromHand(actor, actor.hand[0], "破坏", { silent: true });
+    await game.resourceWorkflow.moveCardBetweenHands(actor, enemy, actor.hand[0], "窃取");
+    const used = actor.hand[0];
+    await game.resourceWorkflow.moveHandToResolving(actor, used);
+    await game.resourceWorkflow.finishResolvingToDiscard(used);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 5);
+    actor.hand.push(instance("charge"));
+    await game.damage(enemy, ally, 2, { canBlock: false });
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 6);
+    await game.eventDispatcher.emit("turnEnd", { player: actor });
+    actor.hand.push(...Array.from({ length: 7 }, () => instance("charge")));
+    await game.turnWorkflow.handleDiscardPhase(actor, game.state.gameId);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 6);
+    await game.eventDispatcher.emit("turnStart", { player: actor });
+    assert.equal(tracker.recordFor(actor).achievementFacts.turnDiscards, 0);
+    actor.hand.push(...Array.from({ length: 8 }, () => instance("charge")));
+    await game.dyingWorkflow.kill(actor, enemy);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 6);
+    game.dispose();
+  });
+
+  test("UI·征途成就：窃取按真实获牌且滋荣只计实际治疗包括自疗", async () => {
+    for (const characterIndex of [3, 2]) {
+      const actor = makePlayer("skill-actor", 0, "dawn", "human", characterIndex);
+      const ally = makePlayer("skill-ally", 1, "dawn");
+      const enemy = makePlayer("skill-enemy", 2, "dusk");
+      const { game } = makeGame([actor, ally, enemy], { random: () => 0 });
+      const tracker = game.matchPerformanceSidecar.tracker;
+      tracker.initializeRoster();
+      for (let index = 0; index < 6; index += 1) {
+        actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+        actor.energy = 2;
+        if (characterIndex === 3) {
+          if (index === 5) enemy.equipment = instance("energyDevice");
+          else enemy.hand.push(instance("charge"));
+          assert.equal(await game.useActiveSkill(actor, "stealSkill", [enemy]), true);
+          assert.equal(tracker.recordFor(actor).achievementFacts.stolenCards, index + 1);
+        } else {
+          const target = index % 2 ? ally : actor;
+          target.hp = target.maxHp - 1;
+          assert.equal(await game.useActiveSkill(actor, "symbiosis", [target]), true);
+          assert.equal(tracker.recordFor(actor).achievementFacts.symbiosisHealing, index + 1);
+        }
+      }
+      if (characterIndex === 3) {
+        assert.equal(tracker.recordFor(actor).totals.enemyControls, 6);
+        await game.eventDispatcher.publishFact("cardsStolen", {
+          source: actor, skill: { id: "stealSkill" },
+          steals: [{ target: ally, actualAmount: 1 }, { target: null, actualAmount: 1 }]
+        });
+        assert.equal(tracker.recordFor(actor).achievementFacts.stolenCards, 6);
+        assert.equal(await game.useActiveSkill(actor, "stealSkill", [enemy]), false);
+        assert.equal(tracker.recordFor(actor).achievementFacts.stolenCards, 6);
+      } else {
+        await game.heal(actor, ally, 10, { skill: "symbiosis" });
+        await game.heal(actor, actor, 10, { skill: "symbiosis" });
+        ally.hp -= 1;
+        await game.heal(actor, ally, 1, { card: instance("recover") });
+        assert.equal(tracker.recordFor(actor).achievementFacts.symbiosisHealing, 6);
+        assert.equal(tracker.recordFor(actor).totals.allyHealing, 4);
+      }
+      game.dispose();
+    }
+  });
+
+  test("UI·征途成就：孤注只计进入转换且技能回滚与新局清空事实", async () => {
+    const actor = makePlayer("all-in-actor", 0, "dawn", "human", 6);
+    const enemy = makePlayer("all-in-enemy", 1, "dusk");
+    let roll = 0;
+    const { game } = makeGame([actor, enemy], { random: () => roll });
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    for (let index = 0; index < 6; index += 1) {
+      actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+      actor.energy = 1;
+      if (index !== 1) delete actor.statuses.allIn;
+      assert.equal(await game.useActiveSkill(actor, "allIn", []), true);
+      assert.equal(tracker.recordFor(actor).achievementFacts.allInEntries, index === 0 ? 1 : index);
+    }
+    delete actor.statuses.allIn;
+    actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+    actor.energy = 1;
+    roll = 0.99;
+    await game.useActiveSkill(actor, "allIn", []);
+    assert.equal(tracker.recordFor(actor).achievementFacts.allInEntries, 5);
+    roll = 0;
+    actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+    actor.energy = 1;
+    const originalLog = game.log;
+    game.log = () => { throw new Error("skill effect rollback"); };
+    await assert.rejects(game.useActiveSkill(actor, "allIn", []), /skill effect rollback/);
+    game.log = originalLog;
+    assert.equal(tracker.recordFor(actor).achievementFacts.allInEntries, 5);
+    assert.equal(Boolean(actor.statuses.allIn), false);
+    tracker.initializeRoster();
+    const facts = tracker.recordFor(actor).achievementFacts;
+    for (const key of ["allInEntries", "stolenCards", "symbiosisHealing", "completedHunts", "damagingHunts", "burningFieldDamage", "maxTurnDiscards", "maxTurnDamage"]) {
+      assert.equal(facts[key], 0, key);
+    }
+    game.dispose();
+  });
+
+  test("UI·征途成就：猎杀完成按实际伤害去重且致胜命中进入终局", async () => {
+    for (const outcome of ["hit", "shield", "block", "cancel", "rollback", "victory"]) {
+      const actor = makePlayer(`hunt-${outcome}`, 0, "dawn", "human", 5);
+      const enemy = makePlayer("hunt-enemy", 1, "dusk", "human");
+      const ally = makePlayer("hunt-ally", 2, "dawn");
+      const fallenA = makePlayer("hunt-fallen-a", 3, "dusk");
+      const fallenB = makePlayer("hunt-fallen-b", 4, "dusk");
+      const { game } = makeGame([actor, enemy, ally, fallenA, fallenB], { response: (request) => outcome === "block" && request.type === "block" });
+      const tracker = game.matchPerformanceSidecar.tracker;
+      tracker.initializeRoster();
+      fallenA.alive = false;
+      fallenB.alive = false;
+      for (let index = 0; index < 3; index += 1) {
+        actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+        actor.energy = 2;
+        enemy.hp = enemy.maxHp;
+        enemy.statuses.huntMark = { sourceId: actor.id };
+        assert.equal(await game.useActiveSkill(actor, "hunt", [enemy]), true);
+      }
+      assert.equal(tracker.recordFor(actor).achievementFacts.completedHunts, 3);
+      assert.equal(tracker.recordFor(actor).achievementFacts.damagingHunts, 3);
+      actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+      actor.energy = 2;
+      enemy.hp = outcome === "victory" ? 1 : enemy.maxHp;
+      enemy.statuses.huntMark = { sourceId: actor.id };
+      if (outcome === "shield") enemy.shield = 2;
+      if (outcome === "block") enemy.hand.push(instance("block"));
+      if (outcome === "cancel") game.eventDispatcher.on("beforeDamage", "test:cancel-hunt", (event) => { event.cancelled = true; });
+      if (outcome === "rollback") {
+        game.eventDispatcher.on("afterDamage", "test:rollback-hunt", () => { throw new Error("hunt rollback"); });
+        await assert.rejects(game.useActiveSkill(actor, "hunt", [enemy]), /hunt rollback/);
+      } else {
+        assert.equal(await game.useActiveSkill(actor, "hunt", [enemy]), true);
+      }
+      const snapshot = tracker.finalizeMatch();
+      const facts = snapshot.players[0].achievementFacts;
+      assert.equal(facts.completedHunts, outcome === "rollback" ? 3 : 4, outcome);
+      assert.equal(facts.damagingHunts, ["hit", "victory"].includes(outcome) ? 4 : 3, outcome);
+      const unlocked = evaluateMatchAchievements(snapshot, actor.id, createEmptyAchievementData().streaks).unlocked;
+      assert.equal(unlocked.includes("unerring_hunt"), ["hit", "rollback", "victory"].includes(outcome), outcome);
+      if (outcome === "victory") assert.equal(game.state.isGameOver, true);
+      game.dispose();
+    }
+  });
+
+  test("UI·征途成就：焚场与单回合伤害复用 Combat 实际生命伤害", async () => {
+    for (const characterIndex of [4, 0]) {
+      const actor = makePlayer("damage-actor", 0, "dawn", "human", characterIndex);
+      const ally = makePlayer("damage-ally", 1, "dawn");
+      const enemy = makePlayer("damage-enemy", 2, "dusk");
+      const { game } = makeGame([actor, ally, enemy]);
+      const tracker = game.matchPerformanceSidecar.tracker;
+      tracker.initializeRoster();
+      await game.eventDispatcher.emit("turnStart", { player: actor });
+      for (let index = 0; index < 10; index += 1) {
+        enemy.hp = enemy.maxHp;
+        if (characterIndex === 4) {
+          actor.energy = 3;
+          actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+          assert.equal(await game.useActiveSkill(actor, "burningField", []), true);
+          assert.equal(tracker.recordFor(actor).achievementFacts.burningFieldDamage, index + 1);
+        } else {
+          if (index === 7) {
+            assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDamage, 7);
+            await game.eventDispatcher.emit("turnEnd", { player: actor });
+            await game.eventDispatcher.emit("turnStart", { player: actor });
+          }
+          await game.damage(actor, enemy, 1, { canBlock: false });
+        }
+      }
+      const facts = tracker.recordFor(actor).achievementFacts;
+      if (characterIndex === 4) {
+        enemy.hp = enemy.maxHp;
+        await game.damage(actor, enemy, 1, { skill: "hunt" });
+        assert.equal(facts.burningFieldDamage, 10);
+      } else {
+        assert.equal(facts.maxTurnDamage, 7);
+        enemy.hp = enemy.maxHp;
+        enemy.shield = 3;
+        await game.damage(actor, enemy, 3);
+        assert.equal(facts.turnDamage, 3);
+        for (let index = 0; index < 5; index += 1) {
+          enemy.hp = enemy.maxHp;
+          await game.damage(actor, enemy, 1);
+        }
+        assert.equal(facts.maxTurnDamage, 8);
+        await game.eventDispatcher.emit("turnEnd", { player: actor });
+        enemy.hp = enemy.maxHp;
+        await game.damage(actor, enemy, 2);
+        assert.equal(facts.maxTurnDamage, 8);
+      }
+      game.dispose();
+    }
   });
 
   test("UI·征途成就：新增判定严格遵守阈值、存活与真实来源", () => {

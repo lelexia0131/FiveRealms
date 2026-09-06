@@ -642,8 +642,8 @@ export function createActionWorkflow(dependencies) {
   createActionTransaction、recordActiveSkillUse、skillRuntime、getSkillTargets、publishFact。
 
   边界与不变量
-  技能规则由 skill runtime 决定，transition 只提交；使用、支付、给牌与窃取事实只在 transaction commit 后发布，
-  回滚不得污染旁路统计。
+  技能规则由 skill runtime 决定，transition 只提交；使用、支付、给牌、窃取与孤注进入事实只在 transaction commit 后发布。
+  猎杀伤害与完成通知共享 resolutionId；回滚不得污染旁路统计。
   */
   async function useActiveSkill(source, skillId, targets = []) {
     const state = runtime.getState();
@@ -662,6 +662,8 @@ export function createActionWorkflow(dependencies) {
     let actualEnergyPaid = 0;
     let cardGrants = [];
     let cardSteals = [];
+    let enteredAllIn = false;
+    let resolutionId = null;
     try {
       recordActiveSkillUse(state, source, skill.id);
       const targetLabel = runtime.getActionTargetLabel(source, skill, targets);
@@ -672,12 +674,14 @@ export function createActionWorkflow(dependencies) {
         displayTargets: runtime.getActionDisplayTargets(source, skill, targets)
       });
       runtime.presentation.playActionCue("skill");
+      resolutionId = runtime.createId("skill-resolution");
       const skillResult = await runtime.skillRuntime.execute(skill, source, targets, {
-        resolutionId: runtime.createId("skill-resolution"), energyCost
+        resolutionId, energyCost
       });
       actualEnergyPaid = skillResult.actualEnergyPaid;
       cardGrants = skillResult.cardGrants ?? [];
       cardSteals = skillResult.cardSteals ?? [];
+      enteredAllIn = skillResult.enteredAllIn === true;
       if (!runtime.isSessionValid(gameId)) return false;
       completed = true;
     } finally {
@@ -711,7 +715,7 @@ export function createActionWorkflow(dependencies) {
       }
     }
     try {
-      await runtime.publishFact("activeSkillUsed", { source, skill });
+      await runtime.publishFact("activeSkillUsed", { source, skill, resolutionId, enteredAllIn });
     } catch (error) {
       runtime.diagnostics.reportWorkflowError(
         "Action",

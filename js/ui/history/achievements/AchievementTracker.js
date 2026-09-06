@@ -140,7 +140,7 @@ definition.id、player canonical 结果、achievementFacts、streak、persistent
 factsFor、Array.includes、Array.every、Number。
 
 边界与不变量
-只消费已存在的真实伤害、击杀、救援、装备、闪电、MVP、firepower 与残局事实；不重算 MVP、火力或分数。
+只消费正式表现结果与结构化技能/回合事实；角色专属条件同时验证角色 ID，不重算 MVP、伤害或分数。
 */
 function meets(definition, player, streak, persistentFacts, matchResult) {
   const facts = factsFor(player);
@@ -182,6 +182,15 @@ function meets(definition, player, streak, persistentFacts, matchResult) {
     case "radar_tactician": return (facts.radarTacticJudgments ?? 0) >= 5;
     case "energy_twenty_five": return (player?.totals?.skillEnergySpent ?? 0) >= 25;
     case "survivor_thirteen": return Number(facts.maxAliveRound ?? 0) > 12;
+    case "lavish_discard": return (facts.maxTurnDiscards ?? 0) >= 6;
+    case "shadow_collector": return player?.characterId === "shade-agent" && (facts.stolenCards ?? 0) >= 6;
+    case "healing_angel": return player?.characterId === "spirit-medic" && (facts.symbiosisHealing ?? 0) >= 6;
+    case "fate_gambler": return player?.characterId === "fate-gambler" && (facts.allInEntries ?? 0) >= 5;
+    // scores 是正式 MVP 单项分数，尚未乘回合与胜局系数；不使用 raw 或 finalScore 替代。
+    case "generous_resonance": return player?.characterId === "resonance-tuner" && (player?.scores?.contribution ?? 0) >= 200;
+    case "steadfast_pillar": return player?.characterId === "oath-warden" && (player?.scores?.support ?? 0) >= 200;
+    case "unerring_hunt": return player?.characterId === "trail-hunter"
+      && (facts.completedHunts ?? 0) >= 3 && facts.completedHunts === facts.damagingHunts;
     case "last_stand_trio": return Boolean(player?.won) && facts.clutchEnemyCounts?.includes?.(2);
     case "score_over_thousand": return Number(player?.finalScore) > 1000;
     case "mvp_streak_ten": return streak.mvp >= 10;
@@ -190,6 +199,8 @@ function meets(definition, player, streak, persistentFacts, matchResult) {
     case "damage_taken_twelve": return (player?.combatStats?.damageTaken ?? 0) >= 12;
     case "card_creator": return (facts.cardsGained ?? 0) > 100;
     case "battle_over_eighteen": return Number(facts.maxAliveRound ?? 0) > 18;
+    case "blazing_encampment": return player?.characterId === "ember-magus" && (facts.burningFieldDamage ?? 0) >= 10;
+    case "swift_blade": return player?.characterId === "blade-walker" && (facts.maxTurnDamage ?? 0) >= 8;
     case "storm_scribe": return (facts.lightningCasts ?? 0) >= 2 && (facts.lightningHits ?? 0) >= 2;
     case "overflowing_grimoire": return (facts.maxHandCount ?? 0) >= 10;
     case "armory_keeper": return (facts.equipmentUses ?? 0) >= 10;
