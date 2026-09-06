@@ -9661,6 +9661,10 @@ test("装备：四种旧装备采用README中的新名称且保留稳定definiti
   );
 });
 
+test("装备：充能桩描述明确只在自己的回合开始额外获得能量", () => {
+  assert.equal(CARD_DEFINITIONS.energyDevice.description, "你的回合开始获得能量时额外获得1点。");
+});
+
 test("装备：替换装备时旧装备进入弃牌堆且新装备留在槽内", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
@@ -44356,7 +44360,7 @@ test("UI·装备槽：动态状态保留在槽位且 Tooltip 只显示名称和�
   const stateLabels = {
     energyDevice: "持续供能",
     recycleDevice: "0/2",
-    bubbleMachine: "待充盾",
+    bubbleMachine: "待加盾",
     defenseDevice: "待判定",
     battleDevice: "强化中",
     assaultMagazine: "0/2",
@@ -44374,6 +44378,29 @@ test("UI·装备槽：动态状态保留在槽位且 Tooltip 只显示名称和�
     );
     assert.notEqual(markup, empty);
   }
+});
+
+test("UI·装备槽：泡泡机和备用弹夹使用装备区专用简述且保留完整卡牌描述", () => {
+  const player = makePlayer("equipment-copy-ui", 0, "dawn", "human");
+  const equippedSummaries = {
+    bubbleMachine: "回合开始无护盾时加1护盾",
+    assaultMagazine: "突袭使用次数 +2"
+  };
+  for (const [definitionId, summary] of Object.entries(equippedSummaries)) {
+    const definition = CARD_DEFINITIONS[definitionId];
+    player.equipment = instance(definitionId);
+    for (const isHuman of [true, false]) {
+      const markup = equipmentSlotTemplate(player, isHuman);
+      assert.ok(markup.includes(`<div class="equipment-copy"><strong>${definition.name}</strong><small>${summary}</small></div>`));
+      assert.ok(
+        markup.includes(`<span class="equipment-tooltip" role="tooltip"><strong>${definition.name}</strong>${definition.description}</span>`)
+      );
+    }
+    assert.ok(handCardTemplate(instance(definitionId)).includes(`<span class="card-description">${definition.description}</span>`));
+  }
+  player.equipment = instance("energyDevice");
+  assert.ok(equipmentSlotTemplate(player, true).includes(`<small>${CARD_DEFINITIONS.energyDevice.description}</small>`));
+  assert.ok(equipmentSlotTemplate(player, false).includes("<small>回合能量额外+1</small>"));
 });
 
 test("UI·装备槽：回收站和备用弹夹保留三档计数且 Tooltip 不显示状态", () => {

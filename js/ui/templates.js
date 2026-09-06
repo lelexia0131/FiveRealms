@@ -102,6 +102,7 @@ presentCard、escapeHtml。
 
 边界与不变量
 备用弹夹和回收站次数只读取权威计数；模板不得从总突袭次数或上限反推使用量。
+泡泡机和备用弹夹在装备区使用专用简述，Tooltip 仍保留卡牌定义中的完整描述。
 */
 export function equipmentSlotTemplate(player, isHuman = false) {
   if (!player.equipment) {
@@ -111,8 +112,8 @@ export function equipmentSlotTemplate(player, isHuman = false) {
     </div>`;
   }
   const equipment = presentCard(player.equipment);
-  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"战术后摸1张·每回合2次", bubbleMachine:"回合开始0盾时+1", defenseDevice:"需要格挡时公开判定", battleDevice:"突袭需2张格挡", assaultMagazine:"主动突袭上限+2", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
-  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待回收", bubbleMachine:"待充盾", defenseDevice:"待判定", battleDevice:"强化中", telescope:"观测中", barrierDevice:"屏障展开" };
+  const summaries = { energyDevice:"回合能量额外+1", recycleDevice:"战术后摸1张·每回合2次", bubbleMachine:"回合开始无护盾时加1护盾", defenseDevice:"需要格挡时公开判定", battleDevice:"突袭需2张格挡", assaultMagazine:"突袭使用次数 +2", telescope:"对外距离-1", barrierDevice:"他人对你距离+1" };
+  const stateLabels = { energyDevice:"持续供能", recycleDevice:"待回收", bubbleMachine:"待加盾", defenseDevice:"待判定", battleDevice:"强化中", telescope:"观测中", barrierDevice:"屏障展开" };
   const recycleUses = player.turnFlags?.recycleDeviceUses ?? 0;
   const triggered = equipment.definitionId === "recycleDevice" && recycleUses >= 2;
   const magazineUses = Math.max(0, Math.min(2, Number(player.turnFlags?.assaultMagazineUsed) || 0));
@@ -121,9 +122,11 @@ export function equipmentSlotTemplate(player, isHuman = false) {
     : equipment.definitionId === "assaultMagazine"
       ? `${magazineUses}/2`
       : stateLabels[equipment.definitionId] ?? "生效中";
+  const usesEquippedSummary = !isHuman || equipment.definitionId === "bubbleMachine" || equipment.definitionId === "assaultMagazine";
+  const slotDescription = usesEquippedSummary ? summaries[equipment.definitionId] ?? equipment.description : equipment.description;
   return `<div class="equipment-slot is-equipped ${triggered ? "is-triggered" : "is-ready"}" tabindex="0" aria-label="装备：${escapeHtml(equipment.name)}，${escapeHtml(stateLabel)}">
     <img class="equipment-icon" src="${escapeHtml(equipment.icon || equipment.art)}" alt="" aria-hidden="true">
-    <div class="equipment-copy"><strong>${escapeHtml(equipment.name)}</strong><small>${isHuman ? escapeHtml(equipment.description) : escapeHtml(summaries[equipment.definitionId] ?? equipment.description)}</small></div>
+    <div class="equipment-copy"><strong>${escapeHtml(equipment.name)}</strong><small>${escapeHtml(slotDescription)}</small></div>
     <span class="equipment-state">${escapeHtml(stateLabel)}</span>
     <span class="equipment-tooltip" role="tooltip"><strong>${escapeHtml(equipment.name)}</strong>${escapeHtml(equipment.description)}</span>
   </div>`;

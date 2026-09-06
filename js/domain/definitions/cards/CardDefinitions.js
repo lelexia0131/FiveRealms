@@ -353,7 +353,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     category: "equipment",
     targetType: "self",
     subtypes: Object.freeze(["equipment", "energy"]),
-    description: "回合开始获得能量时额外获得1点。",
+    description: "你的回合开始获得能量时额外获得1点。",
     turnEnergyBonus: 1,
   }),
 
