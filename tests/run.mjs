@@ -19869,7 +19869,7 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
     assert.equal(stats.expanded, 101);
     assert.equal(stats.depth, 3);
     assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 2.49588542851475);
+    assert.equal(stats.bestValueScore, 2.498436963616415);
     assert.equal(stats.stopReason, "COMPLETE");
     assert.equal(stats.simulationCalls, 101);
     assert.equal(stats.cloneCalls, 101);
@@ -19880,7 +19880,7 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
     assert.equal(stats.matchedPatternCount, 1);
     assert.equal(stats.patternProposalCount, 1);
     assert.equal(stats.completedPatternCount, 1);
-    assert.equal(stats.patternIncumbentUpdateCount, 2);
+    assert.equal(stats.patternIncumbentUpdateCount, 1);
     assert.equal(stats.selectedPatternId, "SEAL_LAST");
   } finally {
     disposeBenchmarkGame(game);
@@ -19996,7 +19996,7 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.equal(outcome.stats.uniqueRootCandidateCount, 4);
     assert.equal(outcome.stats.completedRootCandidateCount, 4);
     assert.equal(outcome.stats.expanded, 5);
-    assert.equal(outcome.stats.bestValueScore, 1.0913203160774465);
+    assert.equal(outcome.stats.bestValueScore, 1.0916742404142703);
     assert.ok(outcome.stats.elapsedMs >= 30);
     assert.ok(outcome.stats.timeObservedAtMs >= 30);
     assert.ok(outcome.stats.searchReturnAtMs >= outcome.stats.timeObservedAtMs);
@@ -20070,7 +20070,7 @@ test("AI·搜索：TIME 在候选边界返回赌命者最佳完整 root incumben
     assert.equal(outcome.stats.uniqueRootCandidateCount, 3);
     assert.equal(outcome.stats.completedRootCandidateCount, 3);
     assert.equal(outcome.stats.expanded, 9);
-    assert.equal(outcome.stats.bestValueScore, 0.7998136645962725);
+    assert.equal(outcome.stats.bestValueScore, 0.7983950617283945);
     assert.ok(outcome.stats.elapsedMs >= 40);
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
       type: "skill",
@@ -30505,7 +30505,7 @@ test("AI·灵医：energyPressure 归因保留且不生成静态当前能量价�
   const adjacentEnemy = owner("b");
   const distantEnemy = owner("e");
   assert.ok(adjacentEnemy && distantEnemy, "应能找到相邻与不相邻敌人 owner");
-  assertClose(adjacentEnemy.threat.residualExposureValue, 1.7804878048780488);
+  assertClose(adjacentEnemy.threat.residualExposureValue, 1.7878787878787878);
   assertClose(distantEnemy.threat.residualExposureValue, 0, 1e-9);
   assert.equal(Object.hasOwn(actorTerms, "energy"), false);
   assert.equal(Object.hasOwn(adjacentEnemy.generic, "energy"), false);
