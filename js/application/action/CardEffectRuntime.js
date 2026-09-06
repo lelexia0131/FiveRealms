@@ -865,6 +865,32 @@ runtime/card/skill facts。
     async recycleDevice(source, card, _targets, context) { return resolveEquipment(source, card, context); },
 /*
 功能
+执行 bubbleMachine 装备效果 sequencing。
+
+调用方
+bubbleMachine 的 direct callers。
+
+输入
+按 signature 传入的 runtime facts。
+
+输出
+按 signature 返回。
+
+读取状态
+runtime/card/skill facts。
+
+写入状态
+无直接 Domain write。
+
+调用函数
+resolveEquipment。
+
+边界与不变量
+只复用通用装备槽与替换流程；装备瞬间不增加护盾。
+*/
+    async bubbleMachine(source, card, _targets, context) { return resolveEquipment(source, card, context); },
+/*
+功能
 执行 defenseDevice 装备效果 sequencing。
 
 调用方

@@ -5548,6 +5548,7 @@ export class Evaluator {
           stacks: fields.stacks ?? 0,
           equipmentDelta: fields.equipmentDelta ?? 0,
           energyDeviceFuture: fields.energyDeviceFuture ?? 0,
+          bubbleMachineFuture: fields.bubbleMachineFuture ?? 0,
           death: fields.death ?? 0
         },
         threat: {

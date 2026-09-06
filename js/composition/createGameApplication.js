@@ -64,6 +64,7 @@ import { createCardEffectRuntime } from "../application/action/CardEffectRuntime
 import { createSkillEffectRuntime } from "../application/action/SkillEffectRuntime.js";
 import { createPassiveSkillTriggerRegistry } from "../application/trigger/PassiveSkillTriggerRegistry.js";
 import { createRecycleDeviceTrigger } from "../application/trigger/RecycleDeviceTrigger.js";
+import { createBubbleMachineTrigger } from "../application/trigger/BubbleMachineTrigger.js";
 import { createGlobalTriggerRegistry } from "../application/trigger/GlobalTriggerRegistry.js";
 import { PublicCardPoolWorkflow } from "../application/action/PublicCardPoolWorkflow.js";
 import { createResourceWorkflow } from "../application/action/ResourceWorkflow.js";
@@ -203,19 +204,20 @@ function assembleApplicationBoundary(application) {
     无返回值。
 
     读取状态
-    recycleDeviceTrigger 与 globalTriggerRegistry。
+    recycleDeviceTrigger、bubbleMachineTrigger 与 globalTriggerRegistry。
 
     写入状态
-    由两个 registry 向 EventDispatcher 注册监听器。
+    由三个 registry 向 EventDispatcher 注册监听器。
 
     调用函数
-    RecycleDeviceTrigger.register、GlobalTriggerRegistry.register。
+    RecycleDeviceTrigger.register、BubbleMachineTrigger.register、GlobalTriggerRegistry.register。
 
     边界与不变量
     composition 只串接 registry，不拥有触发条件或规则分支。
     */
     registerGlobalRules() {
       application.recycleDeviceTrigger.register();
+      application.bubbleMachineTrigger.register();
       application.globalTriggerRegistry.register();
     },
     runGameLoop:application.turnWorkflow.runGameLoop,
@@ -755,6 +757,13 @@ class MatchApplication {
       isSessionValid: (gameId) => this.isSessionValid(gameId),
       presentation: this.presentationPort,
       drawCards: (...args) => this.drawCards(...args)
+    });
+    this.bubbleMachineTrigger = createBubbleMachineTrigger({
+      onEvent: (eventName, key, handler) => this.eventDispatcher.on(eventName, key, handler),
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      presentation: this.presentationPort,
+      emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload)
     });
     this.passiveTriggerRegistry = createPassiveSkillTriggerRegistry({
       onEvent: (eventName, key, handler) => this.eventDispatcher.on(eventName, key, handler),

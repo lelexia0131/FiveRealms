@@ -97,13 +97,13 @@ $$
 | --- | ---: |
 | 基础牌 | 92 |
 | 战术牌 | 56 |
-| 装备牌 | 16 |
-| 总计 | 164 |
+| 装备牌 | 17 |
+| 总计 | 165 |
 
 所有运行中判定概率继续从扣除合法已知牌后的 remaining finite pool 动态计算。标准完整牌堆的装备类别概率为：
 
 $$
-\boxed{P(\text{equipment})=\frac{16}{164}\approx9.7561\%}
+\boxed{P(\text{equipment})=\frac{17}{165}\approx10.3030\%}
 $$
 
 # 1. 哪些公式真正进入 Final Utility
@@ -270,7 +270,7 @@ $$
 玩家存活时：
 
 $$
-\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+HP2Risk\\ &+ShieldValue\\ &+EnergyDeviceFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentValue\\ &+EquipmentRoleDelta \end{aligned}
+\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+HP2Risk\\ &+ShieldValue\\ &+BubbleMachineFuture\\ &+EnergyDeviceFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentValue\\ &+EquipmentRoleDelta \end{aligned}
 $$
 
 其中前半由 `StateValue.js` 唯一拥有，手牌/装备 intrinsic asset 由 `CardValue.js` 唯一拥有。
@@ -594,6 +594,28 @@ $$
 \boxed{ ShieldValue=Reserve+HPProtection+LifeProtection }
 $$
 
+## 7.4 泡泡机未来护盾价值
+
+`BubbleMachineFuture` 只表示当前装备泡泡机且当前护盾为 0 时，下一次自己的回合开始尚未兑现的第一层普通护盾状态价值。它直接复用上一节的 `ShieldValue` authority：
+
+$$
+\boxed{
+BubbleMachineFuture=
+I(alive)\times I(equipment=bubbleMachine)\times I(Shield=0)\times R_{equipment}
+\times[ShieldValue(1)-ShieldValue(0)]
+}
+$$
+
+其中 `R_{equipment}` 直接使用现有 `equipmentRetentionProbability`，并且只在本项乘一次；当前没有额外的公共 equipment-future retention 管线，因此不得再做第二次折损。该公式不引入泡泡机专属价值常数，也不复制 `Reserve`、`HPProtection` 或 `LifeProtection`。
+
+当前已有护盾时：
+
+$$
+Shield>0\Rightarrow BubbleMachineFuture=0
+$$
+
+触发前真实 `ShieldValue` 按 0 盾计算，而 `BubbleMachineFuture` 表示尚未兑现的第一层；真实 `turnStart` 形成 1 点护盾后，`BubbleMachineFuture` 归零，新增价值切换到现有 `ShieldValue`，两者不重复计价。该快照 Future 不预测下一回合前的攻击、护盾消耗或专属触发概率，也不包含静态装备价值 7 与角色差量。
+
 # 8. 充能桩未来能量价值
 
 源码：`StateValue.js:87 energyDeviceFutureUtility()`。
@@ -726,6 +748,7 @@ $$
 | lightning 闪电        | 3    |
 | energyDevice 充能桩   | 7    |
 | recycleDevice 回收站  | 8    |
+| bubbleMachine 泡泡机  | 7    |
 | defenseDevice 雷达    | 9    |
 | battleDevice 军火库   | 9    |
 | assaultMagazine 备用弹夹 | 8 |
@@ -771,6 +794,7 @@ $$
 | 封印                                                 | 0    | 0    | 0    | -1   | +1   | +1   | 0    | -1   |
 | 充能桩                                               | -1   | 0    | +1   | +1   | +1   | +1   | +1   | 0    |
 | 回收站                                               | 0    | -1   | -1   | 0    | +1   | -1   | +1   | +1   |
+| 泡泡机                                               | 0    | +2   | -1   | +1   | 0    | 0    | 0    | +1   |
 | 雷达                                                 | -1   | +1   | +1   | 0    | 0    | -1   | -1   | +1   |
 | 军火库                                               | +2   | -1   | -1   | +1   | 0    | +1   | +1   | -1   |
 | 备用弹夹                                             | +2   | 0    | 0    | 0    | +1   | +2   | +1   | 0    |
@@ -964,6 +988,7 @@ EquipmentValue
 EquipmentRoleDelta
 ExposeStackValue
 EnergyDeviceFuture
+BubbleMachineFuture
 ```
 
 ## 14.2 单玩家风险度 R_i
@@ -3131,7 +3156,7 @@ $$
 其中字段被归类为：
 
 - generic：handCount、energy
-- material：hp、shield、hp2Risk、info、stacks、equipmentDelta、energyDeviceFuture、death
+- material：hp、shield、hp2Risk、info、stacks、equipmentDelta、energyDeviceFuture、bubbleMachineFuture、death
 - threat：currentThreat、futureInventory、energyPressure、markThreat、radar
 - specific：handRole、equipmentRole
 - outcome：danger

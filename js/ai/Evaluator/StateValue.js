@@ -889,6 +889,44 @@ function shieldStateValue(player, residualExposure) {
 
 /*
 功能
+计算泡泡机尚未兑现的下一次自己回合第一层普通护盾状态价值。
+
+调用方
+statePlayerValueTerms。
+
+输入
+玩家与已扣除雷达减免的残余暴露。
+
+输出
+按现有装备保留概率折算的非负未来状态点数。
+
+读取状态
+只读玩家存活、装备、当前护盾与 equipmentRetentionProbability。
+
+写入状态
+无。
+
+调用函数
+shieldStateValue、clampProbability。
+
+边界与不变量
+当前已有护盾时恒为零；只比较同一快照的 ShieldValue(1)-ShieldValue(0)，
+不复制护盾公式、不加入静态装备价值，也不预测触发前的攻击或护盾消耗。
+*/
+function bubbleMachineFutureUtility(player, residualExposure) {
+  if (!player?.alive
+    || player.equipmentDefinitionId !== "bubbleMachine"
+    || Number(player.shield) !== 0) return 0;
+  const retention = clampProbability(player.equipmentRetentionProbability ?? 1);
+  if (retention <= PROBABILITY_EPSILON) return 0;
+  const nextShield = CARD_DEFINITIONS.bubbleMachine.turnShieldGain;
+  const futureShieldValue = shieldStateValue({ ...player, shield: nextShield }, residualExposure);
+  const currentShieldValue = shieldStateValue(player, residualExposure);
+  return retention * Math.max(0, futureShieldValue - currentShieldValue);
+}
+
+/*
+功能
 从 viewer 阵营视角计算封印跳过出牌阶段的期望团队负担。
 
 调用方
@@ -940,11 +978,11 @@ death 与不含 hand/equipment intrinsic asset 的 terms。
 无。
 
 调用函数
-Probability、Threat primitives、skillReadinessThreat 与 energyDeviceFutureUtility。
+Probability、Threat primitives、skillReadinessThreat、energyDeviceFutureUtility 与 bubbleMachineFutureUtility。
 
 边界与不变量
 不得计算手牌或装备资产价值；skillReadiness 只评价已有技能在当前/下一能量阶段的可用机会，
-不得恢复按当前能量线性计分；energyDeviceFuture 只表示装备造成的独立未来能量状态后果。
+不得恢复按当前能量线性计分；energyDeviceFuture 与 bubbleMachineFuture 只表示装备造成且尚未兑现的独立未来状态后果。
 */
 export function statePlayerValueTerms(
   state,
@@ -988,6 +1026,7 @@ export function statePlayerValueTerms(
       hp2Risk: hp2ThreatRiskValue(player, bufferResidualExposure),
       hp: player.hp * HP_VALUE,
       shield,
+      bubbleMachineFuture: bubbleMachineFutureUtility(player, residualExposure),
       skillReadiness: skillReadinessThreat(player),
       stacks: (player.exposeWeaknessStacks ?? 0) * 3,
       markThreat: -markThreat * 2,

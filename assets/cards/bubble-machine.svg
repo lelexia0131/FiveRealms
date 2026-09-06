@@ -1,0 +1,26 @@
+<svg width="480" height="280" viewBox="0 0 480 280" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">泡泡机</title><desc id="desc">蓝绿色机械装置吹出一枚带护盾纹章的发光泡泡</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#183743"/><stop offset="1" stop-color="#466f78"/></linearGradient>
+    <radialGradient id="bubble"><stop stop-color="#f4ffff" stop-opacity=".92"/><stop offset=".42" stop-color="#8bd8e4" stop-opacity=".48"/><stop offset="1" stop-color="#4a91ad" stop-opacity=".12"/></radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#d8c785"/><stop offset=".5" stop-color="#8b7442"/><stop offset="1" stop-color="#3c4e50"/></linearGradient>
+  </defs>
+  <rect width="480" height="280" fill="url(#background)"/>
+  <g fill="url(#bubble)" stroke="#bdebf0" stroke-width="6">
+    <circle cx="334" cy="104" r="72"/>
+    <circle cx="401" cy="53" r="24" opacity=".72"/>
+    <circle cx="421" cy="154" r="31" opacity=".58"/>
+    <circle cx="289" cy="48" r="18" opacity=".62"/>
+  </g>
+  <path d="M334 56 378 72v30c0 31-20 47-44 57-24-10-44-26-44-57V72Z" fill="#6aa9bd" fill-opacity=".68" stroke="#f0dc91" stroke-width="7"/>
+  <path d="m334 76 25 10v17c0 17-11 27-25 34-14-7-25-17-25-34V86Z" fill="#d9f5f3" fill-opacity=".62"/>
+  <g stroke="#d4bd70" stroke-width="8">
+    <rect x="82" y="111" width="173" height="105" rx="22" fill="url(#metal)"/>
+    <path d="M236 127h62l22 21-22 21h-62Z" fill="#667f7e"/>
+    <circle cx="132" cy="164" r="31" fill="#426b70"/>
+    <circle cx="132" cy="164" r="13" fill="#d9f3ed"/>
+    <path d="M102 216v26M228 216v26"/>
+  </g>
+  <path d="M52 242h218" stroke="#90b9b7" stroke-width="9" stroke-linecap="round"/>
+  <g fill="#c9f2f0" opacity=".7"><circle cx="46" cy="66" r="11"/><circle cx="88" cy="43" r="17"/><circle cx="151" cy="72" r="9"/></g>
+</svg>

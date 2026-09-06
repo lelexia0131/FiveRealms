@@ -177,6 +177,13 @@ export const CARD_PRESENTATION = Object.freeze({
     accent: "#7d8260",
     frameStyle: "machine",
   }),
+  bubbleMachine: Object.freeze({
+    categoryName: "装备牌",
+    art: "./assets/cards/bubble-machine.svg",
+    icon: "./assets/cards/bubble-machine.svg",
+    accent: "#4d91a8",
+    frameStyle: "machine",
+  }),
   defenseDevice: Object.freeze({
     categoryName: "装备牌",
     art: "./assets/cards/defense-device.svg",

@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有 FiveRealms 二十七种卡牌的纯静态领域定义；不含 AI 价值、UI 素材、展示样式或运行时 resolver。
+唯一拥有 FiveRealms 二十八种卡牌的纯静态领域定义；不含 AI 价值、UI 素材、展示样式或运行时 resolver。
 
 上游
 Domain card rules、Application action、AI 与 presentation consumers。
@@ -372,6 +372,22 @@ export const CARD_DEFINITIONS = Object.freeze({
     description: "每回合使用战术牌后摸1张，即使该牌被反制；每回合最多触发2次。",
     triggerDrawCount: 1,
     maxUsesPerTurn: 2,
+  }),
+
+  bubbleMachine: Object.freeze({
+    usageMode: "active",
+    responseTypes: Object.freeze([]),
+    counterable: false,
+    counterScope: "card",
+    ignoresDistance: false,
+    selectionFlow: Object.freeze([]),
+    definitionId: "bubbleMachine",
+    name: "泡泡机",
+    category: "equipment",
+    targetType: "self",
+    subtypes: Object.freeze(["equipment", "shield"]),
+    description: "你的回合开始时，若你当前没有护盾，获得1点护盾。",
+    turnShieldGain: 1,
   }),
 
   defenseDevice: Object.freeze({

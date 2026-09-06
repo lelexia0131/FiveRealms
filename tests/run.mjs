@@ -103,7 +103,7 @@ import {
   createAction,
   sameAction
 } from "../js/ai/Generator/Action.js";
-import { threatScore } from "../js/ai/Evaluator/StateValue.js";
+import { statePlayerValueTerms, threatScore } from "../js/ai/Evaluator/StateValue.js";
 import { HP_RISK_OPTION_WEIGHT } from "../js/ai/Evaluator/StateValue.js";
 import {
   Evaluator,
@@ -188,6 +188,7 @@ import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoi
 import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js";
 import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferableHandCount, getTransferSourceIds, hasHandOrEquipmentFacts } from "../js/domain/rules/card/CardRules.js";
 import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRules.js";
+import { canTriggerBubbleMachine } from "../js/domain/rules/card/BubbleMachineRules.js";
 import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js";
 import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js";
 import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js";
@@ -972,9 +973,9 @@ for (const definition of Object.values(CARD_DEFINITIONS)) test(`卡牌资源：$
 
 // ---- 卡牌定义与数量 ----
 
-test("卡牌定义：牌组恰有27种定义和164张实体牌", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 27);
-  assert.equal(TOTAL_CARD_COUNT, 164);
+test("卡牌定义：牌组恰有28种定义和165张实体牌", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 28);
+  assert.equal(TOTAL_CARD_COUNT, 165);
 });
 
 test(
@@ -1039,14 +1040,14 @@ test("卡牌定义：借势在集中牌堆中固定3张且均为不同真实实�
   assert.equal(deck.cards.filter((card) => card.definitionId === "leverage").length, 3);
 });
 
-test("卡牌定义：装备牌数量合计16且数量来自统一配置", () => {
+test("卡牌定义：装备牌数量合计17且数量来自统一配置", () => {
   const equipment = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment");
-  assert.equal(equipment.reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0), 16);
-  assert.equal(equipment.length, 7);
+  assert.equal(equipment.reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0), 17);
+  assert.equal(equipment.length, 8);
   assert.deepEqual(
     Object.fromEntries(equipment.map((card) => [card.definitionId, CARD_COUNTS[card.definitionId]])),
     {
-      energyDevice: 2, recycleDevice: 3, defenseDevice: 2, battleDevice: 2,
+      energyDevice: 2, recycleDevice: 3, bubbleMachine: 1, defenseDevice: 2, battleDevice: 2,
       assaultMagazine: 1, telescope: 3, barrierDevice: 3
     }
   );
@@ -1799,10 +1800,10 @@ test("架构治理：architecture authority 与 checker guard 已冻结", frArch
 
 // ---- 牌堆、区域与重洗 ----
 
-test("牌堆：Deck 创建164个唯一实体 card.id", () => {
+test("牌堆：Deck 创建165个唯一实体 card.id", () => {
   const deck = new Deck(() => .4);
-  assert.equal(deck.build(TEST_VERSION_STATE), 164);
-  assert.equal(new Set(deck.cards.map((card) => card.id)).size, 164);
+  assert.equal(deck.build(TEST_VERSION_STATE), 165);
+  assert.equal(new Set(deck.cards.map((card) => card.id)).size, 165);
 });
 
 test("牌堆：结算区不会进入重洗", () => {
@@ -8716,11 +8717,11 @@ test("封印：定义、数量、牌堆与原有牌数量正确", () => {
   assert.equal(CARD_COUNTS.seal, 3);
   assert.equal(getBaseCardAiValue(seal.definitionId), 7);
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("seal"));
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 27);
-  assert.equal(TOTAL_CARD_COUNT, 164);
-  assert.equal(TOTAL_CARD_COUNT - CARD_COUNTS.seal, 161);
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 28);
+  assert.equal(TOTAL_CARD_COUNT, 165);
+  assert.equal(TOTAL_CARD_COUNT - CARD_COUNTS.seal, 162);
   const deck = new Deck(() => 0);
-  assert.equal(deck.build(TEST_VERSION_STATE), 164);
+  assert.equal(deck.build(TEST_VERSION_STATE), 165);
   const cards = deck.cards.filter((card) => card.definitionId === "seal");
   assert.equal(cards.length, 3);
   assert.equal(new Set(cards.map((card) => card.id)).size, 3);
@@ -9037,17 +9038,17 @@ test("闪电：定义、数量与牌堆总数正确", () => {
   assert.equal(getBaseCardAiValue(lightning.definitionId), 3);
   assert.ok(lightning.description.includes("闪电"));
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("lightning"));
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 27);
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 28);
   const tacticTotal = Object.values(
     CARD_DEFINITIONS
   ).filter((card) => card.category === "tactic").reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0);
   assert.equal(tacticTotal, 56);
-  assert.equal(TOTAL_CARD_COUNT, 164);
+  assert.equal(TOTAL_CARD_COUNT, 165);
 });
 
 test("闪电：Deck.build 生成正好两张不同实体 ID", () => {
   const deck = new Deck(() => 0);
-  assert.equal(deck.build(TEST_VERSION_STATE), 164);
+  assert.equal(deck.build(TEST_VERSION_STATE), 165);
   const cards = deck.cards.filter((card) => card.definitionId === "lightning");
   assert.equal(cards.length, 2);
   assert.equal(new Set(cards.map((card) => card.id)).size, 2);
@@ -9638,7 +9639,7 @@ test("闪电：卡牌描述与 README 当前描述完全一致", async () => {
 
 // ---- 装备公共规则 ----
 
-for (const id of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) test(`装备：${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => {
+for (const id of ["energyDevice", "recycleDevice", "bubbleMachine", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) test(`装备：${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
     = makeGame([a, b]);
@@ -9842,6 +9843,90 @@ test("充能桩：只给回合能量额外+1", () => {
   );
   small.equipment = instance("battleDevice");
   assert.equal(game.teamRules.getTurnEnergyGain(small), 1);
+});
+
+// ---- 泡泡机 ----
+
+test("泡泡机：Domain 只允许存活、实际装备且0盾的角色触发", () => {
+  const facts = { ownerAlive: true, equipmentDefinitionId: "bubbleMachine", currentShield: 0 };
+  assert.equal(CARD_DEFINITIONS.bubbleMachine.description, "你的回合开始时，若你当前没有护盾，获得1点护盾。");
+  assert.equal(CARD_DEFINITIONS.bubbleMachine.turnShieldGain, 1);
+  assert.equal(canTriggerBubbleMachine(facts), true);
+  assert.equal(canTriggerBubbleMachine({ ...facts, ownerAlive: false }), false);
+  assert.equal(canTriggerBubbleMachine({ ...facts, equipmentDefinitionId: "energyDevice" }), false);
+  assert.equal(canTriggerBubbleMachine({ ...facts, currentShield: 1 }), false);
+});
+
+test("泡泡机：自己的 turnStart 在0盾时获得1点普通护盾并发布标准事实", async () => {
+  const owner = makePlayer("bubble-owner", 0, "dawn"),
+    other = makePlayer("bubble-other", 1, "dusk"),
+    { game } = makeGame([owner, other]);
+  owner.equipment = instance("bubbleMachine");
+  const granted = [];
+  game.eventDispatcher.on("shieldGranted", "test:bubble-machine-granted", (event) => {
+    granted.push(event);
+  });
+
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: other });
+  assert.equal(owner.shield, 0);
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 1);
+  assert.equal(granted.length, 1);
+  assert.deepEqual(
+    {
+      source: granted[0].source,
+      target: granted[0].target,
+      actualAddedAmount: granted[0].actualAddedAmount,
+      effectDefinitionId: granted[0].effectDefinitionId
+    },
+    { source: owner, target: owner, actualAddedAmount: 1, effectDefinitionId: "bubbleMachine" }
+  );
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${owner.name}的「泡泡机」触发，获得1点护盾。`
+  ));
+
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 1);
+  assert.equal(granted.length, 1);
+});
+
+test("泡泡机：已有盾不触发且回合中途护盾降到0不补", async () => {
+  const owner = makePlayer("bubble-shielded", 0, "dawn"),
+    enemy = makePlayer("bubble-attacker", 1, "dusk"),
+    { game } = makeGame([owner, enemy]);
+  owner.equipment = instance("bubbleMachine");
+  owner.shield = 1;
+  let granted = 0;
+  game.eventDispatcher.on("shieldGranted", "test:bubble-machine-no-refill", () => {
+    granted += 1;
+  });
+
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 1);
+  await game.damage(enemy, owner, 1, { canBlock: false });
+  assert.equal(owner.shield, 0);
+  assert.equal(granted, 0);
+});
+
+test("泡泡机：回合中途替换装备不立即补盾且只等下个自己的 turnStart", async () => {
+  const owner = makePlayer("bubble-equip-owner", 0, "dawn"),
+    other = makePlayer("bubble-equip-other", 1, "dusk"),
+    oldEquipment = instance("energyDevice"),
+    bubbleMachine = instance("bubbleMachine"),
+    { game } = makeGame([owner, other]);
+  owner.equipment = oldEquipment;
+  owner.hand.push(bubbleMachine);
+
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 0);
+  assert.equal(await game.playCard(owner, bubbleMachine, []), true);
+  assert.equal(owner.equipment, bubbleMachine);
+  assert.ok(game.state.deck.discardPile.includes(oldEquipment));
+  assert.equal(owner.shield, 0);
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: other });
+  assert.equal(owner.shield, 0);
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 1);
 });
 
 // ---- 回收站 ----
@@ -28050,6 +28135,76 @@ test("AI·装备：完全移除时按初始装备价值产生完整损失", () =
 
 
 
+// ---- AI 装备行为·泡泡机 ----
+
+test("AI·泡泡机：通用装备模拟只写装备状态且不在装备瞬间加盾", () => {
+  const state = {
+    players: [{
+      id: "bubble-simulator-actor",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      characterId: "oath-warden",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      handCount: 1,
+      hand: [{ id: "bubble-card", definitionId: "bubbleMachine" }],
+      equipmentDefinitionId: "energyDevice",
+      equipmentRetentionProbability: 1
+    }]
+  };
+  const next = new Simulator(state).apply(
+    state,
+    { type: "card", card: { ...CARD_DEFINITIONS.bubbleMachine, id: "bubble-card" }, targets: [] },
+    "bubble-simulator-actor"
+  );
+  assert.equal(next.players[0].equipmentDefinitionId, "bubbleMachine");
+  assert.equal(next.players[0].equipmentRetentionProbability, 1);
+  assert.equal(next.players[0].shield, 0);
+});
+
+test("AI·泡泡机：Future 复用第一层 ShieldValue、已有盾归零且 retention 只乘一次", () => {
+  const actor = makePlayer("bubble-value-actor", 0, "dawn", "ai", 1),
+    ally = makePlayer("bubble-value-ally", 1, "dawn"),
+    { game } = makeGame([actor, ally]);
+  actor.equipment = instance("bubbleMachine");
+  const world = createInitialWorld(actor.id, game.state);
+  const worldActor = world.players.find((player) => player.id === actor.id);
+  const zeroShieldTerms = statePlayerValueTerms(world, worldActor, actor.id, 0).terms;
+  const oneShieldTerms = statePlayerValueTerms(
+    world,
+    { ...worldActor, shield: 1 },
+    actor.id,
+    0
+  ).terms;
+  const halfRetentionTerms = statePlayerValueTerms(
+    world,
+    { ...worldActor, equipmentRetentionProbability: 0.5 },
+    actor.id,
+    0
+  ).terms;
+  const noRetentionTerms = statePlayerValueTerms(
+    world,
+    { ...worldActor, equipmentRetentionProbability: 0 },
+    actor.id,
+    0
+  ).terms;
+
+  assert.ok(zeroShieldTerms.bubbleMachineFuture > 0);
+  assertClose(
+    zeroShieldTerms.bubbleMachineFuture,
+    oneShieldTerms.shield - zeroShieldTerms.shield
+  );
+  assert.equal(oneShieldTerms.bubbleMachineFuture, 0);
+  assertClose(halfRetentionTerms.bubbleMachineFuture, zeroShieldTerms.bubbleMachineFuture * 0.5);
+  assert.equal(noRetentionTerms.bubbleMachineFuture, 0);
+  assertClose(
+    zeroShieldTerms.shield + zeroShieldTerms.bubbleMachineFuture,
+    oneShieldTerms.shield + oneShieldTerms.bubbleMachineFuture
+  );
+});
+
 // ---- AI 装备行为·回收站 ----
 
 test("AI·回收站：触发期望严格封顶2次", () => {
@@ -28858,16 +29013,16 @@ test("AI·雷达：战术判定概率来自剩余牌堆且战术牌耗尽时归�
   assertClose(fixed.tactic, tacticTotal / total);
 });
 
-test("AI·雷达：标准完整牌堆的装备判定概率由16张装备除以164张总牌动态得出", () => {
+test("AI·雷达：标准完整牌堆与泡泡机都按通用装备类别参与判定", () => {
   const fixed = buildRadarJudgmentProbabilities(null);
   const equipmentTotal = Object.values(CARD_DEFINITIONS)
     .filter((definition) => definition.category === "equipment")
     .reduce((sum, definition) => sum + CARD_COUNTS[definition.definitionId], 0);
   const total = Object.values(CARD_COUNTS).reduce((sum, count) => sum + count, 0);
-  assert.equal(equipmentTotal, 16);
-  assert.equal(total, 164);
+  assert.equal(equipmentTotal, 17);
+  assert.equal(total, 165);
   assertClose(fixed.equipment, equipmentTotal / total);
-  assertClose(fixed.equipment, 16 / 164);
+  assertClose(fixed.equipment, 17 / 165);
   const lightningState = upgradeProbabilityFixture({
     remainingCardCounts: { ...CARD_COUNTS },
     players: []
@@ -28877,7 +29032,14 @@ test("AI·雷达：标准完整牌堆的装备判定概率由16张装备除以16
     lightningState,
     holderIds
   );
-  assertClose(lightning[0].probability, 16 / 164);
+  assertClose(lightning[0].probability, 17 / 165);
+  const bubblePool = buildRadarJudgmentProbabilities({ bubbleMachine: 1, assault: 1 });
+  assertClose(bubblePool.equipment, 0.5);
+  const bubbleLightning = buildProbabilityLightningHitDistribution(
+    upgradeProbabilityFixture({ remainingCardCounts: { bubbleMachine: 1, assault: 1 }, players: [] }),
+    ["bubble-holder", "next-holder"]
+  );
+  assertClose(bubbleLightning[0].probability, 0.5);
 });
 
 test("AI·雷达：canonical Probability 单次判定保持质量、空池、override 与输入只读", async () => {
@@ -34205,6 +34367,7 @@ const EXPECTED_CARD_AI_VALUES = Object.freeze({
   lightning: ["闪电", 3],
   energyDevice: ["充能桩", 7],
   recycleDevice: ["回收站", 8],
+  bubbleMachine: ["泡泡机", 7],
   defenseDevice: ["雷达", 9],
   battleDevice: ["军火库", 9],
   assaultMagazine: ["备用弹夹", 8],
@@ -34260,6 +34423,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     mutualBenefit: -1,
     symbiosis: 1,
     recycleDevice: -1,
+    bubbleMachine: 2,
     defenseDevice: 1,
     battleDevice: -1,
     assaultMagazine: -1,
@@ -34283,6 +34447,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     symbiosis: 2,
     energyDevice: 1,
     recycleDevice: -1,
+    bubbleMachine: -1,
     defenseDevice: 1,
     battleDevice: -1,
     assaultMagazine: -1,
@@ -34299,6 +34464,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     duel: 1,
     seal: -1,
     energyDevice: 1,
+    bubbleMachine: 1,
     battleDevice: 1,
     telescope: 1
   },
@@ -34376,6 +34542,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     symbiosis: 1,
     seal: -1,
     recycleDevice: 1,
+    bubbleMachine: 1,
     defenseDevice: 1,
     battleDevice: -1,
     telescope: 1,
@@ -34383,7 +34550,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
   }
 });
 
-test("AI·角色卡牌价值：27 张正式基础值与名称、definitionId 全部匹配", () => {
+test("AI·角色卡牌价值：28 张正式基础值与名称、definitionId 全部匹配", () => {
   const actual = Object.fromEntries(
     Object.values(CARD_DEFINITIONS).map(
       (definition) => [
@@ -34398,7 +34565,7 @@ test("AI·角色卡牌价值：27 张正式基础值与名称、definitionId 全
   }
 });
 
-test("AI·角色卡牌价值：八名角色 ID 与 141 项正式非零差值全部匹配", () => {
+test("AI·角色卡牌价值：八名角色 ID 与 145 项正式非零差值全部匹配", () => {
   assert.deepEqual(
     Object.fromEntries(CHARACTER_DEFINITIONS.map((character) => [character.id, character.name])),
     EXPECTED_ROLE_NAMES
@@ -34414,7 +34581,7 @@ test("AI·角色卡牌价值：八名角色 ID 与 141 项正式非零差值全�
   }
   assert.equal(
     Object.values(ROLE_CARD_VALUE_DELTAS).reduce((sum, deltas) => sum + Object.keys(deltas).length, 0),
-    141
+    145
   );
 });
 
@@ -34426,7 +34593,7 @@ test("AI·角色卡牌价值：守誓者与灵医的备用弹夹最终值均为 
   assert.equal(getRoleCardAiValue("spirit-medic", "assaultMagazine"), 7);
 });
 
-test("AI·角色卡牌价值：八名角色乘 27 张牌的差值与最终值全部匹配", () => {
+test("AI·角色卡牌价值：八名角色乘 28 张牌的差值与最终值全部匹配", () => {
   for (const [characterId, expectedDeltas] of Object.entries(EXPECTED_ROLE_CARD_VALUE_DELTAS)) {
     for (const [definitionId, [, baseValue]] of Object.entries(EXPECTED_CARD_AI_VALUES)) {
       const expectedDelta = expectedDeltas[definitionId] ?? 0;
@@ -40429,7 +40596,7 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(pages["basic-cards"], /聚能积攒潜力，护盾为下一轮铺路。/);
   assert.equal(getRulebookCardView("recover").targetLabel, "自己或濒死的队友");
   assert.equal(getRulebookCardView("harvest").targetLabel, "自己");
-  for (const definitionId of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) {
+  for (const definitionId of ["energyDevice", "recycleDevice", "bubbleMachine", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) {
     assert.equal(getRulebookCardView(definitionId).destinationLabel, "使用后进入装备槽");
   }
 
@@ -40447,6 +40614,7 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(pages["hidden-information"], /不知道具体牌面。/);
   assert.doesNotMatch(pages["hidden-information"], /FiveRealms 不会因为电脑|definition|类别|实体手牌/);
   assert.match(pages.equipment, /rulebook-card-grid is-equipment/);
+  assert.match(pages.equipment, /泡泡机[\s\S]*每个自己的回合开始仅检查一次/);
   assert.match(pages["horizontal-card-view"], /自己的手牌区、对手手牌区、隐藏牌选择区与私密展示区/);
   assert.match(pages["horizontal-card-view"], /公共牌池/);
   assert.match(pages["example-one"], /<h2>从摸牌到一次格挡。<\/h2>/);
@@ -40454,9 +40622,9 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(rulebookCss, /\.callout-one, \.callout-three, \.callout-four, \.callout-five\s*\{[^}]*color:\s*var\(--text-primary\)[^}]*filter:\s*none;/s);
 });
 
-test("UI·入局说明：二十七张正式卡均以真实定义与素材逐张图解", () => {
+test("UI·入局说明：二十八张正式卡均以真实定义与素材逐张图解", () => {
   const content = buildRulebookPages().map((page) => page.html).join("\n");
-  assert.equal((content.match(/<article class="manual-card"/g) ?? []).length, 27);
+  assert.equal((content.match(/<article class="manual-card"/g) ?? []).length, 28);
   for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
     const view = getRulebookCardView(definitionId);
     assert.equal(view.description, definition.description);
@@ -44188,6 +44356,7 @@ test("UI·装备槽：动态状态保留在槽位且 Tooltip 只显示名称和�
   const stateLabels = {
     energyDevice: "持续供能",
     recycleDevice: "0/2",
+    bubbleMachine: "待充盾",
     defenseDevice: "待判定",
     battleDevice: "强化中",
     assaultMagazine: "0/2",
@@ -44234,8 +44403,8 @@ test("UI·布局样式：UIManager 源码不直接写生命、能量、手牌或
   ) assert.doesNotMatch(source, forbidden);
 });
 
-test("UI·布局样式：27 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 27);
+test("UI·布局样式：28 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 28);
   for (const definition of Object.values(CARD_DEFINITIONS)) {
     const card = { ...definition, id: `layout-${definition.definitionId}` };
     for (const markup of [handCardTemplate(card), opponentHandStripTemplate([{ known: true, ...card }])]) {
