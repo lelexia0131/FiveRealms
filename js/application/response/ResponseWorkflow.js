@@ -768,7 +768,7 @@ export function createResponseWorkflow(dependencies) {
   ResponseWorkflow 决斗/借势窗口。
 
   输入
-  responder、reason 与 context。
+  responder、reason，以及可选的父业务 usageContext/resolution 上下文。
 
   输出
   USED/DECLINED/CANCELLED/INVALID。
@@ -783,7 +783,8 @@ export function createResponseWorkflow(dependencies) {
   isResponderEligible、isCardResponseImpossibleFromPublicInfo、waitForDecision、finishRequest、payCardsFromHandAtomically、emitCardCommitted、createId。
 
   边界与不变量
-  响应类型与资格由 Domain Rule 决定；只有原子支付成功才发布一次 committed 事实，取消、非法和未支付响应均不发布。
+  响应类型与资格由 Domain Rule 决定；只有原子支付成功才发布一次 committed 事实，取消、非法和未支付响应均不发布；
+  决斗身份只能由 Duel resolver 显式传入，不能从提示文案或牌名推导。
   */
   async function requestAssaultDiscard(responder, reason, context = {}) {
     const gameId = runtime.getState().gameId;
@@ -824,7 +825,8 @@ export function createResponseWorkflow(dependencies) {
       card: cardToUse,
       targets: context.source ? [context.source] : [],
       resolutionId: runtime.createId("assault-response-resolution"),
-      usageContext: "response"
+      usageContext: context.usageContext ?? "response",
+      parentResolutionId: context.parentResolutionId ?? null
     });
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
     if (context.card?.definitionId === "duel") {

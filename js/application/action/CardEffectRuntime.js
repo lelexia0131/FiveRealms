@@ -659,28 +659,28 @@ runtime/card/skill facts。
 
 /*
 功能
-执行 duel 卡牌效果 sequencing。
+执行决斗卡牌的交替突袭响应，并发布该真实 Duel session 的生命周期事实。
 
 调用方
-duel 的 direct callers。
+CardEffectRuntime.resolve。
 
 输入
-按 signature 传入的 runtime facts。
+source、duel card、唯一 target 与父 Action context。
 
 输出
-按 signature 返回。
+成功结算无显式返回；session 取消时返回 { resolved:false }。
 
 读取状态
-runtime/card/skill facts。
+MatchState session、参战玩家存活状态与内部 duelContext。
 
 写入状态
-无直接 Domain write。
+内部 duelContext；伤害仍经 combat workflow 写入 Domain state。
 
 调用函数
-下游 collaborator。
+runtime.publishFact、responseWorkflow.requestAssaultDiscard、runtime.damage 与 presentation collaborators。
 
 边界与不变量
-不重复 Domain rule 决定。
+父 Action resolutionId 是本次 Duel session 的唯一身份；生命周期事实只由真实 Duel resolver 发布，响应突袭沿用该身份。
 */
     async duel(source, card, targets, context) {
       const state = runtime.getState();
@@ -688,11 +688,32 @@ runtime/card/skill facts。
       const target = targets[0];
       let current = target;
       let opponent = source;
-      duelContext = { sourceId: source.id, targetId: target.id, currentId: target.id };
+      duelContext = {
+        resolutionId: context.resolutionId,
+        sourceId: source.id,
+        targetId: target.id,
+        currentId: target.id
+      };
+      await runtime.publishFact("duelStarted", {
+        source,
+        target,
+        resolutionId: context.resolutionId
+      });
+      if (!runtime.isSessionValid(gameId)) return { resolved: false };
       while (current.alive && opponent.alive && !state.isGameOver) {
         duelContext.currentId = current.id;
         runtime.presentation.showDuel({ playerId: current.id, opponentId: opponent.id });
-        const assault = await runtime.responseWorkflow.requestAssaultDiscard(current, "在决斗中打出突袭", { source: opponent, target: current, card });
+        const assault = await runtime.responseWorkflow.requestAssaultDiscard(
+          current,
+          "在决斗中打出突袭",
+          {
+            source: opponent,
+            target: current,
+            card,
+            usageContext: "duel",
+            parentResolutionId: context.resolutionId
+          }
+        );
         if (!runtime.isSessionValid(gameId) || assault.status === "cancelled") return { resolved: false };
         if (assault.status !== "used") {
           runtime.presentation.log(`${current.name}在决斗中败下阵来。`, "important");
@@ -702,6 +723,12 @@ runtime/card/skill facts。
         }
         [current, opponent] = [opponent, current];
       }
+      if (!runtime.isSessionValid(gameId)) return { resolved: false };
+      await runtime.publishFact("duelEnded", {
+        source,
+        target,
+        resolutionId: context.resolutionId
+      });
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
       duelContext = null;
       runtime.presentation.hideDuel();
@@ -1128,7 +1155,7 @@ runtime/card/skill facts。
   Object.freeze。
 
   边界与不变量
-  checkpoint 只含公开 player IDs，不持有新的真实实体。
+  checkpoint 只含父 Action resolutionId 与公开 player IDs，不持有新的真实实体。
   */
   function captureActionCheckpoint() {
     return duelContext ? Object.freeze({ ...duelContext }) : null;

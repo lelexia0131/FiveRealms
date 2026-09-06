@@ -191,6 +191,7 @@ function meets(definition, player, streak, persistentFacts, matchResult) {
     case "steadfast_pillar": return player?.characterId === "oath-warden" && (player?.scores?.support ?? 0) >= 200;
     case "unerring_hunt": return player?.characterId === "trail-hunter"
       && (facts.completedHunts ?? 0) >= 3 && facts.completedHunts === facts.damagingHunts;
+    case "evenly_matched": return (facts.maxCommittedAssaultsInDuel ?? 0) >= 3;
     case "last_stand_trio": return Boolean(player?.won) && facts.clutchEnemyCounts?.includes?.(2);
     case "score_over_thousand": return Number(player?.finalScore) > 1000;
     case "mvp_streak_ten": return streak.mvp >= 10;

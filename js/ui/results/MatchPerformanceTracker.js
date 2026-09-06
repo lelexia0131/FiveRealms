@@ -60,13 +60,17 @@ createPlayerRecord。
 Set。
 
 边界与不变量
-集合只在 tracker 内可变，冻结快照输出数组；初始手牌作为本局首批获牌计数，手牌峰值只在本人行动回合采样，最高存活轮次只由 roundStart 推进。
+集合只在 tracker 内可变，冻结快照输出数组；初始手牌作为本局首批获牌计数，手牌峰值只在本人行动回合采样；
+单次决斗计数只活在 Duel 生命周期内，冻结时只保留本局单次最高值。
 */
 function createAchievementFacts(initialHandCount) {
   return {
     activeSkillUses: 0,
     activeAssaultUses: 0,
     committedAssaultUses: 0,
+    activeDuelResolutionId: null,
+    activeDuelCommittedAssaults: 0,
+    maxCommittedAssaultsInDuel: 0,
     rescueCount: 0,
     maxTurnDamage: 0,
     maxTurnDiscards: 0,
@@ -212,7 +216,7 @@ record。
 Object.freeze。
 
 边界与不变量
-effectiveRounds 至少为一；胜负按玩家自己的开局阵营判定；快照不共享可变 totals 引用。
+effectiveRounds 至少为一；胜负按玩家自己的开局阵营判定；快照不共享可变 totals 引用，也不暴露已结束 Duel 的临时 identity/count。
 */
 function freezePlayerRecord(record, aliveAtEnd, winnerTeam, player) {
   const {
@@ -222,6 +226,8 @@ function freezePlayerRecord(record, aliveAtEnd, winnerTeam, player) {
     turnKills: _turnKills,
     damageResolutionId: _damageResolutionId,
     damageResolutionTotal: _damageResolutionTotal,
+    activeDuelResolutionId: _activeDuelResolutionId,
+    activeDuelCommittedAssaults: _activeDuelCommittedAssaults,
     clutchEnemyCounts,
     ...achievementFacts
   } = record.achievementFacts;
@@ -322,6 +328,8 @@ export class MatchPerformanceTracker {
       cardsStolen: (event) => this.handleCardsStolen(event),
       sealSettled: (event) => this.handleSealSettled(event),
       skillEnergyPaid: (event) => this.handleSkillEnergyPaid(event),
+      duelStarted: (event) => this.handleDuelStarted(event),
+      duelEnded: (event) => this.handleDuelEnded(event),
       activeSkillUsed: (event) => this.handleActiveSkillUsed(event),
       playerRescued: (event) => this.handlePlayerRescued(event),
       playerDead: (event) => this.handlePlayerDead(event)
@@ -1638,7 +1646,79 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  记录真人玩家正式提交的突袭事实，并保留普通 action 主动突袭的既有计数。
+  以真实 Duel resolver 发布的生命周期事实初始化参战玩家的本次决斗突袭计数。
+
+  调用方
+  duelStarted listener。
+
+  输入
+  含 source、target 与父 Duel Action resolutionId 的 immutable fact。
+
+  输出
+  无返回值。
+
+  读取状态
+  参战玩家对应的 tracker records。
+
+  写入状态
+  对应 achievementFacts.activeDuelResolutionId 与 activeDuelCommittedAssaults。
+
+  调用函数
+  recordFor、Set。
+
+  边界与不变量
+  只有具备稳定 resolutionId 的真实 Duel 才建立会话；新决斗必须从零开始，已记录的单次最高值不清除。
+  */
+  handleDuelStarted(event) {
+    if (!event.resolutionId) return;
+    const participantIds = new Set([event.source?.id, event.target?.id].filter(Boolean));
+    for (const playerId of participantIds) {
+      const facts = this.recordFor(playerId)?.achievementFacts;
+      if (!facts) continue;
+      facts.activeDuelResolutionId = event.resolutionId;
+      facts.activeDuelCommittedAssaults = 0;
+    }
+  }
+
+  /*
+  功能
+  在真实 Duel resolver 收束时结束参战玩家的临时突袭计数。
+
+  调用方
+  duelEnded listener。
+
+  输入
+  含 source、target 与父 Duel Action resolutionId 的 immutable fact。
+
+  输出
+  无返回值。
+
+  读取状态
+  参战玩家当前 activeDuelResolutionId。
+
+  写入状态
+  匹配会话的 activeDuelResolutionId 与 activeDuelCommittedAssaults。
+
+  调用函数
+  recordFor、Set。
+
+  边界与不变量
+  迟到或不匹配的结束事实不能清除另一场决斗；单次最高值作为本局已达成事实继续保留。
+  */
+  handleDuelEnded(event) {
+    if (!event.resolutionId) return;
+    const participantIds = new Set([event.source?.id, event.target?.id].filter(Boolean));
+    for (const playerId of participantIds) {
+      const facts = this.recordFor(playerId)?.achievementFacts;
+      if (!facts || facts.activeDuelResolutionId !== event.resolutionId) continue;
+      facts.activeDuelResolutionId = null;
+      facts.activeDuelCommittedAssaults = 0;
+    }
+  }
+
+  /*
+  功能
+  记录真人玩家正式提交的突袭事实，并按父 Duel resolution 累计同一次决斗内的本人突袭。
 
   调用方
   cardCommitted listener。
@@ -1650,16 +1730,17 @@ export class MatchPerformanceTracker {
   无返回值。
 
   读取状态
-  source.controllerType、card.definitionId 与 usageContext。
+  source.controllerType、card.definitionId、usageContext、parentResolutionId 与当前 Duel 生命周期。
 
   写入状态
-  source achievementFacts.committedAssaultUses，以及普通 action 的 activeAssaultUses。
+  source achievementFacts 的 committedAssaultUses、activeAssaultUses、activeDuelCommittedAssaults 与 maxCommittedAssaultsInDuel。
 
   调用函数
   recordFor。
 
   边界与不变量
-  committedAssaultUses 接受真人全部正式提交的突袭；activeAssaultUses 仍只接受普通 action，AI 与提交前取消均不计数。
+  committedAssaultUses 接受真人全部正式提交的突袭；决斗计数还要求显式 duel usage 与匹配父 resolution；
+  activeAssaultUses 仍只接受普通 action，AI、其他玩家、非决斗响应与提交前取消均不计入本人成就事实。
   */
   handleCardCommitted(event) {
     if (event.source?.controllerType !== "human"
@@ -1668,6 +1749,15 @@ export class MatchPerformanceTracker {
     if (!record) return;
     record.achievementFacts.committedAssaultUses += 1;
     if (event.usageContext === "action") record.achievementFacts.activeAssaultUses += 1;
+    const facts = record.achievementFacts;
+    if (event.usageContext !== "duel"
+      || !event.parentResolutionId
+      || facts.activeDuelResolutionId !== event.parentResolutionId) return;
+    facts.activeDuelCommittedAssaults += 1;
+    facts.maxCommittedAssaultsInDuel = Math.max(
+      facts.maxCommittedAssaultsInDuel,
+      facts.activeDuelCommittedAssaults
+    );
   }
 
   /*

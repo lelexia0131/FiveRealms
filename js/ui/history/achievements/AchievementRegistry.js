@@ -80,6 +80,7 @@ const definitions = [
   { id: "generous_resonance", tier: "epic", hidden: false, title: "慈善家", description: "风塔送出和弦，每一道回声都成为同行者的力量。", criteria: "使用调律师一局游戏贡献达到200分", teamScope: "both", order: 15, artwork: artwork("generous_resonance") },
   { id: "steadfast_pillar", tier: "epic", hidden: false, title: "中流砥柱", description: "洪流冲过断桥，你撑起了所有人的归路。", criteria: "使用守誓者一局游戏支援达到200分", teamScope: "both", order: 16, artwork: artwork("steadfast_pillar") },
   { id: "unerring_hunt", tier: "epic", hidden: false, title: "百发百中", description: "林间每一道追迹，都在猎物身上留下回答。", criteria: "使用追猎者一局游戏至少完成3次猎杀，且每次都造成伤害", teamScope: "both", order: 17, artwork: artwork("unerring_hunt") },
+  { id: "evenly_matched", tier: "epic", hidden: false, title: "难分上下", description: "你在决斗中至少坚持了 3 个回合。", criteria: "同一次决斗中，玩家本人实际打出至少 3 次突袭。", teamScope: "both", order: 18, artwork: artwork("evenly_matched") },
   { id: "last_stand_trio", tier: "legendary", hidden: false, title: "逆境三人行", description: "三人的阵线倒转成孤锋，也能把绝境走成胜局。", criteria: "三人小队形成 1v2 并最终获胜。", teamScope: "trio", order: 1, artwork: artwork("last_stand_trio") },
   { id: "score_over_thousand", tier: "legendary", hidden: false, title: "破千", description: "终局落幕时，战场为你的表现留下了高耸刻度。", criteria: "单场最终个人成绩严格大于 1000 分。", teamScope: "both", order: 2, artwork: artwork("score_over_thousand") },
   { id: "mvp_streak_ten", tier: "legendary", hidden: false, title: "冠冕长明", description: "十场终局的掌声，始终落在你的名字上。", criteria: "连续 10 场成为 MVP。", teamScope: "both", order: 3, artwork: artwork("mvp_streak_ten") },
