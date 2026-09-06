@@ -33863,6 +33863,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: -1,
     defenseDevice: 1,
     battleDevice: -1,
+    assaultMagazine: -1,
     telescope: -1,
     barrierDevice: 1
   },
@@ -33885,6 +33886,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: -1,
     defenseDevice: 1,
     battleDevice: -1,
+    assaultMagazine: -1,
     telescope: -1,
     barrierDevice: 1
   },
@@ -33997,7 +33999,7 @@ test("AI·角色卡牌价值：27 张正式基础值与名称、definitionId 全
   }
 });
 
-test("AI·角色卡牌价值：八名角色 ID 与 139 项正式非零差值全部匹配", () => {
+test("AI·角色卡牌价值：八名角色 ID 与 141 项正式非零差值全部匹配", () => {
   assert.deepEqual(
     Object.fromEntries(CHARACTER_DEFINITIONS.map((character) => [character.id, character.name])),
     EXPECTED_ROLE_NAMES
@@ -34013,8 +34015,16 @@ test("AI·角色卡牌价值：八名角色 ID 与 139 项正式非零差值全�
   }
   assert.equal(
     Object.values(ROLE_CARD_VALUE_DELTAS).reduce((sum, deltas) => sum + Object.keys(deltas).length, 0),
-    139
+    141
   );
+});
+
+test("AI·角色卡牌价值：守誓者与灵医的备用弹夹最终值均为 7", () => {
+  assert.equal(getBaseCardAiValue("assaultMagazine"), 8);
+  assert.equal(ROLE_CARD_VALUE_DELTAS["oath-warden"].assaultMagazine, -1);
+  assert.equal(ROLE_CARD_VALUE_DELTAS["spirit-medic"].assaultMagazine, -1);
+  assert.equal(getRoleCardAiValue("oath-warden", "assaultMagazine"), 7);
+  assert.equal(getRoleCardAiValue("spirit-medic", "assaultMagazine"), 7);
 });
 
 test("AI·角色卡牌价值：八名角色乘 27 张牌的差值与最终值全部匹配", () => {

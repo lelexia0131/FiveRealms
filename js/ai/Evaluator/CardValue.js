@@ -104,6 +104,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: -1,
     defenseDevice: 1,
     battleDevice: -1,
+    assaultMagazine: -1,
     telescope: -1,
     barrierDevice: 1
   }),
@@ -127,6 +128,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: -1,
     defenseDevice: 1,
     battleDevice: -1,
+    assaultMagazine: -1,
     telescope: -1,
     barrierDevice: 1
   }),
