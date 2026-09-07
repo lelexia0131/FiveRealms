@@ -39,7 +39,7 @@ import {
 } from "./Searcher/Searcher.js";
 import { Pattern } from "./Searcher/Pattern.js";
 import { Rng, hashSearchSeed } from "./Searcher/Rng.js";
-import { Simulator, tacticResolutionScale } from "./Simulator/Simulator.js";
+import { Simulator } from "./Simulator/Simulator.js";
 import {
   inAttackRange,
   sampleProbabilityWorlds
@@ -537,7 +537,6 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   const searcher = new Searcher({
     evaluator,
     pattern:new Pattern(),
-    getResolutionScale:tacticResolutionScale,
     config,
     simulatorFactory,
     searchBudgetFactory:() => new SearchBudget({

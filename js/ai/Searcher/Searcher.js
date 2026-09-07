@@ -128,7 +128,6 @@ export class Searcher {
   constructor({
     evaluator,
     pattern,
-    getResolutionScale,
     config,
     simulatorFactory,
     searchBudgetFactory,
@@ -142,7 +141,6 @@ export class Searcher {
       pattern
     };
     const capabilities = {
-      getResolutionScale,
       simulatorFactory,
       searchBudgetFactory,
       deduplicateActions,
@@ -637,12 +635,6 @@ considerIncumbent 与 prune。
     });
     const beforeLightningOutcomeSets = simulator.buildLightningOutcomeSets(beforeState);
     const afterLightningOutcomeSets = simulator.buildLightningOutcomeSets(afterState);
-    const resolutionScale = this.getResolutionScale(
-      action,
-      beforeState,
-      player.id,
-      simulator
-    );
     const transitionEvaluationWorlds = simulator.getTransitionEvaluationWorlds?.(afterState)
       ?? null;
     const baseTerms = assertCompleteTransitionTerms(this.evaluator.evaluateTransition({
@@ -651,8 +643,8 @@ considerIncumbent 与 prune。
       beforeState,
       afterState,
       effectBaselineState:transitionEvaluationWorlds?.effectBaselineState ?? null,
+      effectResolutionScale:transitionEvaluationWorlds?.effectResolutionScale ?? 1,
       depth,
-      resolutionScale,
       beforeLightningOutcomeSets,
       afterLightningOutcomeSets
     }));

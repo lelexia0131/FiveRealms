@@ -27762,7 +27762,7 @@ test("AI·互利：多名接收者按座次消费当前池且 Final 无重复 Op
   assert.equal(terms.baseTransition, terms.stateDeltaValue);
 });
 
-test("AI·互利：Counter 的部分 resolution 由同一失败/成功 World 配对计价", () => {
+test("AI·互利：Counter 的部分 resolution 由同一 effect Worlds 单一 authority 计价", () => {
   const counter = {
     cardId:"mutual-partial-counter",
     definitionId:"counter",
@@ -27779,7 +27779,13 @@ test("AI·互利：Counter 的部分 resolution 由同一失败/成功 World 配
       knownCards:[counter]
     })
   ], { assault:1, recover:1, charge:1 });
-  const simulator = new Simulator(state, { decideCounter:() => true });
+  let counterDecisionCalls = 0;
+  const simulator = new Simulator(state, {
+    decideCounter:() => {
+      counterDecisionCalls += 1;
+      return true;
+    }
+  });
   const actor = state.players[0];
   const action = createAction({
     type:"card",
@@ -27810,8 +27816,10 @@ test("AI·互利：Counter 的部分 resolution 由同一失败/成功 World 配
     charge:0
   });
   const evaluator = new Evaluator();
-  const effectBaselineState = simulator.getTransitionEvaluationWorlds(after)?.effectBaselineState;
+  const transitionEvaluationWorlds = simulator.getTransitionEvaluationWorlds(after);
+  const effectBaselineState = transitionEvaluationWorlds?.effectBaselineState;
   assert.ok(effectBaselineState);
+  assertClose(transitionEvaluationWorlds.effectResolutionScale, 0.5, 1e-12);
   const baselineDelta = evaluator.stateUtility(effectBaselineState, actor.id)
     - evaluator.stateUtility(state, actor.id);
   const receiptDelta = evaluator.stateUtility(after, actor.id)
@@ -27823,7 +27831,7 @@ test("AI·互利：Counter 的部分 resolution 由同一失败/成功 World 配
     beforeState:state,
     afterState:after,
     effectBaselineState,
-    resolutionScale:0.5
+    effectResolutionScale:transitionEvaluationWorlds.effectResolutionScale
   });
   assertClose(terms.stateDelta, baselineDelta + receiptDelta * 0.5, 1e-12);
   assert.ok(Math.abs(
@@ -27832,6 +27840,33 @@ test("AI·互利：Counter 的部分 resolution 由同一失败/成功 World 配
     ) * 0.5
   ) > 1e-12);
   assert.equal(terms.transitionOptionPoints, 0);
+  const callsAfterApply = counterDecisionCalls;
+  const searcher = Object.assign(Object.create(Searcher.prototype), {
+    evaluator:{
+      evaluateTransition:evaluator.evaluateTransition.bind(evaluator),
+      requiresActionLightningOutcomes:() => false,
+      requiresHiddenWorldPrior:() => false,
+      composeSearchPrior:() => ({ domainPrior:0, searchCredit:0, prior:0 }),
+      resourceSelectionPreference:() => null
+    },
+    materializeValueTerms:() => ({
+      exposeMarginal:0,
+      assaultStacksCredit:0,
+      nextProvenance:null
+    })
+  });
+  const candidate = searcher.evaluateCandidate({
+    action,
+    beforeState:state,
+    afterState:after,
+    player:actor,
+    depth:1,
+    remainingProvenance:null,
+    simulator,
+    context:{}
+  });
+  assertClose(candidate.baseTerms.resolutionScale, 0.5, 1e-12);
+  assert.equal(counterDecisionCalls, callsAfterApply);
 });
 
 test("AI·互利：部分 resolution 的装备换装保留失败旧装备与成功新装备 Worlds", () => {

@@ -39,7 +39,6 @@ import {
 } from "../../domain/rules/status/StatusRules.js";
 import {
   PROBABILITY_EPSILON,
-  availableBranchesFromState,
   buildLightningHitDistribution,
   buildRadarJudgmentSequenceProbabilities,
   cardAvailability,
@@ -141,7 +140,7 @@ class SimulatorCore {
   Simulator.apply 返回的 resolved World。
 
   输出
-  可空的 `{ effectBaselineState }`；resolved World 即输入 afterState，普通 transition 返回 null。
+  Scout/互利返回可空的 `{ effectBaselineState, effectResolutionScale }`；普通 transition 返回 null。
 
   读取状态
   transitionEvaluationWorlds 的本实例 WeakMap。
@@ -153,7 +152,8 @@ class SimulatorCore {
   WeakMap.get。
 
   边界与不变量
-  只返回同一次 apply 产生的完整 Worlds；不在 canonical World 保存 action metadata、branch arrays 或第二套状态。
+  只返回同一次 apply 产生的完整 Worlds 与实际 effect Worlds 的发生质量；
+  不在 canonical World 保存 action metadata、branch arrays 或第二套状态。
   */
   getTransitionEvaluationWorlds(afterState) {
     return this.transitionEvaluationWorlds.get(afterState) ?? null;
@@ -3016,8 +3016,11 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
         this.simulateCategoryUse(effectBaselineState, baselineActor, category, cardEventWorlds);
       }
       this.syncActiveSkillCosts(effectBaselineState);
+    }
+    if (["scout", "mutualBenefit"].includes(card.definitionId)) {
       this.transitionEvaluationWorlds.set(next, {
-        effectBaselineState
+        effectBaselineState,
+        effectResolutionScale:scale
       });
     }
 

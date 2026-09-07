@@ -697,7 +697,13 @@ spyGapTransitionInformationPoints、privatePeekInformationValue、resourceTransa
 互利 receipt 已完整物化到 after World，只能经 StateDelta 进入 Final；
 资源交易直接读取 after World 的实际应用概率，不得再次乘 resolutionScale。
 */
-function deriveTransitionOptionPoints(action, player, beforeState, afterState, resolutionScale) {
+function deriveTransitionOptionPoints(
+  action,
+  player,
+  beforeState,
+  afterState,
+  effectResolutionScale
+) {
   const spyGapInformationPoints = spyGapTransitionInformationPoints(
     player,
     beforeState,
@@ -714,11 +720,6 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
       afterState
     );
   }
-  const heldCard = (beforeActor.hand ?? []).find((entry) => (
-    entry.id === action.cardInstanceId
-  ));
-  const executionProbability = cardAvailability(heldCard);
-  const effectScale = clampProbability(executionProbability * resolutionScale);
   if (cardId === "scout") {
     const target = beforeState.players.find((entry) => entry.id === action.targetIds?.[0]);
     if (!target?.alive) return spyGapInformationPoints;
@@ -732,7 +733,7 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
       beforeActor,
       target,
       actualNewRevealCount
-    ) * effectScale * 0.35;
+    ) * clampProbability(effectResolutionScale) * 0.35;
   }
   if (cardId === "leverage") {
     const firstId = action.selection?.firstTargetId ?? action.targetIds?.[0];
@@ -4604,7 +4605,7 @@ planningCounterDecision、planningDynamicCounterGain、assessGlobalBenefit、dyn
   Searcher candidate evaluation path。
 
   输入
-  动作、actor、before/after、可选 effect baseline World、horizon depth 与上游已计算的 resolution scale。
+  动作、actor、before/after、可选 effect baseline World、Simulator 已解析的 effect resolution scale 与 horizon depth。
 
   输出
   各命名 term、X 技能的下一能量反事实输入、END 独立装备槽事实与 baseTransition 的普通对象。
@@ -4632,14 +4633,11 @@ planningCounterDecision、planningDynamicCounterGain、assessGlobalBenefit、dyn
     beforeState,
     afterState,
     effectBaselineState = null,
+    effectResolutionScale = 1,
     depth = 1,
-    resolutionScale = 1,
     beforeLightningOutcomeSets = [],
     afterLightningOutcomeSets = []
   }) {
-    const effectResolutionScale = ["scout", "mutualBenefit"].includes(action.cardId)
-      ? resolutionScale
-      : 1;
     const beforeSnapshot = this.stateValueSnapshot(
       beforeState,
       player.id,
@@ -5414,7 +5412,7 @@ planningCounterDecision、planningDynamicCounterGain、assessGlobalBenefit、dyn
   Simulator root Worlds、响应者 ID 与两侧闪电 outcomes。
 
   输出
-  FLIP-STAY 数值；全体受益牌返回 null。
+  FLIP-STAY 数值；互利直接比较 Simulator 已物化的 receipt Worlds。
 
   读取状态
   只读当前 World 与 root 公开上下文。

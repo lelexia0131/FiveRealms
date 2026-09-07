@@ -36,7 +36,6 @@ import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import {
   projectAttackUsage,
-  projectRulePlayer,
   projectRulePlayers,
   projectTransferRulePlayers
 } from "../Event/Fact.js";
