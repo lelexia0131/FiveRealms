@@ -103,8 +103,8 @@ import {
   createAction,
   sameAction
 } from "../js/ai/Generator/Action.js";
-import { statePlayerValueTerms, threatScore } from "../js/ai/Evaluator/StateValue.js";
-import { HP_RISK_OPTION_WEIGHT } from "../js/ai/Evaluator/StateValue.js";
+import { statePlayerValueTerms, targetPriorityScore } from "../js/ai/Evaluator/StateValue.js";
+import { HP3_RISK_WEIGHT, HP2_RISK_WEIGHT } from "../js/ai/Evaluator/StateValue.js";
 import {
   Evaluator,
   MIN_TRANSFER_UTILITY,
@@ -14987,7 +14987,7 @@ async function responseCombatSemanticClosure() {
   assert.doesNotMatch(source.controller, /ResponsePolicy|ResponseBoundary/);
   assert.doesNotMatch(
     source.controller,
-    /threatPriority\(|turnOpportunityValue|probabilityFromCurrentCounts|tacticJudgmentProbability|\.(?:sort|reduce)\(/
+    /targetPriority\(|turnOpportunityValue|probabilityFromCurrentCounts|tacticJudgmentProbability|\.(?:sort|reduce)\(/
   );
   assert.match(source.response, /this\.decideBlock/);
   assert.match(source.response, /this\.decideGuardianAid/);
@@ -15087,7 +15087,7 @@ async function finalAiResidueApiClosure() {
   assert.match(counterfactualMethod, /actor\.energy = energy/);
   assert.match(counterfactualMethod, /afterWorld:this\.apply\(beforeWorld, action\)/);
   assert.doesNotMatch(source.stateValue, /class\s+ThreatCalculator/);
-  assert.match(source.stateValue, /export\s+function\s+threatScore\s*\(/);
+  assert.match(source.stateValue, /export\s+function\s+targetPriorityScore\s*\(/);
   assert.match(
     source.evaluator,
     /breakArmyUtility[\s\S]*reduce\(\(sum, card\) => sum \+ cardAvailability\(card\)/
@@ -29659,6 +29659,28 @@ test("AI·雷达：保留基础牌收益只按实际 HandCount 与 viewer HandRo
   assertClose(enemyViewerTerms.radarFuture, HAND_COUNT_VALUE);
 });
 
+test("AI·雷达：判得 Block 与其它 Basic 使用同一 HandValue", () => {
+  const holder = radarFixtureTarget({ hand:[] });
+  const attacker = radarAttacker({
+    handCount:1,
+    hand:[{ id:"radar-block-future-assault", definitionId:"assault" }],
+    attackRange:1,
+    nextTurnBaseAttackLimit:1
+  });
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ block:1 },
+    players:[attacker, holder]
+  });
+  const future = new Evaluator().playerValueTerms(
+    state,
+    holder,
+    holder.id,
+    buildRadarJudgmentProbabilities({ block:1 })
+  ).terms.radarFuture;
+  assert.ok(future > 0);
+  assertClose(future, realizedHandCardStateValue(holder, holder.id, "block"));
+});
+
 test("AI·雷达：保留基础牌 RoleDelta 不乘材料尺度且 Base 不进入 StateValue", () => {
   const positive = equipmentFutureFixture("defenseDevice", {
     actorCharacterId:"spirit-medic",
@@ -29730,50 +29752,77 @@ test("AI·雷达：保留基础牌 Future 与 viewer 边界下的实际 HandStat
   assert.equal(holder.hand[0].definitionId, "charge");
 });
 
-test("AI·雷达：判得 Block 立即支付不留下手牌或 Future phantom", () => {
-  for (const preExistingCount of [0, 1]) {
-    const holder = radarFixtureTarget({
-      handCount:preExistingCount,
-      hand:Array.from({ length:preExistingCount }, (_, index) => ({
-        id:`radar-existing-block-${index}`,
-        definitionId:"block"
-      }))
-    });
-    const attacker = radarAttacker();
-    const state = upgradeProbabilityFixture({
-      remainingCardCounts:{ block:1 },
-      players:[attacker, holder]
-    });
-    const beforeTerms = cardPlayerValueTerms(holder, holder.id);
-    const evaluator = new Evaluator();
-    const prediction = evaluator.playerValueTerms(
-      state,
-      holder,
-      holder.id,
-      buildRadarJudgmentProbabilities({ block:1 })
-    ).terms.radarFuture;
-    const predictedDefenseCost = expectedDefenseCost(
-      state,
-      holder,
-      getRequiredBlockCount(null, true),
-      realizedHandCardStateValue(holder, attacker.id, "block")
-    );
-    new Simulator(state).applyDamage(state, attacker, holder, 1, {
-      canBlock:true,
-      deviceAttack:true,
-      radarJudgmentProbabilities:{ block:1, otherBasic:0, equipment:0 }
-    });
-    const afterTerms = cardPlayerValueTerms(holder, holder.id);
-    assert.equal(prediction, 0);
-    assert.equal(predictedDefenseCost, 0);
-    assert.equal(holder.hp, 4);
-    assert.equal(holder.handCount, preExistingCount);
-    assert.equal(holder.hand.length, preExistingCount);
-    assertClose(
-      afterTerms.handCount + afterTerms.handRoleDelta,
-      beforeTerms.handCount + beforeTerms.handRoleDelta
-    );
-  }
+test("AI·雷达：旧 Block 支付后 judgment Block 留手并守恒", () => {
+  const original = { id:"radar-existing-block", definitionId:"block" };
+  const holder = radarFixtureTarget({ handCount:1, hand:[original] });
+  const attacker = radarAttacker({
+    handCount:1,
+    hand:[{ id:"radar-existing-payment-assault", definitionId:"assault" }],
+    attackRange:1,
+    nextTurnBaseAttackLimit:1
+  });
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ block:1 },
+    players:[attacker, holder]
+  });
+  const beforeTerms = cardPlayerValueTerms(holder, holder.id);
+  const basicHandValue = realizedHandCardStateValue(holder, holder.id, "block");
+  const future = new Evaluator().playerValueTerms(
+    state,
+    holder,
+    holder.id,
+    buildRadarJudgmentProbabilities({ block:1 })
+  ).terms.radarFuture;
+  new Simulator(state).applyDamage(state, attacker, holder, 1, {
+    canBlock:true,
+    deviceAttack:true,
+    radarJudgmentProbabilities:{ block:1, otherBasic:0, equipment:0 }
+  });
+  const afterTerms = cardPlayerValueTerms(holder, holder.id);
+  const handStateDelta = afterTerms.handCount + afterTerms.handRoleDelta
+    - beforeTerms.handCount - beforeTerms.handRoleDelta;
+  assertClose(future, basicHandValue);
+  assert.equal(holder.hp, 4);
+  assert.equal(holder.handCount, 1);
+  assert.equal(holder.hand.length, 1);
+  assert.notEqual(holder.hand[0].id, original.id);
+  assert.equal(holder.hand[0].definitionId, "block");
+  assertClose(handStateDelta, future - basicHandValue);
+});
+
+test("AI·雷达：judgment Block 立即支付后不留下 phantom hand value", () => {
+  const holder = radarFixtureTarget({ hand:[] });
+  const attacker = radarAttacker({
+    handCount:1,
+    hand:[{ id:"radar-judgment-payment-assault", definitionId:"assault" }],
+    attackRange:1,
+    nextTurnBaseAttackLimit:1
+  });
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ block:1 },
+    players:[attacker, holder]
+  });
+  const beforeTerms = cardPlayerValueTerms(holder, holder.id);
+  const basicHandValue = realizedHandCardStateValue(holder, holder.id, "block");
+  const future = new Evaluator().playerValueTerms(
+    state,
+    holder,
+    holder.id,
+    buildRadarJudgmentProbabilities({ block:1 })
+  ).terms.radarFuture;
+  new Simulator(state).applyDamage(state, attacker, holder, 1, {
+    canBlock:true,
+    deviceAttack:true,
+    radarJudgmentProbabilities:{ block:1, otherBasic:0, equipment:0 }
+  });
+  const afterTerms = cardPlayerValueTerms(holder, holder.id);
+  const handStateDelta = afterTerms.handCount + afterTerms.handRoleDelta
+    - beforeTerms.handCount - beforeTerms.handRoleDelta;
+  assertClose(future, basicHandValue);
+  assert.equal(holder.hp, 4);
+  assert.equal(holder.handCount, 0);
+  assert.equal(holder.hand.length, 0);
+  assertClose(handStateDelta, future - basicHandValue);
 });
 
 test("AI·雷达：突袭、震荡、焚场与猎杀全部进入真实 Expected Block Demand", () => {
@@ -31202,10 +31251,10 @@ test("AI·灵医：R4 暴露很小时治疗溢价平滑无跳变", () => {
   const deltaTiny = medicRiskHealDelta(tinyPlayers, "x");
   const deltaNone = medicRiskHealDelta(tinyPlayers, "y");
   const premium = deltaTiny - deltaNone;
-  // 期望伤害当量 D=0.3：风险标记 = min(1, D)×DANGER_VALUE×权重，随威胁平滑缩放。
+  // 治疗 HP2→HP3 后仍保留 HP3Risk，因此溢价只来自两个互斥权重之差。
   assertClose(
     premium,
-    Math.min(1, 1.5 / 5) * 7 * HP_RISK_OPTION_WEIGHT,
+    Math.min(1, 1.5 / 5) * 7 * (HP2_RISK_WEIGHT - HP3_RISK_WEIGHT),
     1e-6
   );
   // 中等暴露（D=2.1）的溢价同样有界，不产生巨大不连续。
@@ -31214,7 +31263,7 @@ test("AI·灵医：R4 暴露很小时治疗溢价平滑无跳变", () => {
     - medicRiskHealDelta(basePlayers, "y");
   assert.ok(
     midPremium > 0
-    && midPremium <= 7 * HP_RISK_OPTION_WEIGHT + 1e-6,
+    && midPremium <= 7 * (HP2_RISK_WEIGHT - HP3_RISK_WEIGHT) + 1e-6,
     `中等暴露溢价应平滑有界（实际 ${midPremium.toFixed(3)}）`);
 });
 
@@ -31266,6 +31315,47 @@ test("AI·灵医：energyPressure 归因保留且不生成静态当前能量价�
   assert.equal(Object.hasOwn(actorTerms, "energy"), false);
   assert.equal(Object.hasOwn(adjacentEnemy.generic, "energy"), false);
   assert.equal(Object.hasOwn(owner("a").generic, "energy"), false);
+});
+
+test("AI·灵医：HP3Risk 与 HP2Risk 共用威胁且按生命互斥封顶", () => {
+  const termsAtHp = (hp) => {
+    const players = medicRiskBoard(1, 5);
+    const attacker = players.find((player) => player.id === "p");
+    const target = players.find((player) => player.id === "x");
+    target.hp = hp;
+    attacker.hand = Array.from(
+      { length:4 },
+      (_, index) => makeBenchmarkCard("assault", `risk-cap-assault-${index}`)
+    );
+    players[0].aiMemory.knownCardsByPlayer[attacker.id] = attacker.hand.map((card) => ({
+      id:card.id,
+      definitionId:card.definitionId
+    }));
+    const game = makeBenchmarkGame({ players, options:{ actorId:"a" } });
+    const visible = createInitialWorld(
+      "a",
+      game.state,
+      deriveCurrentCardCounts(game.state.players[0], game.state)
+    );
+    const visibleTarget = visible.players.find((player) => player.id === target.id);
+    const terms = game.aiController.evaluator.playerValueTerms(
+      visible,
+      visibleTarget,
+      "a",
+      0
+    ).terms;
+    disposeBenchmarkGame(game);
+    return terms;
+  };
+  const hp3 = termsAtHp(3);
+  const hp2 = termsAtHp(2);
+  const hp4 = termsAtHp(4);
+  assertClose(hp3.hp3Risk, -7 * HP3_RISK_WEIGHT, 1e-12);
+  assert.equal(hp3.hp2Risk, 0);
+  assertClose(hp2.hp2Risk, -7 * HP2_RISK_WEIGHT, 1e-12);
+  assert.equal(hp2.hp3Risk, 0);
+  assert.equal(hp4.hp3Risk, 0);
+  assert.equal(hp4.hp2Risk, 0);
 });
 
 // ---- AI 角色行为·影客 ----
@@ -39924,10 +40014,10 @@ test("AI·威胁评估：近期攻击者 ID 记忆参与 canonical ThreatValue",
       roleTags: [],
       statuses: []
     };
-  const withMemory = threatScore(
+  const withMemory = targetPriorityScore(
     viewer, target, { recentAggressors: { "player-b": 3 } }, 1
   );
-  const withoutMemory = threatScore(viewer, target, { recentAggressors: {} }, 1);
+  const withoutMemory = targetPriorityScore(viewer, target, { recentAggressors: {} }, 1);
   assert.equal(withMemory - withoutMemory, 6);
 });
 
@@ -39938,7 +40028,7 @@ test("AI·威胁评估：转移威胁：近期攻击者记忆决定敌方转移�
       battleTeam: "dusk",
       alive: true,
       hp: 2,
-      maxHp: 4,
+      maxHp: 3,
       shield: 0,
       energy: 0,
       handCount: 1,
@@ -39966,7 +40056,7 @@ test("AI·威胁评估：转移威胁：近期攻击者记忆决定敌方转移�
     receiver
   });
   assert.equal(evaluate({}).score, Number.NEGATIVE_INFINITY);
-  const preferred = evaluate({ source: 3 });
+  const preferred = evaluate({ source: 1 });
   assert.ok(preferred.score >= MIN_TRANSFER_UTILITY);
   assert.equal(preferred.receiverId, receiver.id);
 });
@@ -39989,7 +40079,7 @@ test("AI·威胁评估：转移缺失来源或接收者时安全返回负无穷"
   );
 });
 
-test("AI·威胁评估：threatScore 的稳定角色标签与近期攻击者会进入目标评分", () => {
+test("AI·威胁评估：targetPriorityScore 的稳定角色标签与近期攻击者会进入目标评分", () => {
   const viewer = { battleTeam: "dawn" },
     base = {
       id: "x",
@@ -40003,10 +40093,10 @@ test("AI·威胁评估：threatScore 的稳定角色标签与近期攻击者会�
       tags: [],
       statuses: []
     };
-  const plain = threatScore(
+  const plain = targetPriorityScore(
     viewer, { ...base, roleTags: [] }, { recentAggressors: {} }, 1
   );
-  const support = threatScore(
+  const support = targetPriorityScore(
     viewer, { ...base, roleTags: ["support", "healer"] }, { recentAggressors: {} }, 1
   );
   assert.ok(support > plain);
@@ -40033,6 +40123,80 @@ test("AI·威胁评估：threatScore 的稳定角色标签与近期攻击者会�
   assert.equal(score(first), score(second));
   game.aiDifficultyMultiplier = 1;
   assert.ok(score(second) > score(first));
+});
+
+test("AI·威胁评估：目标优先级忽略手牌能量并保留残血与斩杀因素", () => {
+  const viewer = { battleTeam:"dawn" };
+  const base = {
+    id:"priority-target",
+    alive:true,
+    battleTeam:"dusk",
+    hp:3,
+    maxHp:4,
+    shield:0,
+    handCount:0,
+    energy:0,
+    roleTags:[],
+    tags:[],
+    statuses:[]
+  };
+  const score = (target, expectedDamage = 0) => targetPriorityScore(
+    viewer,
+    target,
+    { recentAggressors:{} },
+    expectedDamage
+  );
+  assert.equal(score(base), score({ ...base, handCount:9, energy:9 }));
+  assert.ok(score({ ...base, hp:2 }) > score(base));
+  const lethalTarget = { ...base, hp:1 };
+  assert.equal(score(lethalTarget, 1) - score(lethalTarget, 0), 24);
+});
+
+test("AI·威胁评估：Assault 使用完整 Focus 且牌数不产生固定奖励", () => {
+  const evaluator = new Evaluator({ getDifficultyMultiplier:() => 0 });
+  const actor = {
+    id:"focus-actor",
+    alive:true,
+    battleTeam:"dawn",
+    characterId:"blade-walker",
+    aiMemory:{ recentAggressors:{} }
+  };
+  const target = (id, hp, handCount) => ({
+    id,
+    alive:true,
+    battleTeam:"dusk",
+    hp,
+    maxHp:4,
+    shield:0,
+    handCount,
+    energy:0,
+    roleTags:[],
+    tags:[],
+    statuses:[]
+  });
+  const full = target("focus-full", 4, 4);
+  const injured = target("focus-injured", 3, 4);
+  const lowHand = target("focus-low-hand", 4, 0);
+  const visible = { players:[actor, full, injured, lowHand] };
+  const utility = (entry) => evaluator.actionUtility(createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"assault",
+    cardInstanceId:"focus-assault",
+    targetIds:[entry.id]
+  }), actor, visible);
+  assert.equal(utility(injured) - utility(full), 3);
+  assert.equal(utility(lowHand), utility(full));
+  assert.equal(evaluator.hiddenWorldPrior(
+    createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"assault",
+      cardInstanceId:"focus-assault",
+      targetIds:[lowHand.id]
+    }),
+    [{ [lowHand.id]:["block"] }, { [lowHand.id]:[] }]
+  ), -0.75);
 });
 
 // ---- AI 评分·闪电评分 ----
@@ -40328,9 +40492,9 @@ function rescueReserveFixture(members, recoverCount, selfState = {}) {
     team,
     viewerId: self.id,
     hp2RiskByPlayer: new Map([
-      [self.id, -2.1 * (selfState.threat ?? 0)],
+      [self.id, -7 * HP2_RISK_WEIGHT * (selfState.threat ?? 0)],
       ...allies.map((player, index) => (
-        [player.id, -2.1 * (members[index].threat ?? 0)]
+        [player.id, -7 * HP2_RISK_WEIGHT * (members[index].threat ?? 0)]
       ))
     ])
   };
@@ -40556,6 +40720,9 @@ function testTeamRescueReserveStateIntegration() {
   assert.ok(ledger.owners.every(
     (owner) => !Object.hasOwn(owner.outcome, removedOutlookField)
   ));
+  assert.ok(ledger.owners.every(
+    (owner) => Object.hasOwn(owner.material, "hp3Risk")
+  ));
   const threatenedState = ledgerState([
     ledgerHand(
       ledgerPlayer("reserve-action-self", 0, "dawn", "spirit-medic", { hp: 3 }),
@@ -40576,7 +40743,7 @@ function testTeamRescueReserveStateIntegration() {
   ]);
   upgradeProbabilityFixture(threatenedState);
   const threatenedRisk = valueTerms(threatenedState);
-  assert.equal(threatenedRisk.get("reserve-action-hp2"), -2.1);
+  assert.equal(threatenedRisk.get("reserve-action-hp2"), -7 * HP2_RISK_WEIGHT);
   const threatenedBefore = teamRescueReserve(
     threatenedState,
     "dawn",

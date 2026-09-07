@@ -1083,9 +1083,9 @@ team state
 seal burden
 global board-state consequence
 
-Threat 使用普通 primitive，例如：
+Target priority 使用普通 primitive，例如：
 
-threatScore(...)
+targetPriorityScore(...)
 
 无实例状态、只有单个 static 方法的 class 不构成独立 abstraction。
 

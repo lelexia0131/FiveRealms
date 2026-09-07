@@ -118,8 +118,8 @@ const DANGER_VALUE = 7;
 const DEATH_VALUE = 28;
 const SHIELD_RESERVE_WEIGHT = 2;
 const SHIELD_PROTECTION_WEIGHT = 0.5;
-export const HP_RISK_OPTION_WEIGHT = 0.3;
-const HP2_RISK_MAX = DANGER_VALUE * HP_RISK_OPTION_WEIGHT;
+export const HP3_RISK_WEIGHT = 0.2;
+export const HP2_RISK_WEIGHT = 0.6;
 const ACTIVE_TACTIC_DEFINITIONS = Object.freeze(
   Object.values(CARD_DEFINITIONS)
     .filter((definition) => definition.category === "tactic"
@@ -548,7 +548,7 @@ export function turnOpportunityValue(player, state) {
 
 /*
 功能
-计算一个存活敌人的公开目标威胁分。
+计算一个存活敌人的公开目标优先级分。
 
 调用方
 Evaluator 搜索先验与转移策略。
@@ -571,14 +571,12 @@ viewer、目标可见条目、合法记忆与当前行动预计伤害。
 边界与不变量
 不读取敌方具体手牌；本值属于 POLICY_VALUE，不进入最终 transition。
 */
-export function threatScore(viewer, target, memory, expectedDamage = 1) {
+export function targetPriorityScore(viewer, target, memory, expectedDamage = 1) {
   if (!target.alive || target.battleTeam === viewer.battleTeam) return -Infinity;
   const roleTags = target.roleTags ?? [];
   const displayTags = target.tags ?? [];
   const statuses = target.statuses ?? [];
-  const handCount = target.handCount ?? target.hand?.length ?? 0;
-  let score = ((target.maxHp ?? 0) - (target.hp ?? 0)) * 2.5
-    + handCount * 1.4 + (target.energy ?? 0) * 2;
+  let score = ((target.maxHp ?? 0) - (target.hp ?? 0)) * 2.5;
   if (roleTags.some((tag) => ["damage", "attacker", "caster", "hunter"].includes(tag))
     || displayTags.some((tag) => ["输出", "群攻", "爆发", "突破"].includes(tag))) score += 4;
   if (roleTags.some((tag) => ["support", "healer", "tank", "protector", "control"].includes(tag))
@@ -1434,8 +1432,8 @@ ExpectedBlockDemand × ExpectedUtilityPerJudgment 的非负 State points。
 expectedBlockDemand、clampProbability。
 
 边界与不变量
-不拥有 CardValue 或第二套概率；战术只免除一次需求，保留的非 Block 基础牌收益已按定义概率加权，
-判得 Block 在同一次防御中立即参与支付，不作为保留手牌收益；
+不拥有 CardValue 或第二套概率；战术只免除一次需求，全部基础牌（含 Block）收益已按定义概率加权；
+判得 Block 后是否在同一次防御中消费只由 Simulator/Response 的真实支付状态决定；
 多格挡需求通过 demand 数量自然产生多次判定机会。
 */
 function radarFutureUtility(
@@ -1454,7 +1452,7 @@ function radarFutureUtility(
 
 /*
 功能
-计算生命恰为二且存在残余威胁时的有界风险状态值。
+计算生命恰为三或二时共用 ThreatDamage 的互斥风险状态分项。
 
 调用方
 Evaluator 与直接价值查询。
@@ -1463,7 +1461,7 @@ Evaluator 与直接价值查询。
 玩家与排除 viewer 自身资源联动后的残余暴露。
 
 输出
-零或有界负风险值。
+同时包含 hp3Risk 与 hp2Risk 的对象，其中至多一项为有界负值。
 
 读取状态
 只读存活和当前生命。
@@ -1475,13 +1473,18 @@ Evaluator 与直接价值查询。
 无。
 
 边界与不变量
-仅 HP=2 且有威胁时生效，上限严格使用既有 danger 与风险权重。
+仅 HP=3 或 HP=2 且有威胁时生效；两项按当前生命互斥，且共用同一 ThreatDamage。
 */
-function hp2ThreatRiskValue(player, bufferResidualExposure) {
-  if (!player?.alive || player.hp !== 2) return 0;
+function lowHpThreatRiskTerms(player, bufferResidualExposure) {
+  const empty = { hp3Risk:0, hp2Risk:0 };
+  if (!player?.alive || ![2, 3].includes(player.hp)) return empty;
   const threatDamage = Math.max(0, bufferResidualExposure) / HP_VALUE;
-  if (threatDamage <= 1e-9) return 0;
-  return -Math.min(1, threatDamage) * HP2_RISK_MAX;
+  if (threatDamage <= 1e-9) return empty;
+  const risk = -Math.min(1, threatDamage) * DANGER_VALUE
+    * (player.hp === 3 ? HP3_RISK_WEIGHT : HP2_RISK_WEIGHT);
+  return player.hp === 3
+    ? { hp3Risk:risk, hp2Risk:0 }
+    : { hp3Risk:0, hp2Risk:risk };
 }
 
 /*
@@ -1528,7 +1531,8 @@ export function teamRescueReserve(
       demand += 1;
     } else if (player.hp === 2) {
       const threat = clampProbability(
-        -Math.min(0, Number(hp2RiskByPlayer?.get(player.id)) || 0) / HP2_RISK_MAX
+        -Math.min(0, Number(hp2RiskByPlayer?.get(player.id)) || 0)
+          / (DANGER_VALUE * HP2_RISK_WEIGHT)
       );
       demand += 0.5 + 0.5 * threat;
     }
@@ -1721,11 +1725,12 @@ export function statePlayerValueTerms(
     0,
     bufferExposure - radarMitigationUtility(bufferExposure, player, radarTacticProbability)
   );
+  const lowHpRisk = lowHpThreatRiskTerms(player, bufferResidualExposure);
   return {
     death: 0,
     terms: {
       danger,
-      hp2Risk: hp2ThreatRiskValue(player, bufferResidualExposure),
+      ...lowHpRisk,
       hp: player.hp * HP_VALUE,
       shield,
       bubbleMachineFuture: bubbleMachineFutureUtility(player, residualExposure),

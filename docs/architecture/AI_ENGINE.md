@@ -63,7 +63,7 @@ REAL GAME
 
 运行时方向已经固定为 `Simulator -> completed/alternative Worlds -> Evaluator`。Evaluator 不 import、构造、保存、接收或回调 Simulator/transition capability；StateValue/CardValue 不反调 Evaluator。counterfactual 的 World clone/mutation/action/damage construction 全部属于 Simulator，准备完成的 World comparison 属于 Evaluator，Searcher 只组织调用和预算。Controller 的 response `DecisionContext` 只包含 canonical World/player、预物化 paired/outcome Worlds、普通数据与标量，不含 lazy query 或 service locator。
 
-Simulator 构造器只接收 SearchBudget 与 Evaluator 窄决策能力，不接收或保存 initial World；`apply`、`clone` 和所有 paired/outcome builder 都必须显式接收 canonical World。StateValue 的公开威胁 primitive 为普通函数 `threatScore`，不存在无状态 static wrapper class；Action 模块同样只公开 named functions，不提供 aggregate compatibility facade。
+Simulator 构造器只接收 SearchBudget 与 Evaluator 窄决策能力，不接收或保存 initial World；`apply`、`clone` 和所有 paired/outcome builder 都必须显式接收 canonical World。StateValue 的公开目标优先级 primitive 为普通函数 `targetPriorityScore`，不存在无状态 static wrapper class；Action 模块同样只公开 named functions，不提供 aggregate compatibility facade。
 
 正式 deterministic legality、目标、距离、伤害、响应与状态判定仍以 `js/domain/rules/**` 与 `js/domain/definitions/**` 为 Repository authority；AI core 没有第二套 Game Rule authority。正式搜索不得读取敌方未知手牌的 `definitionId`，unknown identity 只通过 Probability/World 的合法条件世界表达。
 
@@ -1671,7 +1671,7 @@ STEP 5.8 不重新设计架构，只在既有 owner 内关闭 value placement、
 - `endOpportunityCost`、`economic`、`immediate` 的 production term 和 caller 均为零引用；`resolutionScale` / `effectResolutionScale` 仍为 Scout、MutualBenefit 等 transition option 服务。
 - `BaseTransition = StateDeltaValue + TransitionOptionValue`；Transfer 低于冻结门槛时仍返回 `-Infinity`。
 - `CardValue.staticCardAssetValue()` 唯一表达 `(BaseAiValue + RoleDelta) × RESOURCE_MATERIAL_SCALE`；只服务 Equipment StateValue、Destroy/Plunder static normalization、Leverage acquisition 等静态 card/resource asset。普通 hand 与装备动态 Future 不消费该 primitive。
-- `CardValue.realizedHandCardStateValue()` 唯一表达普通手牌兑现后的 `HandCount + viewer-own HandRoleDelta`。Recycle 匿名摸牌只兑现 HandCount；Radar 保留的非 Block 基础牌按 viewer 边界兑现 HandRoleDelta；BattleDevice 与 AssaultMagazine 的 Block spend 使用同一实际手牌损失。
+- `CardValue.realizedHandCardStateValue()` 唯一表达普通手牌兑现后的 `HandCount + viewer-own HandRoleDelta`。Recycle 匿名摸牌只兑现 HandCount；Radar 判得的全部基础牌（含 Block）先按 viewer 边界兑现同一普通手牌价值，后续 Block 是否消费由 Simulator/Response 的真实支付状态决定；BattleDevice 与 AssaultMagazine 的 Block spend 使用同一实际手牌损失。
 - Radar 判得 Block 在同一防御分支立即加入有效容量；判定前容量使用 canonical count 字段保存，支付按判定槽位消费或保留 identity。防御成本只计算 demand 扣除同次判得 Block 后的净 HandState loss，避免 HandCount 与 HandRole phantom。
 - BattleDevice、RecycleDevice、Radar 与 AssaultMagazine 的动态 Future 由 StateValue 唯一拥有；Destroy/Plunder 只通过 before/after RawStateDelta 看见其 denial/acquisition context，不存在装备名 special bonus。
 - SpyGap 由 Simulator 的逐次实际伤害信息事件与 Evaluator 的实际新增未知数量共同决定；已知牌和同一路径已查看槽位不重复计值，结果并入 generic transition option。

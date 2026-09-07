@@ -70,7 +70,7 @@ import {
   statePlayerValueTerms,
   statePointsToUtility,
   teamRescueReserve,
-  threatScore,
+  targetPriorityScore,
   turnOpportunityValue
 } from "./StateValue.js";
 
@@ -784,19 +784,15 @@ radarBasicCardGainValue、clampProbability。
 
 边界与不变量
 Probability 只由上游 canonical authority 提供；战术只保存一张现有 Block 的真实手牌状态价值；
-判得 Block 会在同一次防御中立即消费，不得再作为保留手牌收益。
+全部基础牌（含 Block）先按同一普通手牌 authority 计值；后续是否消费只由 Simulator/Response 真实支付决定。
 */
 function radarJudgmentValueInputs(player, viewerId, radarJudgment) {
   if (!radarJudgment || typeof radarJudgment !== "object") return null;
   return {
     avoidedBlockDemandValue:radarBasicCardGainValue(player, viewerId, "block"),
     expectedBasicCardGainValue:Object.entries(radarJudgment.basic ?? {}).reduce(
-      (sum, [definitionId, probability]) => (
-        definitionId === "block"
-          ? sum
-          : sum + clampProbability(probability)
-            * radarBasicCardGainValue(player, viewerId, definitionId)
-      ),
+      (sum, [definitionId, probability]) => sum + clampProbability(probability)
+        * radarBasicCardGainValue(player, viewerId, definitionId),
       0
     )
   };
@@ -1910,7 +1906,7 @@ function transferResourceUtility(actor, from, receiver, sourceValue, receiverVal
 
 /*
 功能
-把过滤后的玩家状态归一化为 StateValue threat primitive 可消费的转移视图。
+把过滤后的玩家状态归一化为 StateValue target-priority primitive 可消费的转移视图。
 
 调用方
 transferEnemyThreatGap。
@@ -1919,7 +1915,7 @@ transferEnemyThreatGap。
 World 玩家。
 
 输出
-不含未知牌定义的公开 threat view。
+不含未知牌定义的公开目标优先级视图。
 
 读取状态
 公开生命、资源、状态、角色标签与手牌数量。
@@ -1953,7 +1949,7 @@ function transferThreatView(player) {
 
 /*
 功能
-计算敌方来源相对敌方接收者的公开威胁差。
+计算敌方来源相对敌方接收者的公开目标优先级差。
 
 调用方
 evaluateTransferSelection。
@@ -1962,7 +1958,7 @@ evaluateTransferSelection。
 行动者、来源与接收者 World 玩家。
 
 输出
-StateValue threat primitive 差值。
+StateValue target-priority primitive 差值。
 
 读取状态
 公开玩家字段与行动者合法近期攻击者记忆。
@@ -1971,15 +1967,15 @@ StateValue threat primitive 差值。
 无。
 
 调用函数
-threatScore、transferThreatView。
+targetPriorityScore、transferThreatView。
 
 边界与不变量
 不读取任一未知手牌定义。
 */
 function transferEnemyThreatGap(actor, from, receiver) {
   const memory = actor?.aiMemory ?? {};
-  return threatScore(transferThreatView(actor), transferThreatView(from), memory)
-    - threatScore(transferThreatView(actor), transferThreatView(receiver), memory);
+  return targetPriorityScore(transferThreatView(actor), transferThreatView(from), memory)
+    - targetPriorityScore(transferThreatView(actor), transferThreatView(receiver), memory);
 }
 
 /*
@@ -1996,7 +1992,7 @@ Evaluator.evaluateTransferAction。
 包含冻结分数、资源身份和稳定比较字段的局部候选记录。
 
 读取状态
-CardValue primitive、公开关系/容量、StateValue threat primitive 与控制器类型。
+CardValue primitive、公开关系/容量、StateValue target-priority primitive 与控制器类型。
 
 写入状态
 无。
@@ -2231,6 +2227,7 @@ const END_PRIOR_PENALTY = 0.8;
 const SKILL_THRESHOLD_PRIOR_BONUS = 4;
 const TEAM_DANGER_TERM_KEYS = Object.freeze([
   "danger",
+  "hp3Risk",
   "hp2Risk",
   "shield",
   "markThreat",
@@ -2701,7 +2698,7 @@ export class Evaluator {
       };
       let value = values[action.skillId] ?? 4;
       if (["stealSkill", "hunt"].includes(action.skillId)) {
-        value += this.threatPriority(actor, target, player.aiMemory, 1);
+        value += this.targetPriority(actor, target, player.aiMemory, 1);
       }
       return value;
     }
@@ -2734,7 +2731,7 @@ export class Evaluator {
           + (target.hp <= 2 ? 5 : 0)
           + (target.hp <= 1 ? 8 : 0);
         if (enemy && card.definitionId === "assault") {
-          value += (target.hp <= 2 ? 5 : 0) + (target.hp <= 1 ? 8 : 0);
+          value += focus;
         } else if (enemy && !["assault", "shockwave"].includes(card.definitionId)) {
           value += 3 + focus;
         } else if (!enemy) {
@@ -2769,7 +2766,7 @@ export class Evaluator {
       }
       if (!enemy && ["plunder", "destroy"].includes(card.definitionId)) value -= 30;
       if (enemy && ["assault", "duel", "plunder", "destroy"].includes(card.definitionId)) {
-        value += this.threatPriority(
+        value += this.targetPriority(
           actor,
           target,
           player.aiMemory,
@@ -4360,18 +4357,18 @@ export class Evaluator {
   无。
 
   调用函数
-  threatScore。
+  targetPriorityScore。
 
   边界与不变量
   这是唯一 target preference 语义；Searcher/Controller 不得复制公式，且本值不直接进入 Final Utility。
   */
-  threatPriority(viewer, target, memory, expectedDamage = 1) {
+  targetPriority(viewer, target, memory, expectedDamage = 1) {
     const multiplier = Math.max(
       0,
       Number(this.getDifficultyMultiplier?.() ?? 1) || 0
     );
     if (!multiplier || !target || target.battleTeam === viewer.battleTeam) return 0;
-    return threatScore(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
+    return targetPriorityScore(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
   }
 
   /*
@@ -4530,7 +4527,8 @@ export class Evaluator {
 
   边界与不变量
   Danger 取队伍成员最大负向安全压力，并只用既有 HP-equivalent 尺度归一化；
-  RescueReserve 使用本次遍历已得到的 HP2Risk，并对每个 battleTeam 只汇总一次。
+  低血风险按 HP 互斥进入团队危险；RescueReserve 只复用其中的 HP2Risk，
+  并对每个 battleTeam 汇总一次。
   */
   stateValueSnapshot(state, viewerId, lightningOutcomeSets = [], sealValues = null) {
     const viewer = state.players.find((player) => player.id === viewerId);
@@ -5658,6 +5656,7 @@ export class Evaluator {
         material: {
           hp: fields.hp ?? 0,
           shield: fields.shield ?? 0,
+          hp3Risk: fields.hp3Risk ?? 0,
           hp2Risk: fields.hp2Risk ?? 0,
           info: fields.info ?? 0,
           stacks: fields.stacks ?? 0,

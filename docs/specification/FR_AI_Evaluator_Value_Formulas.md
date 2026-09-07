@@ -45,7 +45,8 @@ $$
 | `DEATH_VALUE`              | `28`  | Death 基值；进入 StateValue 时作为 `-28 SP = -5.6u` |
 | `SHIELD_RESERVE_WEIGHT`    | `2`   | 第一层护盾的储备价值                                |
 | `SHIELD_PROTECTION_WEIGHT` | `0.5` | 护盾对当前威胁/生命阈值保护的折算系数               |
-| `HP_RISK_OPTION_WEIGHT`    | `0.3` | HP=2 风险项权重                                     |
+| `HP3_RISK_WEIGHT`          | `0.2` | HP=3 风险项权重                                     |
+| `HP2_RISK_WEIGHT`          | `0.6` | HP=2 风险项权重                                     |
 | `RESOURCE_MATERIAL_SCALE`  | `0.4` | card/equipment base material 的唯一 SP 换算 authority |
 | `UNKNOWN_HAND_EXPECTED_VALUE` | `5.8` | 无有效 finite-pool 时 unknown base expectation 的唯一 authority |
 | `HAND_COUNT_VALUE`         | `1.1` | 每张手牌的数量状态价值                              |
@@ -270,10 +271,12 @@ $$
 玩家存活时：
 
 $$
-\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+RadarFutureUtility\\ &+HP2Risk\\ &+ShieldValue\\ &+BubbleMachineFuture\\ &+EnergyDeviceFuture\\ &+BattleDeviceFuture\\ &+RecycleDeviceFuture\\ &+AssaultMagazineFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentBaseMaterial\\ &+EquipmentRoleDelta \end{aligned}
+\begin{aligned} V_i={}& HPValue\\ &+Danger\\ &+ExposeStackValue\\ &+MarkThreat\\ &+ResidualExposureValue\\ &+RadarFutureUtility\\ &+HP3Risk\\ &+HP2Risk\\ &+ShieldValue\\ &+BubbleMachineFuture\\ &+EnergyDeviceFuture\\ &+BattleDeviceFuture\\ &+RecycleDeviceFuture\\ &+AssaultMagazineFuture\\ &+HandCountValue\\ &+HandRoleDelta\\ &+EquipmentBaseMaterial\\ &+EquipmentRoleDelta \end{aligned}
 $$
 
 其中前半由 `StateValue.js` 唯一拥有，手牌/装备 intrinsic asset 由 `CardValue.js` 唯一拥有。
+
+`HP3Risk` 与 `HP2Risk` 按玩家当前 HP 互斥：HP=3 时只有前者非零，HP=2 时只有后者非零，其它 HP 二者均为 0。
 
 源码：`StateValue.js:857 statePlayerValueTerms()`；`CardValue.js:744 cardPlayerValueTerms()`；`Evaluator.js:3374 playerValueTerms()`。
 
@@ -327,7 +330,8 @@ $$
 HP=2 的威胁必须复用同一次 State Value 遍历已经得到的 `HP2Risk`：
 
 $$
-T_i=\min(1,ThreatDamage_i)=\frac{-HP2Risk_i}{2.1}
+T_i=\min(1,ThreatDamage_i)=
+\frac{-HP2Risk_i}{DANGER\_VALUE\times HP2\_RISK\_WEIGHT}
 $$
 
 团队总需求与合法调息期望容量：
@@ -484,7 +488,7 @@ $$
 -currentThreat, \quad -futureInventory, \quad -energyPressure
 $$
 
-# 7. Radar / HP2 Risk / Shield
+# 7. Radar / Low-HP Risk / Shield
 
 ## 7.1 防御装置 Radar 减免与 Future Utility
 
@@ -514,23 +518,24 @@ $$
 $$
 ResidualExposureValue=-\max(0,Exposure-RadarMitigation)
 $$
-该 exposure 风险减免之外，Radar 还拥有独立的真实判定资源 Future Utility。它不是固定雷达补分，而是只在存在真实 Block demand 时产生：
+该 exposure 风险减免之外，Radar 还拥有独立的真实判定资源 Future Utility。它只在存在真实 Block demand 时产生：
 
 $$
 RadarFutureUtility=ExpectedBlockDemand\times Retention\times ExpectedUtilityPerJudgment 
 $$
 
+其中：
 $$
- ExpectedUtilityPerJudgment=P(Tactic)\times AvoidedBlockDemandValue+\sum_{d\in Basic\setminus\{Block\}}P(d)\times RetainedBasicHandValue(d)
-$$
-
-一次战术牌判定免除对应的一次 Block demand，其价值等于避免支付一张已有 Block 的真实 Hand StateValue。一次非 Block 基础牌判定把该牌保留在 Radar holder 手牌：
-
-$$
-RetainedBasicHandValue(d)=HAND\_COUNT\_VALUE+I[holder=viewer]\times RoleDelta(holder,d)
+ExpectedUtilityPerJudgment=P(Tactic)\times AvoidedBlockDemandValue+\sum_{d\in Basic}P(d)\times BasicHandValue(d)
 $$
 
-其中 RoleDelta 不乘材料尺度；`holder != viewer` 时该项为 0。判得 Block 若用于当前防御，会立即进入同一 Block payment，因此不先记一张保留牌收益再扣一次成本。`AvoidedBlockDemandValue` 使用同一真实手牌公式对现有 `block` 计算，不新增雷达专属数值。
+一次战术牌判定免除对应的一次 Block demand，其价值等于避免支付一张已有 Block 的真实 Hand StateValue。`Block` 属于正常 Basic；Radar 判得任一基础牌时，首先按统一 hand value authority 计入：
+
+$$
+BasicHandValue(d)=HAND\_COUNT\_VALUE+I[holder=viewer]\times RoleDelta(holder,d)
+$$
+
+其中 RoleDelta 不乘材料尺度；`holder != viewer` 时该项为 0。判得 Block 后是否用于当前防御，由 Simulator / Response 的真实 Block payment 决定；Future 不提前排除或假设消费。判得 Block 并留下时保留正常 `BasicHandValue`，立即消费时则由支付后的 StateDelta 自然扣除。`AvoidedBlockDemandValue` 也使用同一真实手牌公式对现有 `block` 计算，不建立 Block 专属价值体系。
 
 `ExpectedBlockDemand` 由 `StateValue.expectedBlockDemand()` 从真实 production source 汇总：
 
@@ -553,9 +558,9 @@ $$
 
 判定类别与每个基础牌定义的概率全部来自 Event/Probability 的 `buildRadarJudgmentProbabilities()` 和当前 remaining finite pool；Evaluator/StateValue 不建立第二套概率系统。Radar `aiValue=9` 保持不变，其 base material 与上述功能 Future Utility 分开记账。
 
-## 7.2 HP=2 风险与附加剩余暴露度
+## 7.2 低血量风险与附加剩余暴露度
 
-只在 `HP=2` 时附加暴露度公式为：
+HP=3 与 HP=2 风险共用同一套附加暴露数据链：
 
 $$
 BufferExposure=\sum_{enemy}Exposure_{enemy\rightarrow player}
@@ -576,15 +581,23 @@ ThreatDamage = \frac{BufferResidualExposure}{5}
 $$
 
 $$
-\boxed{ HP2Risk = -\min(1,ThreatDamage)\times7\times0.3 }
+\boxed{ HP3Risk = -\min(1,ThreatDamage)\times DANGER\_VALUE\times HP3\_RISK\_WEIGHT }
 $$
 
-其中 7 是 `DANGER_VALUE` ，0.3 是 `HP_RISK_OPTION_WEIGHT`
-
-进而最大负值：
+仅 HP=3 生效，`DANGER_VALUE=7`、`HP3_RISK_WEIGHT=0.2`，最大负值：
 
 $$
--2.1SP=-0.42u
+-1.4SP=-0.28u
+$$
+
+$$
+\boxed{ HP2Risk = -\min(1,ThreatDamage)\times DANGER\_VALUE\times HP2\_RISK\_WEIGHT }
+$$
+
+仅 HP=2 生效，`DANGER_VALUE=7`、`HP2_RISK_WEIGHT=0.6`，最大负值：
+
+$$
+-4.2SP=-0.84u
 $$
 
 ## 7.3 护盾价值
@@ -778,7 +791,7 @@ $$
 
 普通手牌不持有 Base material，且只有 viewer 自己的合法已知 Block 才包含未缩放 RoleDelta。
 
-设目标当前 Block 数量分布为 $P(N=n)$，真实 Domain demand 为 $r$，一次未格挡伤害造成的现有生命、Danger、HP2Risk 与 ShieldValue 边际为 $DamageStateLoss$。没有 Radar 时：
+设目标当前 Block 数量分布为 $P(N=n)$，真实 Domain demand 为 $r$，一次未格挡伤害造成的现有生命、Danger、低血量 Risk 与 ShieldValue 边际为 $DamageStateLoss$。没有 Radar 时：
 
 $$
 \boxed{DefenseCost(r)=\sum_nP(N=n)\begin{cases}r\times BlockSpendValue,&n\ge r\\DamageStateLoss,&n<r\end{cases}}
@@ -796,7 +809,7 @@ DamageStateLoss,&N+b_s<r-w_s
 \end{cases}
 $$
 
-最终按 Radar retention 混合有/无装备世界。战术判定只免除对应 demand；判得 Block 可参与同次防御，其获得会抵消同次支付中的等量 HandState loss。其它基础牌判定摸牌收益仍由 `RadarFutureUtility` 唯一拥有，不进入攻击方的 `DefenseCost`。
+最终按 Radar retention 混合有/无装备世界。战术判定只免除对应 demand；判得 Block 可参与同次防御，其获得会抵消同次支付中的等量 HandState loss。全部基础牌判定的 hand value 仍由 `RadarFutureUtility` 统一拥有，不进入攻击方的 `DefenseCost`。
 
 ## 9.5 军火库 Future Utility
 
@@ -1139,6 +1152,7 @@ $$
 
 ```
 Danger
+HP3Risk
 HP2Risk
 ShieldValue
 MarkThreat
@@ -2886,7 +2900,7 @@ $$
 
 仅作为 `decideLeverageAssault()` 的 runtime fact。
 
-# 38. Search Scheduling 公式（不进入 Final Utility）
+# 38. Search Scheduling 公式
 
 ## 38.1 Root Scheduling 通用归一化
 
@@ -3004,14 +3018,14 @@ $$
 BranchingWork+=1+\sum_{responders}P(counter)
 $$
 
-# 39. Beam Action Utility / Search Prior（不进入 Final）
+# 39. Beam Action Utility / Search Prior
 
 ## 39.1 END prior
 
 若还有手牌：
 
 $$
-\boxed{ActionUtility(END)=-0.8}
+ActionUtility(END)=-0.8
 $$
 
 否则 0。
@@ -3035,7 +3049,7 @@ $$
 `stealSkill` 与 `hunt` 再加：
 
 $$
-ThreatPriority(target)
+TargetPriority(target)
 $$
 
 ## 39.3 breakArmyUtility
@@ -3078,7 +3092,7 @@ $$
 Focus =MissingHP\times3 +5I[HP\le2] +8I[HP\le1]
 $$
 
-Assault 对敌人只加入低 HP 两个 threshold 项。
+Assault 对敌人加入完整 Focus。
 
 其它 enemy attack/duel（排除 assault、shockwave）：
 
@@ -3202,14 +3216,14 @@ $$
 
 这只进入 search prior，不进入 Final StateDelta。
 
-# 41. Threat Target Preference（不进入 Final）
+# 41. Target Priority
 
-源码：`StateValue.js:524 threatScore()`、`Evaluator.js:3340 threatPriority()`。
+源码：`StateValue.targetPriorityScore()`、`Evaluator.targetPriority()`。
 
 基础：
 
 $$
-ThreatScore =(MaxHP-HP)\times2.5 +HandCount\times1.4 +Energy\times2
+TargetPriorityScore =(MaxHP-HP)\times2.5
 $$
 
 再加：
@@ -3225,8 +3239,10 @@ $$
 难度缩放 target prior：
 
 $$
-\boxed{ ThreatPriority =ThreatScore\times0.12\times DifficultyMultiplier }
+\boxed{TargetPriority =TargetPriorityScore\times0.12\times DifficultyMultiplier}
 $$
+
+其中 0.12 是局部冻结系数 `Target priority` （见数值常量总表 48.4 Event）。
 
 非敌方或倍率 0：返回 0。
 
@@ -3254,13 +3270,13 @@ Searcher 通过 paired worlds 得到：
 - `assaultStacksCredit`
 
 $$
-\boxed{ DomainPrior =0.4\times U(exposeMarginal+assaultStacksCredit) }
+\boxed{DomainPrior =0.4\times U(exposeMarginal+assaultStacksCredit)}
 $$
 
 ## 42.3 Burning Field search credit
 
 $$
-\boxed{SearchCredit=8}
+SearchCredit=8
 $$
 
 其它动作 0。
@@ -3268,35 +3284,35 @@ $$
 ## 42.4 总 Search Prior
 
 $$
-\boxed{ SearchPrior =HiddenPrior +ActionUtility +SearchCredit +DomainPrior }
+\boxed{SearchPrior =HiddenPrior +ActionUtility +SearchCredit +DomainPrior}
 $$
 
-所有这些都明确**不进入 Final Utility**。
+所有这些都明确不进入 Final Utility。
 
-# 43. Expose Weakness paired-world marginal（Search only）
+# 43. Expose Weakness paired-world marginal
 
 ## 43.1 正边际
 
 $$
-\boxed{ PositiveMarginal =\max(0,V_{state}(Boosted)-V_{state}(Baseline)) }
+PositiveMarginal =\max(0,V_{state}(Boosted)-V_{state}(Baseline))
 $$
 
 ## 43.2 Root provenance
 
 $$
-\boxed{Provenance_0=\max(0,RootExposeStacks)}
+Provenance_0=\max(0,RootExposeStacks)
 $$
 
 Assault 当前可兑现 provenance：
 
 $$
-\boxed{ StackCount= \begin{cases} RemainingProvenance,&action=assault\\ 0,&otherwise \end{cases} }
+StackCount= \begin{cases} RemainingProvenance,&action=assault\\ 0,&otherwise \end{cases} 
 $$
 
 Assault 后剩余 provenance：
 
 $$
-\boxed{ P_{next} =\max\left(0,P_{current}\times\max\left(0,\frac{Stacks_{after}}{Stacks_{before}}\right)\right) }
+P_{next} =\max\left(0,P_{current}\times\max\left(0,\frac{Stacks_{after}}{Stacks_{before}}\right)\right)
 $$
 
 如果不是 assault 则保持不变。
@@ -3342,7 +3358,7 @@ $$
 其中字段被归类为：
 
 - generic：handCount、energy
-- material：hp、shield、hp2Risk、info、stacks、equipmentDelta、energyDeviceFuture、bubbleMachineFuture、death
+- material：hp、shield、hp3Risk、hp2Risk、info、stacks、equipmentDelta、energyDeviceFuture、bubbleMachineFuture、death
 - threat：currentThreat、futureInventory、energyPressure、markThreat、radar
 - specific：handRole、equipmentRole
 - outcome：danger
@@ -3509,7 +3525,8 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 | `DEATH_VALUE`              | 28   | State Value                |
 | `SHIELD_RESERVE_WEIGHT`    | 2    | State Value                |
 | `SHIELD_PROTECTION_WEIGHT` | 0.5  | State Value                |
-| `HP_RISK_OPTION_WEIGHT`    | 0.3  | State Value                |
+| `HP3_RISK_WEIGHT`          | 0.2  | State Value                |
+| `HP2_RISK_WEIGHT`          | 0.6  | State Value                |
 
 ## 48.2 CardValue.js
 
@@ -3561,7 +3578,7 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 
 - Counter cost `×0.35`
 - Scout transition information `×0.35`
-- Threat priority `×0.12`
+- Target priority `×0.12`
 - Assault hidden prior `-1.5`
 - Root density `x/(1+|x|)`
 - Provoke prior `×3`
@@ -3580,7 +3597,7 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 - `actionSearchPrior()`
 - `hiddenWorldPrior()`
 - `composeSearchPrior()`
-- `threatScore()` / `threatPriority()`
+- `targetPriorityScore()` / `targetPriority()`
 - `sealUseValue()`（主动使用封印的 search prior）
 - `getDiscardKeepValue()`
 - `getTransferCardValue()`
