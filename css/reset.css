@@ -1,9 +1,54 @@
-*, *::before, *::after { box-sizing: border-box; }
-html { color-scheme: light; }
-body, h1, h2, h3, h4, p, ol { margin: 0; }
-ol { padding: 0; }
-button, input { font: inherit; }
-button, [role="button"] { -webkit-tap-highlight-color: transparent; }
-button { color: inherit; }
-img { display: block; max-width: 100%; }
-body { min-width: 980px; min-height: 100vh; }
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    color-scheme: light;
+}
+
+body,
+h1,
+h2,
+h3,
+h4,
+p,
+ol {
+    margin: 0;
+}
+
+ol {
+    padding: 0;
+}
+
+button,
+input {
+    font: inherit;
+}
+
+button,
+[role="button"] {
+    -webkit-tap-highlight-color: transparent;
+}
+
+button {
+    color: inherit;
+}
+
+img {
+    display: block;
+    max-width: 100%;
+}
+
+body {
+    min-width: 980px;
+    min-height: 100vh;
+}
+
+html,
+body,
+body * {
+    -webkit-user-select: none;
+    user-select: none;
+}
