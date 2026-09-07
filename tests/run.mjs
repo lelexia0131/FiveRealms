@@ -8670,7 +8670,7 @@ async function settledSealContribution({ countered = false, initialHandCount = 0
   game.state.deck.cards = countered
     ? [drawB, drawA]
     : [drawB, drawA, instance("assault")];
-  game.takeAiPlayPhase = async () => {};
+  game.takeAiPlayPhase = async () => { };
   await game.takeTurn(holder, game.state.gameId);
   return game.matchPerformanceSidecar.tracker
     .recordFor(source).contributionFacts.sealContribution;
@@ -9745,10 +9745,10 @@ test("备用弹夹：借势内嵌突袭不消耗装备额外次数", async () =>
   forced.turnFlags.attackUsed = forced.turnFlags.attackLimit;
 
   assert.equal(await game.playCard(actor, leverage, [], {
-    firstTargetId:forced.id,
-    equipmentCardId:magazine.id,
-    equipmentDefinitionId:magazine.definitionId,
-    secondTargetId:actor.id
+    firstTargetId: forced.id,
+    equipmentCardId: magazine.id,
+    equipmentDefinitionId: magazine.definitionId,
+    secondTargetId: actor.id
   }), true);
   assert.equal(forced.turnFlags.assaultMagazineUsed, 0);
 });
@@ -13534,7 +13534,7 @@ test("调律师：被下一层反制取消的反制不产生有效结算且不�
   const counterEvents = [];
   game.eventDispatcher.on("cardUsed", "test:counter-chain-effective-use", (event) => {
     if (event.card.definitionId === "counter") {
-      counterEvents.push({ id:event.card.id, resolved:event.resolved });
+      counterEvents.push({ id: event.card.id, resolved: event.resolved });
     }
   });
   const hidden = game.hiddenCardSelection.createHiddenSelection(ally);
@@ -13543,8 +13543,8 @@ test("调律师：被下一层反制取消的反制不产生有效结算且不�
   }), true);
   assert.equal(tuner.turnFlags.coordinationTriggered, false);
   assert.deepEqual(counterEvents, [
-    { id:nextCounter.id, resolved:true },
-    { id:tunerCounter.id, resolved:false }
+    { id: nextCounter.id, resolved: true },
+    { id: tunerCounter.id, resolved: false }
   ]);
 });
 
@@ -15402,7 +15402,7 @@ async function valueResidueClosure() {
       }),
       2 - statePointsToUtility(dangerFull)
     );
-    assert.equal(evaluator.composeTransitionValue({ baseTransition:2 }), 2);
+    assert.equal(evaluator.composeTransitionValue({ baseTransition: 2 }), 2);
     const productionCode = (await Promise.all([
       "js/ai/Evaluator/Evaluator.js",
       "js/ai/Searcher/Searcher.js"
@@ -16015,19 +16015,19 @@ function destroyUnknownResourceTransactionOptionRegression() {
   const game = makeBenchmarkGame({
     players: [
       {
-        id:"resource-destroy-actor",
-        team:"dawn",
-        character:"shade-agent",
-        hand:[makeBenchmarkCard("destroy", "resource-destroy-use")]
+        id: "resource-destroy-actor",
+        team: "dawn",
+        character: "shade-agent",
+        hand: [makeBenchmarkCard("destroy", "resource-destroy-use")]
       },
       {
-        id:"resource-destroy-source",
-        team:"dusk",
-        character:"oath-warden",
-        hand:[makeBenchmarkCard("block", "resource-destroy-hidden")]
+        id: "resource-destroy-source",
+        team: "dusk",
+        character: "oath-warden",
+        hand: [makeBenchmarkCard("block", "resource-destroy-hidden")]
       }
     ],
-    options:{ actorId:"resource-destroy-actor", seed:20260901, nodeBudget:20 }
+    options: { actorId: "resource-destroy-actor", seed: 20260901, nodeBudget: 20 }
   });
   try {
     const actor = game.state.players[0];
@@ -16040,18 +16040,18 @@ function destroyUnknownResourceTransactionOptionRegression() {
     const anonymousCount = expectedAnonymousSlots(world.probabilityState, source.id);
     assert.equal(anonymousCount, 1);
     const action = createAction({
-      type:"card",
-      actorId:actor.id,
-      cardId:"destroy",
-      cardInstanceId:"resource-destroy-use",
-      targetIds:[source.id],
-      selection:{
-        zone:"hand",
-        selectionKind:"unknown",
-        cardId:null,
-        definitionId:null,
-        knownCardIds:[],
-        availableUnknownCount:anonymousCount
+      type: "card",
+      actorId: actor.id,
+      cardId: "destroy",
+      cardInstanceId: "resource-destroy-use",
+      targetIds: [source.id],
+      selection: {
+        zone: "hand",
+        selectionKind: "unknown",
+        cardId: null,
+        definitionId: null,
+        knownCardIds: [],
+        availableUnknownCount: anonymousCount
       }
     });
     const after = new Simulator(world).apply(world, action);
@@ -16059,18 +16059,18 @@ function destroyUnknownResourceTransactionOptionRegression() {
     for (const definitionId of Object.keys(CARD_DEFINITIONS)) {
       const identityProbability = queryProbability(world.probabilityState, {
         definitionId,
-        bucketId:source.id
+        bucketId: source.id
       }).slotProbability;
       expectedOption += identityProbability * (
         getBaseCardAiValue(definitionId) * RESOURCE_MATERIAL_SCALE
-          + roleCardDelta(source.characterId, definitionId)
+        + roleCardDelta(source.characterId, definitionId)
       );
     }
     const terms = game.aiController.evaluator.evaluateTransition({
       action,
-      player:world.players.find((player) => player.id === actor.id),
-      beforeState:world,
-      afterState:after
+      player: world.players.find((player) => player.id === actor.id),
+      beforeState: world,
+      afterState: after
     });
     assertClose(terms.transitionOptionPoints, expectedOption, 1e-12);
     assertClose(terms.transitionOptionValue, expectedOption / OWNED_HP_VALUE, 1e-12);
@@ -16119,26 +16119,26 @@ function plunderKnownResourceTransactionOptionRegression() {
   const game = makeBenchmarkGame({
     players: [
       {
-        id:"resource-plunder-actor",
-        team:"dawn",
-        character:"resonance-tuner",
-        hand:[makeBenchmarkCard("plunder", "resource-plunder-use")],
-        aiMemory:{
-          knownCardsByPlayer:{
-            "resource-plunder-source":[
-              { id:"resource-plunder-charge", definitionId:"charge" }
+        id: "resource-plunder-actor",
+        team: "dawn",
+        character: "resonance-tuner",
+        hand: [makeBenchmarkCard("plunder", "resource-plunder-use")],
+        aiMemory: {
+          knownCardsByPlayer: {
+            "resource-plunder-source": [
+              { id: "resource-plunder-charge", definitionId: "charge" }
             ]
           }
         }
       },
       {
-        id:"resource-plunder-source",
-        team:"dusk",
-        character:"spirit-medic",
-        hand:[makeBenchmarkCard("charge", "resource-plunder-charge")]
+        id: "resource-plunder-source",
+        team: "dusk",
+        character: "spirit-medic",
+        hand: [makeBenchmarkCard("charge", "resource-plunder-charge")]
       }
     ],
-    options:{ actorId:"resource-plunder-actor", seed:20260901, nodeBudget:20 }
+    options: { actorId: "resource-plunder-actor", seed: 20260901, nodeBudget: 20 }
   });
   try {
     const actor = game.state.players[0];
@@ -16152,17 +16152,17 @@ function plunderKnownResourceTransactionOptionRegression() {
       (card) => (card.id ?? card.cardId) === "resource-plunder-charge"
     ).availability = 0.5;
     const action = createAction({
-      type:"card",
-      actorId:actor.id,
-      cardId:"plunder",
-      cardInstanceId:"resource-plunder-use",
-      targetIds:[source.id],
-      selection:{
-        zone:"hand",
-        selectionKind:"known",
-        cardId:"resource-plunder-charge",
-        definitionId:"charge",
-        availableUnknownCount:0
+      type: "card",
+      actorId: actor.id,
+      cardId: "plunder",
+      cardInstanceId: "resource-plunder-use",
+      targetIds: [source.id],
+      selection: {
+        zone: "hand",
+        selectionKind: "known",
+        cardId: "resource-plunder-charge",
+        definitionId: "charge",
+        availableUnknownCount: 0
       }
     });
     const after = new Simulator(world).apply(world, action);
@@ -16171,9 +16171,9 @@ function plunderKnownResourceTransactionOptionRegression() {
     const expectedOption = (baseMaterial - (-sourceIdentity)) * 0.5;
     const terms = game.aiController.evaluator.evaluateTransition({
       action,
-      player:world.players.find((player) => player.id === actor.id),
-      beforeState:world,
-      afterState:after
+      player: world.players.find((player) => player.id === actor.id),
+      beforeState: world,
+      afterState: after
     });
     assertClose(world.players[1].handCount - after.players[1].handCount, 0.5, 1e-12);
     assertClose(terms.transitionOptionPoints, expectedOption, 1e-12);
@@ -16216,32 +16216,32 @@ function transferKnownResourceTransactionOptionRegression() {
   const game = makeBenchmarkGame({
     players: [
       {
-        id:"resource-transfer-actor",
-        team:"dawn",
-        character:"resonance-tuner",
-        hand:[makeBenchmarkCard("transfer", "resource-transfer-use")],
-        aiMemory:{
-          knownCardsByPlayer:{
-            "resource-transfer-source":[
-              { id:"resource-transfer-charge", definitionId:"charge" }
+        id: "resource-transfer-actor",
+        team: "dawn",
+        character: "resonance-tuner",
+        hand: [makeBenchmarkCard("transfer", "resource-transfer-use")],
+        aiMemory: {
+          knownCardsByPlayer: {
+            "resource-transfer-source": [
+              { id: "resource-transfer-charge", definitionId: "charge" }
             ]
           }
         }
       },
       {
-        id:"resource-transfer-source",
-        team:"dusk",
-        character:"spirit-medic",
-        hand:[makeBenchmarkCard("charge", "resource-transfer-charge")]
+        id: "resource-transfer-source",
+        team: "dusk",
+        character: "spirit-medic",
+        hand: [makeBenchmarkCard("charge", "resource-transfer-charge")]
       },
       {
-        id:"resource-transfer-receiver",
-        team:"dawn",
-        character:"oath-warden",
-        hand:[]
+        id: "resource-transfer-receiver",
+        team: "dawn",
+        character: "oath-warden",
+        hand: []
       }
     ],
-    options:{ actorId:"resource-transfer-actor", seed:20260901, nodeBudget:20 }
+    options: { actorId: "resource-transfer-actor", seed: 20260901, nodeBudget: 20 }
   });
   try {
     const actor = game.state.players[0];
@@ -16253,18 +16253,18 @@ function transferKnownResourceTransactionOptionRegression() {
     const source = world.players.find((player) => player.id === "resource-transfer-source");
     const receiver = world.players.find((player) => player.id === "resource-transfer-receiver");
     const action = createAction({
-      type:"card",
-      actorId:actor.id,
-      cardId:"transfer",
-      cardInstanceId:"resource-transfer-use",
-      selection:{
-        sourceId:source.id,
-        receiverId:receiver.id,
-        zone:"hand",
-        selectionKind:"known",
-        cardId:"resource-transfer-charge",
-        definitionId:"charge",
-        availableUnknownCount:0
+      type: "card",
+      actorId: actor.id,
+      cardId: "transfer",
+      cardInstanceId: "resource-transfer-use",
+      selection: {
+        sourceId: source.id,
+        receiverId: receiver.id,
+        zone: "hand",
+        selectionKind: "known",
+        cardId: "resource-transfer-charge",
+        definitionId: "charge",
+        availableUnknownCount: 0
       }
     });
     const after = new Simulator(world).apply(world, action);
@@ -16274,9 +16274,9 @@ function transferKnownResourceTransactionOptionRegression() {
     const expectedOption = receiverIdentity - (-sourceIdentity);
     const terms = game.aiController.evaluator.evaluateTransition({
       action,
-      player:world.players.find((player) => player.id === actor.id),
-      beforeState:world,
-      afterState:after
+      player: world.players.find((player) => player.id === actor.id),
+      beforeState: world,
+      afterState: after
     });
     assertClose(terms.transitionOptionPoints, expectedOption, 1e-12);
     assertClose(
@@ -16557,7 +16557,7 @@ test("AI·响应一致性：Counter planning 与 runtime 共享全体受益合�
       rootCard,
       [],
       null,
-      { rootFlipWorlds:decision.rootFlipWorlds }
+      { rootFlipWorlds: decision.rootFlipWorlds }
     );
     const runtime = game.aiController.evaluator.shouldRespond(decision);
     assert.equal(planning, runtime);
@@ -16821,7 +16821,7 @@ async function responseCooperativeYieldParity() {
       responder.hp = 1;
       responder.hand.push(block);
       const { game } = makeGame([source, responder, ally, counterweight]);
-      return { game, responder, type:"block", context:{ target:responder, source, amount:1, requiredCount:1 }, cards:[block] };
+      return { game, responder, type: "block", context: { target: responder, source, amount: 1, requiredCount: 1 }, cards: [block] };
     },
     () => {
       const responder = makePlayer("yield-counter-responder", 0, "dawn", "ai", 0);
@@ -16832,7 +16832,7 @@ async function responseCooperativeYieldParity() {
       const rootCard = instance("mutualBenefit");
       responder.hand.push(counter);
       const { game } = makeGame([responder, source, ally, enemy]);
-      return { game, responder, type:"counter", context:{ source, rootSource:source, card:rootCard, rootCard }, cards:[counter] };
+      return { game, responder, type: "counter", context: { source, rootSource: source, card: rootCard, rootCard }, cards: [counter] };
     },
     () => {
       const source = makePlayer("yield-guardian-source", 0, "dusk", "ai", 4);
@@ -16840,27 +16840,27 @@ async function responseCooperativeYieldParity() {
       const responder = makePlayer("yield-guardian-responder", 2, "dawn", "ai", 1);
       responder.hand.push(instance("charge"));
       const { game } = makeGame([source, target, responder]);
-      return { game, responder, type:"skill", context:{ target, source, amount:1 }, cards:[] };
+      return { game, responder, type: "skill", context: { target, source, amount: 1 }, cards: [] };
     },
     () => {
       const responder = makePlayer("yield-seal-responder", 0, "dawn", "ai", 0);
       const holder = makePlayer("yield-seal-holder", 1, "dawn", "ai", 1);
       const enemy = makePlayer("yield-seal-enemy", 2, "dusk", "ai", 4);
       const counter = instance("counter");
-      holder.statuses.sealed = { stacks:1 };
+      holder.statuses.sealed = { stacks: 1 };
       responder.hand.push(counter);
       const { game } = makeGame([responder, holder, enemy]);
-      return { game, responder, type:"counter", context:{ statusCounterContext:{ holderId:holder.id, statusId:"sealed" } }, cards:[counter] };
+      return { game, responder, type: "counter", context: { statusCounterContext: { holderId: holder.id, statusId: "sealed" } }, cards: [counter] };
     },
     () => {
       const responder = makePlayer("yield-lightning-responder", 0, "dawn", "ai", 0);
       const holder = makePlayer("yield-lightning-holder", 1, "dawn", "ai", 1);
       const enemy = makePlayer("yield-lightning-enemy", 2, "dusk", "ai", 4);
       const counter = instance("counter");
-      holder.statuses.lightning = { stacks:1 };
+      holder.statuses.lightning = { stacks: 1 };
       responder.hand.push(counter);
       const { game } = makeGame([responder, holder, enemy]);
-      return { game, responder, type:"counter", context:{ statusCounterContext:{ holderId:holder.id, statusId:"lightning" } }, cards:[counter] };
+      return { game, responder, type: "counter", context: { statusCounterContext: { holderId: holder.id, statusId: "lightning" } }, cards: [counter] };
     }
   ];
   for (const build of fixtures) {
@@ -18587,8 +18587,8 @@ test("AI·动作生成：非调律师不破坏队友手牌但保留其他资源�
   const { game }
     = makeGame([actor, tuner, ally, enemy]);
   const actorActions = game.aiController.actionGenerator.generate(
-      createInitialWorld(actor.id, game.state), actor.id
-    ).filter((action) => action.cardId === "destroy"),
+    createInitialWorld(actor.id, game.state), actor.id
+  ).filter((action) => action.cardId === "destroy"),
     tunerActions = game.aiController.actionGenerator.generate(
       createInitialWorld(tuner.id, game.state), tuner.id
     ).filter((action) => action.cardId === "destroy");
@@ -18638,7 +18638,7 @@ test("AI·动作生成：转移排除己方到敌方并保留其它合法方向"
   otherActor.hand.push(instance("transfer"));
   enemyA.hand.push(instance("block"));
   enemyB.hand.push(instance("block"));
-  const { game:otherGame } = makeGame([otherActor, enemyA, enemyB]);
+  const { game: otherGame } = makeGame([otherActor, enemyA, enemyB]);
   const enemyActions = otherGame.aiController.actionGenerator.generate(
     createInitialWorld(otherActor.id, otherGame.state),
     otherActor.id
@@ -19580,10 +19580,10 @@ async function allyDestroySelectionDirectionRegression() {
       "协调后置摸牌会抵消目标手牌净数量差"
     );
     assert.deepEqual(chargeAfter.lastResourceTransaction, {
-      cardId:"destroy",
-      cardInstanceId:"ally-destroy-use",
-      sourceId:"ally-destroy-target",
-      appliedProbability:1
+      cardId: "destroy",
+      cardInstanceId: "ally-destroy-use",
+      sourceId: "ally-destroy-target",
+      appliedProbability: 1
     });
     assert.ok(Number.isFinite(chargeTerms.contextualUtility));
     assert.ok(blockTerms.resourceSelectionUtility < chargeTerms.resourceSelectionUtility);
@@ -19894,8 +19894,8 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.equal(outcome.searchStopReason, "TIME");
     assert.equal(outcome.stats.uniqueRootCandidateCount, 4);
     assert.equal(outcome.stats.completedRootCandidateCount, 4);
-    assert.equal(outcome.stats.expanded, 5);
-    assert.equal(outcome.stats.bestValueScore, 0.7185260922661222);
+    assert.equal(outcome.stats.expanded, 8);
+    assert.equal(outcome.stats.bestValueScore, 1.3264197530864201);
     assert.ok(outcome.stats.elapsedMs >= 30);
     assert.ok(outcome.stats.timeObservedAtMs >= 30);
     assert.ok(outcome.stats.searchReturnAtMs >= outcome.stats.timeObservedAtMs);
@@ -19911,17 +19911,11 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.ok(Number.isFinite(outcome.stats.counterfactualDurationMs));
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
       type: "card",
-      cardId: "plunder",
-      cardInstanceId: "time-plunder",
-      targetId: "resource-enemy",
-      targetIds: ["resource-enemy"],
-      selection: {
-        zone: "equipment",
-        selectionKind: "equipment",
-        cardId: null,
-        definitionId: "energyDevice",
-        availableUnknownCount: 0
-      }
+      cardId: "charge",
+      cardInstanceId: "time-charge",
+      targetId: null,
+      targetIds: [],
+      selection: null
     });
     assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
     assert.equal(accepted.action, outcome.action);
@@ -20665,7 +20659,7 @@ async function runLargeHandEmergencyRecovery(stopReason) {
     requestsContainNonEnd,
     emergencyRecords,
     normalSearcherResumed,
-    currentPlayerIndex:game.state.currentPlayerIndex
+    currentPlayerIndex: game.state.currentPlayerIndex
   };
 }
 
@@ -20703,10 +20697,10 @@ test("AI·搜索故障恢复：首次搜索失败且无需弃牌时直接 canoni
       searchCalls += 1;
       return createWorkerSearchOutcome({
         request,
-        action:null,
-        stats:{ stopReason:"NODE", completedRootCandidateCount:0 },
-        searchStopReason:"NODE",
-        rngAfter:request.rng
+        action: null,
+        stats: { stopReason: "NODE", completedRootCandidateCount: 0 },
+        searchStopReason: "NODE",
+        rngAfter: request.rng
       });
     }
   };
@@ -20754,10 +20748,10 @@ test("AI·搜索故障恢复：会弃牌但无安全 card 时最终 canonical EN
       searchCalls += 1;
       return createWorkerSearchOutcome({
         request,
-        action:null,
-        stats:{ stopReason:"TIME", completedRootCandidateCount:0 },
-        searchStopReason:"TIME",
-        rngAfter:request.rng
+        action: null,
+        stats: { stopReason: "TIME", completedRootCandidateCount: 0 },
+        searchStopReason: "TIME",
+        rngAfter: request.rng
       });
     }
   };
@@ -20802,7 +20796,7 @@ test("AI·搜索故障恢复：emergency 排除共生互利闪电并选择安全
     assert.ok(roots.some((action) => action.cardId === "mutualBenefit"));
     assert.ok(roots.some((action) => action.cardId === "lightning"));
     const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
-      mandatoryDiscardCount:4
+      mandatoryDiscardCount: 4
     });
     assert.equal(emergency.status, "SELECTED_SAFE_CARD");
     assert.equal(emergency.action.type, "card");
@@ -20826,7 +20820,7 @@ test("AI·搜索故障恢复：emergency 排除仅以队友为目标的 card act
     assert.ok(plunderActions.length > 0);
     assert.ok(plunderActions.every((action) => action.targetIds.includes(ally.id)));
     const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
-      mandatoryDiscardCount:4
+      mandatoryDiscardCount: 4
     });
     assert.equal(emergency.status, "SELECTED_END_NO_SAFE_CARD");
     assert.equal(emergency.safeCardCandidateCount, 0);
@@ -20847,7 +20841,7 @@ test("AI·搜索故障恢复：已有装备时 emergency 不覆盖装备", () =>
       (action) => action.cardId === "energyDevice"
     ));
     const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
-      mandatoryDiscardCount:4
+      mandatoryDiscardCount: 4
     });
     assert.equal(emergency.status, "SELECTED_END_NO_SAFE_CARD");
     assert.equal(emergency.action.type, "end");
@@ -20868,7 +20862,7 @@ test("AI·搜索故障恢复：空装备槽且强制弃牌时 emergency 在普�
   const { game } = makeGame([actor, enemy]);
   try {
     const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
-      mandatoryDiscardCount:4
+      mandatoryDiscardCount: 4
     });
     assert.equal(emergency.status, "SELECTED_SAFE_CARD");
     assert.equal(emergency.action.type, "card");
@@ -20919,7 +20913,7 @@ async function runActionCapEquipmentClosureScenario(hasEquipmentCandidates) {
   );
   actor.hp = 1;
   const normalCards = Array.from(
-    { length:AI_RUNTIME_POLICY.maxActionsPerTurn },
+    { length: AI_RUNTIME_POLICY.maxActionsPerTurn },
     (_, index) => instance("charge", `action-cap-charge-${index}`)
   );
   actor.hand.push(...normalCards);
@@ -20929,78 +20923,78 @@ async function runActionCapEquipmentClosureScenario(hasEquipmentCandidates) {
     actor.hand.push(instance("block"), instance("block"));
   }
   const state = {
-    gameId:`${actor.id}-game`,
-    phase:"play",
-    players:[actor],
-    isGameOver:false,
-    isDisposed:false
+    gameId: `${actor.id}-game`,
+    phase: "play",
+    players: [actor],
+    isGameOver: false,
+    isDisposed: false
   };
   let searchCalls = 0;
   const executed = [];
   const closureSelections = [];
   const workflow = createTurnWorkflow({
-    getState:() => state,
-    isSessionValid:(gameId) => gameId === state.gameId,
-    emitEvent:async () => null,
-    publishFact:() => null,
-    presentation:{
-      setPrompt:() => null,
-      showThinking:() => null,
-      clearThinking:() => null,
-      refresh:() => null
+    getState: () => state,
+    isSessionValid: (gameId) => gameId === state.gameId,
+    emitEvent: async () => null,
+    publishFact: () => null,
+    presentation: {
+      setPrompt: () => null,
+      showThinking: () => null,
+      clearThinking: () => null,
+      refresh: () => null
     },
-    diagnostics:{ reportWorkflowError:() => null },
-    runTurn:async () => null,
-    gainEnergy:async () => 0,
-    drawCards:async () => null,
-    cleanupDefeatedZones:() => null,
-    delay:async () => true,
-    getAiDelay:() => 0,
-    now:() => 0,
-    sampleAiDecisionWindow:() => ({ minimumMs:0, maximumMs:0 }),
-    getRemainingAiDecisionDelay:() => 0,
-    getTeamRules:() => ({}),
-    waitForHumanPlayEnd:async () => true,
-    runAiPlayPhase:async () => null,
-    choiceCoordinator:{},
-    choiceContexts:{},
-    createId:() => "action-cap-choice",
-    selectAction:async () => {
+    diagnostics: { reportWorkflowError: () => null },
+    runTurn: async () => null,
+    gainEnergy: async () => 0,
+    drawCards: async () => null,
+    cleanupDefeatedZones: () => null,
+    delay: async () => true,
+    getAiDelay: () => 0,
+    now: () => 0,
+    sampleAiDecisionWindow: () => ({ minimumMs: 0, maximumMs: 0 }),
+    getRemainingAiDecisionDelay: () => 0,
+    getTeamRules: () => ({}),
+    waitForHumanPlayEnd: async () => true,
+    runAiPlayPhase: async () => null,
+    choiceCoordinator: {},
+    choiceContexts: {},
+    createId: () => "action-cap-choice",
+    selectAction: async () => {
       searchCalls += 1;
       const card = actor.hand.find((entry) => entry.definitionId === "charge");
       if (!card) throw new Error("16 个正常 Action 夹具提前耗尽");
-    return createAction({
-      type:"card",
-      actorId:actor.id,
-      cardId:card.definitionId,
-        cardInstanceId:card.id
+      return createAction({
+        type: "card",
+        actorId: actor.id,
+        cardId: card.definitionId,
+        cardInstanceId: card.id
       });
     },
-    selectRuntimeRecoveryEndAction:() => {
+    selectRuntimeRecoveryEndAction: () => {
       throw new Error("16 个正常 Action 不应进入 search recovery");
     },
-    selectRuntimeEmergencyAction:() => {
+    selectRuntimeEmergencyAction: () => {
       throw new Error("16 个正常 Action 不应进入 emergency recovery");
     },
-    selectRuntimeActionCapClosureAction:(currentPlayer, { mandatoryDiscardCount }) => {
+    selectRuntimeActionCapClosureAction: (currentPlayer, { mandatoryDiscardCount }) => {
       const equipment = hasEquipmentCandidates
         ? currentPlayer.hand.find(
-            (card) => CARD_DEFINITIONS[card.definitionId]?.category === "equipment"
-          ) ?? null
+          (card) => CARD_DEFINITIONS[card.definitionId]?.category === "equipment"
+        ) ?? null
         : null;
       const action = equipment
         ? createAction({
-            type:"card",
-            actorId:currentPlayer.id,
-            cardId:equipment.definitionId,
-            cardInstanceId:equipment.id
-          })
+          type: "card",
+          actorId: currentPlayer.id,
+          cardId: equipment.definitionId,
+          cardInstanceId: equipment.id
+        })
         : null;
       closureSelections.push(action);
       assert.ok(mandatoryDiscardCount > 0);
       return action;
     },
-    playCard:async (source, card) => {
+    playCard: async (source, card) => {
       const index = source.hand.indexOf(card);
       if (index < 0) return false;
       source.hand.splice(index, 1);
@@ -21010,12 +21004,12 @@ async function runActionCapEquipmentClosureScenario(hasEquipmentCandidates) {
       executed.push(card);
       return true;
     },
-    useActiveSkill:async () => false,
-    getAiMaxActions:() => AI_RUNTIME_POLICY.maxActionsPerTurn,
-    getActionTargetLabel:() => "",
-    resetActionLocks:() => null,
-    discardCardFromHand:async () => false,
-    cancelPendingInteractions:() => null
+    useActiveSkill: async () => false,
+    getAiMaxActions: () => AI_RUNTIME_POLICY.maxActionsPerTurn,
+    getActionTargetLabel: () => "",
+    resetActionLocks: () => null,
+    discardCardFromHand: async () => false,
+    cancelPendingInteractions: () => null
   });
   await workflow.takeAiPlayPhase(actor, state.gameId);
   return { actor, closureSelections, executed, searchCalls };
@@ -21027,12 +21021,12 @@ test("AI·搜索故障恢复：16 Action 上限后最多一次装备 closure 且
   const canonicalEnemy = makePlayer("action-cap-canonical-enemy", 1, "dusk", "ai", 1);
   canonicalActor.hp = 1;
   canonicalActor.hand.push(instance("charge"), instance("energyDevice"), instance("battleDevice"));
-  const { game:canonicalGame } = makeGame([canonicalActor, canonicalEnemy]);
+  const { game: canonicalGame } = makeGame([canonicalActor, canonicalEnemy]);
   canonicalGame.state.phase = "play";
   try {
     const closureAction = canonicalGame.aiController.selectRuntimeActionCapClosureAction(
       canonicalActor,
-      { mandatoryDiscardCount:2 }
+      { mandatoryDiscardCount: 2 }
     );
     assert.ok(sameAction(
       closureAction,
@@ -21044,7 +21038,7 @@ test("AI·搜索故障恢复：16 Action 上限后最多一次装备 closure 且
     canonicalActor.equipment = instance("recycleDevice");
     assert.equal(canonicalGame.aiController.selectRuntimeActionCapClosureAction(
       canonicalActor,
-      { mandatoryDiscardCount:2 }
+      { mandatoryDiscardCount: 2 }
     ), null, "已有装备时 Action cap closure 不换装");
     canonicalActor.equipment = null;
     canonicalActor.hand.splice(
@@ -21055,7 +21049,7 @@ test("AI·搜索故障恢复：16 Action 上限后最多一次装备 closure 且
     );
     assert.equal(canonicalGame.aiController.selectRuntimeActionCapClosureAction(
       canonicalActor,
-      { mandatoryDiscardCount:1 }
+      { mandatoryDiscardCount: 1 }
     ), null, "没有合法装备 Action 时正常结束");
   } finally {
     canonicalGame.dispose();
@@ -21318,11 +21312,11 @@ test("AI·搜索故障恢复：失败 card 整体回滚后立即 final recovery 
   game.aiController.selectAction = async () => {
     searchCalls += 1;
     game.aiController.lastSearchResult = Object.freeze({
-      status:SEARCH_RESULT_STATUS.ACCEPTED
+      status: SEARCH_RESULT_STATUS.ACCEPTED
     });
     return createAction({
-      type:"card", actorId:actor.id, cardId:"assault", cardInstanceId:assault.id,
-      targetIds:[enemy.id]
+      type: "card", actorId: actor.id, cardId: "assault", cardInstanceId: assault.id,
+      targetIds: [enemy.id]
     });
   };
   let emergencyCalls = 0;
@@ -21438,10 +21432,10 @@ test("AI·搜索故障恢复：失败 skill 整体回滚后立即 final recovery
   game.aiController.selectAction = async () => {
     searchCalls += 1;
     game.aiController.lastSearchResult = Object.freeze({
-      status:SEARCH_RESULT_STATUS.ACCEPTED
+      status: SEARCH_RESULT_STATUS.ACCEPTED
     });
     return createAction({
-      type:"skill", actorId:actor.id, skillId:"barrier", targetIds:[ally.id]
+      type: "skill", actorId: actor.id, skillId: "barrier", targetIds: [ally.id]
     });
   };
   let emergencyCalls = 0;
@@ -21494,12 +21488,12 @@ test("AI·搜索故障恢复：emergency 不改写 Searcher 诊断或制造 incu
   };
   try {
     assert.equal(await game.aiController.selectAction(actor, {
-      gameId:game.state.gameId
+      gameId: game.state.gameId
     }), null);
     const searchResult = game.aiController.lastSearchResult;
     const searchRequest = game.aiController.lastSearchRequest;
     const recovery = game.aiController.selectRuntimeEmergencyAction(actor, {
-      mandatoryDiscardCount:1
+      mandatoryDiscardCount: 1
     });
     assert.equal(recovery.kind, "RUNTIME_EMERGENCY_LEGAL_ACTION");
     assert.equal(recovery.status, "SELECTED_SAFE_CARD");
@@ -22031,12 +22025,12 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
       discardOpportunityInputs: { beforeOverflow: 0, afterOverflow: 0, stateDelta: 0 },
       endOpportunityInputs: action.type === "end"
         ? {
-            energy:0,
-            turnEnergyGain:0,
-            maxEnergy:0,
-            activeSkillCost:0,
-            hasActiveSkill:false
-          }
+          energy: 0,
+          turnEnergyGain: 0,
+          maxEnergy: 0,
+          activeSkillCost: 0,
+          hasActiveSkill: false
+        }
         : null,
       endPolicyInputs: action.type === "end"
         ? { hasEquipmentBefore: true }
@@ -22057,7 +22051,7 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
     }) {
       return this.composeTransitionValue({
         baseTransition,
-        endOpportunityPoints:this.endOpportunityPoints(
+        endOpportunityPoints: this.endOpportunityPoints(
           endTransitionTerms,
           siblingTransitionTerms
         )
@@ -22337,12 +22331,12 @@ async function runSearcherFaultBoundaryFixture(mode) {
         discardOpportunityInputs: { beforeOverflow: 0, afterOverflow: 0, stateDelta: 0 },
         endOpportunityInputs: action.type === "end"
           ? {
-              energy:0,
-              turnEnergyGain:0,
-              maxEnergy:0,
-              activeSkillCost:0,
-              hasActiveSkill:false
-            }
+            energy: 0,
+            turnEnergyGain: 0,
+            maxEnergy: 0,
+            activeSkillCost: 0,
+            hasActiveSkill: false
+          }
           : null,
         endPolicyInputs: action.type === "end"
           ? { hasEquipmentBefore: true }
@@ -22364,7 +22358,7 @@ async function runSearcherFaultBoundaryFixture(mode) {
     finalizeEndTransition({ baseTransition }) {
       return this.composeTransitionValue({
         baseTransition,
-        endOpportunityPoints:0
+        endOpportunityPoints: 0
       });
     },
     composeTransitionValue: ({ baseTransition, endOpportunityPoints }) => {
@@ -22821,20 +22815,20 @@ async function runEquipmentEndPolicyRootSearch({
   const game = makeBenchmarkGame({
     players: [
       {
-        id:actorId,
-        team:"dawn",
-        character:"blade-walker",
+        id: actorId,
+        team: "dawn",
+        character: "blade-walker",
         hp,
-        hand:cardIds.map((definitionId, index) => (
+        hand: cardIds.map((definitionId, index) => (
           makeBenchmarkCard(definitionId, `${actorId}-${index}`)
         )),
-        equipment:equipment
+        equipment: equipment
           ? makeBenchmarkCard(equipment, `${actorId}-equipped`)
           : null
       },
-      { id:`${actorId}-enemy`, team:"dusk", character:"oath-warden", hp:4 }
+      { id: `${actorId}-enemy`, team: "dusk", character: "oath-warden", hp: 4 }
     ],
-    options:{ actorId, seed:20260906, nodeBudget:1000 }
+    options: { actorId, seed: 20260906, nodeBudget: 1000 }
   });
   try {
     const actor = game.state.players[0];
@@ -22846,15 +22840,15 @@ async function runEquipmentEndPolicyRootSearch({
     const roots = game.aiController.getActionCandidates(actor, world);
     const { searcher } = createSearchEngine({
       world,
-      searchConfig:{
+      searchConfig: {
         ...game.aiController.buildSearchConfig(),
-        depth:1,
-        nodeBudget:1000,
-        timeBudgetMs:null,
-        enableRandomness:false,
-        randomnessRange:0
+        depth: 1,
+        nodeBudget: 1000,
+        timeBudgetMs: null,
+        enableRandomness: false,
+        randomnessRange: 0
       }
-    }, { next:() => 0 });
+    }, { next: () => 0 });
     const finalized = new Map();
     const finalizeCandidate = searcher.finalizeCandidate.bind(searcher);
     searcher.finalizeCandidate = (candidate, siblings) => {
@@ -22866,14 +22860,14 @@ async function runEquipmentEndPolicyRootSearch({
       world.players.find((entry) => entry.id === actor.id),
       world,
       roots,
-      { gameId:world.gameId, rootCandidateCount:roots.length }
+      { gameId: world.gameId, rootCandidateCount: roots.length }
     );
     return {
       choice,
-      evaluator:searcher.evaluator,
+      evaluator: searcher.evaluator,
       finalized,
       roots,
-      stats:searcher.lastSearchStats,
+      stats: searcher.lastSearchStats,
       world
     };
   } finally {
@@ -22883,7 +22877,7 @@ async function runEquipmentEndPolicyRootSearch({
 
 test("AI·搜索：空装备槽强制弃牌时完整装备 sibling 使 END 不可竞争且装备仍按 Final Utility 选择", async () => {
   const single = await runEquipmentEndPolicyRootSearch({
-    cardIds:["energyDevice", "block", "block", "block", "block"]
+    cardIds: ["energyDevice", "block", "block", "block", "block"]
   });
   const singleEndAction = single.roots.find((action) => action.type === "end");
   assert.ok(singleEndAction, "canonical END 必须继续存在");
@@ -22896,7 +22890,7 @@ test("AI·搜索：空装备槽强制弃牌时完整装备 sibling 使 END 不�
   assert.equal(single.choice.cardId, "energyDevice");
 
   const multiple = await runEquipmentEndPolicyRootSearch({
-    cardIds:["energyDevice", "battleDevice", "block", "block", "block", "block"]
+    cardIds: ["energyDevice", "battleDevice", "block", "block", "block", "block"]
   });
   const equipmentCandidates = multiple.roots
     .filter((action) => CARD_DEFINITIONS[action.cardId]?.category === "equipment")
@@ -22918,8 +22912,8 @@ test("AI·搜索：空装备槽强制弃牌时完整装备 sibling 使 END 不�
   assert.ok(sameAction(multiple.choice, expectedEquipment.action));
 
   const equipped = await runEquipmentEndPolicyRootSearch({
-    cardIds:["energyDevice", "block", "block", "block", "block"],
-    equipment:"recycleDevice"
+    cardIds: ["energyDevice", "block", "block", "block", "block"],
+    equipment: "recycleDevice"
   });
   const equippedEnd = equipped.roots.find((action) => action.type === "end");
   assert.ok(Number.isFinite(
@@ -22927,7 +22921,7 @@ test("AI·搜索：空装备槽强制弃牌时完整装备 sibling 使 END 不�
   ));
 
   const noOverflow = await runEquipmentEndPolicyRootSearch({
-    cardIds:["energyDevice", "block", "block", "block"]
+    cardIds: ["energyDevice", "block", "block", "block"]
   });
   const noOverflowEnd = noOverflow.roots.find((action) => action.type === "end");
   assert.ok(Number.isFinite(
@@ -22935,7 +22929,7 @@ test("AI·搜索：空装备槽强制弃牌时完整装备 sibling 使 END 不�
   ));
 
   const noEquipment = await runEquipmentEndPolicyRootSearch({
-    cardIds:["charge", "block", "block", "block", "block"]
+    cardIds: ["charge", "block", "block", "block", "block"]
   });
   assert.equal(noEquipment.roots.some(
     (action) => CARD_DEFINITIONS[action.cardId]?.category === "equipment"
@@ -25350,12 +25344,12 @@ test("AI·Worker 搜索请求：大 root 集按 Worker index 常数次验收选�
   const actor = makePlayer("root-index-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("root-index-enemy", 1, "dusk", "ai", 1);
   const { game } = makeGame([actor, enemy]);
-  const guardedRoots = Array.from({ length:2000 }, (_, index) => {
+  const guardedRoots = Array.from({ length: 2000 }, (_, index) => {
     const root = createAction({
-      type:"card",
-      actorId:actor.id,
-      cardId:"charge",
-      cardInstanceId:`root-index-${index}`
+      type: "card",
+      actorId: actor.id,
+      cardId: "charge",
+      cardInstanceId: `root-index-${index}`
     });
     return new Proxy(root, {
       get(target, property, receiver) {
@@ -25364,27 +25358,27 @@ test("AI·Worker 搜索请求：大 root 集按 Worker index 常数次验收选�
       }
     });
   });
-  const selected = createAction({ type:"end", actorId:actor.id });
+  const selected = createAction({ type: "end", actorId: actor.id });
   const rootActions = [...guardedRoots, selected];
   const request = createSearchRequest({
-    requestId:"large-root-index-acceptance",
-    gameId:game.state.gameId,
-    stateVersion:game.state.stateVersion,
-    actorId:actor.id,
-    phase:game.state.phase,
-    currentRound:game.state.currentRound,
-    world:createInitialWorld(actor.id, game.state),
-    searchConfig:game.aiController.buildSearchConfig(),
-    rng:game.aiController.searchRng.snapshot(),
+    requestId: "large-root-index-acceptance",
+    gameId: game.state.gameId,
+    stateVersion: game.state.stateVersion,
+    actorId: actor.id,
+    phase: game.state.phase,
+    currentRound: game.state.currentRound,
+    world: createInitialWorld(actor.id, game.state),
+    searchConfig: game.aiController.buildSearchConfig(),
+    rng: game.aiController.searchRng.snapshot(),
     rootActions
   });
   const outcome = createWorkerSearchOutcome({
     request,
-    action:structuredClone(selected),
-    selectedRootIndex:rootActions.length - 1,
-    stats:{ stopReason:"COMPLETE" },
-    searchStopReason:"COMPLETE",
-    rngAfter:game.aiController.searchRng.snapshot()
+    action: structuredClone(selected),
+    selectedRootIndex: rootActions.length - 1,
+    stats: { stopReason: "COMPLETE" },
+    searchStopReason: "COMPLETE",
+    rngAfter: game.aiController.searchRng.snapshot()
   });
   const accepted = game.aiController.acceptWorkerSearchOutcome(request, outcome, rootActions);
   assert.equal(accepted.result.status, SEARCH_RESULT_STATUS.ACCEPTED);
@@ -27264,38 +27258,38 @@ Evaluator.evaluateTransition、staticCardAssetValue。
 */
 function testLeverageEquipmentStaticAssetScale() {
   const actor = {
-    id:"leverage-static-actor", seatIndex:0, battleTeam:"dawn",
-    characterId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
-    energy:0, handCount:1,
-    hand:[{ id:"leverage-static-card", definitionId:"leverage" }],
-    equipmentDefinitionId:null, equipmentRetentionProbability:0,
-    huntMarkProbabilities:{}, statuses:[]
+    id: "leverage-static-actor", seatIndex: 0, battleTeam: "dawn",
+    characterId: "blade-walker", alive: true, hp: 4, maxHp: 4, shield: 0,
+    energy: 0, handCount: 1,
+    hand: [{ id: "leverage-static-card", definitionId: "leverage" }],
+    equipmentDefinitionId: null, equipmentRetentionProbability: 0,
+    huntMarkProbabilities: {}, statuses: []
   };
   const target = {
-    id:"leverage-static-target", seatIndex:1, battleTeam:"dusk",
-    characterId:"oath-warden", alive:true, hp:4, maxHp:4, shield:0,
-    energy:0, handCount:0, knownCards:[],
-    equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1,
-    huntMarkProbabilities:{}, statuses:[]
+    id: "leverage-static-target", seatIndex: 1, battleTeam: "dusk",
+    characterId: "oath-warden", alive: true, hp: 4, maxHp: 4, shield: 0,
+    energy: 0, handCount: 0, knownCards: [],
+    equipmentDefinitionId: "battleDevice", equipmentRetentionProbability: 1,
+    huntMarkProbabilities: {}, statuses: []
   };
   const before = upgradeProbabilityFixture({
-    remainingCardCounts:{},
-    players:[actor, target]
+    remainingCardCounts: {},
+    players: [actor, target]
   });
   const after = cloneWorld(before);
   after.players[1].equipmentRetentionProbability = 0;
   const terms = new Evaluator().evaluateTransition({
-    action:createAction({
-      type:"card",
-      actorId:actor.id,
-      cardId:"leverage",
-      cardInstanceId:"leverage-static-card",
-      targetIds:[target.id],
-      selection:{ firstTargetId:target.id }
+    action: createAction({
+      type: "card",
+      actorId: actor.id,
+      cardId: "leverage",
+      cardInstanceId: "leverage-static-card",
+      targetIds: [target.id],
+      selection: { firstTargetId: target.id }
     }),
-    player:actor,
-    beforeState:before,
-    afterState:after
+    player: actor,
+    beforeState: before,
+    afterState: after
   });
   assertClose(
     terms.transitionOptionPoints,
@@ -27584,7 +27578,7 @@ ledgerState、upgradeProbabilityFixture。
 */
 function mutualBenefitTestWorld(players, remainingCardCounts) {
   const state = ledgerState(players.map((player, index) => (
-    index === 0 ? player : { ...player, hand:undefined, knownCards:player.knownCards ?? [] }
+    index === 0 ? player : { ...player, hand: undefined, knownCards: player.knownCards ?? [] }
   )));
   state.remainingCardCounts = remainingCardCounts;
   return upgradeProbabilityFixture(state);
@@ -27594,13 +27588,13 @@ test("AI·互利：non-viewer receipt 的公开 RoleDelta 进入真实 StateDelt
   const state = mutualBenefitTestWorld([
     ledgerPlayer("receipt-root-viewer", 0, "dawn", "oath-warden"),
     ledgerPlayer("receipt-non-viewer", 1, "dawn", "blade-walker")
-  ], { assault:1, telescope:1 });
+  ], { assault: 1, telescope: 1 });
   const simulator = new Simulator(state);
   const evaluator = new Evaluator();
   const recipient = state.players[1];
   const outcomes = simulator.buildPublicCardReceiptOutcomes(state, recipient.id, [
-    { id:"receipt-assault", definitionId:"assault" },
-    { id:"receipt-telescope", definitionId:"telescope" }
+    { id: "receipt-assault", definitionId: "assault" },
+    { id: "receipt-telescope", definitionId: "telescope" }
   ], probabilityEventPartition("mutual-receipt-full", 1, "occurs"));
   const assaultWorld = outcomes.find((outcome) => outcome.definitionId === "assault").worlds[0];
   const assaultRecipient = assaultWorld.players[1];
@@ -27620,7 +27614,7 @@ test("AI·互利：non-viewer receipt 的公开 RoleDelta 进入真实 StateDelt
   );
   assertClose(
     evaluator.stateUtility(assaultWorld, recipient.id)
-      - evaluator.stateUtility(state, recipient.id),
+    - evaluator.stateUtility(state, recipient.id),
     HAND_COUNT_VALUE + roleCardDelta(recipient.characterId, "assault"),
     1e-12
   );
@@ -27655,27 +27649,27 @@ test("AI·互利：cardId 与 worldIndex 精确物化选中的装备 World", () 
       ledgerPlayer("mutual-equipment-actor", 0, "dawn", "blade-walker"),
       ["mutualBenefit"]
     )
-  ], { telescope:1 });
+  ], { telescope: 1 });
   const simulator = new Simulator(state);
   const evaluator = new Evaluator();
   const actor = state.players[0];
   const outcomes = simulator.buildPublicCardReceiptOutcomes(state, actor.id, [
-    { id:"mutual-equipment:telescope", definitionId:"telescope" }
+    { id: "mutual-equipment:telescope", definitionId: "telescope" }
   ], probabilityEventPartition("mutual-equipment-full", 1, "occurs"));
   assert.deepEqual(
     evaluator.choosePublicCardOutcome(actor, [{
-      id:"mutual-equipment:telescope",
-      definitionId:"telescope"
+      id: "mutual-equipment:telescope",
+      definitionId: "telescope"
     }], state, outcomes),
-    { cardId:"mutual-equipment:telescope", definitionId:"telescope", worldIndex:1 }
+    { cardId: "mutual-equipment:telescope", definitionId: "telescope", worldIndex: 1 }
   );
 
   const action = createAction({
-    type:"card",
-    actorId:actor.id,
-    cardId:"mutualBenefit",
-    cardInstanceId:actor.hand[0].id,
-    targetIds:[actor.id]
+    type: "card",
+    actorId: actor.id,
+    cardId: "mutualBenefit",
+    cardInstanceId: actor.hand[0].id,
+    targetIds: [actor.id]
   });
   const after = simulator.apply(state, action);
   assert.equal(after.players[0].equipmentDefinitionId, "telescope");
@@ -27684,9 +27678,9 @@ test("AI·互利：cardId 与 worldIndex 精确物化选中的装备 World", () 
   assert.equal(queryCurrentCardCounts(after.probabilityState).telescope, 0);
   const terms = evaluator.evaluateTransition({
     action,
-    player:actor,
-    beforeState:state,
-    afterState:after
+    player: actor,
+    beforeState: state,
+    afterState: after
   });
   assert.equal(terms.transitionOptionPoints, 0);
   assert.equal(terms.baseTransition, terms.stateDeltaValue);
@@ -27694,9 +27688,9 @@ test("AI·互利：cardId 与 worldIndex 精确物化选中的装备 World", () 
 
 test("AI·互利：resolution 为零时无人领取且有限池不消费", () => {
   const counter = {
-    cardId:"mutual-zero-counter",
-    definitionId:"counter",
-    availability:1
+    cardId: "mutual-zero-counter",
+    definitionId: "counter",
+    availability: 1
   };
   const state = mutualBenefitTestWorld([
     ledgerHand(
@@ -27705,27 +27699,27 @@ test("AI·互利：resolution 为零时无人领取且有限池不消费", () =>
     ),
     ledgerPlayer("mutual-zero-ally", 1, "dawn", "oath-warden"),
     ledgerPlayer("mutual-zero-enemy", 2, "dusk", "spirit-medic", {
-      handCount:1,
-      knownCards:[counter]
+      handCount: 1,
+      knownCards: [counter]
     })
-  ], { assault:1, recover:1, charge:1 });
+  ], { assault: 1, recover: 1, charge: 1 });
   const action = createAction({
-    type:"card",
-    actorId:state.players[0].id,
-    cardId:"mutualBenefit",
-    cardInstanceId:state.players[0].hand[0].id,
-    targetIds:state.players.map((player) => player.id)
+    type: "card",
+    actorId: state.players[0].id,
+    cardId: "mutualBenefit",
+    cardInstanceId: state.players[0].hand[0].id,
+    targetIds: state.players.map((player) => player.id)
   });
-  const after = new Simulator(state, { decideCounter:() => true }).apply(state, action);
+  const after = new Simulator(state, { decideCounter: () => true }).apply(state, action);
   assert.equal(after.players.some((player) => (
     (player.hand ?? player.knownCards ?? []).some(
       (card) => (card.id ?? card.cardId)?.startsWith("mutual-benefit:")
     )
   )), false);
   assert.deepEqual(queryCurrentCardCounts(after.probabilityState), {
-    assault:1,
-    recover:1,
-    charge:1
+    assault: 1,
+    recover: 1,
+    charge: 1
   });
 });
 
@@ -27736,27 +27730,27 @@ test("AI·互利：多名接收者按座次消费当前池且 Final 无重复 Op
       ["mutualBenefit"]
     ),
     ledgerPlayer("mutual-draft-ally", 1, "dawn", "oath-warden")
-  ], { assault:1, recover:1 });
+  ], { assault: 1, recover: 1 });
   const simulator = new Simulator(state);
   const evaluator = new Evaluator();
   const actor = state.players[0];
   const action = createAction({
-    type:"card",
-    actorId:actor.id,
-    cardId:"mutualBenefit",
-    cardInstanceId:actor.hand[0].id,
-    targetIds:state.players.map((player) => player.id)
+    type: "card",
+    actorId: actor.id,
+    cardId: "mutualBenefit",
+    cardInstanceId: actor.hand[0].id,
+    targetIds: state.players.map((player) => player.id)
   });
   const after = simulator.apply(state, action);
   assert.deepEqual(after.players[0].hand.map((card) => card.definitionId), ["assault"]);
   assert.equal(after.players[1].hand, undefined);
   assert.deepEqual(after.players[1].knownCards.map((card) => card.definitionId), ["recover"]);
-  assert.deepEqual(queryCurrentCardCounts(after.probabilityState), { assault:0, recover:0 });
+  assert.deepEqual(queryCurrentCardCounts(after.probabilityState), { assault: 0, recover: 0 });
   const terms = evaluator.evaluateTransition({
     action,
-    player:actor,
-    beforeState:state,
-    afterState:after
+    player: actor,
+    beforeState: state,
+    afterState: after
   });
   assert.equal(terms.transitionOptionPoints, 0);
   assert.equal(terms.baseTransition, terms.stateDeltaValue);
@@ -27764,9 +27758,9 @@ test("AI·互利：多名接收者按座次消费当前池且 Final 无重复 Op
 
 test("AI·互利：Counter 的部分 resolution 由同一 effect Worlds 单一 authority 计价", () => {
   const counter = {
-    cardId:"mutual-partial-counter",
-    definitionId:"counter",
-    availability:0.5
+    cardId: "mutual-partial-counter",
+    definitionId: "counter",
+    availability: 0.5
   };
   const state = mutualBenefitTestWorld([
     ledgerHand(
@@ -27775,24 +27769,24 @@ test("AI·互利：Counter 的部分 resolution 由同一 effect Worlds 单一 a
     ),
     ledgerPlayer("mutual-partial-ally", 1, "dawn", "oath-warden"),
     ledgerPlayer("mutual-partial-enemy", 2, "dusk", "spirit-medic", {
-      handCount:0.5,
-      knownCards:[counter]
+      handCount: 0.5,
+      knownCards: [counter]
     })
-  ], { assault:1, recover:1, charge:1 });
+  ], { assault: 1, recover: 1, charge: 1 });
   let counterDecisionCalls = 0;
   const simulator = new Simulator(state, {
-    decideCounter:() => {
+    decideCounter: () => {
       counterDecisionCalls += 1;
       return true;
     }
   });
   const actor = state.players[0];
   const action = createAction({
-    type:"card",
-    actorId:actor.id,
-    cardId:"mutualBenefit",
-    cardInstanceId:actor.hand[0].id,
-    targetIds:state.players.map((player) => player.id)
+    type: "card",
+    actorId: actor.id,
+    cardId: "mutualBenefit",
+    cardInstanceId: actor.hand[0].id,
+    targetIds: state.players.map((player) => player.id)
   });
   const after = simulator.apply(state, action);
   assertClose(after.players[0].handCount, 1, 1e-12);
@@ -27811,9 +27805,9 @@ test("AI·互利：Counter 的部分 resolution 由同一 effect Worlds 单一 a
   ));
   assert.equal(new Set(receiptDefinitions).size, 3);
   assert.deepEqual(queryCurrentCardCounts(after.probabilityState), {
-    assault:0,
-    recover:0,
-    charge:0
+    assault: 0,
+    recover: 0,
+    charge: 0
   });
   const evaluator = new Evaluator();
   const transitionEvaluationWorlds = simulator.getTransitionEvaluationWorlds(after);
@@ -27827,11 +27821,11 @@ test("AI·互利：Counter 的部分 resolution 由同一 effect Worlds 单一 a
   assert.ok(Math.abs(baselineDelta) > 1e-12);
   const terms = evaluator.evaluateTransition({
     action,
-    player:actor,
-    beforeState:state,
-    afterState:after,
+    player: actor,
+    beforeState: state,
+    afterState: after,
     effectBaselineState,
-    effectResolutionScale:transitionEvaluationWorlds.effectResolutionScale
+    effectResolutionScale: transitionEvaluationWorlds.effectResolutionScale
   });
   assertClose(terms.stateDelta, baselineDelta + receiptDelta * 0.5, 1e-12);
   assert.ok(Math.abs(
@@ -27842,28 +27836,28 @@ test("AI·互利：Counter 的部分 resolution 由同一 effect Worlds 单一 a
   assert.equal(terms.transitionOptionPoints, 0);
   const callsAfterApply = counterDecisionCalls;
   const searcher = Object.assign(Object.create(Searcher.prototype), {
-    evaluator:{
-      evaluateTransition:evaluator.evaluateTransition.bind(evaluator),
-      requiresActionLightningOutcomes:() => false,
-      requiresHiddenWorldPrior:() => false,
-      composeSearchPrior:() => ({ domainPrior:0, searchCredit:0, prior:0 }),
-      resourceSelectionPreference:() => null
+    evaluator: {
+      evaluateTransition: evaluator.evaluateTransition.bind(evaluator),
+      requiresActionLightningOutcomes: () => false,
+      requiresHiddenWorldPrior: () => false,
+      composeSearchPrior: () => ({ domainPrior: 0, searchCredit: 0, prior: 0 }),
+      resourceSelectionPreference: () => null
     },
-    materializeValueTerms:() => ({
-      exposeMarginal:0,
-      assaultStacksCredit:0,
-      nextProvenance:null
+    materializeValueTerms: () => ({
+      exposeMarginal: 0,
+      assaultStacksCredit: 0,
+      nextProvenance: null
     })
   });
   const candidate = searcher.evaluateCandidate({
     action,
-    beforeState:state,
-    afterState:after,
-    player:actor,
-    depth:1,
-    remainingProvenance:null,
+    beforeState: state,
+    afterState: after,
+    player: actor,
+    depth: 1,
+    remainingProvenance: null,
     simulator,
-    context:{}
+    context: {}
   });
   assertClose(candidate.baseTerms.resolutionScale, 0.5, 1e-12);
   assert.equal(counterDecisionCalls, callsAfterApply);
@@ -27873,17 +27867,17 @@ test("AI·互利：部分 resolution 的装备换装保留失败旧装备与成�
   const state = mutualBenefitTestWorld([
     ledgerHand(
       ledgerPlayer("mutual-replace-actor", 0, "dawn", "blade-walker", {
-        equipmentDefinitionId:"energyDevice",
-        equipmentRetentionProbability:1
+        equipmentDefinitionId: "energyDevice",
+        equipmentRetentionProbability: 1
       }),
       ["mutualBenefit"]
     )
-  ], { telescope:1 });
+  ], { telescope: 1 });
   const eventWorlds = probabilityEventPartition("mutual-replace", 0.5, "occurs");
   const outcomes = new Simulator(state).buildPublicCardReceiptOutcomes(
     state,
     state.players[0].id,
-    [{ id:"mutual-replace:telescope", definitionId:"telescope" }],
+    [{ id: "mutual-replace:telescope", definitionId: "telescope" }],
     eventWorlds
   );
   const equipped = outcomes[0].worlds[1].players[0];
@@ -27901,16 +27895,16 @@ test("AI·互利：重复领取同装备在失败与成功 Worlds 中都保持�
   const state = mutualBenefitTestWorld([
     ledgerHand(
       ledgerPlayer("mutual-same-equipment", 0, "dawn", "blade-walker", {
-        equipmentDefinitionId:"telescope",
-        equipmentRetentionProbability:1
+        equipmentDefinitionId: "telescope",
+        equipmentRetentionProbability: 1
       }),
       ["mutualBenefit"]
     )
-  ], { telescope:1 });
+  ], { telescope: 1 });
   const outcomes = new Simulator(state).buildPublicCardReceiptOutcomes(
     state,
     state.players[0].id,
-    [{ id:"mutual-same:telescope", definitionId:"telescope" }],
+    [{ id: "mutual-same:telescope", definitionId: "telescope" }],
     probabilityEventPartition("mutual-same", 0.5, "occurs")
   );
   const equipped = outcomes[0].worlds[1].players[0];
@@ -28279,12 +28273,12 @@ test("AI·装备：完全移除时按初始装备价值产生完整损失", () =
 
 test("AI·装备：StaticAsset 的 Base 与正负 RoleDelta 同乘唯一材料尺度", () => {
   const cardDefinitions = {
-    battleDevice:CARD_DEFINITIONS.battleDevice
+    battleDevice: CARD_DEFINITIONS.battleDevice
   };
-  const characterDefinitions = [{ id:"positive" }, { id:"negative" }];
+  const characterDefinitions = [{ id: "positive" }, { id: "negative" }];
   const deltas = {
-    positive:{ battleDevice:2 },
-    negative:{ battleDevice:-2 }
+    positive: { battleDevice: 2 },
+    negative: { battleDevice: -2 }
   };
   assertClose(staticCardAssetValue("positive", "battleDevice", {
     cardDefinitions,
@@ -28298,20 +28292,20 @@ test("AI·装备：StaticAsset 的 Base 与正负 RoleDelta 同乘唯一材料�
   }), 2.8);
 
   const retained = cardPlayerValueTerms({
-    id:"equipment-static-owner",
-    characterId:"blade-walker",
-    handCount:0,
-    hand:[],
-    equipmentDefinitionId:"battleDevice",
-    equipmentRetentionProbability:1
+    id: "equipment-static-owner",
+    characterId: "blade-walker",
+    handCount: 0,
+    hand: [],
+    equipmentDefinitionId: "battleDevice",
+    equipmentRetentionProbability: 1
   }, "equipment-static-owner");
   const halfRetained = cardPlayerValueTerms({
-    id:"equipment-static-owner",
-    characterId:"blade-walker",
-    handCount:0,
-    hand:[],
-    equipmentDefinitionId:"battleDevice",
-    equipmentRetentionProbability:0.5
+    id: "equipment-static-owner",
+    characterId: "blade-walker",
+    handCount: 0,
+    hand: [],
+    equipmentDefinitionId: "battleDevice",
+    equipmentRetentionProbability: 0.5
   }, "equipment-static-owner");
   assertClose(retained.equipmentDelta + retained.equipmentRoleDelta, 4.4);
   assertClose(halfRetained.equipmentDelta + halfRetained.equipmentRoleDelta, 2.2);
@@ -28345,7 +28339,7 @@ actor 手牌是 viewer 合法身份；target 手牌只经 knownCards 或匿名 f
 */
 function equipmentFutureFixture(equipmentDefinitionId, options = {}) {
   const actorCards = (options.actorCards ?? []).map((definitionId, index) => ({
-    id:`equipment-future-actor-${index}`,
+    id: `equipment-future-actor-${index}`,
     definitionId
   }));
   const targetCards = (options.targetCards ?? []).map((definitionId, index) => fullKnownCard(
@@ -28353,30 +28347,30 @@ function equipmentFutureFixture(equipmentDefinitionId, options = {}) {
     definitionId
   ));
   const actor = {
-    id:"equipment-future-actor", seatIndex:0, battleTeam:"dawn",
-    characterId:options.actorCharacterId ?? "blade-walker",
-    alive:true, hp:options.actorHp ?? 4, maxHp:4, shield:options.actorShield ?? 0,
-    energy:0, maxEnergy:3, handCount:options.actorHandCount ?? actorCards.length,
-    hand:actorCards, attackRange:options.attackRange ?? 1, nextTurnBaseAttackLimit:1,
+    id: "equipment-future-actor", seatIndex: 0, battleTeam: "dawn",
+    characterId: options.actorCharacterId ?? "blade-walker",
+    alive: true, hp: options.actorHp ?? 4, maxHp: 4, shield: options.actorShield ?? 0,
+    energy: 0, maxEnergy: 3, handCount: options.actorHandCount ?? actorCards.length,
+    hand: actorCards, attackRange: options.attackRange ?? 1, nextTurnBaseAttackLimit: 1,
     equipmentDefinitionId,
-    equipmentRetentionProbability:options.retention ?? (equipmentDefinitionId ? 1 : 0),
-    recycleDeviceUses:options.recycleDeviceUses ?? 0,
-    huntMarkProbabilities:{}, statuses:[]
+    equipmentRetentionProbability: options.retention ?? (equipmentDefinitionId ? 1 : 0),
+    recycleDeviceUses: options.recycleDeviceUses ?? 0,
+    huntMarkProbabilities: {}, statuses: []
   };
   const target = {
-    id:"equipment-future-target", seatIndex:1, battleTeam:"dusk",
-    characterId:options.targetCharacterId ?? "oath-warden",
-    alive:true, hp:options.targetHp ?? 4, maxHp:4, shield:options.targetShield ?? 0,
-    energy:0, maxEnergy:3, handCount:options.targetHandCount ?? targetCards.length,
-    knownCards:targetCards, attackRange:1, nextTurnBaseAttackLimit:1,
-    equipmentDefinitionId:options.targetEquipmentDefinitionId ?? null,
-    equipmentRetentionProbability:options.targetEquipmentRetention ?? 0,
-    recycleDeviceUses:0, huntMarkProbabilities:{}, statuses:[]
+    id: "equipment-future-target", seatIndex: 1, battleTeam: "dusk",
+    characterId: options.targetCharacterId ?? "oath-warden",
+    alive: true, hp: options.targetHp ?? 4, maxHp: 4, shield: options.targetShield ?? 0,
+    energy: 0, maxEnergy: 3, handCount: options.targetHandCount ?? targetCards.length,
+    knownCards: targetCards, attackRange: 1, nextTurnBaseAttackLimit: 1,
+    equipmentDefinitionId: options.targetEquipmentDefinitionId ?? null,
+    equipmentRetentionProbability: options.targetEquipmentRetention ?? 0,
+    recycleDeviceUses: 0, huntMarkProbabilities: {}, statuses: []
   };
   const remainingCardCounts = options.remainingCardCounts ?? {};
   const state = upgradeProbabilityFixture({
     remainingCardCounts,
-    players:[actor, target]
+    players: [actor, target]
   });
   const evaluator = new Evaluator();
   return {
@@ -28384,7 +28378,7 @@ function equipmentFutureFixture(equipmentDefinitionId, options = {}) {
     actor,
     target,
     evaluator,
-    terms:evaluator.playerValueTerms(
+    terms: evaluator.playerValueTerms(
       state,
       actor,
       actor.id,
@@ -28470,16 +28464,16 @@ test("AI·泡泡机：Future 复用第一层 ShieldValue、已有盾归零且 re
 
 test("AI·回收站：普通 StateValue 按剩余额度与合法已知战术单调计价", () => {
   const exhausted = equipmentFutureFixture("recycleDevice", {
-    actorCards:["harvest", "exposeWeakness"],
-    recycleDeviceUses:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
+    actorCards: ["harvest", "exposeWeakness"],
+    recycleDeviceUses: CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
   });
   const oneRemaining = equipmentFutureFixture("recycleDevice", {
-    actorCards:["harvest", "exposeWeakness"],
-    recycleDeviceUses:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - 1
+    actorCards: ["harvest", "exposeWeakness"],
+    recycleDeviceUses: CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - 1
   });
   const twoRemaining = equipmentFutureFixture("recycleDevice", {
-    actorCards:["harvest", "exposeWeakness"],
-    recycleDeviceUses:0
+    actorCards: ["harvest", "exposeWeakness"],
+    recycleDeviceUses: 0
   });
   assert.equal(exhausted.terms.recycleDeviceFuture, 0);
   assert.ok(oneRemaining.terms.recycleDeviceFuture > 0);
@@ -28491,19 +28485,19 @@ test("AI·回收站：普通 StateValue 按剩余额度与合法已知战术单�
 
 test("AI·回收站：匿名 Future draw 只持有 HandCount 且不含 Base/RoleDelta", () => {
   const positive = equipmentFutureFixture("recycleDevice", {
-    actorCharacterId:"spirit-medic",
-    actorCards:["harvest"],
-    remainingCardCounts:{ charge:1 }
+    actorCharacterId: "spirit-medic",
+    actorCards: ["harvest"],
+    remainingCardCounts: { charge: 1 }
   });
   const negative = equipmentFutureFixture("recycleDevice", {
-    actorCharacterId:"blade-walker",
-    actorCards:["harvest"],
-    remainingCardCounts:{ charge:1 }
+    actorCharacterId: "blade-walker",
+    actorCards: ["harvest"],
+    remainingCardCounts: { charge: 1 }
   });
   const noPool = equipmentFutureFixture("recycleDevice", {
-    actorCharacterId:"spirit-medic",
-    actorCards:["harvest"],
-    remainingCardCounts:{}
+    actorCharacterId: "spirit-medic",
+    actorCards: ["harvest"],
+    remainingCardCounts: {}
   });
   assertClose(
     positive.terms.recycleDeviceFuture,
@@ -28520,10 +28514,10 @@ test("AI·回收站：匿名 Future draw 只持有 HandCount 且不含 Base/Role
 });
 
 test("AI·回收站：没有可用战术或 retention 为零时 Future Utility 为零", () => {
-  const noTactic = equipmentFutureFixture("recycleDevice", { actorCards:["charge"] });
+  const noTactic = equipmentFutureFixture("recycleDevice", { actorCards: ["charge"] });
   const noRetention = equipmentFutureFixture("recycleDevice", {
-    actorCards:["harvest"],
-    retention:0
+    actorCards: ["harvest"],
+    retention: 0
   });
   assert.equal(noTactic.terms.recycleDeviceFuture, 0);
   assert.equal(noRetention.terms.recycleDeviceFuture, 0);
@@ -28531,29 +28525,29 @@ test("AI·回收站：没有可用战术或 retention 为零时 Future Utility �
 
 test("AI·回收站：敌方匿名战术只用 finite-pool expectation 且 no-pool 保守归零", () => {
   const viewer = {
-    id:"recycle-hidden-viewer", seatIndex:0, battleTeam:"dawn", characterId:"blade-walker",
-    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0, hand:[],
-    equipmentDefinitionId:null, equipmentRetentionProbability:0, huntMarkProbabilities:{}, statuses:[]
+    id: "recycle-hidden-viewer", seatIndex: 0, battleTeam: "dawn", characterId: "blade-walker",
+    alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 0, hand: [],
+    equipmentDefinitionId: null, equipmentRetentionProbability: 0, huntMarkProbabilities: {}, statuses: []
   };
   const hiddenHolder = {
-    id:"recycle-hidden-holder", seatIndex:1, battleTeam:"dusk", characterId:"oath-warden",
-    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1, knownCards:[],
-    equipmentDefinitionId:"recycleDevice", equipmentRetentionProbability:1,
-    recycleDeviceUses:0, huntMarkProbabilities:{}, statuses:[]
+    id: "recycle-hidden-holder", seatIndex: 1, battleTeam: "dusk", characterId: "oath-warden",
+    alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 1, knownCards: [],
+    equipmentDefinitionId: "recycleDevice", equipmentRetentionProbability: 1,
+    recycleDeviceUses: 0, huntMarkProbabilities: {}, statuses: []
   };
   const finite = upgradeProbabilityFixture({
-    remainingCardCounts:{ harvest:1, block:1 },
-    players:[viewer, hiddenHolder]
+    remainingCardCounts: { harvest: 1, block: 1 },
+    players: [viewer, hiddenHolder]
   });
   const evaluator = new Evaluator();
   const finiteFuture = evaluator.playerValueTerms(
     finite,
     hiddenHolder,
     viewer.id,
-    buildRadarJudgmentProbabilities({ harvest:1, block:1 })
+    buildRadarJudgmentProbabilities({ harvest: 1, block: 1 })
   ).terms.recycleDeviceFuture;
   const noPool = {
-    players:[structuredClone(viewer), structuredClone(hiddenHolder)]
+    players: [structuredClone(viewer), structuredClone(hiddenHolder)]
   };
   const noPoolHolder = noPool.players[1];
   const noPoolFuture = evaluator.playerValueTerms(
@@ -28570,17 +28564,17 @@ test("AI·回收站：敌方匿名战术只用 finite-pool expectation 且 no-po
 
 test("AI·回收站：确定 Future 兑现与 anonymous HandCount 增益严格守恒", () => {
   const fixture = equipmentFutureFixture("recycleDevice", {
-    actorCards:["exposeWeakness"],
-    remainingCardCounts:{ block:1 }
+    actorCards: ["exposeWeakness"],
+    remainingCardCounts: { block: 1 }
   });
   const withoutDevice = structuredClone(fixture.state);
   const withoutActor = withoutDevice.players.find((player) => player.id === fixture.actor.id);
   withoutActor.equipmentDefinitionId = null;
   withoutActor.equipmentRetentionProbability = 0;
   const action = {
-    type:"card",
-    card:{ ...CARD_DEFINITIONS.exposeWeakness, id:"equipment-future-actor-0" },
-    targets:[]
+    type: "card",
+    card: { ...CARD_DEFINITIONS.exposeWeakness, id: "equipment-future-actor-0" },
+    targets: []
   };
   const realized = new Simulator(fixture.state).apply(fixture.state, action, fixture.actor.id);
   const baseline = new Simulator(withoutDevice).apply(withoutDevice, action, fixture.actor.id);
@@ -28597,18 +28591,18 @@ test("AI·回收站：确定 Future 兑现与 anonymous HandCount 增益严格�
 
 test("AI·回收站：半概率 Future 与 Simulator 半张匿名摸牌线性守恒", () => {
   const fixture = equipmentFutureFixture("recycleDevice", {
-    actorCards:["exposeWeakness"],
-    remainingCardCounts:{ block:1 },
-    retention:0.5
+    actorCards: ["exposeWeakness"],
+    remainingCardCounts: { block: 1 },
+    retention: 0.5
   });
   const withoutDevice = structuredClone(fixture.state);
   const withoutActor = withoutDevice.players.find((player) => player.id === fixture.actor.id);
   withoutActor.equipmentDefinitionId = null;
   withoutActor.equipmentRetentionProbability = 0;
   const action = {
-    type:"card",
-    card:{ ...CARD_DEFINITIONS.exposeWeakness, id:"equipment-future-actor-0" },
-    targets:[]
+    type: "card",
+    card: { ...CARD_DEFINITIONS.exposeWeakness, id: "equipment-future-actor-0" },
+    targets: []
   };
   const realized = new Simulator(fixture.state).apply(fixture.state, action, fixture.actor.id);
   const baseline = new Simulator(withoutDevice).apply(withoutDevice, action, fixture.actor.id);
@@ -29644,34 +29638,34 @@ test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效�
     noRadarScore = evaluator.stateUtility(
       { remainingCardCounts: counts, players: [viewer, enemy(false)] },
       "radar-enemy-viewer"
-  );
+    );
   // 敌方雷达降低敌方预期受损 → 己方效用更低；差值包含唯一材料尺度与按符号反向的功能价值。
   assert.ok(noRadarScore > radarScore);
   assert.ok(noRadarScore - radarScore > (
     getBaseCardAiValue("defenseDevice") * RESOURCE_MATERIAL_SCALE
-      + roleCardDelta("blade-walker", "defenseDevice")
+    + roleCardDelta("blade-walker", "defenseDevice")
   ));
 });
 
 test("AI·雷达：低威胁没有真实 Block demand 时 Future Utility 为零", () => {
   const target = {
-    id:"radar-low-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
-    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
-    equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
-    huntMarkProbabilities:{}, statuses:[]
+    id: "radar-low-target", seatIndex: 0, battleTeam: "dawn", characterId: "oath-warden",
+    alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 0,
+    equipmentDefinitionId: "defenseDevice", equipmentRetentionProbability: 1,
+    huntMarkProbabilities: {}, statuses: []
   };
   const enemy = {
-    id:"radar-low-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
-    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
-    equipmentDefinitionId:null, equipmentRetentionProbability:0,
-    huntMarkProbabilities:{}, statuses:[]
+    id: "radar-low-enemy", seatIndex: 1, battleTeam: "dusk", characterId: "blade-walker",
+    alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 0,
+    equipmentDefinitionId: null, equipmentRetentionProbability: 0,
+    huntMarkProbabilities: {}, statuses: []
   };
-  const state = upgradeProbabilityFixture({ remainingCardCounts:{}, players:[target, enemy] });
+  const state = upgradeProbabilityFixture({ remainingCardCounts: {}, players: [target, enemy] });
   const terms = new Evaluator().playerValueTerms(
     state,
     target,
     target.id,
-    buildRadarJudgmentProbabilities({ counter:1 })
+    buildRadarJudgmentProbabilities({ counter: 1 })
   ).terms;
   assert.equal(expectedBlockDemand(state, target), 0);
   assert.equal(terms.radarFuture, 0);
@@ -29680,24 +29674,24 @@ test("AI·雷达：低威胁没有真实 Block demand 时 Future Utility 为零"
 test("AI·雷达：军火库双 Block demand 产生两倍判定 Future Utility", () => {
   const build = (equipmentDefinitionId) => {
     const target = {
-      id:"radar-demand-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
-      alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
-      equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
-      huntMarkProbabilities:{}, statuses:[]
+      id: "radar-demand-target", seatIndex: 0, battleTeam: "dawn", characterId: "oath-warden",
+      alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 0,
+      equipmentDefinitionId: "defenseDevice", equipmentRetentionProbability: 1,
+      huntMarkProbabilities: {}, statuses: []
     };
     const enemy = {
-      id:"radar-demand-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
-      alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1,
-      hand:[{ id:`radar-demand-${equipmentDefinitionId ?? "normal"}`, definitionId:"assault" }],
-      attackRange:1, nextTurnBaseAttackLimit:1,
-      equipmentDefinitionId, equipmentRetentionProbability:equipmentDefinitionId ? 1 : 0,
-      huntMarkProbabilities:{}, statuses:[]
+      id: "radar-demand-enemy", seatIndex: 1, battleTeam: "dusk", characterId: "blade-walker",
+      alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 1,
+      hand: [{ id: `radar-demand-${equipmentDefinitionId ?? "normal"}`, definitionId: "assault" }],
+      attackRange: 1, nextTurnBaseAttackLimit: 1,
+      equipmentDefinitionId, equipmentRetentionProbability: equipmentDefinitionId ? 1 : 0,
+      huntMarkProbabilities: {}, statuses: []
     };
-    const state = upgradeProbabilityFixture({ remainingCardCounts:{}, players:[target, enemy] });
-    const judgment = buildRadarJudgmentProbabilities({ charge:1 });
+    const state = upgradeProbabilityFixture({ remainingCardCounts: {}, players: [target, enemy] });
+    const judgment = buildRadarJudgmentProbabilities({ charge: 1 });
     return {
-      demand:expectedBlockDemand(state, target),
-      future:new Evaluator().playerValueTerms(state, target, target.id, judgment).terms.radarFuture
+      demand: expectedBlockDemand(state, target),
+      future: new Evaluator().playerValueTerms(state, target, target.id, judgment).terms.radarFuture
     };
   };
   const single = build(null);
@@ -29709,22 +29703,22 @@ test("AI·雷达：军火库双 Block demand 产生两倍判定 Future Utility",
 
 test("AI·雷达：保留基础牌收益只按实际 HandCount 与 viewer HandRoleDelta 计算", () => {
   const target = {
-    id:"radar-basic-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
-    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
-    equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
-    huntMarkProbabilities:{}, statuses:[]
+    id: "radar-basic-target", seatIndex: 0, battleTeam: "dawn", characterId: "oath-warden",
+    alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 0,
+    equipmentDefinitionId: "defenseDevice", equipmentRetentionProbability: 1,
+    huntMarkProbabilities: {}, statuses: []
   };
   const enemy = {
-    id:"radar-basic-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
-    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1,
-    hand:[{ id:"radar-basic-assault", definitionId:"assault" }],
-    attackRange:1, nextTurnBaseAttackLimit:1,
-    equipmentDefinitionId:null, equipmentRetentionProbability:0,
-    huntMarkProbabilities:{}, statuses:[]
+    id: "radar-basic-enemy", seatIndex: 1, battleTeam: "dusk", characterId: "blade-walker",
+    alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 1,
+    hand: [{ id: "radar-basic-assault", definitionId: "assault" }],
+    attackRange: 1, nextTurnBaseAttackLimit: 1,
+    equipmentDefinitionId: null, equipmentRetentionProbability: 0,
+    huntMarkProbabilities: {}, statuses: []
   };
-  const state = upgradeProbabilityFixture({ remainingCardCounts:{}, players:[target, enemy] });
+  const state = upgradeProbabilityFixture({ remainingCardCounts: {}, players: [target, enemy] });
   const evaluator = new Evaluator();
-  const judgment = buildRadarJudgmentProbabilities({ charge:1 });
+  const judgment = buildRadarJudgmentProbabilities({ charge: 1 });
   const terms = evaluator.playerValueTerms(state, target, target.id, judgment).terms;
   assertClose(
     terms.radarFuture,
@@ -29734,7 +29728,7 @@ test("AI·雷达：保留基础牌收益只按实际 HandCount 与 viewer HandRo
     state,
     target,
     target.id,
-    buildRadarJudgmentProbabilities({ counter:1 })
+    buildRadarJudgmentProbabilities({ counter: 1 })
   ).terms;
   assertClose(
     tacticTerms.radarFuture,
@@ -29750,22 +29744,22 @@ test("AI·雷达：保留基础牌收益只按实际 HandCount 与 viewer HandRo
 });
 
 test("AI·雷达：判得 Block 与其它 Basic 使用同一 HandValue", () => {
-  const holder = radarFixtureTarget({ hand:[] });
+  const holder = radarFixtureTarget({ hand: [] });
   const attacker = radarAttacker({
-    handCount:1,
-    hand:[{ id:"radar-block-future-assault", definitionId:"assault" }],
-    attackRange:1,
-    nextTurnBaseAttackLimit:1
+    handCount: 1,
+    hand: [{ id: "radar-block-future-assault", definitionId: "assault" }],
+    attackRange: 1,
+    nextTurnBaseAttackLimit: 1
   });
   const state = upgradeProbabilityFixture({
-    remainingCardCounts:{ block:1 },
-    players:[attacker, holder]
+    remainingCardCounts: { block: 1 },
+    players: [attacker, holder]
   });
   const future = new Evaluator().playerValueTerms(
     state,
     holder,
     holder.id,
-    buildRadarJudgmentProbabilities({ block:1 })
+    buildRadarJudgmentProbabilities({ block: 1 })
   ).terms.radarFuture;
   assert.ok(future > 0);
   assertClose(future, realizedHandCardStateValue(holder, holder.id, "block"));
@@ -29773,14 +29767,14 @@ test("AI·雷达：判得 Block 与其它 Basic 使用同一 HandValue", () => {
 
 test("AI·雷达：保留基础牌 RoleDelta 不乘材料尺度且 Base 不进入 StateValue", () => {
   const positive = equipmentFutureFixture("defenseDevice", {
-    actorCharacterId:"spirit-medic",
-    targetCards:["assault"],
-    remainingCardCounts:{ charge:1 }
+    actorCharacterId: "spirit-medic",
+    targetCards: ["assault"],
+    remainingCardCounts: { charge: 1 }
   });
   const negative = equipmentFutureFixture("defenseDevice", {
-    actorCharacterId:"blade-walker",
-    targetCards:["assault"],
-    remainingCardCounts:{ charge:1 }
+    actorCharacterId: "blade-walker",
+    targetCards: ["assault"],
+    remainingCardCounts: { charge: 1 }
   });
   assertClose(
     positive.terms.radarFuture,
@@ -29793,20 +29787,20 @@ test("AI·雷达：保留基础牌 RoleDelta 不乘材料尺度且 Base 不进�
 });
 
 test("AI·雷达：保留基础牌 Future 与 viewer 边界下的实际 HandState 增益守恒", () => {
-  const holder = radarFixtureTarget({ characterId:"spirit-medic", hand:[] });
+  const holder = radarFixtureTarget({ characterId: "spirit-medic", hand: [] });
   const attacker = radarAttacker({
-    handCount:1,
-    hand:[{ id:"radar-conservation-assault", definitionId:"assault" }],
-    attackRange:1,
-    nextTurnBaseAttackLimit:1
+    handCount: 1,
+    hand: [{ id: "radar-conservation-assault", definitionId: "assault" }],
+    attackRange: 1,
+    nextTurnBaseAttackLimit: 1
   });
   const state = upgradeProbabilityFixture({
-    remainingCardCounts:{ charge:1 },
-    players:[attacker, holder]
+    remainingCardCounts: { charge: 1 },
+    players: [attacker, holder]
   });
   const beforeHolder = structuredClone(holder);
   const evaluator = new Evaluator();
-  const judgment = buildRadarJudgmentProbabilities({ charge:1 });
+  const judgment = buildRadarJudgmentProbabilities({ charge: 1 });
   const holderPrediction = evaluator.playerValueTerms(
     state,
     holder,
@@ -29820,9 +29814,9 @@ test("AI·雷达：保留基础牌 Future 与 viewer 边界下的实际 HandStat
     judgment
   ).terms.radarFuture;
   new Simulator(state).applyDamage(state, attacker, holder, 1, {
-    canBlock:true,
-    deviceAttack:true,
-    radarJudgmentProbabilities:{ block:0, otherBasic:1, equipment:0 }
+    canBlock: true,
+    deviceAttack: true,
+    radarJudgmentProbabilities: { block: 0, otherBasic: 1, equipment: 0 }
   });
   const holderBeforeTerms = cardPlayerValueTerms(beforeHolder, holder.id);
   const holderAfterTerms = cardPlayerValueTerms(holder, holder.id);
@@ -29831,29 +29825,29 @@ test("AI·雷达：保留基础牌 Future 与 viewer 边界下的实际 HandStat
   assertClose(
     holderPrediction,
     holderAfterTerms.handCount + holderAfterTerms.handRoleDelta
-      - holderBeforeTerms.handCount - holderBeforeTerms.handRoleDelta
+    - holderBeforeTerms.handCount - holderBeforeTerms.handRoleDelta
   );
   assertClose(
     enemyPrediction,
     enemyAfterTerms.handCount + enemyAfterTerms.handRoleDelta
-      - enemyBeforeTerms.handCount - enemyBeforeTerms.handRoleDelta
+    - enemyBeforeTerms.handCount - enemyBeforeTerms.handRoleDelta
   );
   assert.equal(holder.handCount, 1);
   assert.equal(holder.hand[0].definitionId, "charge");
 });
 
 test("AI·雷达：旧 Block 支付后 judgment Block 留手并守恒", () => {
-  const original = { id:"radar-existing-block", definitionId:"block" };
-  const holder = radarFixtureTarget({ handCount:1, hand:[original] });
+  const original = { id: "radar-existing-block", definitionId: "block" };
+  const holder = radarFixtureTarget({ handCount: 1, hand: [original] });
   const attacker = radarAttacker({
-    handCount:1,
-    hand:[{ id:"radar-existing-payment-assault", definitionId:"assault" }],
-    attackRange:1,
-    nextTurnBaseAttackLimit:1
+    handCount: 1,
+    hand: [{ id: "radar-existing-payment-assault", definitionId: "assault" }],
+    attackRange: 1,
+    nextTurnBaseAttackLimit: 1
   });
   const state = upgradeProbabilityFixture({
-    remainingCardCounts:{ block:1 },
-    players:[attacker, holder]
+    remainingCardCounts: { block: 1 },
+    players: [attacker, holder]
   });
   const beforeTerms = cardPlayerValueTerms(holder, holder.id);
   const basicHandValue = realizedHandCardStateValue(holder, holder.id, "block");
@@ -29861,12 +29855,12 @@ test("AI·雷达：旧 Block 支付后 judgment Block 留手并守恒", () => {
     state,
     holder,
     holder.id,
-    buildRadarJudgmentProbabilities({ block:1 })
+    buildRadarJudgmentProbabilities({ block: 1 })
   ).terms.radarFuture;
   new Simulator(state).applyDamage(state, attacker, holder, 1, {
-    canBlock:true,
-    deviceAttack:true,
-    radarJudgmentProbabilities:{ block:1, otherBasic:0, equipment:0 }
+    canBlock: true,
+    deviceAttack: true,
+    radarJudgmentProbabilities: { block: 1, otherBasic: 0, equipment: 0 }
   });
   const afterTerms = cardPlayerValueTerms(holder, holder.id);
   const handStateDelta = afterTerms.handCount + afterTerms.handRoleDelta
@@ -29881,16 +29875,16 @@ test("AI·雷达：旧 Block 支付后 judgment Block 留手并守恒", () => {
 });
 
 test("AI·雷达：judgment Block 立即支付后不留下 phantom hand value", () => {
-  const holder = radarFixtureTarget({ hand:[] });
+  const holder = radarFixtureTarget({ hand: [] });
   const attacker = radarAttacker({
-    handCount:1,
-    hand:[{ id:"radar-judgment-payment-assault", definitionId:"assault" }],
-    attackRange:1,
-    nextTurnBaseAttackLimit:1
+    handCount: 1,
+    hand: [{ id: "radar-judgment-payment-assault", definitionId: "assault" }],
+    attackRange: 1,
+    nextTurnBaseAttackLimit: 1
   });
   const state = upgradeProbabilityFixture({
-    remainingCardCounts:{ block:1 },
-    players:[attacker, holder]
+    remainingCardCounts: { block: 1 },
+    players: [attacker, holder]
   });
   const beforeTerms = cardPlayerValueTerms(holder, holder.id);
   const basicHandValue = realizedHandCardStateValue(holder, holder.id, "block");
@@ -29898,12 +29892,12 @@ test("AI·雷达：judgment Block 立即支付后不留下 phantom hand value", 
     state,
     holder,
     holder.id,
-    buildRadarJudgmentProbabilities({ block:1 })
+    buildRadarJudgmentProbabilities({ block: 1 })
   ).terms.radarFuture;
   new Simulator(state).applyDamage(state, attacker, holder, 1, {
-    canBlock:true,
-    deviceAttack:true,
-    radarJudgmentProbabilities:{ block:1, otherBasic:0, equipment:0 }
+    canBlock: true,
+    deviceAttack: true,
+    radarJudgmentProbabilities: { block: 1, otherBasic: 0, equipment: 0 }
   });
   const afterTerms = cardPlayerValueTerms(holder, holder.id);
   const handStateDelta = afterTerms.handCount + afterTerms.handRoleDelta
@@ -29917,38 +29911,38 @@ test("AI·雷达：judgment Block 立即支付后不留下 phantom hand value", 
 
 test("AI·雷达：突袭、震荡、焚场与猎杀全部进入真实 Expected Block Demand", () => {
   const target = {
-    id:"radar-all-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
-    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
-    equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
-    huntMarkProbabilities:{ "radar-hunt-enemy":1 }, statuses:[]
+    id: "radar-all-target", seatIndex: 0, battleTeam: "dawn", characterId: "oath-warden",
+    alive: true, hp: 4, maxHp: 4, shield: 0, energy: 0, handCount: 0,
+    equipmentDefinitionId: "defenseDevice", equipmentRetentionProbability: 1,
+    huntMarkProbabilities: { "radar-hunt-enemy": 1 }, statuses: []
   };
   const assaultEnemy = {
-    id:"radar-assault-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
-    alive:true, hp:4, maxHp:4, energy:0, handCount:1,
-    hand:[{ id:"radar-all-assault", definitionId:"assault" }], attackRange:1,
-    nextTurnBaseAttackLimit:1, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1
+    id: "radar-assault-enemy", seatIndex: 1, battleTeam: "dusk", characterId: "blade-walker",
+    alive: true, hp: 4, maxHp: 4, energy: 0, handCount: 1,
+    hand: [{ id: "radar-all-assault", definitionId: "assault" }], attackRange: 1,
+    nextTurnBaseAttackLimit: 1, equipmentDefinitionId: "battleDevice", equipmentRetentionProbability: 1
   };
   const shockwaveEnemy = {
-    id:"radar-shockwave-enemy", seatIndex:2, battleTeam:"dusk", characterId:"shade-agent",
-    alive:true, hp:4, maxHp:4, energy:0, handCount:1,
-    hand:[{ id:"radar-all-shockwave", definitionId:"shockwave" }], attackRange:1,
-    equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1
+    id: "radar-shockwave-enemy", seatIndex: 2, battleTeam: "dusk", characterId: "shade-agent",
+    alive: true, hp: 4, maxHp: 4, energy: 0, handCount: 1,
+    hand: [{ id: "radar-all-shockwave", definitionId: "shockwave" }], attackRange: 1,
+    equipmentDefinitionId: "battleDevice", equipmentRetentionProbability: 1
   };
   const burningEnemy = {
-    id:"radar-burning-enemy", seatIndex:3, battleTeam:"dusk", characterId:"ember-magus",
-    alive:true, hp:4, maxHp:4, energy:2, maxEnergy:3, handCount:0,
-    activeSkillId:"burningField", activeSkillCost:3, activeSkillLimit:2,
-    equipmentDefinitionId:null, equipmentRetentionProbability:0
+    id: "radar-burning-enemy", seatIndex: 3, battleTeam: "dusk", characterId: "ember-magus",
+    alive: true, hp: 4, maxHp: 4, energy: 2, maxEnergy: 3, handCount: 0,
+    activeSkillId: "burningField", activeSkillCost: 3, activeSkillLimit: 2,
+    equipmentDefinitionId: null, equipmentRetentionProbability: 0
   };
   const huntEnemy = {
-    id:"radar-hunt-enemy", seatIndex:4, battleTeam:"dusk", characterId:"trail-hunter",
-    alive:true, hp:4, maxHp:4, energy:1, maxEnergy:3, handCount:0,
-    activeSkillId:"hunt", activeSkillCost:2, activeSkillLimit:2,
-    equipmentDefinitionId:null, equipmentRetentionProbability:0
+    id: "radar-hunt-enemy", seatIndex: 4, battleTeam: "dusk", characterId: "trail-hunter",
+    alive: true, hp: 4, maxHp: 4, energy: 1, maxEnergy: 3, handCount: 0,
+    activeSkillId: "hunt", activeSkillCost: 2, activeSkillLimit: 2,
+    equipmentDefinitionId: null, equipmentRetentionProbability: 0
   };
   const state = upgradeProbabilityFixture({
-    remainingCardCounts:{},
-    players:[target, assaultEnemy, shockwaveEnemy, burningEnemy, huntEnemy]
+    remainingCardCounts: {},
+    players: [target, assaultEnemy, shockwaveEnemy, burningEnemy, huntEnemy]
   });
   assert.equal(expectedBlockDemand(state, target), 6);
 });
@@ -30003,8 +29997,8 @@ test("AI·军火库：defensive value 统一消费 HP3/HP2 风险且其它 HP �
 test("AI·军火库：没有可兑现攻击或没有可达目标时 Future Utility 为零", () => {
   const noAttack = equipmentFutureFixture("battleDevice");
   const unreachable = equipmentFutureFixture("battleDevice", {
-    actorCards:["assault"],
-    attackRange:0
+    actorCards: ["assault"],
+    attackRange: 0
   });
   assert.equal(noAttack.terms.battleDeviceFuture, 0);
   assert.equal(unreachable.terms.battleDeviceFuture, 0);
@@ -30012,15 +30006,15 @@ test("AI·军火库：没有可兑现攻击或没有可达目标时 Future Utili
 
 test("AI·军火库：0张 Block 边际为零、恰1张显著升高、2张体现额外资源支付", () => {
   const zero = equipmentFutureFixture("battleDevice", {
-    actorCards:["assault"]
+    actorCards: ["assault"]
   });
   const one = equipmentFutureFixture("battleDevice", {
-    actorCards:["assault"],
-    targetCards:["block"]
+    actorCards: ["assault"],
+    targetCards: ["block"]
   });
   const two = equipmentFutureFixture("battleDevice", {
-    actorCards:["assault"],
-    targetCards:["block", "block"]
+    actorCards: ["assault"],
+    targetCards: ["block", "block"]
   });
   const blockSpendValue = realizedHandCardStateValue(two.target, two.actor.id, "block");
   assert.equal(zero.terms.battleDeviceFuture, 0);
@@ -30031,8 +30025,8 @@ test("AI·军火库：0张 Block 边际为零、恰1张显著升高、2张体现
 test("AI·军火库：预测防御成本保留目标全局风险且足额 Block 支付与实际损失一致", () => {
   for (const blockCount of [0, 1, 2]) {
     const fixture = equipmentFutureFixture("battleDevice", {
-      actorCards:["assault"],
-      targetCards:Array.from({ length:blockCount }, () => "block")
+      actorCards: ["assault"],
+      targetCards: Array.from({ length: blockCount }, () => "block")
     });
     const beforeTarget = structuredClone(fixture.target);
     const predicted = expectedDefenseCost(
@@ -30046,10 +30040,10 @@ test("AI·军火库：预测防御成本保留目标全局风险且足额 Block 
       fixture.actor,
       fixture.target,
       1,
-      { canBlock:true, deviceAttack:true }
+      { canBlock: true, deviceAttack: true }
     );
     const beforeValue = fixture.evaluator.playerValueTerms(
-      { ...fixture.state, players:[fixture.actor, beforeTarget] },
+      { ...fixture.state, players: [fixture.actor, beforeTarget] },
       beforeTarget,
       fixture.actor.id,
       0
@@ -30076,22 +30070,22 @@ test("AI·军火库：预测防御成本保留目标全局风险且足额 Block 
 
 test("AI·军火库：Block 防御成本复用 Radar 无放回双 demand 判定", () => {
   const allTactic = equipmentFutureFixture("battleDevice", {
-    actorCards:["assault"],
-    targetEquipmentDefinitionId:"defenseDevice",
-    targetEquipmentRetention:1,
-    remainingCardCounts:{ counter:2 }
+    actorCards: ["assault"],
+    targetEquipmentDefinitionId: "defenseDevice",
+    targetEquipmentRetention: 1,
+    remainingCardCounts: { counter: 2 }
   });
   const mixed = equipmentFutureFixture("battleDevice", {
-    actorCards:["assault"],
-    targetEquipmentDefinitionId:"defenseDevice",
-    targetEquipmentRetention:1,
-    remainingCardCounts:{ counter:1, energyDevice:1 }
+    actorCards: ["assault"],
+    targetEquipmentDefinitionId: "defenseDevice",
+    targetEquipmentRetention: 1,
+    remainingCardCounts: { counter: 1, energyDevice: 1 }
   });
   const allMiss = equipmentFutureFixture("battleDevice", {
-    actorCards:["assault"],
-    targetEquipmentDefinitionId:"defenseDevice",
-    targetEquipmentRetention:1,
-    remainingCardCounts:{ energyDevice:2 }
+    actorCards: ["assault"],
+    targetEquipmentDefinitionId: "defenseDevice",
+    targetEquipmentRetention: 1,
+    remainingCardCounts: { energyDevice: 2 }
   });
   const ordinary = getRequiredBlockCount(null, true);
   const battle = getRequiredBlockCount("battleDevice", true);
@@ -30148,21 +30142,21 @@ test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
 // ---- AI 装备行为·备用弹夹 ----
 
 test("AI·备用弹夹：只有1张 Assault 为零、超过基础上限才产生 StateValue Future", () => {
-  const one = equipmentFutureFixture("assaultMagazine", { actorCards:["assault"] });
+  const one = equipmentFutureFixture("assaultMagazine", { actorCards: ["assault"] });
   const three = equipmentFutureFixture("assaultMagazine", {
-    actorCards:["assault", "assault", "assault"]
+    actorCards: ["assault", "assault", "assault"]
   });
   assert.equal(one.terms.assaultMagazineFuture, 0);
   assert.ok(three.terms.assaultMagazineFuture > 0);
   assertClose(
     three.terms.assaultMagazineFuture,
     assaultInventoryOpportunityValue(three.actor, three.state, {
-      [three.target.id]:realizedHandCardStateValue(three.target, three.actor.id, "block")
+      [three.target.id]: realizedHandCardStateValue(three.target, three.actor.id, "block")
     }) - assaultInventoryOpportunityValue(
-      { ...three.actor, equipmentDefinitionId:null, equipmentRetentionProbability:0 },
+      { ...three.actor, equipmentDefinitionId: null, equipmentRetentionProbability: 0 },
       three.state,
       {
-        [three.target.id]:realizedHandCardStateValue(three.target, three.actor.id, "block")
+        [three.target.id]: realizedHandCardStateValue(three.target, three.actor.id, "block")
       }
     )
   );
@@ -30170,8 +30164,8 @@ test("AI·备用弹夹：只有1张 Assault 为零、超过基础上限才产生
 
 test("AI·备用弹夹：Block spend 预测与新增攻击的实际 HandState 损失守恒", () => {
   const fixture = equipmentFutureFixture("assaultMagazine", {
-    actorCards:["assault", "assault", "assault"],
-    targetCards:["block"]
+    actorCards: ["assault", "assault", "assault"],
+    targetCards: ["block"]
   });
   const beforeTarget = structuredClone(fixture.target);
   const predictedSpend = expectedDefenseCost(
@@ -30185,7 +30179,7 @@ test("AI·备用弹夹：Block spend 预测与新增攻击的实际 HandState �
     fixture.actor,
     fixture.target,
     1,
-    { canBlock:true, deviceAttack:true }
+    { canBlock: true, deviceAttack: true }
   );
   const beforeTerms = cardPlayerValueTerms(beforeTarget, fixture.actor.id);
   const afterTerms = cardPlayerValueTerms(fixture.target, fixture.actor.id);
@@ -30198,12 +30192,12 @@ test("AI·备用弹夹：Block spend 预测与新增攻击的实际 HandState �
 
 test("AI·备用弹夹：retention 为零或没有可达目标时 Future Utility 为零", () => {
   const noRetention = equipmentFutureFixture("assaultMagazine", {
-    actorCards:["assault", "assault", "assault"],
-    retention:0
+    actorCards: ["assault", "assault", "assault"],
+    retention: 0
   });
   const unreachable = equipmentFutureFixture("assaultMagazine", {
-    actorCards:["assault", "assault", "assault"],
-    attackRange:0
+    actorCards: ["assault", "assault", "assault"],
+    attackRange: 0
   });
   assert.equal(noRetention.terms.assaultMagazineFuture, 0);
   assert.equal(unreachable.terms.assaultMagazineFuture, 0);
@@ -30211,17 +30205,17 @@ test("AI·备用弹夹：retention 为零或没有可达目标时 Future Utility
 
 test("AI·备用弹夹：高 Block 与 Radar 防御使额外攻击容量低于裸露目标", () => {
   const naked = equipmentFutureFixture("assaultMagazine", {
-    actorCards:["assault", "assault", "assault"]
+    actorCards: ["assault", "assault", "assault"]
   });
   const blocked = equipmentFutureFixture("assaultMagazine", {
-    actorCards:["assault", "assault", "assault"],
-    targetCards:["block", "block", "block"]
+    actorCards: ["assault", "assault", "assault"],
+    targetCards: ["block", "block", "block"]
   });
   const radar = equipmentFutureFixture("assaultMagazine", {
-    actorCards:["assault", "assault", "assault"],
-    targetEquipmentDefinitionId:"defenseDevice",
-    targetEquipmentRetention:1,
-    remainingCardCounts:{ counter:3 }
+    actorCards: ["assault", "assault", "assault"],
+    targetEquipmentDefinitionId: "defenseDevice",
+    targetEquipmentRetention: 1,
+    remainingCardCounts: { counter: 3 }
   });
   assert.ok(naked.terms.assaultMagazineFuture > blocked.terms.assaultMagazineFuture);
   assert.equal(radar.terms.assaultMagazineFuture, 0);
@@ -31441,14 +31435,14 @@ test("AI·灵医：HP3Risk 与 HP2Risk 共用威胁且按生命互斥封顶", ()
     const target = players.find((player) => player.id === "x");
     target.hp = hp;
     attacker.hand = Array.from(
-      { length:4 },
+      { length: 4 },
       (_, index) => makeBenchmarkCard("assault", `risk-cap-assault-${index}`)
     );
     players[0].aiMemory.knownCardsByPlayer[attacker.id] = attacker.hand.map((card) => ({
-      id:card.id,
-      definitionId:card.definitionId
+      id: card.id,
+      definitionId: card.definitionId
     }));
-    const game = makeBenchmarkGame({ players, options:{ actorId:"a" } });
+    const game = makeBenchmarkGame({ players, options: { actorId: "a" } });
     const visible = createInitialWorld(
       "a",
       game.state,
@@ -32329,9 +32323,9 @@ async function buildCounterRootOverlapFixture({
     : [];
   const publicTransferContext = rootDefinitionId === "transfer"
     ? {
-        fromPlayerId:responder.id,
-        receiverPlayerId:receiver.id
-      }
+      fromPlayerId: responder.id,
+      receiverPlayerId: receiver.id
+    }
     : null;
   const { game } = makeGame([responder, source, receiver, filler]);
   const rememberedIds = new Set();
@@ -32349,8 +32343,8 @@ async function buildCounterRootOverlapFixture({
     "counter",
     {
       source,
-      rootSource:source,
-      card:rootCard,
+      rootSource: source,
+      card: rootCard,
       rootCard,
       rootTargetIds,
       publicTransferContext
@@ -32418,21 +32412,21 @@ test("AI·反制：counter opportunity cost 只计一次", async () => {
 
 test("AI·反制：Plunder hand future selection 按 c 除以 c 加 x 聚合", async () => {
   const cases = [
-    { counters:1, others:0, probability:1, responds:true },
-    { counters:1, others:1, probability:1 / 2, responds:true },
-    { counters:1, others:2, probability:1 / 3, responds:true },
-    { counters:2, others:0, probability:1, responds:true },
-    { counters:2, others:1, probability:2 / 3, responds:true },
-    { counters:2, others:2, probability:1 / 2, responds:true },
-    { counters:3, others:0, probability:1, responds:true }
+    { counters: 1, others: 0, probability: 1, responds: true },
+    { counters: 1, others: 1, probability: 1 / 2, responds: true },
+    { counters: 1, others: 2, probability: 1 / 3, responds: true },
+    { counters: 2, others: 0, probability: 1, responds: true },
+    { counters: 2, others: 1, probability: 2 / 3, responds: true },
+    { counters: 2, others: 2, probability: 1 / 2, responds: true },
+    { counters: 3, others: 0, probability: 1, responds: true }
   ];
   for (const entry of cases) {
     const fixture = await buildCounterRootOverlapFixture({
-      handDefinitionIds:[
+      handDefinitionIds: [
         ...Array(entry.counters).fill("counter"),
         ...Array(entry.others).fill("assault")
       ],
-      rootDefinitionId:"plunder"
+      rootDefinitionId: "plunder"
     });
     try {
       const { counterLossProbability, selfCounterGainOverlap, gain }
@@ -32456,10 +32450,10 @@ test("AI·反制：Plunder hand future selection 按 c 除以 c 加 x 聚合", a
 
 test("AI·反制：Plunder future equipment 的 pC 为零且高价值装备仍受保护", async () => {
   const fixture = await buildCounterRootOverlapFixture({
-    handDefinitionIds:["counter"],
-    equipmentDefinitionId:"barrierDevice",
-    rootSourceGeneralIndex:2,
-    rootDefinitionId:"plunder"
+    handDefinitionIds: ["counter"],
+    equipmentDefinitionId: "barrierDevice",
+    rootSourceGeneralIndex: 2,
+    rootDefinitionId: "plunder"
   });
   try {
     assert.equal(fixture.futureSelection?.zone, "equipment");
@@ -32473,9 +32467,9 @@ test("AI·反制：Plunder future equipment 的 pC 为零且高价值装备仍�
 
 test("AI·反制：hand 与 equipment 未预填 selection 时仍投影 canonical future selection", async () => {
   const fixture = await buildCounterRootOverlapFixture({
-    handDefinitionIds:["counter", "assault"],
-    equipmentDefinitionId:"defenseDevice",
-    rootDefinitionId:"plunder"
+    handDefinitionIds: ["counter", "assault"],
+    equipmentDefinitionId: "defenseDevice",
+    rootDefinitionId: "plunder"
   });
   try {
     assert.equal(fixture.decision.counterSelection, undefined);
@@ -32491,11 +32485,11 @@ test("AI·反制：hand 与 equipment 未预填 selection 时仍投影 canonical
 
 test("AI·反制：root actor 知道 Counter 时预测仍匿名且 runtime 保留具体身份", async () => {
   const fixture = await buildCounterRootOverlapFixture({
-    handDefinitionIds:["counter", "assault", "recover"],
-    rootDefinitionId:"plunder",
-    responderGeneralIndex:7,
-    rootSourceGeneralIndex:7,
-    rootKnownDefinitionIds:["counter"]
+    handDefinitionIds: ["counter", "assault", "recover"],
+    rootDefinitionId: "plunder",
+    responderGeneralIndex: 7,
+    rootSourceGeneralIndex: 7,
+    rootKnownDefinitionIds: ["counter"]
   });
   try {
     const counter = fixture.responder.hand.find((card) => card.definitionId === "counter");
@@ -32503,7 +32497,7 @@ test("AI·反制：root actor 知道 Counter 时预测仍匿名且 runtime 保�
     assert.equal(fixture.futureSelection?.cardId, null);
     assert.equal(fixture.futureCounterTerms?.counterLossProbability, 1 / 3);
     const runtime = await fixture.game.aiController.choosePostCounterResource(
-      fixture.source, fixture.responder, { purpose:"plunder", card:fixture.rootCard }
+      fixture.source, fixture.responder, { purpose: "plunder", card: fixture.rootCard }
     );
     assert.equal(runtime?.selection.selectionKind, "known");
     assert.equal(runtime?.card.id, counter.id);
@@ -32514,11 +32508,11 @@ test("AI·反制：root actor 知道 Counter 时预测仍匿名且 runtime 保�
 
 test("AI·反制：root actor 知道非 Counter 时预测仍匿名且 runtime 保留具体身份", async () => {
   const fixture = await buildCounterRootOverlapFixture({
-    handDefinitionIds:["counter", "assault", "recover"],
-    rootDefinitionId:"plunder",
-    responderGeneralIndex:5,
-    rootSourceGeneralIndex:0,
-    rootKnownDefinitionIds:["assault"]
+    handDefinitionIds: ["counter", "assault", "recover"],
+    rootDefinitionId: "plunder",
+    responderGeneralIndex: 5,
+    rootSourceGeneralIndex: 0,
+    rootKnownDefinitionIds: ["assault"]
   });
   try {
     const assault = fixture.responder.hand.find((card) => card.definitionId === "assault");
@@ -32526,7 +32520,7 @@ test("AI·反制：root actor 知道非 Counter 时预测仍匿名且 runtime �
     assert.equal(fixture.futureSelection?.cardId, null);
     assert.equal(fixture.futureCounterTerms?.counterLossProbability, 1 / 3);
     const runtime = await fixture.game.aiController.choosePostCounterResource(
-      fixture.source, fixture.responder, { purpose:"plunder", card:fixture.rootCard }
+      fixture.source, fixture.responder, { purpose: "plunder", card: fixture.rootCard }
     );
     assert.equal(runtime?.selection.selectionKind, "known");
     assert.equal(runtime?.card.id, assault.id);
@@ -32572,9 +32566,9 @@ async function rebuildCounterResourceDecision(fixture, context = {}) {
 test("AI·反制：future prediction 隔离 root actor hidden hand 与私人记忆", async () => {
   for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
     const fixture = await buildCounterRootOverlapFixture({
-      handDefinitionIds:["counter", "assault", "recover"],
+      handDefinitionIds: ["counter", "assault", "recover"],
       rootDefinitionId,
-      equipmentDefinitionId:"defenseDevice"
+      equipmentDefinitionId: "defenseDevice"
     });
     try {
       fixture.source.hand = [instance("counter"), instance("recover")];
@@ -32601,24 +32595,24 @@ test("AI·反制：future prediction 隔离 root actor hidden hand 与私人记�
 test("AI·反制：future candidates 私密手牌只生成一个匿名候选并保留公开装备", async () => {
   for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
     const fixture = await buildCounterRootOverlapFixture({
-      handDefinitionIds:["counter", "assault", "recover"],
+      handDefinitionIds: ["counter", "assault", "recover"],
       rootDefinitionId,
-      equipmentDefinitionId:"barrierDevice",
-      rootKnownDefinitionIds:["counter", "assault", "recover"]
+      equipmentDefinitionId: "barrierDevice",
+      rootKnownDefinitionIds: ["counter", "assault", "recover"]
     });
     try {
       const candidates = fixture.game.aiController.actionGenerator.getResponderSafeFutureRootSelections(
         fixture.decision.world, fixture.rootCard, fixture.decision.context.rootTargetIds,
-        { publicTransferContext:fixture.decision.context.publicTransferContext }
+        { publicTransferContext: fixture.decision.context.publicTransferContext }
       );
       const hands = candidates.filter((selection) => selection.zone === "hand");
       assert.equal(hands.length, 1);
       assert.deepEqual(hands[0], {
-        zone:"hand", selectionKind:"unknown", cardId:null, definitionId:null,
-        selectionMode:"uniform-hand",
+        zone: "hand", selectionKind: "unknown", cardId: null, definitionId: null,
+        selectionMode: "uniform-hand",
         ...(rootDefinitionId === "transfer" ? {
-          sourceId:fixture.responder.id,
-          receiverId:fixture.decision.context.publicTransferContext.receiverPlayerId
+          sourceId: fixture.responder.id,
+          receiverId: fixture.decision.context.publicTransferContext.receiverPlayerId
         } : {})
       });
       assert.equal(candidates.length, rootDefinitionId === "transfer" ? 1 : 2);
@@ -32629,7 +32623,7 @@ test("AI·反制：future candidates 私密手牌只生成一个匿名候选并�
       const handTerms = fixture.game.aiController.evaluator.futureSelectionCounterTerms(
         fixture.decision.world, fixture.responderWorld, fixture.sourceWorld,
         fixture.rootCard, fixture.targets,
-        [{ weight:1, selection:hands[0], resolvesAtStay:true }]
+        [{ weight: 1, selection: hands[0], resolvesAtStay: true }]
       );
       assert.equal(handTerms.counterLossProbability, 1 / 3);
     } finally {
@@ -32641,8 +32635,8 @@ test("AI·反制：future candidates 私密手牌只生成一个匿名候选并�
 test("AI·反制：future production path 不读取 actor 私密字段或启动二阶采样", async () => {
   for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
     const fixture = await buildCounterRootOverlapFixture({
-      handDefinitionIds:["counter", "assault", "recover"], rootDefinitionId,
-      equipmentDefinitionId:"barrierDevice"
+      handDefinitionIds: ["counter", "assault", "recover"], rootDefinitionId,
+      equipmentDefinitionId: "barrierDevice"
     });
     const memory = Object.getOwnPropertyDescriptor(fixture.source, "aiMemory");
     const hand = fixture.source.hand;
@@ -32652,7 +32646,7 @@ test("AI·反制：future production path 不读取 actor 私密字段或启动�
     const materialized = [];
     try {
       Object.defineProperty(fixture.source, "aiMemory", {
-        configurable:true,
+        configurable: true,
         get() { throw new Error("Counter prediction accessed actor private memory"); }
       });
       fixture.source.hand = new Proxy(hand, {
@@ -32699,20 +32693,20 @@ test("AI·反制：future production path 不读取 actor 私密字段或启动�
 test("AI·反制：future anonymous projection 保持 Counter depth 与公开声明边界", async () => {
   for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
     const fixture = await buildCounterRootOverlapFixture({
-      handDefinitionIds:["counter", "assault", "recover"], rootDefinitionId
+      handDefinitionIds: ["counter", "assault", "recover"], rootDefinitionId
     });
     try {
-      const flipped = await rebuildCounterResourceDecision(fixture, { counterDepth:1 });
+      const flipped = await rebuildCounterResourceDecision(fixture, { counterDepth: 1 });
       assert.deepEqual(flipped.futureSelectionOutcomes[0].selection, fixture.futureSelection);
       assert.equal(flipped.futureCounterTerms.gain, -fixture.futureCounterTerms.gain);
       assert.equal(flipped.futureCounterTerms.counterLossProbability, 0);
       assert.equal(flipped.futureCounterTerms.selfCounterGainOverlap, 0);
-      const restored = await rebuildCounterResourceDecision(fixture, { counterDepth:2 });
+      const restored = await rebuildCounterResourceDecision(fixture, { counterDepth: 2 });
       assert.deepEqual(restored.futureCounterTerms, fixture.futureCounterTerms);
       const invalid = await rebuildCounterResourceDecision(fixture,
         rootDefinitionId === "transfer"
-          ? { publicTransferContext:{ fromPlayerId:fixture.responder.id, receiverPlayerId:fixture.responder.id } }
-          : { rootTargetIds:[] }
+          ? { publicTransferContext: { fromPlayerId: fixture.responder.id, receiverPlayerId: fixture.responder.id } }
+          : { rootTargetIds: [] }
       );
       assert.equal(invalid.futureCounterTerms, null);
       fixture.responder.hand = [];
@@ -32727,15 +32721,15 @@ test("AI·反制：future anonymous projection 保持 Counter depth 与公开声
 test("AI·反制：future hand 来源为其他玩家时保留匿名资源收益", async () => {
   for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
     const fixture = await buildCounterRootOverlapFixture({
-      handDefinitionIds:["counter"], rootDefinitionId, transferReceiverTeam:"dawn"
+      handDefinitionIds: ["counter"], rootDefinitionId, transferReceiverTeam: "dawn"
     });
     try {
       const owner = fixture.game.state.players.find((player) => player.id === "counter-overlap-receiver");
       owner.hand.push(instance("recover"), instance("assault"));
       const decision = await rebuildCounterResourceDecision(fixture,
         rootDefinitionId === "transfer"
-          ? { publicTransferContext:{ fromPlayerId:owner.id, receiverPlayerId:fixture.source.id } }
-          : { rootTargetIds:[owner.id] }
+          ? { publicTransferContext: { fromPlayerId: owner.id, receiverPlayerId: fixture.source.id } }
+          : { rootTargetIds: [owner.id] }
       );
       assert.equal(decision.futureSelectionOutcomes[0].selection.selectionKind, "unknown");
       assert.ok(decision.futureCounterTerms.gain > 0);
@@ -32748,8 +32742,8 @@ test("AI·反制：future hand 来源为其他玩家时保留匿名资源收益"
 
 test("AI·反制：真正匿名的三张 hand future selection 保持三分之一 pC", async () => {
   const fixture = await buildCounterRootOverlapFixture({
-    handDefinitionIds:["counter", "assault", "recover"],
-    rootDefinitionId:"plunder"
+    handDefinitionIds: ["counter", "assault", "recover"],
+    rootDefinitionId: "plunder"
   });
   try {
     assert.equal(fixture.futureSelection?.selectionKind, "unknown");
@@ -32762,8 +32756,8 @@ test("AI·反制：真正匿名的三张 hand future selection 保持三分之�
 
 test("AI·反制：Destroy 命中唯一 Counter 时重叠归零且严格比较拒绝响应", async () => {
   const fixture = await buildCounterRootOverlapFixture({
-    handDefinitionIds:["counter"],
-    rootDefinitionId:"destroy"
+    handDefinitionIds: ["counter"],
+    rootDefinitionId: "destroy"
   });
   try {
     assert.equal(fixture.futureCounterTerms.counterLossProbability, 1);
@@ -32779,14 +32773,14 @@ test("AI·反制：Destroy 命中唯一 Counter 时重叠归零且严格比较�
 
 test("AI·反制：Transfer future selection 对 enemy 与 ally 分别保留阵营价值", async () => {
   const toEnemy = await buildCounterRootOverlapFixture({
-    handDefinitionIds:["counter"],
-    rootDefinitionId:"transfer",
-    transferReceiverTeam:"dusk"
+    handDefinitionIds: ["counter"],
+    rootDefinitionId: "transfer",
+    transferReceiverTeam: "dusk"
   });
   const toAlly = await buildCounterRootOverlapFixture({
-    handDefinitionIds:["counter"],
-    rootDefinitionId:"transfer",
-    transferReceiverTeam:"dawn"
+    handDefinitionIds: ["counter"],
+    rootDefinitionId: "transfer",
+    transferReceiverTeam: "dawn"
   });
   try {
     assert.equal(toEnemy.futureCounterTerms.counterLossProbability, 1);
@@ -32803,25 +32797,25 @@ test("AI·反制：Transfer future selection 对 enemy 与 ally 分别保留阵�
 
 test("AI·反制：普通 root 无 Counter overlap 时保持原严格成本比较", async () => {
   const fixture = await buildCounterRootOverlapFixture({
-    handDefinitionIds:["counter"],
-    rootDefinitionId:"harvest"
+    handDefinitionIds: ["counter"],
+    rootDefinitionId: "harvest"
   });
   try {
     assert.equal(fixture.futureCounterTerms, null);
     const gain = fixture.decision.rootFlipWorlds
       ? fixture.game.aiController.evaluator.dynamicRootFlipGain(
-          fixture.decision.rootFlipWorlds,
-          fixture.responderWorld.id,
-          fixture.decision.rootFlipWorlds.baseLightningOutcomeSets,
-          fixture.decision.rootFlipWorlds.resolvedLightningOutcomeSets
-        )
+        fixture.decision.rootFlipWorlds,
+        fixture.responderWorld.id,
+        fixture.decision.rootFlipWorlds.baseLightningOutcomeSets,
+        fixture.decision.rootFlipWorlds.resolvedLightningOutcomeSets
+      )
       : planningDynamicCounterGain(
-          fixture.decision.world,
-          fixture.responderWorld,
-          fixture.sourceWorld,
-          fixture.rootCard,
-          fixture.targets
-        );
+        fixture.decision.world,
+        fixture.responderWorld,
+        fixture.sourceWorld,
+        fixture.rootCard,
+        fixture.targets
+      );
     assert.equal(fixture.game.aiController.evaluator.shouldRespond(fixture.decision), gain > 2.8);
   } finally {
     fixture.game.dispose();
@@ -33082,17 +33076,17 @@ test(
 
 test("AI·反制概率：匿名 Counter selection 直接复用 canonical finite-pool query", () => {
   const player = counterPlayer("counter-overlap-anonymous", "dawn", {
-    handCount:2,
-    knownCards:[]
+    handCount: 2,
+    knownCards: []
   });
   const state = upgradeProbabilityFixture({
-    remainingCardCounts:{ counter:1, assault:1 },
-    players:[player]
+    remainingCardCounts: { counter: 1, assault: 1 },
+    players: [player]
   });
   assert.equal(queryHandSelectionProbability(
     state.probabilityState,
     player,
-    { zone:"hand", selectionKind:"unknown", availableUnknownCount:2 },
+    { zone: "hand", selectionKind: "unknown", availableUnknownCount: 2 },
     "counter"
   ), 1 / 2);
 });
@@ -34088,32 +34082,32 @@ test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", a
 
 test("AI·救援：已知调息足够且剩余池为空时成功概率为一", () => {
   const responder = {
-    id:"known-rescue-responder",
-    alive:true,
-    battleTeam:"dawn",
-    controllerType:"ai",
-    hp:3,
-    handCount:1,
-    energy:0,
-    roleTags:[]
+    id: "known-rescue-responder",
+    alive: true,
+    battleTeam: "dawn",
+    controllerType: "ai",
+    hp: 3,
+    handCount: 1,
+    energy: 0,
+    roleTags: []
   };
   const target = {
-    id:"known-rescue-target",
-    alive:true,
-    battleTeam:"dawn",
-    controllerType:"ai",
-    hp:0,
-    handCount:0,
-    energy:0,
-    roleTags:[]
+    id: "known-rescue-target",
+    alive: true,
+    battleTeam: "dawn",
+    controllerType: "ai",
+    hp: 0,
+    handCount: 0,
+    energy: 0,
+    roleTags: []
   };
   const assessment = new Evaluator().assessDyingRescue({
     responder,
     target,
-    rescueOrder:[target, responder],
-    responderHandDefinitionIds:["recover"],
-    knownCardsByPlayer:{ [target.id]:{}, [responder.id]:{} },
-    remainingCardCounts:{}
+    rescueOrder: [target, responder],
+    responderHandDefinitionIds: ["recover"],
+    knownCardsByPlayer: { [target.id]: {}, [responder.id]: {} },
+    remainingCardCounts: {}
   });
   assert.equal(assessment.guaranteedSurvivable, true);
   assert.equal(assessment.unknownRecoveryRequired, 0);
@@ -35145,7 +35139,7 @@ test("AI·动态密度：模拟器动态：同阵营 plunder 使用动态差值"
   assertClose(
     dynamic.resourceSelectionUtility,
     dynamic.contextualUtility + dynamic.resourceMaterialUtility
-      + dynamic.acquisitionUtility + dynamic.thresholdUtility
+    + dynamic.acquisitionUtility + dynamic.thresholdUtility
   );
   // 同阵营 base 抵消；双方各自 RoleDelta 的静态资产差按 0.4 保留，施牌成本留在 context。
   assert.notEqual(dynamic.contextualUtility, 0);
@@ -35188,7 +35182,7 @@ test("AI·动态密度：模拟器动态：与共享候选/区域公式一致", 
   assertClose(
     terms.resourceSelectionUtility,
     terms.contextualUtility + terms.resourceMaterialUtility
-      + terms.acquisitionUtility + terms.thresholdUtility
+    + terms.acquisitionUtility + terms.thresholdUtility
   );
   assertClose(
     terms.resourceMaterialUtility,
@@ -35656,12 +35650,12 @@ test("AI·角色卡牌价值：新增角色未配置差值时自动回退基础�
 test("AI·角色卡牌价值：CARD_AI_VALUES 是唯一 Base Value authority", async () => {
   const conflictingDefinitions = {
     ...CARD_DEFINITIONS,
-    assault:Object.freeze({ ...CARD_DEFINITIONS.assault, aiValue:999 }),
-    futureCard:Object.freeze({ definitionId:"futureCard", aiValue:4 })
+    assault: Object.freeze({ ...CARD_DEFINITIONS.assault, aiValue: 999 }),
+    futureCard: Object.freeze({ definitionId: "futureCard", aiValue: 4 })
   };
   assert.equal(getBaseCardAiValue("assault", conflictingDefinitions), CARD_AI_VALUES.assault);
   assert.equal(
-    getRoleCardAiValue("blade-walker", "assault", { cardDefinitions:conflictingDefinitions }),
+    getRoleCardAiValue("blade-walker", "assault", { cardDefinitions: conflictingDefinitions }),
     CARD_AI_VALUES.assault + ROLE_CARD_VALUE_DELTAS["blade-walker"].assault
   );
   assert.throws(() => getBaseCardAiValue("futureCard", conflictingDefinitions), /futureCard/);
@@ -36529,19 +36523,19 @@ fixture 只验证材料、角色 context、手牌功能与 acquisition 的一次
 */
 function resourceSelectionLedgerFixture(purpose) {
   const state = {
-    remainingCardCounts:{ recover:4, charge:1 },
-    players:[
+    remainingCardCounts: { recover: 4, charge: 1 },
+    players: [
       {
-        id:"ledger-resource-actor", seatIndex:0, battleTeam:"dawn",
-        characterId:"blade-walker", alive:true, hp:4, maxHp:4,
-        energy:0, handCount:0, hand:[], equipmentDefinitionId:null,
-        equipmentRetentionProbability:0, huntMarkProbabilities:{}, statuses:[]
+        id: "ledger-resource-actor", seatIndex: 0, battleTeam: "dawn",
+        characterId: "blade-walker", alive: true, hp: 4, maxHp: 4,
+        energy: 0, handCount: 0, hand: [], equipmentDefinitionId: null,
+        equipmentRetentionProbability: 0, huntMarkProbabilities: {}, statuses: []
       },
       {
-        id:"ledger-resource-owner", seatIndex:1, battleTeam:"dusk",
-        characterId:"oath-warden", alive:true, hp:4, maxHp:4,
-        energy:0, handCount:1, knownCards:[], equipmentDefinitionId:"defenseDevice",
-        equipmentRetentionProbability:1, huntMarkProbabilities:{}, statuses:[]
+        id: "ledger-resource-owner", seatIndex: 1, battleTeam: "dusk",
+        characterId: "oath-warden", alive: true, hp: 4, maxHp: 4,
+        energy: 0, handCount: 1, knownCards: [], equipmentDefinitionId: "defenseDevice",
+        equipmentRetentionProbability: 1, huntMarkProbabilities: {}, statuses: []
       }
     ]
   };
@@ -36553,8 +36547,8 @@ function resourceSelectionLedgerFixture(purpose) {
   );
   return {
     chosen,
-    unknown:chosen.candidates.find((candidate) => candidate.action.selection?.selectionKind === "unknown"),
-    radar:chosen.candidates.find((candidate) => candidate.action.selection?.zone === "equipment")
+    unknown: chosen.candidates.find((candidate) => candidate.action.selection?.selectionKind === "unknown"),
+    radar: chosen.candidates.find((candidate) => candidate.action.selection?.zone === "equipment")
   };
 }
 
@@ -36663,27 +36657,27 @@ chooseCanonicalResourceActionForTest、Evaluator.playerValueTerms。
 */
 function equipmentFutureResourceCase(equipmentDefinitionId, cards, purpose) {
   const state = {
-    remainingCardCounts:{},
-    players:[
+    remainingCardCounts: {},
+    players: [
       {
-        id:"future-resource-actor", seatIndex:0, battleTeam:"dawn",
-        characterId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
-        energy:0, handCount:1,
-        hand:[{ id:"future-resource-block", definitionId:"block" }], attackRange:1,
-        equipmentDefinitionId:null, equipmentRetentionProbability:0,
-        huntMarkProbabilities:{}, statuses:[]
+        id: "future-resource-actor", seatIndex: 0, battleTeam: "dawn",
+        characterId: "blade-walker", alive: true, hp: 4, maxHp: 4, shield: 0,
+        energy: 0, handCount: 1,
+        hand: [{ id: "future-resource-block", definitionId: "block" }], attackRange: 1,
+        equipmentDefinitionId: null, equipmentRetentionProbability: 0,
+        huntMarkProbabilities: {}, statuses: []
       },
       {
-        id:"future-resource-owner", seatIndex:1, battleTeam:"dusk",
-        characterId:"oath-warden", alive:true, hp:4, maxHp:4, shield:0,
-        energy:0, handCount:cards.length,
-        knownCards:cards.map((definitionId, index) => fullKnownCard(
+        id: "future-resource-owner", seatIndex: 1, battleTeam: "dusk",
+        characterId: "oath-warden", alive: true, hp: 4, maxHp: 4, shield: 0,
+        energy: 0, handCount: cards.length,
+        knownCards: cards.map((definitionId, index) => fullKnownCard(
           `future-resource-${index}`,
           definitionId
         )),
-        attackRange:1, nextTurnBaseAttackLimit:1,
-        equipmentDefinitionId, equipmentRetentionProbability:1,
-        recycleDeviceUses:0, huntMarkProbabilities:{}, statuses:[]
+        attackRange: 1, nextTurnBaseAttackLimit: 1,
+        equipmentDefinitionId, equipmentRetentionProbability: 1,
+        recycleDeviceUses: 0, huntMarkProbabilities: {}, statuses: []
       }
     ]
   };
@@ -36709,22 +36703,22 @@ function equipmentFutureResourceCase(equipmentDefinitionId, cards, purpose) {
 test("AI·资源选择：三项装备 Future 由 RawStateDelta 自然进入 Destroy 与 Plunder", () => {
   const cases = [
     {
-      equipmentDefinitionId:"battleDevice",
-      activeCards:["assault"],
-      baselineCards:["charge"],
-      term:"battleDeviceFuture"
+      equipmentDefinitionId: "battleDevice",
+      activeCards: ["assault"],
+      baselineCards: ["charge"],
+      term: "battleDeviceFuture"
     },
     {
-      equipmentDefinitionId:"recycleDevice",
-      activeCards:["harvest"],
-      baselineCards:["charge"],
-      term:"recycleDeviceFuture"
+      equipmentDefinitionId: "recycleDevice",
+      activeCards: ["harvest"],
+      baselineCards: ["charge"],
+      term: "recycleDeviceFuture"
     },
     {
-      equipmentDefinitionId:"assaultMagazine",
-      activeCards:["assault", "assault", "assault"],
-      baselineCards:["charge", "charge", "charge"],
-      term:"assaultMagazineFuture"
+      equipmentDefinitionId: "assaultMagazine",
+      activeCards: ["assault", "assault", "assault"],
+      baselineCards: ["charge", "charge", "charge"],
+      term: "assaultMagazineFuture"
     }
   ];
   for (const entry of cases) {
@@ -36743,7 +36737,7 @@ test("AI·资源选择：三项装备 Future 由 RawStateDelta 自然进入 Dest
       assert.equal(baseline.future[entry.term], 0, `${purpose}:${entry.term}:baseline`);
       assertClose(
         active.equipment.comparisonTerms.contextualUtility
-          - baseline.equipment.comparisonTerms.contextualUtility,
+        - baseline.equipment.comparisonTerms.contextualUtility,
         active.future[entry.term],
         1e-9
       );
@@ -36779,7 +36773,7 @@ test("AI·资源选择：装备 target 与 Plunder actor 分别使用各自 Role
   assertClose(plunder.equipment.comparisonTerms.acquisitionUtility, actorStaticAsset);
   assertClose(
     destroy.equipment.comparisonTerms.contextualUtility
-      - destroyBaseline.equipment.comparisonTerms.contextualUtility,
+    - destroyBaseline.equipment.comparisonTerms.contextualUtility,
     destroy.future.battleDeviceFuture
   );
 });
@@ -36787,21 +36781,21 @@ test("AI·资源选择：装备 target 与 Plunder actor 分别使用各自 Role
 test("AI·资源选择：统一标量与 Final Utility 共用机器精度 tie 层级", () => {
   const evaluator = new Evaluator();
   const root = {
-    type:"card",
-    actorId:"resource-tie-actor",
-    cardId:"destroy",
-    cardInstanceId:"resource-tie-card",
-    targetIds:["resource-tie-owner"]
+    type: "card",
+    actorId: "resource-tie-actor",
+    cardId: "destroy",
+    cardInstanceId: "resource-tie-card",
+    targetIds: ["resource-tie-owner"]
   };
   const left = {
-    action:{ ...root, selection:{ zone:"hand", selectionKind:"unknown" } },
-    comparisonTerms:{ resourceSelectionUtility:1 + Number.EPSILON },
-    valueScore:1
+    action: { ...root, selection: { zone: "hand", selectionKind: "unknown" } },
+    comparisonTerms: { resourceSelectionUtility: 1 + Number.EPSILON },
+    valueScore: 1
   };
   const right = {
-    action:{ ...root, selection:{ zone:"equipment", selectionKind:"equipment" } },
-    comparisonTerms:{ resourceSelectionUtility:1 },
-    valueScore:2
+    action: { ...root, selection: { zone: "equipment", selectionKind: "equipment" } },
+    comparisonTerms: { resourceSelectionUtility: 1 },
+    valueScore: 2
   };
   assert.ok(
     evaluator.compareCandidates(left, right) < 0,
@@ -36810,19 +36804,19 @@ test("AI·资源选择：统一标量与 Final Utility 共用机器精度 tie �
   assert.ok(evaluator.compareCandidates(
     {
       ...left,
-      comparisonTerms:{ resourceSelectionUtility:1 + Number.EPSILON * 4 },
-      valueScore:0
+      comparisonTerms: { resourceSelectionUtility: 1 + Number.EPSILON * 4 },
+      valueScore: 0
     },
-    { ...right, valueScore:100 }
+    { ...right, valueScore: 100 }
   ) > 0, "超过统一机器精度容差的真实 Resource 差异必须优先于 Final Utility");
   assert.ok(evaluator.compareCandidates(
-    { ...left, comparisonTerms:{ resourceSelectionUtility:1 }, valueScore:3 },
-    { ...right, valueScore:2 }
+    { ...left, comparisonTerms: { resourceSelectionUtility: 1 }, valueScore: 3 },
+    { ...right, valueScore: 2 }
   ) > 0, "Resource tie 后必须继续比较 generic Final Utility");
   assert.equal(
     evaluator.compareCandidates(
-      { ...left, comparisonTerms:{ resourceSelectionUtility:1 }, valueScore:2 },
-      { ...right, valueScore:2 }
+      { ...left, comparisonTerms: { resourceSelectionUtility: 1 }, valueScore: 2 },
+      { ...right, valueScore: 2 }
     ),
     0,
     "Resource 与 Final 都 tie 时保持稳定枚举顺序"
@@ -36840,7 +36834,7 @@ test("AI·资源选择：材料与未知牌期望各自只有一个 production a
     3.42
   );
   assertClose(getBaseCardAiValue("defenseDevice") * RESOURCE_MATERIAL_SCALE, 3.6);
-  assertClose(getUnknownAcquisitionUtility({ recover:4, charge:1 }), 5.8);
+  assertClose(getUnknownAcquisitionUtility({ recover: 4, charge: 1 }), 5.8);
   assert.equal(getUnknownAcquisitionUtility(null), UNKNOWN_HAND_EXPECTED_VALUE);
 
   const aiSources = (await Promise.all(
@@ -36857,21 +36851,21 @@ test("AI·资源选择：材料与未知牌期望各自只有一个 production a
 
 test("AI·资源选择：充能桩门槛功能项在统一标量中保持可见", () => {
   const state = {
-    remainingCardCounts:{ recover:1 },
-    players:[
+    remainingCardCounts: { recover: 1 },
+    players: [
       {
-        id:"energy-resource-actor", seatIndex:0, battleTeam:"dawn",
-        characterId:"blade-walker", alive:true, hp:4, maxHp:4,
-        energy:0, handCount:0, hand:[], equipmentDefinitionId:null,
-        equipmentRetentionProbability:0
+        id: "energy-resource-actor", seatIndex: 0, battleTeam: "dawn",
+        characterId: "blade-walker", alive: true, hp: 4, maxHp: 4,
+        energy: 0, handCount: 0, hand: [], equipmentDefinitionId: null,
+        equipmentRetentionProbability: 0
       },
       {
-        id:"energy-resource-owner", seatIndex:1, battleTeam:"dusk",
-        characterId:"oath-warden", alive:true, hp:4, maxHp:4,
-        energy:0, maxEnergy:4, handCount:1, knownCards:[],
-        activeSkillId:"barrier", activeSkillCost:2, activeSkillLimit:2,
-        turnEnergyGainWithoutEquipment:1, energyDeviceTurnEnergyGain:1,
-        equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1
+        id: "energy-resource-owner", seatIndex: 1, battleTeam: "dusk",
+        characterId: "oath-warden", alive: true, hp: 4, maxHp: 4,
+        energy: 0, maxEnergy: 4, handCount: 1, knownCards: [],
+        activeSkillId: "barrier", activeSkillCost: 2, activeSkillLimit: 2,
+        turnEnergyGainWithoutEquipment: 1, energyDeviceTurnEnergyGain: 1,
+        equipmentDefinitionId: "energyDevice", equipmentRetentionProbability: 1
       }
     ]
   };
@@ -36922,7 +36916,7 @@ async function playAiResourceCardThroughCounterChain(definitionId) {
   const assault = instance("assault");
   actor.hand.push(use, actorCounter);
   owner.hand.push(staleCounter, assault);
-  const { game } = makeGame([actor, owner, receiver], { random:() => 0 });
+  const { game } = makeGame([actor, owner, receiver], { random: () => 0 });
   game.rememberPrivateCard(actor, owner, staleCounter);
   game.rememberPrivateCard(actor, owner, assault);
   forceAvailableAiCounters(game);
@@ -36938,13 +36932,13 @@ async function playAiResourceCardThroughCounterChain(definitionId) {
     return chosen;
   };
   const staleSelection = {
-    zone:"hand",
-    selectionKind:"known",
-    cardId:staleCounter.id,
-    definitionId:staleCounter.definitionId,
-    availableUnknownCount:0,
+    zone: "hand",
+    selectionKind: "known",
+    cardId: staleCounter.id,
+    definitionId: staleCounter.definitionId,
+    availableUnknownCount: 0,
     ...(definitionId === "transfer"
-      ? { sourceId:owner.id, receiverId:receiver.id }
+      ? { sourceId: owner.id, receiverId: receiver.id }
       : {})
   };
   const executed = await game.playCard(
@@ -37031,7 +37025,7 @@ test("AI·资源选择：同一当前状态的 planning 与 runtime canonical se
     const runtime = await game.aiController.choosePostCounterResource(
       actor,
       owner,
-      { purpose:"plunder", card:use }
+      { purpose: "plunder", card: use }
     );
     assert.deepEqual(runtime?.selection, planning?.action?.selection);
     assert.equal(runtime?.card?.id, planning?.action?.selection?.cardId);
@@ -38729,18 +38723,18 @@ function transferDirectionMatrixPreservesLegalityAndExecution() {
       false
     );
     const action = generatedAction ?? createAction({
-      type:"card",
-      actorId:actor.id,
-      cardId:"transfer",
-      cardInstanceId:use.id,
-      selection:{
-        sourceId:source.id,
-        receiverId:receiver.id,
-        zone:"hand",
-        selectionKind:"known",
-        cardId:held.id,
-        definitionId:held.definitionId,
-        availableUnknownCount:0
+      type: "card",
+      actorId: actor.id,
+      cardId: "transfer",
+      cardInstanceId: use.id,
+      selection: {
+        sourceId: source.id,
+        receiverId: receiver.id,
+        zone: "hand",
+        selectionKind: "known",
+        cardId: held.id,
+        definitionId: held.definitionId,
+        availableUnknownCount: 0
       }
     });
     const preference = game.aiController.evaluator.evaluateTransferAction(
@@ -40104,11 +40098,11 @@ function magazineAssaultValueFixture(assaultCount, retention = 1, bladeWalker = 
   const worldActor = world.players.find((player) => player.id === actor.id);
   worldActor.equipmentRetentionProbability = retention;
   return {
-    player:worldActor,
+    player: worldActor,
     world,
-    usable:expectedUsableAssaultsNextTurn(worldActor, world),
-    threat:assaultThreat(worldActor, world),
-    equipmentSynergy:equipmentThreatSynergy(worldActor, world)
+    usable: expectedUsableAssaultsNextTurn(worldActor, world),
+    threat: assaultThreat(worldActor, world),
+    equipmentSynergy: equipmentThreatSynergy(worldActor, world)
   };
 }
 
@@ -40289,20 +40283,20 @@ test("AI·威胁评估：targetPriorityScore 的稳定角色标签与近期攻�
 });
 
 test("AI·威胁评估：Target Priority 命名权重保持既有数学结果", () => {
-  const viewer = { battleTeam:"dawn" };
+  const viewer = { battleTeam: "dawn" };
   const target = {
-    id:"target-priority-weight-target",
-    alive:true,
-    battleTeam:"dusk",
-    hp:3,
-    maxHp:4,
-    shield:0,
-    roleTags:[],
-    tags:[],
-    statuses:[]
+    id: "target-priority-weight-target",
+    alive: true,
+    battleTeam: "dusk",
+    hp: 3,
+    maxHp: 4,
+    shield: 0,
+    roleTags: [],
+    tags: [],
+    statuses: []
   };
-  const memory = { recentAggressors:{ [target.id]:2 } };
-  const evaluator = new Evaluator({ getDifficultyMultiplier:() => 2 });
+  const memory = { recentAggressors: { [target.id]: 2 } };
+  const evaluator = new Evaluator({ getDifficultyMultiplier: () => 2 });
   assert.equal(TARGET_PRIORITY_WEIGHT, 0.12);
   assertClose(targetPriorityScore(viewer, target, memory, 1), 6.5);
   assertClose(evaluator.targetPriority(viewer, target, memory, 1), 1.56);
@@ -40310,30 +40304,30 @@ test("AI·威胁评估：Target Priority 命名权重保持既有数学结果", 
 
 test("AI·评分：Scout definition 映射与公开 handCount 优先于过滤 hand", () => {
   const actor = ledgerPlayer("public-count-actor", 0, "dawn", "blade-walker", {
-    handCount:1,
-    hand:[{ id:"public-count-decision", definitionId:"shockwave" }],
-    aiMemory:{ recentAggressors:{} }
+    handCount: 1,
+    hand: [{ id: "public-count-decision", definitionId: "shockwave" }],
+    aiMemory: { recentAggressors: {} }
   });
   const target = ledgerPlayer("public-count-target", 1, "dusk", "oath-warden", {
-    handCount:1,
-    hand:[]
+    handCount: 1,
+    hand: []
   });
   const visible = ledgerState([actor, target]);
-  visible.remainingCardCounts = { assault:1, block:1, counter:1 };
+  visible.remainingCardCounts = { assault: 1, block: 1, counter: 1 };
   upgradeProbabilityFixture(visible);
-  const evaluator = new Evaluator({ getDifficultyMultiplier:() => 0 });
+  const evaluator = new Evaluator({ getDifficultyMultiplier: () => 0 });
   assert.ok(evaluator.scoutDecisionRelevance(actor, target, visible) > 0);
 
   const utility = (cardId, handCount) => evaluator.actionUtility(createAction({
-    type:"card",
-    actorId:actor.id,
+    type: "card",
+    actorId: actor.id,
     cardId,
-    cardInstanceId:`public-count-${cardId}`,
-    targetIds:[target.id],
-    selection:cardId === "scout" ? { unknownCount:2 } : null
+    cardInstanceId: `public-count-${cardId}`,
+    targetIds: [target.id],
+    selection: cardId === "scout" ? { unknownCount: 2 } : null
   }), actor, {
     ...visible,
-    players:[actor, { ...target, handCount, hand:[] }]
+    players: [actor, { ...target, handCount, hand: [] }]
   });
   assert.equal(utility("plunder", 3) - utility("plunder", 0), 3);
   assert.ok(utility("scout", 3) > utility("scout", 0));
@@ -40341,8 +40335,8 @@ test("AI·评分：Scout definition 映射与公开 handCount 优先于过滤 ha
 
 test("AI·反制：部分已知 uniform hand 保留 known weighted value", () => {
   const responder = ledgerPlayer("uniform-known", 0, "dawn", "blade-walker", {
-    handCount:2,
-    hand:[{ id:"uniform-assault", definitionId:"assault", availability:1 }]
+    handCount: 2,
+    hand: [{ id: "uniform-assault", definitionId: "assault", availability: 1 }]
   });
   const actor = ledgerPlayer("uniform-enemy", 1, "dusk", "oath-warden");
   const state = ledgerState([responder, actor]);
@@ -40350,84 +40344,84 @@ test("AI·反制：部分已知 uniform hand 保留 known weighted value", () =>
     state,
     responder,
     actor,
-    { definitionId:"plunder" },
+    { definitionId: "plunder" },
     [responder],
-    { zone:"hand", selectionMode:"uniform-hand" }
+    { zone: "hand", selectionMode: "uniform-hand" }
   );
   assertClose(gain, 3.2, 1e-12);
 });
 
 test("AI·威胁评估：目标优先级忽略手牌能量并保留残血与斩杀因素", () => {
-  const viewer = { battleTeam:"dawn" };
+  const viewer = { battleTeam: "dawn" };
   const base = {
-    id:"priority-target",
-    alive:true,
-    battleTeam:"dusk",
-    hp:3,
-    maxHp:4,
-    shield:0,
-    handCount:0,
-    energy:0,
-    roleTags:[],
-    tags:[],
-    statuses:[]
+    id: "priority-target",
+    alive: true,
+    battleTeam: "dusk",
+    hp: 3,
+    maxHp: 4,
+    shield: 0,
+    handCount: 0,
+    energy: 0,
+    roleTags: [],
+    tags: [],
+    statuses: []
   };
   const score = (target, expectedDamage = 0) => targetPriorityScore(
     viewer,
     target,
-    { recentAggressors:{} },
+    { recentAggressors: {} },
     expectedDamage
   );
-  assert.equal(score(base), score({ ...base, handCount:9, energy:9 }));
-  assert.ok(score({ ...base, hp:2 }) > score(base));
-  const lethalTarget = { ...base, hp:1 };
+  assert.equal(score(base), score({ ...base, handCount: 9, energy: 9 }));
+  assert.ok(score({ ...base, hp: 2 }) > score(base));
+  const lethalTarget = { ...base, hp: 1 };
   assert.equal(score(lethalTarget, 1) - score(lethalTarget, 0), 24);
 });
 
 test("AI·威胁评估：Assault 使用完整 Focus 且牌数不产生固定奖励", () => {
-  const evaluator = new Evaluator({ getDifficultyMultiplier:() => 0 });
+  const evaluator = new Evaluator({ getDifficultyMultiplier: () => 0 });
   const actor = {
-    id:"focus-actor",
-    alive:true,
-    battleTeam:"dawn",
-    characterId:"blade-walker",
-    aiMemory:{ recentAggressors:{} }
+    id: "focus-actor",
+    alive: true,
+    battleTeam: "dawn",
+    characterId: "blade-walker",
+    aiMemory: { recentAggressors: {} }
   };
   const target = (id, hp, handCount) => ({
     id,
-    alive:true,
-    battleTeam:"dusk",
+    alive: true,
+    battleTeam: "dusk",
     hp,
-    maxHp:4,
-    shield:0,
+    maxHp: 4,
+    shield: 0,
     handCount,
-    energy:0,
-    roleTags:[],
-    tags:[],
-    statuses:[]
+    energy: 0,
+    roleTags: [],
+    tags: [],
+    statuses: []
   });
   const full = target("focus-full", 4, 4);
   const injured = target("focus-injured", 3, 4);
   const lowHand = target("focus-low-hand", 4, 0);
-  const visible = { players:[actor, full, injured, lowHand] };
+  const visible = { players: [actor, full, injured, lowHand] };
   const utility = (entry) => evaluator.actionUtility(createAction({
-    type:"card",
-    actorId:actor.id,
-    cardId:"assault",
-    cardInstanceId:"focus-assault",
-    targetIds:[entry.id]
+    type: "card",
+    actorId: actor.id,
+    cardId: "assault",
+    cardInstanceId: "focus-assault",
+    targetIds: [entry.id]
   }), actor, visible);
   assert.equal(utility(injured) - utility(full), 3);
   assert.equal(utility(lowHand), utility(full));
   assert.equal(evaluator.hiddenWorldPrior(
     createAction({
-      type:"card",
-      actorId:actor.id,
-      cardId:"assault",
-      cardInstanceId:"focus-assault",
-      targetIds:[lowHand.id]
+      type: "card",
+      actorId: actor.id,
+      cardId: "assault",
+      cardInstanceId: "focus-assault",
+      targetIds: [lowHand.id]
     }),
-    [{ [lowHand.id]:["block"] }, { [lowHand.id]:[] }]
+    [{ [lowHand.id]: ["block"] }, { [lowHand.id]: [] }]
   ), -0.75);
 });
 
@@ -40604,26 +40598,26 @@ test("AI·资源选择：记录交易事实优先于 before/after 净手牌差",
   const actor = before.players[0];
   const owner = before.players[1];
   const action = createAction({
-    type:"card",
-    actorId:actor.id,
-    cardId:"destroy",
-    cardInstanceId:actor.hand[0].id,
-    targetIds:[owner.id],
-    selection:{
-      zone:"hand",
-      selectionKind:"known",
-      cardId:owner.hand[0].id,
-      definitionId:"recover"
+    type: "card",
+    actorId: actor.id,
+    cardId: "destroy",
+    cardInstanceId: actor.hand[0].id,
+    targetIds: [owner.id],
+    selection: {
+      zone: "hand",
+      selectionKind: "known",
+      cardId: owner.hand[0].id,
+      definitionId: "recover"
     }
   });
   const after = structuredClone(before);
   after.players[1].hand = [];
   after.players[1].handCount = 0;
   after.lastResourceTransaction = {
-    cardId:"destroy",
-    cardInstanceId:action.cardInstanceId,
-    sourceId:owner.id,
-    appliedProbability:0.5
+    cardId: "destroy",
+    cardInstanceId: action.cardInstanceId,
+    sourceId: owner.id,
+    appliedProbability: 0.5
   };
   const preference = new Evaluator().resourceSelectionPreference(
     action,
@@ -40643,17 +40637,17 @@ test("AI·资源选择：记录交易事实优先于 before/after 净手牌差",
 test("AI·价值归属：END transition contract 缺少 hasActiveSkill 时 fail fast", () => {
   const state = ledgerState([
     ledgerPlayer("end-contract-actor", 0, "dawn", "oath-warden", {
-      activeSkillId:"barrier",
-      activeSkillCost:2
+      activeSkillId: "barrier",
+      activeSkillCost: 2
     })
   ]);
   upgradeProbabilityFixture(state);
   const evaluator = new Evaluator();
   const terms = evaluator.evaluateTransition({
-    action:createAction({ type:"end", actorId:"end-contract-actor" }),
-    player:state.players[0],
-    beforeState:state,
-    afterState:state
+    action: createAction({ type: "end", actorId: "end-contract-actor" }),
+    player: state.players[0],
+    beforeState: state,
+    afterState: state
   });
   const incomplete = structuredClone(terms);
   delete incomplete.endOpportunityInputs.hasActiveSkill;
@@ -40666,10 +40660,10 @@ test("AI·价值归属：END transition contract 缺少 hasActiveSkill 时 fail 
 test("AI·价值归属：Final 无 skillReadiness 且 diagnostic categories 完整守恒", () => {
   const before = ledgerState([
     ledgerPlayer("category-actor", 0, "dawn", "oath-warden", {
-      activeSkillId:"barrier",
-      activeSkillCost:2,
-      activeSkillLimit:1,
-      energy:2
+      activeSkillId: "barrier",
+      activeSkillCost: 2,
+      activeSkillLimit: 1,
+      energy: 2
     }),
     ledgerPlayer("category-enemy", 1, "dusk", "blade-walker")
   ]);
@@ -40702,8 +40696,8 @@ test("AI·价值归属：Radar ledger 分别使用 before/after probability stat
   const makeRadarLedgerState = (remainingCardCounts) => {
     const state = ledgerState([
       ledgerPlayer("radar-ledger-owner", 0, "dawn", "oath-warden", {
-        equipmentDefinitionId:"defenseDevice",
-        equipmentRetentionProbability:1
+        equipmentDefinitionId: "defenseDevice",
+        equipmentRetentionProbability: 1
       }),
       ledgerHand(
         ledgerPlayer("radar-ledger-enemy", 1, "dusk", "blade-walker"),
@@ -40713,8 +40707,8 @@ test("AI·价值归属：Radar ledger 分别使用 before/after probability stat
     state.remainingCardCounts = remainingCardCounts;
     return upgradeProbabilityFixture(state);
   };
-  const before = makeRadarLedgerState({ counter:1 });
-  const after = makeRadarLedgerState({ assault:1 });
+  const before = makeRadarLedgerState({ counter: 1 });
+  const after = makeRadarLedgerState({ assault: 1 });
   const evaluator = new Evaluator();
   const beforeJudgment = buildRadarJudgmentProbabilities(
     queryCurrentCardCounts(before.probabilityState)
@@ -40745,7 +40739,7 @@ test("AI·价值归属：Seal owner-local ledger 只投影一次且与 StateDelt
     ledgerPlayer("seal-ledger-ally", 1, "dawn", "spirit-medic"),
     ledgerPlayer("seal-ledger-enemy", 2, "dusk", "blade-walker")
   ]);
-  before.remainingCardCounts = { recover:1 };
+  before.remainingCardCounts = { recover: 1 };
   upgradeProbabilityFixture(before);
   const evaluator = new Evaluator();
   for (const ownerId of ["seal-ledger-ally", "seal-ledger-enemy"]) {
@@ -40760,7 +40754,7 @@ test("AI·价值归属：Seal owner-local ledger 只投影一次且与 StateDelt
     const projected = evaluator.projectOwnerLedger(ownerLedger, "seal-ledger-viewer");
     const stateDelta = statePointsToUtility(
       evaluator.stateUtility(after, "seal-ledger-viewer")
-        - evaluator.stateUtility(before, "seal-ledger-viewer")
+      - evaluator.stateUtility(before, "seal-ledger-viewer")
     );
     assert.equal(Math.sign(projected.total), ownerId.endsWith("ally") ? -1 : 1);
     assertClose(projected.total, stateDelta, 1e-12);
@@ -42439,53 +42433,105 @@ loadGameVersion、GameInfoView.show、GameInfoView.handleClick。
 可见文案不得扩写；版本只从源码 package.json 读取且发布包不复制该文件；样式不得滚动或整体缩放。
 */
 async function gameInfoUsesCanonicalVersionAndSpecifiedCopy() {
-  const [index, css, releaseScript, packageSource] = await Promise.all([
+  const [index, css, packageSource] = await Promise.all([
     readFile(projectFile("index.html"), "utf8"),
     readFile(projectFile("css/game-info.css"), "utf8"),
-    readFile(projectFile("tools/build_release.ps1"), "utf8"),
     readFile(projectFile("package.json"), "utf8")
   ]);
+
   const packageMetadata = JSON.parse(packageSource);
   const fetchedUrls = [];
+
   const version = await loadGameVersion(async (url) => {
     fetchedUrls.push(String(url));
-    return { ok:true, json:async () => packageMetadata };
+    return {
+      ok: true,
+      json: async () => packageMetadata
+    };
   });
+
   assert.equal(version, packageMetadata.version);
   assert.match(fetchedUrls[0], /package\.json$/);
 
   const root = makeInteractiveElement();
+
   let loadCount = 0;
   let backCount = 0;
-  const view = new GameInfoView(root, () => { backCount += 1; }, async () => {
-    loadCount += 1;
-    return version;
-  });
+
+  const view = new GameInfoView(
+    root,
+    () => {
+      backCount += 1;
+    },
+    async () => {
+      loadCount += 1;
+      return version;
+    }
+  );
+
   await view.show();
   await view.show();
-  assert.equal(loadCount, 1, "重复进入不得重复维护或读取第二份版本值");
+
+  assert.equal(
+    loadCount,
+    1,
+    "重复进入不得重复维护或读取第二份版本值"
+  );
+
   root.click(clickTarget("[data-game-info-back]"));
   assert.equal(backCount, 1);
 
   for (const copy of [
-    "五域纷争", "FIVE REALMS", `v${packageMetadata.version}`, "Lelexia", "2026.09.04", "关于游戏",
+    "五域纷争",
+    "FIVE REALMS",
+    `v${packageMetadata.version}`,
+    "Lelexia",
+    "关于游戏",
     "《五域纷争》是一款以阵营对抗、卡牌博弈与角色能力为核心的策略游戏。",
     "游戏将根据实际对局体验持续进行规则调整、平衡优化、Bug 修复与界面改进。",
-    "反馈与联系", "colasmith3783@gmail.com", "2100532928@qq.com",
-    "https://github.com/lelexia0131/FiveRealms", "版权说明",
-    "© 2026 Five Realms. All Rights Reserved.", "感谢游玩《五域纷争》"
-  ]) assert.ok(root.innerHTML.includes(copy), `缺少游戏说明文案：${copy}`);
-  assert.doesNotMatch(root.innerHTML, /策略 · 博弈 · 阵营对抗|探索五域|命运由你书写|欢迎来到五域纷争/);
-  assert.match(root.innerHTML, /target="_blank" rel="noopener noreferrer"/);
-  assert.match(index, /href="\.\/css\/game-info\.css"/);
-  assert.match(css, /\.game-info-screen\s*\{[^}]*height:\s*100vh[^}]*overflow:\s*hidden/s);
-  assert.match(css, /@media\s*\(max-height:\s*800px\)/);
-  assert.doesNotMatch(css, /overflow-y:\s*auto|\bzoom\s*:|transform:\s*scale\(/);
-  assert.match(releaseScript, /ConvertFrom-Json[\s\S]*\$PackageMetadata\.version/);
-  const runtimeRootFiles = releaseScript.match(/\$runtimeRootFiles\s*=\s*@\(([\s\S]*?)\)/);
-  assert.ok(runtimeRootFiles, "发布脚本必须声明根目录文件白名单");
-  assert.doesNotMatch(runtimeRootFiles[1], /["']package\.json["']/, "发布目录不得包含 package.json");
-  assert.match(releaseScript, /"css\/game-info\.css"/);
+    "反馈与联系",
+    "colasmith3783@gmail.com",
+    "2100532928@qq.com",
+    "https://github.com/lelexia0131/FiveRealms",
+    "版权说明",
+    "© 2026 Five Realms. All Rights Reserved.",
+    "感谢游玩《五域纷争》"
+  ]) {
+    assert.ok(
+      root.innerHTML.includes(copy),
+      `缺少游戏说明文案：${copy}`
+    );
+  }
+
+  assert.doesNotMatch(
+    root.innerHTML,
+    /策略 · 博弈 · 阵营对抗|探索五域|命运由你书写|欢迎来到五域纷争/
+  );
+
+  assert.match(
+    root.innerHTML,
+    /target="_blank" rel="noopener noreferrer"/
+  );
+
+  assert.match(
+    index,
+    /href="\.\/css\/game-info\.css"/
+  );
+
+  assert.match(
+    css,
+    /\.game-info-screen\s*\{[^}]*height:\s*100vh[^}]*overflow:\s*hidden/s
+  );
+
+  assert.match(
+    css,
+    /@media\s*\(max-height:\s*800px\)/
+  );
+
+  assert.doesNotMatch(
+    css,
+    /overflow-y:\s*auto|\bzoom\s*:|transform:\s*scale\(/
+  );
 }
 
 test("UI·游戏说明：版本、指定正文、安全外链与一屏样式使用稳定资源", gameInfoUsesCanonicalVersionAndSpecifiedCopy);
@@ -42528,7 +42574,7 @@ async function gameInfoUsesExistingTopLevelLifecycle() {
   const context = {
     elements,
     sound: { playMenuMusic: () => calls.push("music") },
-    gameInfoView: { show:async () => calls.push("render") },
+    gameInfoView: { show: async () => calls.push("render") },
     clearLog: () => calls.push("clear"),
     showStart: UIManager.prototype.showStart
   };
@@ -43243,7 +43289,7 @@ test("UI·手牌：弃牌阶段继续按 selectedIds 保持多选高亮", () => 
       targetState: null,
       isInteractionActive() { return Boolean(this.discardState); },
       elements: { human_hand: hand, hand_hint: { textContent: "" } }
-  };
+    };
 
   UIManager.prototype.renderHand.call(ui, game, human);
   assert.match(hand.innerHTML, new RegExp(`<button(?=[^>]*data-card-id="${selectedCard.id}")(?=[^>]*is-selected)[^>]*>`));
@@ -45019,7 +45065,7 @@ test("UI·日志：位于底部时新日志继续自动跟随", () => {
   globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
   try {
     UIManager.prototype.appendLog.call(
-      { elements: { log_list: list }, logFollowingBottom:true, updateLogCount() { } },
+      { elements: { log_list: list }, logFollowingBottom: true, updateLogCount() { } },
       { kind: "normal", message: "新日志" },
       1
     );
@@ -45041,7 +45087,7 @@ test("UI·日志：用户上滚时新日志保持原阅读位置", () => {
   globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
   try {
     UIManager.prototype.appendLog.call(
-      { elements: { log_list: list }, logFollowingBottom:false, updateLogCount() { } },
+      { elements: { log_list: list }, logFollowingBottom: false, updateLogCount() { } },
       { kind: "normal", message: "新日志" },
       1
     );
@@ -45062,7 +45108,7 @@ test("UI·日志：用户重新滚到底部后恢复自动跟随", () => {
   };
   globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
   try {
-    const fake = { elements: { log_list: list }, logFollowingBottom:false, updateLogCount() { } };
+    const fake = { elements: { log_list: list }, logFollowingBottom: false, updateLogCount() { } };
     UIManager.prototype.appendLog.call(fake, { kind: "normal", message: "第一条" }, 1);
     assert.equal(list.scrollTop, 40);
     list.scrollTop = list.scrollHeight - list.clientHeight;
@@ -47635,16 +47681,16 @@ function withActionLogTransactionFixture(run) {
     setAttribute(name, value) { this.attributes.set(name, value); }
   };
   const ui = {
-    elements: { log_list:list, log_count:countElement },
+    elements: { log_list: list, log_count: countElement },
     logFollowingBottom: false,
     appendLog: UIManager.prototype.appendLog,
     restoreLogBoundary: UIManager.prototype.restoreLogBoundary,
     updateLogCount: UIManager.prototype.updateLogCount
   };
-  const state = { players:[], logs:[] };
+  const state = { players: [], logs: [] };
   const logAdapter = new MatchLogAdapter(state, ui);
-  const randomPort = createRandomPort({ next:() => 0.25 });
-  globalThis.document = { createElement: () => ({ className:"", innerHTML:"" }) };
+  const randomPort = createRandomPort({ next: () => 0.25 });
+  globalThis.document = { createElement: () => ({ className: "", innerHTML: "" }) };
   try {
     logAdapter.add("历史日志 A");
     logAdapter.add("历史日志 B");
@@ -47654,8 +47700,8 @@ function withActionLogTransactionFixture(run) {
       children,
       countElement,
       createTransaction: () => createActionTransaction({
-        roots:[state],
-        logs:state.logs,
+        roots: [state],
+        logs: state.logs,
         restoreLogPresentation: (count) => ui.restoreLogBoundary(count),
         randomPort
       })
@@ -47672,14 +47718,14 @@ test("生命周期：Action transaction 不递归 checkpoint 大量历史日志"
     card = instance("charge"),
     { game } = makeGame([source, enemy]);
   let historyReads = 0;
-  const guardedHistoryEntry = new Proxy({ id:"guarded-history" }, {
+  const guardedHistoryEntry = new Proxy({ id: "guarded-history" }, {
     ownKeys() {
       historyReads += 1;
       throw new Error("历史日志不应进入深度 checkpoint");
     }
   });
   game.state.logs.push(
-    ...Array.from({ length:5000 }, (_, index) => ({ id:`history-${index}` })),
+    ...Array.from({ length: 5000 }, (_, index) => ({ id: `history-${index}` })),
     guardedHistoryEntry
   );
   source.hand.push(card);
@@ -47726,15 +47772,15 @@ test("UI·日志：大量追加完整保留且 append 热路径不读取 layout"
 });
 
 test("生命周期：Action transaction commit 保留本次新增日志", () => {
-  const historicalEntry = { id:"history" };
+  const historicalEntry = { id: "history" };
   const logs = [historicalEntry];
-  const state = { logs, player:{ hp:3 } };
+  const state = { logs, player: { hp: 3 } };
   const transaction = createActionTransaction({
-    roots:[state],
+    roots: [state],
     logs,
-    randomPort:createRandomPort({ next:() => 0.25 })
+    randomPort: createRandomPort({ next: () => 0.25 })
   });
-  const actionEntry = { id:"action-log" };
+  const actionEntry = { id: "action-log" };
   logs.push(actionEntry);
   state.player.hp = 2;
   transaction.commit();
@@ -47744,21 +47790,21 @@ test("生命周期：Action transaction commit 保留本次新增日志", () => 
 
 test("生命周期：Action transaction rollback 只删除本次日志并恢复其它状态", () => {
   const historicalEntries = [
-    { id:"history-a", nested:{ text:"A" } },
-    { id:"history-b", nested:{ text:"B" } }
+    { id: "history-a", nested: { text: "A" } },
+    { id: "history-b", nested: { text: "B" } }
   ];
   const logs = [...historicalEntries];
   const state = {
     logs,
-    player:{ hp:3, statuses:new Set(["sealed"]) },
-    deck:{ cards:["card-a", "card-b"] }
+    player: { hp: 3, statuses: new Set(["sealed"]) },
+    deck: { cards: ["card-a", "card-b"] }
   };
   const transaction = createActionTransaction({
-    roots:[state],
+    roots: [state],
     logs,
-    randomPort:createRandomPort({ next:() => 0.25 })
+    randomPort: createRandomPort({ next: () => 0.25 })
   });
-  logs.push({ id:"action-log-a" }, { id:"action-log-b" });
+  logs.push({ id: "action-log-a" }, { id: "action-log-b" });
   state.player.hp = 1;
   state.player.statuses.add("lightning");
   state.deck.cards.shift();
@@ -47766,7 +47812,7 @@ test("生命周期：Action transaction rollback 只删除本次日志并恢复�
   assert.deepEqual(logs, historicalEntries);
   assert.equal(logs[0], historicalEntries[0]);
   assert.equal(logs[1], historicalEntries[1]);
-  assert.deepEqual(state.player, { hp:3, statuses:new Set(["sealed"]) });
+  assert.deepEqual(state.player, { hp: 3, statuses: new Set(["sealed"]) });
   assert.deepEqual(state.deck.cards, ["card-a", "card-b"]);
 });
 
@@ -48371,10 +48417,10 @@ test("生命周期：历史借势结算完成后 resolution 去重状态不累�
     actor.hand.push(leverage);
     first.equipment = equipment;
     assert.equal(await game.playCard(actor, leverage, [], {
-      firstTargetId:first.id,
-      equipmentCardId:equipment.id,
-      equipmentDefinitionId:equipment.definitionId,
-      secondTargetId:actor.id
+      firstTargetId: first.id,
+      equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId,
+      secondTargetId: actor.id
     }), true);
     assert.equal(game.leverageResolutionIds.size, 0);
   }

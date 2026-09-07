@@ -138,7 +138,7 @@ export class GameInfoView {
         <section class="game-info-facts">
           <div><span>当前版本</span><strong>v${this.version}</strong></div>
           <div><span>游戏作者</span><strong>Lelexia</strong></div>
-          <div><span>更新时间</span><strong>2026.09.04</strong></div>
+          <div><span>更新时间</span><strong>2026.09.07</strong></div>
         </section>
 
         <div class="game-info-columns">
