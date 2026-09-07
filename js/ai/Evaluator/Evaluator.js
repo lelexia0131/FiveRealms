@@ -55,7 +55,6 @@ import {
   getTransferCardValue,
   getUnknownTransferCardValue,
   getUnknownAcquisitionUtility,
-  mutualBenefitDraftValues,
   realizedHandCardStateValue,
   roleCardDelta,
   staticCardAssetValue,
@@ -246,6 +245,11 @@ export function assertCompleteTransitionTerms(terms) {
     }
     for (const name of ["energy", "turnEnergyGain", "maxEnergy", "activeSkillCost"]) {
       assertValueContract(terms.endOpportunityInputs[name], `endOpportunityInputs.${name}`);
+    }
+    if (typeof terms.endOpportunityInputs.hasActiveSkill !== "boolean") {
+      throw new TypeError(
+        "Evaluator value invariant 失败：endOpportunityInputs.hasActiveSkill 必须是布尔值"
+      );
     }
   }
   if (terms.endPolicyInputs !== null) {
@@ -676,7 +680,7 @@ Evaluator.evaluateTransition。
 动作、行动者、before/after World 与战术结算比例。
 
 输出
-窥探/窥隙信息、资源身份交易、借势获得装备和互利座次选择的 raw State points 总和。
+窥探/窥隙信息、资源身份交易与借势获得装备的 raw State points 总和。
 
 读取状态
 动作前后装备保留、合法手牌、Probability 当前有限池与团队关系。
@@ -685,11 +689,12 @@ Evaluator.evaluateTransition。
 无。
 
 调用函数
-spyGapTransitionInformationPoints、privatePeekInformationValue、resourceTransactionOptionPoints、CardValue、mutualBenefitDraftValues。
+spyGapTransitionInformationPoints、privatePeekInformationValue、resourceTransactionOptionPoints 与 CardValue。
 
 边界与不变量
 只评价 Action 已明确的 transition；借势获得量必须由真实装备保留差反推，
-不得把 value 写回 World；窥隙只读取 Simulator 已确认的实际新增未知数量；Scout/互利只乘一次卡牌可用性与结算比例；
+不得把 value 写回 World；窥隙只读取 Simulator 已确认的实际新增未知数量；Scout 只乘一次卡牌可用性与结算比例；
+互利 receipt 已完整物化到 after World，只能经 StateDelta 进入 Final；
 资源交易直接读取 after World 的实际应用概率，不得再次乘 resolutionScale。
 */
 function deriveTransitionOptionPoints(action, player, beforeState, afterState, resolutionScale) {
@@ -744,18 +749,6 @@ function deriveTransitionOptionPoints(action, player, beforeState, afterState, r
       beforeActor.characterId,
       equipmentDefinitionId
     ) * acquired;
-  }
-  if (cardId === "mutualBenefit") {
-    const draftValues = mutualBenefitDraftValues(
-      beforeState.players,
-      beforeActor,
-      queryCurrentCardCounts(beforeState.probabilityState)
-    );
-    return spyGapInformationPoints + beforeState.players.reduce((sum, recipient) => {
-      if (!recipient.alive) return sum;
-      const sign = recipient.battleTeam === beforeActor.battleTeam ? 1 : -1;
-      return sum + sign * (draftValues[recipient.id] ?? 0) * effectScale;
-    }, 0);
   }
   return spyGapInformationPoints;
 }
@@ -905,10 +898,10 @@ Evaluator 的 Counter、延迟状态与全体受益响应意愿方法。
 无。
 
 输出
-冻结的 counter.aiValue × 0.35。
+冻结的 Counter Base Card Value × 0.35。
 
 读取状态
-CARD_DEFINITIONS.counter。
+CARD_AI_VALUES 的唯一 Base Card Value authority。
 
 写入状态
 无。
@@ -1283,14 +1276,13 @@ function uniformHandResourceStateValue(source, valueOwner, viewerId) {
     }, viewerId)
   ), 0);
   const knownMass = hand.reduce((sum, card) => sum + cardAvailability(card), 0);
-  if (knownMass + PROBABILITY_EPSILON < handCount) {
-    return selectedResourceStateValue(valueOwner, {
-      zone:"hand",
-      selectionKind:"unknown",
-      definitionId:null
-    }, viewerId);
-  }
-  return weighted / handCount;
+  const unknownMass = Math.max(0, handCount - knownMass);
+  const anonymousSingleValue = selectedResourceStateValue(valueOwner, {
+    zone:"hand",
+    selectionKind:"unknown",
+    definitionId:null
+  }, viewerId);
+  return (weighted + unknownMass * anonymousSingleValue) / handCount;
 }
 
 /*
@@ -1563,11 +1555,11 @@ export function planningDynamicCounterGain(
         : 0;
       const unknownCount = Math.max(0, Number(target.handCount) - knownCount);
       const info = Math.min(2, unknownCount) * 0.35;
-      return actorEnemy ? info : -info;
+      return info;
     }
-    case "harvest": return actorEnemy ? 2 * 1.1 : -2 * 1.1;
-    case "charge": return actorEnemy ? 1.2 : -1.2;
-    case "exposeWeakness": return actorEnemy ? 1.5 : -1.5;
+    case "harvest": return 2 * 1.1;
+    case "charge": return 1.2;
+    case "exposeWeakness": return 1.5;
     case "plunder": {
       if (!target?.alive || !hasResource(target)) return 0;
       if (selection?.zone) {
@@ -1585,8 +1577,8 @@ export function planningDynamicCounterGain(
               ? selectedResourceStateValue(actor, selected, responder.id)
               : 1.1);
       }
-      const threat = actorEnemy && knownAssault(target) ? HP_VALUE : 0;
-      return actorEnemy ? 2.2 + threat : -(2.2 + threat);
+      const threat = knownAssault(target) ? HP_VALUE : 0;
+      return 2.2 + threat;
     }
     case "destroy": {
       if (!target?.alive || !hasResource(target)) return 0;
@@ -1600,8 +1592,7 @@ export function planningDynamicCounterGain(
             ?? (selection.zone === "equipment" ? target.equipmentDefinitionId : null)
         }, responder.id);
       }
-      const threat = !actorEnemy && knownAssault(target) ? HP_VALUE : 0;
-      return (target.battleTeam === team ? 1.1 + threat : 1.1) * (actorEnemy ? 1 : -1);
+      return 1.1;
     }
     case "transfer": {
       const from = state.players.find((player) => player.id === selection?.sourceId) ?? null;
@@ -1616,11 +1607,11 @@ export function planningDynamicCounterGain(
         + (receiver?.battleTeam === team ? -receiverValue : receiverValue);
     }
     case "counter": return getBaseCardAiValue("counter");
-    case "seal": return actorEnemy ? 2.8 : -2.8;
-    case "lightning": return actorEnemy ? 2.8 : -2.8;
+    case "seal": return 2.8;
+    case "lightning": return 2.8;
     case "leverage": {
       if (!target?.alive) return 0;
-      return actorEnemy && target.equipmentDefinitionId ? 2 : -2;
+      return target.equipmentDefinitionId ? 2 : -2;
     }
     default: return 0;
   }
@@ -2315,7 +2306,7 @@ export class Evaluator {
 
   /*
   功能
-  从公开合法牌池中按领取或换装后的最大 StateValue 边际稳定选择实体 ID。
+  从公开合法牌池中按领取或换装后的最大 StateValue 边际稳定选择 receipt outcome。
 
   调用方
   Controller.choosePublicCard。
@@ -2324,7 +2315,7 @@ export class Evaluator {
   当前玩家、公开卡牌、领取前 World，以及 Simulator 为每张牌准备的领取/可选换装 Worlds。
 
   输出
-  最大真实状态边际的 cardId；空牌池或缺少合法 outcome 时返回 null。
+  最大真实状态边际的 cardId、definitionId 与 worldIndex；空牌池或缺少合法 outcome 时返回 null。
 
   读取状态
   领取前后 World 的正式 StateValue，以及当前装备和手牌状态。
@@ -2339,27 +2330,30 @@ export class Evaluator {
   Simulator 唯一构造状态；Evaluator 只比较已准备 Worlds；装备可保留在手牌或替换当前槽位，
   重复装备不被硬禁；同分保持公开池原始顺序，静态 CardValue 不再代替边际状态。
   */
-  choosePublicCardId(player, cards, beforeState, receiptOutcomes) {
+  choosePublicCardOutcome(player, cards, beforeState, receiptOutcomes) {
     if (!player || !beforeState || !Array.isArray(cards) || cards.length === 0) return null;
     const outcomesByCardId = new Map(
       (receiptOutcomes ?? []).map((outcome) => [outcome.cardId, outcome])
     );
     const beforeValue = this.stateUtility(beforeState, player.id);
-    let bestCardId = null;
+    let best = null;
     let bestMarginal = Number.NEGATIVE_INFINITY;
     for (const card of cards) {
       const outcome = outcomesByCardId.get(card.id);
       const worlds = Array.isArray(outcome?.worlds) ? outcome.worlds : [];
-      const marginal = worlds.reduce((maximum, world) => Math.max(
-        maximum,
-        this.stateUtility(world, player.id) - beforeValue
-      ), Number.NEGATIVE_INFINITY);
-      if (marginal > bestMarginal) {
-        bestCardId = card.id;
-        bestMarginal = marginal;
+      for (let worldIndex = 0; worldIndex < worlds.length; worldIndex += 1) {
+        const marginal = this.stateUtility(worlds[worldIndex], player.id) - beforeValue;
+        if (marginal > bestMarginal) {
+          best = {
+            cardId:card.id,
+            definitionId:outcome.definitionId,
+            worldIndex
+          };
+          bestMarginal = marginal;
+        }
       }
     }
-    return bestCardId;
+    return best ? Object.freeze(best) : null;
   }
 
   /*
@@ -2435,7 +2429,7 @@ export class Evaluator {
   scoutDecisionRelevance(actor, target, visible) {
     const decisionDefinitions = (actor?.hand ?? [])
       .filter((entry) => cardAvailability(entry) > 0)
-      .map((entry) => entry)
+      .map((entry) => CARD_DEFINITIONS[entry.definitionId] ?? entry)
       .filter((definition) => !definition.subtypes?.includes("information"));
     const offensiveDecision = Math.min(1, Math.max(
       0,
@@ -2561,9 +2555,7 @@ export class Evaluator {
     if (!card?.definitionId) return 0;
     let score = actor.characterId
       ? getRoleCardAiValue(actor.characterId, card.definitionId)
-      : (Number.isFinite(card.aiValue)
-        ? card.aiValue
-        : getBaseCardAiValue(card.definitionId));
+      : getBaseCardAiValue(card.definitionId);
     if (target) {
       const enemy = target.battleTeam !== actor.battleTeam;
       if (card.subtypes?.includes("attack") || card.definitionId === "duel") {
@@ -2708,9 +2700,7 @@ export class Evaluator {
     const identityDelta = roleCardDelta(actor?.characterId, card?.definitionId);
     let value = actor?.characterId && card?.definitionId
       ? getRoleCardAiValue(actor.characterId, card.definitionId)
-      : (Number.isFinite(card?.aiValue)
-        ? card.aiValue
-        : (card?.definitionId ? getBaseCardAiValue(card.definitionId) : 0));
+      : (card?.definitionId ? getBaseCardAiValue(card.definitionId) : 0);
     if (card.definitionId === "lightning") {
       value = getBaseCardAiValue(card.definitionId)
         + statePointsToUtility(this.lightningLifecycleValue(
@@ -2745,7 +2735,7 @@ export class Evaluator {
           : 0;
         value += Math.min(
           5,
-          (target.hand?.length ?? target.handCount ?? 0) + equipmentValue
+          (target.handCount ?? target.hand?.length ?? 0) + equipmentValue
         );
       }
       if (card.definitionId === "scout") {
@@ -2753,7 +2743,7 @@ export class Evaluator {
           .reduce((sum, entry) => sum + cardAvailability(entry), 0);
         const unknownCount = Math.max(
           0,
-          (target.hand?.length ?? target.handCount ?? 0) - knownExpectedCount
+          (target.handCount ?? target.hand?.length ?? 0) - knownExpectedCount
         );
         const revealLimit = Math.max(1, Number(card.maxRevealCount) || 1);
         const actualNewRevealCount = Math.min(
@@ -2821,7 +2811,7 @@ export class Evaluator {
 
   /*
   功能
-  从显式状态计算互利全局收益的搜索 prior。
+  从显式状态计算共生全局收益的搜索 prior。
 
   调用方
   actionUtility 与正式边界。
@@ -3327,13 +3317,11 @@ export class Evaluator {
           - (afterOwner.equipmentRetentionProbability ?? 0)
       );
     } else if (selection.zone === "hand") {
-      const netHandLoss = clampProbability(
+      const recordedScale = recordedResourceTransactionScale(action, afterState, owner.id);
+      appliedProbability = recordedScale ?? clampProbability(
         Math.max(0, Number(owner.handCount) || 0)
           - Math.max(0, Number(afterOwner.handCount) || 0)
       );
-      appliedProbability = netHandLoss > PROBABILITY_EPSILON
-        ? netHandLoss
-        : recordedResourceTransactionScale(action, afterState, owner.id) ?? 0;
     }
     if (appliedProbability <= PROBABILITY_EPSILON) {
       return Object.freeze({
@@ -3549,23 +3537,24 @@ export class Evaluator {
   调用方
   Simulator composition 注入的 decideCounter capability。
 
-  输入
-  World、响应者、行动者、卡牌、目标、selection 与 root recursion guard。
+输入
+World、响应者、行动者、卡牌、目标、selection、root recursion guard 与可选已物化 root Worlds。
 
   输出
   确定的 respond / do-not-respond 布尔值。
 
-  读取状态
-  公开 World、canonical Probability 与 GlobalBenefit value。
+读取状态
+公开 World、canonical Probability、共生收益与互利已物化 receipt Worlds。
 
   写入状态
   无。
 
-  调用函数
-  planningCounterDecision、planningDynamicCounterGain、assessGlobalBenefit。
+调用函数
+planningCounterDecision、planningDynamicCounterGain、assessGlobalBenefit、dynamicRootFlipGain。
 
-  边界与不变量
-  价值比较必须在 Evaluator 内结束；Simulator 只能消费 boolean，不能把 heuristic 当概率。
+边界与不变量
+价值比较必须在 Evaluator 内结束；Simulator 只能消费 boolean，不能把 heuristic 当概率。
+互利必须比较真实 receipt StateDelta，不得回退静态卡值。
   */
   decidePlanningCounter(
     state,
@@ -3574,8 +3563,13 @@ export class Evaluator {
     card,
     targets,
     selection = null,
-    { simulatingRootResolution = false } = {}
+    { simulatingRootResolution = false, rootFlipWorlds = null } = {}
   ) {
+    if (card?.definitionId === "mutualBenefit" && rootFlipWorlds) {
+      return dynamicCounterWillingness(
+        this.dynamicRootFlipGain(rootFlipWorlds, responder.id)
+      );
+    }
     return planningCounterDecision(state, responder, actor, card, targets, selection, {
       assessGlobalBenefit,
       simulatingRootResolution,
@@ -3920,9 +3914,11 @@ export class Evaluator {
       (sum, count) => sum + (Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0),
       0
     );
-    const rescueSuccessProbability = guaranteedImpossible || remainingPopulation <= 0
-      ? 0
-      : hypergeometricProbabilityAtLeast(
+    const rescueSuccessProbability = guaranteedSurvivable || unknownRecoveryRequired <= 0
+      ? 1
+      : guaranteedImpossible || remainingPopulation <= 0
+        ? 0
+        : hypergeometricProbabilityAtLeast(
           remainingPopulation,
           Math.max(0, remainingRecoverCount),
           unknownRecoverSlots,
@@ -4103,17 +4099,19 @@ export class Evaluator {
         ?? context.rootSource?.id
         ?? context.source?.id
         ?? null;
-      const globalDecision = globalBenefitCounterDecision(
-        assessGlobalBenefit,
-        players,
-        responder.battleTeam,
-        rootId,
-        {
-          rootSourceId,
-          counterDepth:context.counterDepth ?? 0,
-          remainingCardCounts
-        }
-      );
+      const globalDecision = rootId === "mutualBenefit" && rootFlipWorlds
+        ? null
+        : globalBenefitCounterDecision(
+            assessGlobalBenefit,
+            players,
+            responder.battleTeam,
+            rootId,
+            {
+              rootSourceId,
+              counterDepth:context.counterDepth ?? 0,
+              remainingCardCounts
+            }
+          );
       if (globalDecision !== null) return globalDecision;
       const rootTargets = (context.rootTargetIds ?? []).map((targetId) => (
         world.players.find((player) => player.id === targetId)
@@ -4606,7 +4604,7 @@ export class Evaluator {
   Searcher candidate evaluation path。
 
   输入
-  动作、actor、before/after、horizon depth 与上游已计算的 resolution scale。
+  动作、actor、before/after、可选 effect baseline World、horizon depth 与上游已计算的 resolution scale。
 
   输出
   各命名 term、X 技能的下一能量反事实输入、END 独立装备槽事实与 baseTransition 的普通对象。
@@ -4622,6 +4620,7 @@ export class Evaluator {
 
   边界与不变量
   BaseTransition 只由 StateDeltaValue 与 TransitionOptionValue 构成；低于冻结门槛的 Transfer 只失去竞争资格；
+  互利使用 Simulator 准备的支付后 baseline 与完整成功 World，只有 receipt delta 按 resolution mass 加权一次；
   depth 只作诊断，不缩放价值，search-prior terms 不得进入；手牌溢出只作为后续同层真实状态比较输入，
   hasEquipmentBefore 只进入 END policy inputs，不污染 discard opportunity；
   X 技能只在此识别并以 min(E+1,Emax) 交给 Searcher 构造同 World 反事实；
@@ -4632,6 +4631,7 @@ export class Evaluator {
     player,
     beforeState,
     afterState,
+    effectBaselineState = null,
     depth = 1,
     resolutionScale = 1,
     beforeLightningOutcomeSets = [],
@@ -4650,7 +4650,17 @@ export class Evaluator {
       player.id,
       afterLightningOutcomeSets
     );
-    const stateDelta = afterSnapshot.statePoints - beforeSnapshot.statePoints;
+    const effectBaselineSnapshot = effectBaselineState
+      ? this.stateValueSnapshot(
+          effectBaselineState,
+          player.id,
+          beforeLightningOutcomeSets
+        )
+      : null;
+    const stateDelta = effectBaselineSnapshot
+      ? effectBaselineSnapshot.statePoints - beforeSnapshot.statePoints
+        + (afterSnapshot.statePoints - effectBaselineSnapshot.statePoints) * effectResolutionScale
+      : afterSnapshot.statePoints - beforeSnapshot.statePoints;
     const stateDeltaValue = statePointsToUtility(stateDelta);
     const transitionOptionPoints = deriveTransitionOptionPoints(
       action,
@@ -5530,7 +5540,10 @@ export class Evaluator {
     beforeLightningOutcomeSets = [],
     afterLightningOutcomeSets = []
   ) {
-    const radarJudgment = buildRadarJudgmentProbabilities(
+    const beforeRadarJudgment = buildRadarJudgmentProbabilities(
+      queryCurrentCardCounts(before.probabilityState)
+    );
+    const afterRadarJudgment = buildRadarJudgmentProbabilities(
       queryCurrentCardCounts(after.probabilityState)
     );
     const viewer = after.players.find((player) => player.id === viewerId)
@@ -5549,13 +5562,13 @@ export class Evaluator {
         before,
         beforePlayer,
         viewerId,
-        radarJudgment
+        beforeRadarJudgment
       );
       const afterTerms = this.playerValueTerms(
         after,
         afterPlayer,
         viewerId,
-        radarJudgment
+        afterRadarJudgment
       );
       beforeHp2RiskByPlayer.set(beforePlayer.id, beforeTerms.terms.hp2Risk ?? 0);
       afterHp2RiskByPlayer.set(afterPlayer.id, afterTerms.terms.hp2Risk ?? 0);
@@ -5566,7 +5579,7 @@ export class Evaluator {
           beforePlayer.id,
           viewerId
         ),
-        seal: sealTeamBurden(before, beforePlayer, viewer.battleTeam)
+        seal: -sealTeamBurden(before, beforePlayer, beforePlayer.battleTeam)
       };
       const afterBurden = {
         lightning: this.lightningOwnerDelta(
@@ -5575,7 +5588,7 @@ export class Evaluator {
           afterPlayer.id,
           viewerId
         ),
-        seal: sealTeamBurden(after, afterPlayer, viewer.battleTeam)
+        seal: -sealTeamBurden(after, afterPlayer, afterPlayer.battleTeam)
       };
       const fields = {};
       for (const key of new Set([
@@ -5588,17 +5601,13 @@ export class Evaluator {
       fields.lightning = afterBurden.lightning - beforeBurden.lightning;
       fields.seal = afterBurden.seal - beforeBurden.seal;
       const total = Object.values(fields).reduce((sum, value) => sum + value, 0);
-      owners.push({
-        playerId: afterPlayer.id,
-        relation,
-        total,
+      const categories = {
         generic: { handCount: fields.handCount ?? 0 },
         material: {
           hp: fields.hp ?? 0,
           shield: fields.shield ?? 0,
           hp3Risk: fields.hp3Risk ?? 0,
           hp2Risk: fields.hp2Risk ?? 0,
-          info: fields.info ?? 0,
           stacks: fields.stacks ?? 0,
           equipmentDelta: fields.equipmentDelta ?? 0,
           energyDeviceFuture: fields.energyDeviceFuture ?? 0,
@@ -5610,7 +5619,8 @@ export class Evaluator {
         },
         threat: {
           markThreat: fields.markThreat ?? 0,
-          residualExposureValue: fields.residualExposureValue ?? 0
+          residualExposureValue: fields.residualExposureValue ?? 0,
+          radarFuture: fields.radarFuture ?? 0
         },
         specific: {
           handRoleDelta: fields.handRoleDelta ?? 0,
@@ -5623,6 +5633,20 @@ export class Evaluator {
           lightning: fields.lightning ?? 0,
           seal: fields.seal ?? 0
         }
+      };
+      const categoryTotal = Object.values(categories).reduce((sum, category) => (
+        sum + Object.values(category).reduce((categorySum, value) => categorySum + value, 0)
+      ), 0);
+      if (compareUtilityValues(categoryTotal, total) !== 0) {
+        throw new TypeError(
+          `Evaluator diagnostic invariant 失败：owner ${afterPlayer.id} category sum 必须等于 total`
+        );
+      }
+      owners.push({
+        playerId: afterPlayer.id,
+        relation,
+        total,
+        ...categories
       });
     }
     const battleTeams = new Set([

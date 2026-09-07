@@ -266,9 +266,7 @@ export const ROLE_CARD_VALUE_DELTAS = Object.freeze({
 */
 export function getBaseCardAiValue(definitionId, cardDefinitions = CARD_DEFINITIONS) {
   const definition = cardDefinitions[definitionId];
-  const value = definition?.aiValue ?? (cardDefinitions === CARD_DEFINITIONS
-    ? CARD_AI_VALUES[definitionId]
-    : undefined);
+  const value = CARD_AI_VALUES[definitionId];
   if (!definition || !Number.isFinite(value)) {
     throw new Error(`getBaseCardAiValue 未知卡牌 ID：${definitionId}`);
   }
@@ -809,7 +807,7 @@ Evaluator.playerValueTerms。
 只包含 hand/equipment asset terms 的普通对象。
 
 读取状态
-玩家公开手牌数量、viewer 自身合法手牌身份与公开装备摘要。
+玩家公开手牌数量、viewer 的合法 hand/knownCards 身份与公开装备摘要。
 
 写入状态
 无。
@@ -819,6 +817,7 @@ getBaseCardAiValue、roleCardDelta、realizedHandCardStateValue、cardAvailabili
 
 边界与不变量
 装备 Base 与 RoleDelta 同属 static asset，分别在这里乘 RESOURCE_MATERIAL_SCALE 恰好一次。
+临时以 non-root recipient 作为 viewer 时，只消费其公开确定的 knownCards，不补全或读取未知手牌。
 距离、雷达、能量收益等装备后果由 StateValue 另行计算。
 */
 export function cardPlayerValueTerms(player, viewerId) {
@@ -830,7 +829,7 @@ export function cardPlayerValueTerms(player, viewerId) {
     ? roleCardDelta(player.characterId, player.equipmentDefinitionId)
     : 0;
   const handRoleDelta = player.id === viewerId
-    ? (player.hand ?? []).reduce((sum, card) => (
+    ? (player.hand ?? player.knownCards ?? []).reduce((sum, card) => (
         sum + (
           realizedHandCardStateValue(player, viewerId, card?.definitionId)
             - HAND_COUNT_VALUE
@@ -845,234 +844,51 @@ export function cardPlayerValueTerms(player, viewerId) {
   };
 }
 
-const GLOBAL_BENEFIT_CARDS = new Set(
-  Object.entries(CARD_DEFINITIONS)
-    .filter(([, definition]) => definition.globalBenefit === true)
-    .map(([definitionId]) => definitionId)
-);
-
 /*
 功能
-判断卡牌定义是否属于全体受益模型。
+从指定阵营视角计算共生的盟友、敌方与团队净治疗。
 
 调用方
-assessGlobalBenefitOutcome 与本文件全体受益值查询。
+Evaluator response willingness、Evaluator search prior、Simulation 与 Controller 组合根。
 
 输入
-卡牌定义 ID。
+过滤玩家、观察阵营与卡牌定义。
 
 输出
-布尔值。
+非共生返回 null，否则返回团队计数与受益摘要。
 
 读取状态
-固定全体受益定义集合。
+玩家公开生命字段与共生治疗量规则。
 
 写入状态
 无。
 
 调用函数
-无。
+calculateHealAmount。
 
 边界与不变量
-只包含互利与共生，不扩张真实卡牌规则。
+团队净值等于盟友实际治疗量减敌方实际治疗量。
 */
-function isGlobalBenefitCard(definitionId) {
-  return GLOBAL_BENEFIT_CARDS.has(definitionId);
-}
-
-/*
-功能
-计算互利从来源开始顺时针的存活接收者 ID 顺序。
-
-调用方
-buildMutualBenefitDraftOutcome 与直接领域测试。
-
-输入
-座位顺序玩家数组与来源玩家。
-
-输出
-新的存活玩家 ID 数组。
-
-读取状态
-player.id、seatIndex 与 alive。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-来源优先，随后按真实座位环顺时针；输出不持有 Player 引用。
-*/
-function mutualBenefitSeatOrderIds(players, source) {
-  const all = Array.isArray(players) ? players : [];
-  const seatCount = Math.max(1, all.length);
-  const sourceSeat = Number(source?.seatIndex) || 0;
-  const orderedIds = [];
-  for (let offset = 0; offset < seatCount; offset += 1) {
-    const player = all[(sourceSeat + offset) % seatCount];
-    if (player?.alive) orderedIds.push(player.id);
-  }
-  return orderedIds;
-}
-
-/*
-功能
-按真实接收顺序从公开剩余定义池构造互利的确定性期望选择结果。
-
-调用方
-assessGlobalBenefitOutcome、mutualBenefitDraftValues 与直接领域测试。
-
-输入
-玩家、来源、公开剩余定义计数，以及由调用方注入的角色定义价值查询。
-
-输出
-含 seatOrderIds、publicPoolDefinitionOrder、recipients 与 remainingCounts 的独立结果。
-
-读取状态
-玩家公开 ID/座位/存活字段、剩余定义计数和注入价值查询。
-
-写入状态
-无。
-
-调用函数
-mutualBenefitSeatOrderIds、definitionValue。
-
-边界与不变量
-每名接收者只取当前池中最高价值定义并消耗一张；同分沿用公开池定义顺序，输入计数保持只读。
-*/
-export function buildMutualBenefitDraftOutcome(players, source, remainingCounts, definitionValue) {
-  const pool = {};
-  let total = 0;
-  if (remainingCounts && typeof remainingCounts === "object" && !Array.isArray(remainingCounts)) {
-    for (const [definitionId, count] of Object.entries(remainingCounts)) {
-      if (!Number.isFinite(count) || count <= 0) continue;
-      pool[definitionId] = count;
-      total += count;
-    }
-  }
-  const publicPoolDefinitionOrder = Object.keys(pool);
-  const seatOrderIds = mutualBenefitSeatOrderIds(players, source);
-  const recipients = [];
-  for (const playerId of seatOrderIds) {
-    if (total <= 0) break;
-    let bestDefinitionId = null;
-    let bestValue = -Infinity;
-    for (const definitionId of publicPoolDefinitionOrder) {
-      if (pool[definitionId] <= 0) continue;
-      const value = Number(definitionValue?.(playerId, definitionId));
-      const normalizedValue = Number.isFinite(value) ? value : 0;
-      if (normalizedValue > bestValue) {
-        bestValue = normalizedValue;
-        bestDefinitionId = definitionId;
-      }
-    }
-    if (bestDefinitionId === null) break;
-    pool[bestDefinitionId] -= 1;
-    total -= 1;
-    recipients.push({ playerId, definitionId:bestDefinitionId, benefit:bestValue });
-  }
-  return {
-    seatOrderIds,
-    publicPoolDefinitionOrder:[...publicPoolDefinitionOrder],
-    recipients:recipients.map((recipient) => ({ ...recipient })),
-    remainingCounts:{ ...pool }
-  };
-}
-
-/*
-功能
-计算单名玩家从共生获得的本次实际治疗量。
-
-调用方
-assessGlobalBenefitOutcome 与直接领域测试。
-
-输入
-过滤玩家与卡牌定义 ID。
-
-输出
-零或一的受益量。
-
-读取状态
-player.hp 与 maxHp。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-互利受益由公开池 recipient 模型提供；本函数不承担卡牌价值。
-*/
-function directBenefitForPlayer(player, definitionId) {
-  if (definitionId === "symbiosis") {
-    return calculateHealAmount(
-      CARD_DEFINITIONS.symbiosis.healAmount,
-      player.maxHp ?? 0,
-      player.hp ?? 0
-    );
-  }
-  return 0;
-}
-
-/*
-功能
-从指定阵营视角汇总全体受益牌的盟友、敌方与净受益结构。
-
-调用方
-assessGlobalBenefit 与直接领域测试。
-
-输入
-玩家、观察阵营、定义 ID，以及来源、剩余计数和注入定义价值查询。
-
-输出
-非全体受益牌为 null，否则返回独立的计数、受益、座次、公开池与 recipient 摘要。
-
-读取状态
-存活玩家公开字段和互利公开池模型。
-
-写入状态
-无。
-
-调用函数
-isGlobalBenefitCard、buildMutualBenefitDraftOutcome、directBenefitForPlayer。
-
-边界与不变量
-团队净值等于盟友受益减敌方受益；输出不持有 Player、Card 或 Game 引用。
-*/
-export function assessGlobalBenefitOutcome(players, battleTeam, definitionId, options = {}) {
-  if (!isGlobalBenefitCard(definitionId)) return null;
-  const alive = (players ?? []).filter((player) => player?.alive);
-  const source = alive.find((player) => player.id === options.sourceId) ?? null;
-  const draft = definitionId === "mutualBenefit"
-    ? buildMutualBenefitDraftOutcome(
-      alive,
-      source,
-      options.remainingCounts,
-      options.definitionValue
-    )
-    : { seatOrderIds:[], publicPoolDefinitionOrder:[], recipients:[], remainingCounts:{} };
-  const recipientBenefits = new Map(
-    draft.recipients.map((recipient) => [recipient.playerId, recipient.benefit])
-  );
+export function assessGlobalBenefit(
+  players,
+  battleTeam,
+  definitionId
+) {
+  if (definitionId !== "symbiosis") return null;
   const result = {
     allyAliveCount:0,
     enemyAliveCount:0,
     allyBenefit:0,
     enemyBenefit:0,
-    netBenefit:0,
-    seatOrderIds:[...draft.seatOrderIds],
-    publicPoolDefinitionOrder:[...draft.publicPoolDefinitionOrder],
-    recipients:draft.recipients.map((recipient) => ({ ...recipient }))
+    netBenefit:0
   };
-  for (const player of alive) {
-    const allied = player.battleTeam === battleTeam;
-    const benefit = definitionId === "mutualBenefit"
-      ? (recipientBenefits.get(player.id) ?? 0)
-      : directBenefitForPlayer(player, definitionId);
-    if (allied) {
+  for (const player of (players ?? []).filter((entry) => entry?.alive)) {
+    const benefit = calculateHealAmount(
+      CARD_DEFINITIONS.symbiosis.healAmount,
+      player.maxHp ?? 0,
+      player.hp ?? 0
+    );
+    if (player.battleTeam === battleTeam) {
       result.allyAliveCount += 1;
       result.allyBenefit += benefit;
     } else {
@@ -1082,130 +898,4 @@ export function assessGlobalBenefitOutcome(players, battleTeam, definitionId, op
   }
   result.netBenefit = result.allyBenefit - result.enemyBenefit;
   return result;
-}
-
-/*
-功能
-按公开角色身份读取卡牌有效价值，并为未知角色回退基础值。
-
-调用方
-互利公开池与全体受益价值投影。
-
-输入
-角色定义 ID 与卡牌定义 ID。
-
-输出
-有限卡牌价值。
-
-读取状态
-CardValue 的基础值与角色差量。
-
-写入状态
-无。
-
-调用函数
-getBaseCardAiValue、getRoleCardAiValue。
-
-边界与不变量
-只处理缺失角色定义的回退，不改变已定义差量或最终聚合。
-*/
-function cardValueFor(characterId, definitionId) {
-  if (!characterId) return getBaseCardAiValue(definitionId);
-  try {
-    return getRoleCardAiValue(characterId, definitionId);
-  } catch {
-    return getBaseCardAiValue(definitionId);
-  }
-}
-
-/*
-功能
-把互利公开池的逐座次选择结果投影为每名接收者的期望牌值。
-
-调用方
-Simulator 与直接价值测试。
-
-输入
-过滤玩家、来源玩家与公开剩余定义计数。
-
-输出
-以玩家 ID 为键的期望选牌价值对象。
-
-读取状态
-玩家角色 ID、公开座次和 CardValue。
-
-写入状态
-无。
-
-调用函数
-buildMutualBenefitDraftOutcome、cardValueFor。
-
-边界与不变量
-座次和牌池消耗只由 buildMutualBenefitDraftOutcome 决定；本函数只提供价值查询并投影结果。
-*/
-export function mutualBenefitDraftValues(players, source, remainingCounts) {
-  const playersById = new Map((players ?? []).map((player) => [player.id, player]));
-  const outcome = buildMutualBenefitDraftOutcome(
-    players,
-    source,
-    remainingCounts,
-    (playerId, definitionId) => cardValueFor(
-      playersById.get(playerId)?.characterId,
-      definitionId
-    )
-  );
-  return Object.fromEntries(
-    outcome.recipients.map((recipient) => [recipient.playerId, recipient.benefit])
-  );
-}
-
-/*
-功能
-从指定阵营视角计算互利或共生的盟友、敌方与团队净受益。
-
-调用方
-Evaluator response willingness、Evaluator search prior、Simulation 与 Controller 组合根。
-
-输入
-过滤玩家、观察阵营、卡牌定义、来源 ID 与公开剩余定义计数。
-
-输出
-非全体受益牌为 null，否则返回团队计数与受益摘要。
-
-读取状态
-玩家公开字段、CardValue 与 buildMutualBenefitDraftOutcome 的当前 recipient 结果。
-
-写入状态
-无。
-
-调用函数
-assessGlobalBenefitOutcome、cardValueFor。
-
-边界与不变量
-buildMutualBenefitDraftOutcome 唯一构造 recipient 结构；此处只投影既有团队 Value 输出字段。
-*/
-export function assessGlobalBenefit(
-  players,
-  battleTeam,
-  definitionId,
-  sourceId = null,
-  remainingCounts = null
-) {
-  const playersById = new Map((players ?? []).map((player) => [player.id, player]));
-  const result = assessGlobalBenefitOutcome(players, battleTeam, definitionId, {
-    sourceId,
-    remainingCounts,
-    definitionValue:(playerId, candidateDefinitionId) => cardValueFor(
-      playersById.get(playerId)?.characterId,
-      candidateDefinitionId
-    )
-  });
-  if (!result) return null;
-  return {
-    allyAliveCount:result.allyAliveCount,
-    enemyAliveCount:result.enemyAliveCount,
-    allyBenefit:result.allyBenefit,
-    enemyBenefit:result.enemyBenefit,
-    netBenefit:result.netBenefit
-  };
 }

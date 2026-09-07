@@ -24,13 +24,13 @@ Evaluator 内部首先使用 **State Points（SP）**，最终候选比较使用
 当前唯一换算：
 
 $$
-\boxed{1u=1HP\_VALUE=5\;SP}
+{1u=1HP\_VALUE=5\;SP}
 $$
 
 因此：
 
 $$
-\boxed{u=\frac{SP}{5}}
+{u=\frac{SP}{5}}
 $$
 
 源码：`StateValue.HP_VALUE`、`StateValue.statePointsToUtility()`。
@@ -56,7 +56,7 @@ $$
 当前 Final Transition Utility 的唯一组合公式是：
 
 $$
-\boxed{ V_{final} = V_{baseTransition} - U(P_{END}) }
+{ V_{final} = V_{baseTransition} - U(P_{END}) }
 $$
 
 其中：
@@ -67,12 +67,12 @@ $$
 
 P_{END} 只对 END candidate 非零；普通卡牌/技能动作通常为 0。
 
-源码：`Evaluator.js:3897 composeTransitionValue()`。
+源码：`Evaluator.js composeTransitionValue()`。
 
 ## 0.3 BaseTransition
 
 $$
-\boxed{ V_{baseTransition} = V_{stateDelta} + V_{transitionOption} }
+{ V_{baseTransition} = V_{stateDelta} + V_{transitionOption} }
 $$
 
 其中：
@@ -85,7 +85,7 @@ $$
 V_{transitionOption} = U(P_{transitionOption})
 $$
 
-源码：`Evaluator.js:3647 evaluateTransition()`。
+源码：`Evaluator.js evaluateTransition()`。
 
 ## 0.4 牌堆与装备判定基线
 
@@ -129,47 +129,47 @@ BaseTransition
 数学总式：
 
 $$
-\boxed{ V_{final}(A) = \frac{V_{state}(Y)-V_{state}(X)+P_{option}}{5} -I[A=END]\frac{P_f+P_s+P_d}{5} }
+{ V_{final}(A) = \frac{V_{state}(Y)-V_{state}(X)+P_{option}}{5} -I[A=END]\frac{P_f+P_s+P_d}{5} }
 $$
 
 其中：
 
 $$
-\boxed{P_f=1.2\max(0,E+G-E_{max})}
+{P_f=1.2\max(0,E+G-E_{max})}
 $$
 
 $$
-\boxed{P_s^{normal}=S(E)D'(X)\Delta_s^+}
+{P_s^{normal}=S(E)D'(X)\Delta_s^+}
 $$
 
 $$
-\boxed{P_s^X=1.2-(\Delta_{E+1}-\Delta_E)}
+{P_s^X=1.2-(\Delta_{E+1}-\Delta_E)}
 $$
 
 $$
-\boxed{ P_d = \max_{a\in EligibleSibling} \max(0,\Delta_a-\Delta_{END}) }
+{ P_d = \max_{a\in EligibleSibling} \max(0,\Delta_a-\Delta_{END}) }
 $$
 
-其中 `EligibleSibling` 为通过真实 HP / 手牌状态变化完全消除 END 强制弃牌溢出的完整 sibling。
+其中 `EligibleSibling` 为通过真实 HP / 手牌状态变化减少 END 强制弃牌溢出的完整 sibling。
 
 $$
-\boxed{ S(E)= \begin{cases} 0,&E<C\\ \sqrt{\frac{E-C+1}{E_{max}-C+1}},&E\ge C \end{cases} }
-$$
-
-$$
-\boxed{D(X)=\max_{i\in allies}R_i}
+{ S(E)= \begin{cases} 0,&E<C\\ \sqrt{\frac{E-C+1}{E_{max}-C+1}},&E\ge C \end{cases} }
 $$
 
 $$
-\boxed{D'(X)=\max(0.75,D(X))}
+{D(X)=\max_{i\in allies}R_i}
 $$
 
 $$
-\boxed{ R_i=clamp_{[0,1]}\left(\frac{\max(0,-AdverseSafety_i)}{5}\right) }
+{D'(X)=\max(0.75,D(X))}
 $$
 
 $$
-\boxed{\Delta_s^+=\max_{s\in LegalSkill}\max(0,V_{state}(Y_s)-V_{state}(X))}
+{ R_i=clamp_{[0,1]}\left(\frac{\max(0,-AdverseSafety_i)}{5}\right) }
+$$
+
+$$
+{\Delta_s^+=\max_{s\in LegalSkill}\max(0,V_{state}(Y_s)-V_{state}(X))}
 $$
 
 这就是当前 Evaluator 最终评分 authority 的完整骨架。
@@ -179,7 +179,7 @@ $$
 对通过 Transfer competitiveness 门槛的候选：
 
 $$
-\boxed{ V_{baseTransition} =\frac{\Delta State+P_{option}}{5} }
+{ V_{baseTransition} =\frac{\Delta State+P_{option}}{5} }
 $$
 
 若根 Transfer 的冻结 preference 分数：
@@ -203,10 +203,10 @@ X\xrightarrow{A}Y
 $$
 
 $$
-\boxed{ \Delta State =V_{state}(Y)-V_{state}(X) }
+{ \Delta State =V_{state}(Y)-V_{state}(X) }
 $$
 
-源码：`Evaluator.js:3609 transitionDelta()`。
+源码：`Evaluator.js transitionDelta()`。
 
 # 4. State Value 总公式
 
@@ -236,14 +236,14 @@ $$
 - 我方持有封印：`SealBurden > 0` → 减分；
 - 敌方持有封印：`SealBurden < 0` → 减去负数，相当于加分。
 
-源码：`Evaluator.js:3670 stateValueSnapshot()`；`StateValue.js:787 teamRescueReserve()`。
+源码：`Evaluator.js stateValueSnapshot()`；`StateValue.js teamRescueReserve()`。
 
 ## 4.2 单玩家 State Value
 
 玩家死亡时：
 
 $$
-\boxed{V_i=-28\;SP}
+{V_i=-28\;SP}
 $$
 
 且不再加入活人 terms。
@@ -256,14 +256,14 @@ $$
 
 其中前半由 `StateValue.js` 唯一拥有，手牌/装备 intrinsic asset 由 `CardValue.js` 唯一拥有。
 
-源码：`StateValue.js:857 statePlayerValueTerms()`；`CardValue.js:744 cardPlayerValueTerms()`；`Evaluator.js:3374 playerValueTerms()`。
+源码：`StateValue.js statePlayerValueTerms()`；`CardValue.js cardPlayerValueTerms()`；`Evaluator.js playerValueTerms()`。
 
 # 5. 单玩家 StateValue 各项详细公式
 
 ## 5.1 HP
 
 $$
-\boxed{HPValue=HP\times5}
+{HPValue=HP\times5}
 $$
 
 所以：
@@ -283,7 +283,7 @@ $$
 则：
 
 $$
-\boxed{Danger=-7SP=-1.4u}
+{Danger=-7SP=-1.4u}
 $$
 
 否则：
@@ -315,11 +315,11 @@ $$
 团队总需求与合法调息期望容量：
 
 $$
-D=\sum_iN_i
+D=\sum_{i\in Team,\ i\ne viewer}N_i
 $$
 
 $$
-C=\sum_{r\in Team}E[Recover_r]
+C=\sum_{i\in Team}RecoveryCapacity_i
 $$
 
 有效容量：
@@ -331,7 +331,7 @@ $$
 最终团队共享状态值：
 
 $$
-\boxed{RescueReserve=\begin{cases}
+{RescueReserve=\begin{cases}
 0,&D\le0\lor C\le0\\[4pt]
 \dfrac{8DC_e}{D+C_e},&otherwise
 \end{cases}}
@@ -342,7 +342,7 @@ $$
 ## 5.4 破势层 `Expose Weakness Stacks`
 
 $$
-\boxed{ExposeStackValue=Stacks\times3}\ (Stacks代表层数)
+{ExposeStackValue=Stacks\times3}\ (Stacks代表层数)
 $$
 
 即：
@@ -362,7 +362,7 @@ $$
 最终：
 
 $$
-\boxed{MarkThreat=-2\times MarkMass}
+{MarkThreat=-2\times MarkMass}
 $$
 
 故身上携带猎印等效-0.4u
@@ -425,7 +425,7 @@ Event/Probability 提供：
 当前威胁：
 
 $$
-\boxed{ CurrentThreat = P_{assault}\times HP\_VALUE\times AssaultAllocation }
+{ CurrentThreat = P_{assault}\times HP\_VALUE\times AssaultAllocation }
 $$
 
 ## 6.3 未来突袭库存
@@ -439,19 +439,19 @@ $$
 然后：
 
 $$
-\boxed{ FutureInventory = FutureCount\times0.5\times5\times AssaultAllocation }
+{ FutureInventory = FutureCount\times0.5\times5\times AssaultAllocation }
 $$
 
 ## 6.4 敌方能量压力
 
 $$
-\boxed{ EnergyPressure = \min(2,EnemyEnergy)\times0.3\times5\times RangeProbability }
+{ EnergyPressure = \min(2,EnemyEnergy)\times0.3\times5\times RangeProbability }
 $$
 
 ## 6.5 原始暴露度
 
 $$
-\boxed{ Exposure = CurrentThreat+FutureInventory+EnergyPressure }
+{ Exposure = CurrentThreat+FutureInventory+EnergyPressure }
 $$
 
 StateValue 中三项均以负值进入玩家价值：
@@ -528,7 +528,7 @@ $$
 
 `NormalRequirement` 与 `BattleRequirement` 均读取 Domain `getRequiredBlockCount()`；军火库双需求因此自然产生两次独立 Radar judgment opportunity。普通 Assault、Shockwave、Burning Field 与 Hunt/hunt-mark 都按真实规则进入，不存在 `if radar then +X` 特判。
 
-判定类别与每个基础牌定义的概率全部来自 Event/Probability 的 `buildRadarJudgmentProbabilities()` 和当前 remaining finite pool；Evaluator/StateValue 不建立第二套概率系统。Radar `aiValue=9` 保持不变，其 base material 与上述功能 Future Utility 分开记账。
+判定类别与每个基础牌定义的概率全部来自 Event/Probability 的 `buildRadarJudgmentProbabilities()` 和当前 remaining finite pool；Evaluator/StateValue 不建立第二套概率系统。Radar 的 Base Card Value 为 9，其 base material 与上述功能 Future Utility 分开记账。
 
 ## 7.2 低血量风险与附加剩余暴露度
 
@@ -536,7 +536,7 @@ HP=3 与 HP=2 风险共用同一套附加暴露数据链：
 `defensiveStateValue()` 与完整玩家 StateValue 都复用 `lowHpThreatRiskTerms()`，一次取得互斥的 `hp3Risk` 与 `hp2Risk`。
 
 $$
-BufferExposure=\sum_{enemy}Exposure_{enemy\rightarrow player}
+BufferExposure=\sum_{enemy,\ enemy\ne viewer}Exposure_{enemy\rightarrow player}
 $$
 
 $$
@@ -554,7 +554,7 @@ ThreatDamage = \frac{BufferResidualExposure}{5}
 $$
 
 $$
-\boxed{ HP3Risk = -\min(1,ThreatDamage)\times DANGER\_VALUE\times HP3\_RISK\_WEIGHT }
+{ HP3Risk = -\min(1,ThreatDamage)\times DANGER\_VALUE\times HP3\_RISK\_WEIGHT }
 $$
 
 仅 HP=3 生效，`DANGER_VALUE=7`、`HP3_RISK_WEIGHT=0.2`，最大负值：
@@ -564,7 +564,7 @@ $$
 $$
 
 $$
-\boxed{ HP2Risk = -\min(1,ThreatDamage)\times DANGER\_VALUE\times HP2\_RISK\_WEIGHT }
+{ HP2Risk = -\min(1,ThreatDamage)\times DANGER\_VALUE\times HP2\_RISK\_WEIGHT }
 $$
 
 仅 HP=2 生效，`DANGER_VALUE=7`、`HP2_RISK_WEIGHT=0.6`，最大负值：
@@ -622,7 +622,7 @@ $$
 总护盾价值：
 
 $$
-\boxed{ ShieldValue=Reserve+HPProtection+LifeProtection }
+{ ShieldValue=Reserve+HPProtection+LifeProtection }
 $$
 
 ## 7.4 泡泡机未来护盾价值
@@ -646,7 +646,7 @@ $$
 
 # 8. 充能桩未来能量价值
 
-源码：`StateValue.js:87 energyDeviceFutureUtility()`。
+源码：`StateValue.js energyDeviceFutureUtility()`。
 
 仅持有 `energyDevice` 时。
 
@@ -673,7 +673,7 @@ EffectiveGain=\max(0,E_1-E_0)
 $$
 
 $$
-\boxed{ EnergyDeviceFuture =R\times EffectiveGain\times1.2 }
+{ EnergyDeviceFuture =R\times EffectiveGain\times1.2 }
 $$
 
 其中 1.2 是 `ENERGY_STATE_WEIGHT`
@@ -687,7 +687,7 @@ $$
 ## 9.1 手牌数量
 
 $$
-\boxed{HandCountValue=HandCount\times1.1}
+{HandCountValue=HandCount\times1.1}
 $$
 
 因此每张纯数量手牌价值为：
@@ -701,7 +701,7 @@ $$
 只有 `player.id == viewerId` 才读取具体合法手牌身份：
 
 $$
-\boxed{ HandRoleDelta = \sum_{card\in hand} RoleDelta(character,card)\times Availability(card) }
+{ HandRoleDelta = \sum_{card\in hand} RoleDelta(character,card)\times Availability(card) }
 $$
 
 其中：
@@ -765,7 +765,7 @@ $$
 设目标当前 Block 数量分布为 $P(N=n)$，真实 Domain demand 为 $r$，一次未格挡伤害造成的现有生命、Danger、低血量 Risk 与 ShieldValue 边际为 $DamageStateLoss$。没有 Radar 时：
 
 $$
-\boxed{DefenseCost(r)=\sum_nP(N=n)\begin{cases}r\times BlockSpendValue,&n\ge r\\DamageStateLoss,&n<r\end{cases}}
+{DefenseCost(r)=\sum_nP(N=n)\begin{cases}r\times BlockSpendValue,&n\ge r\\DamageStateLoss,&n<r\end{cases}}
 $$
 
 该分段严格保留真实规则：数量不足时不浪费 Block。$DamageStateLoss$ 复用现有生命/危险/护盾 authority，不等同于固定 `HP_VALUE`。
@@ -860,7 +860,7 @@ $$
 
 # 10. 静态卡牌价值常量
 
-源码：`CardValue.js:33 CARD_AI_VALUES`。
+`CARD_AI_VALUES` 是唯一 Base Card Value authority；`CARD_DEFINITIONS` 不保存 `aiValue`。
 
 这些值主要服务保留、资源、搜索 prior；**不直接作为 Final Transition Value**。
 
@@ -898,7 +898,7 @@ $$
 # 11. 角色 × 卡牌静态差量
 
 $$
-\boxed{ RoleCardValue(character,card) = BaseCardValue(card)+RoleDelta(character,card) }
+{ RoleCardValue(character,card) = BaseCardValue(card)+RoleDelta(character,card) }
 $$
 
 未列出的组合：
@@ -958,7 +958,7 @@ $$
 则：
 
 $$
-\boxed{ P_{skillReady} = clamp\left(\sum_{j:E_j\ge C}p_j\right) }
+{ P_{skillReady} = clamp\left(\sum_{j:E_j\ge C}p_j\right) }
 $$
 
 若没有主动技能、费用≤0、次数上限≤0，则为 0。
@@ -966,10 +966,10 @@ $$
 ## 12.2 技能准备威胁
 
 $$
-\boxed{ SkillReadinessThreat =P_{skillReady}\times\left(3+0.5\cdot I[E\ge C]\right) }
+{ SkillReadinessThreat =P_{skillReady}\times\left(3+0.5\cdot I[E\ge C]\right) }
 $$
 
-这是策略威胁尺度，不是真实技能效果价值。
+该值只用于策略威胁尺度，不进入真实技能效果价值。
 
 ## 12.3 下一回合可兑现突袭数
 
@@ -1020,7 +1020,7 @@ $$
 等价地，可写为：
 
 $$
-\boxed{U=E_{A,R,B}[\min(A,L+2R+B)]}
+{U=E_{A,R,B}[\min(A,L+2R+B)]}
 $$
 
 其中 $R\sim Bernoulli(r)$，$B\sim Bernoulli(p)$。Event 分布若存在会先按实际总质量归一化；否则使用库存期望值代入同一函数。
@@ -1032,7 +1032,7 @@ Reserve=\max(0,E[A]-E[U])
 $$
 
 $$
-\boxed{ V_{assault}=1.25E[U]+0.25\min(2,\max(0,E[A]-E[U])) }
+{ V_{assault}=1.25E[U]+0.25\min(2,\max(0,E[A]-E[U])) }
 $$
 
 ## 12.5 角色属性威胁
@@ -1048,7 +1048,7 @@ Resources=\min(3,E[UsableAssaultsNextTurn])
 $$
 
 $$
-\boxed{ RoleThreatSynergy =Resources\times\min(0.75,0.3\times TagCount) }
+{ RoleThreatSynergy =Resources\times\min(0.75,0.3\times TagCount) }
 $$
 
 无攻击资源则为 0。
@@ -1058,7 +1058,7 @@ $$
 仅攻击型装备：
 
 $$
-\boxed{ EquipmentThreatSynergy =Resources\times0.75\times Retention }
+{ EquipmentThreatSynergy =Resources\times0.75\times Retention }
 $$
 
 备用弹夹的 subtype 为 `assault-capacity`，不属于本节的 `attack` 装备集合；它的收益只通过有效次数上限进入 `expectedUsableAssaultsNextTurn()` 与 `AssaultThreat`。
@@ -1092,7 +1092,7 @@ Sign= \begin{cases} +1,&holder\;ally\\ -1,&holder\;enemy \end{cases}
 $$
 
 $$
-\boxed{ SealTeamBurden =P_{skip}\times TurnOpportunityValue\times Sign }
+{ SealTeamBurden =P_{skip}\times TurnOpportunityValue\times Sign }
 $$
 
 World State Value 中执行：
@@ -1101,11 +1101,9 @@ $$
 V_{state}\;-=SealTeamBurden
 $$
 
-源码：`StateValue.js:824`。
+源码：`StateValue.js`。
 
 # 14. 团队危险性
-
-源码：`Evaluator.js:1421,3502`。
 
 ## 14.1 Danger term 集合
 
@@ -1148,13 +1146,13 @@ $$
 然后用唯一 HP-equivalent 换算并夹到 `[0,1]`：
 
 $$
-\boxed{ R_i =clamp_{[0,1]}\left(\frac{DangerPoints_i}{5}\right) }
+{ R_i =clamp_{[0,1]}\left(\frac{DangerPoints_i}{5}\right) }
 $$
 
 ## 14.3 团队危险度 D(X)
 
 $$
-\boxed{ D(X)=\max_{i\in allies}R_i }
+{ D(X)=\max_{i\in allies}R_i }
 $$
 
 因此只要任一己方角色处于高风险，团队危险度不会被其它安全队友平均稀释。
@@ -1162,7 +1160,7 @@ $$
 END 的普通技能机会损失使用最低危险系数：
 
 $$
-\boxed{ D'(X)=\max(0.75,D(X)) }
+{ D'(X)=\max(0.75,D(X)) }
 $$
 
 # 15. Lightning 生命周期价值
@@ -1176,13 +1174,13 @@ $$
 - `ΔMaterial_{owner,j}` = 对 owner 的前后 material value 差。
 
 $$
-\boxed{ \Delta Owner =\sum_j Presence\times p_j\times\Delta Material_j }
+{ \Delta Owner =\sum_j Presence\times p_j\times\Delta Material_j }
 $$
 
 ## 15.2 Viewer 阵营 Lightning Lifecycle Value
 
 $$
-\boxed{ LightningLifecycle =\sum_i\sigma_i\Delta Owner_i }
+{ LightningLifecycle =\sum_i\sigma_i\Delta Owner_i }
 $$
 
 它以 State Points 进入 World State Value。
@@ -1190,7 +1188,7 @@ $$
 ## 15.3 Lightning Burden
 
 $$
-\boxed{ LightningTeamBurden=-LightningLifecycle }
+{ LightningTeamBurden=-LightningLifecycle }
 $$
 
 ## 15.4 Lightning Counter
@@ -1216,7 +1214,7 @@ $$
 使用反制 iff：
 
 $$
-\boxed{ B_{transfer}+2.8<B_{stay} }
+{ B_{transfer}+2.8<B_{stay} }
 $$
 
 # 16. Transition Option Value
@@ -1226,16 +1224,23 @@ $$
 总点数：
 
 $$
-\boxed{ P_{option} =P_{derivedOption} }
+P_{option}=P_{spyGap}+P_{card}
 $$
 
 其中：
 
-$$ P_{derivedOption}= \begin{cases} ScoutOption,&Scout\\ SpyGapOption,&SpyGap\ information\ event\\ LeverageOption,&Leverage\\ MutualBenefitOption,&MutualBenefit\\ResourceTransactionOption,&Destroy/Plunder/Transfer\\ 0,&otherwise \end{cases} $$
+$$
+P_{card}=\begin{cases}
+ScoutOption,&Scout\\
+LeverageOption,&Leverage\\
+ResourceTransactionOption,&Destroy/Plunder/Transfer\\
+0,&otherwise
+\end{cases}
+$$
 
 最终：
 $$
-\boxed{ V_{option}=\frac{P_{option}}{5} }
+{ V_{option}=\frac{P_{option}}{5} }
 $$
 
 ## 16.1 Scout / SpyGap 私密信息价值
@@ -1266,7 +1271,7 @@ $$
 对每种定义 `d`，Event 提供当前 finite-pool density `p_d`：
 
 $$
-\boxed{ H=-\sum_dp_d\log_2p_d }
+{ H=-\sum_dp_d\log_2p_d }
 $$
 
 ### 16.1.3 四类关键资源不确定性
@@ -1305,7 +1310,7 @@ $$
 
 ### 16.1.5 `privatePeekDecisionRelevance()` 的四类相关性
 
-先从 actor 当前合法可见手牌得到三个布尔/有界决策量：
+先把 actor 手牌实例映射为 `CARD_DEFINITIONS[entry.definitionId] ?? entry`，再得到三个布尔/有界决策量：
 
 $$
 OffensiveDecision =clamp\left(\max(E[Assault],I[存在 attack/damage/attack-buff 动作])\right)
@@ -1382,7 +1387,7 @@ $$
 其中 `ResolutionScale` 是这张战术牌在反制机制下最终能够结算的概率
 
 $$
-\boxed{ ScoutOption=InfoPoints\times EffectScale\times0.35 }
+{ ScoutOption=InfoPoints\times EffectScale\times0.35 }
 $$
 
 ## 16.2 Leverage 装备获得选择权
@@ -1402,67 +1407,19 @@ EquipActorStaticAsset=(BaseEquipValue+RoleDelta(actor,equipment))\times RESOURCE
 $$
 
 $$
-\boxed{ LeverageOption =EquipActorStaticAsset\times Acquired }
+{ LeverageOption =EquipActorStaticAsset\times Acquired }
 $$
 
 Base 与 RoleDelta 经同一 static-asset scale；`LeverageOption` 是 Transition Option，会经 `statePointsToUtility()` 进入 Final Utility。借势其它 willingness 与 Search Prior 公式不受影响。
 
-## 16.3 Mutual Benefit Option
-
-这里计算的是 **Transition Option 中互利公开牌收益的静态期望牌值**，不是实际公开牌领取时的 `StateValue` 边际比较。实际公开牌如何选择见 23.1。
-
-对按真实座次顺序轮到的 recipient `i`，设当前剩余公开定义池为 `Pool_i`。定义 `d` 对该 recipient 的静态牌值为：
-
-$$
-CardValue_i(d)=RoleCardValue(character_i,d)
-$$
-
-若缺少角色定义，则回退为：
-
-$$
-CardValue_i(d)=BaseCardValue(d)
-$$
-
-recipient 从当前仍有剩余数量的定义中选择静态牌值最高者：
-
-$$
-d_i^*=\arg\max_{d\in Pool_i} CardValue_i(d)
-$$
-
-并令：
-
-$$
-DraftValue_i=CardValue_i(d_i^*)
-$$
-
-取走后从池中消耗一张 `d_i^*`，再轮到下一名 recipient；静态值同分时保持公开池原始定义顺序。
-
-对每个 recipient：
-
-$$
-Sign_i= \begin{cases} +1,&ally\ -1,&enemy \end{cases}
-$$
-
-最终：
-
-$$
-\boxed{ MutualBenefitOption =\sum_i Sign_i\times DraftValue_i\times EffectScale }
-$$
-
-其中：
-
-$$
-EffectScale=clamp(ExecutionProbability\times ResolutionScale)
-$$
-
-## 16.4 Resource Transaction Option
+## 16.3 Resource Transaction Option
 
 源码：`Evaluator.resourceTransactionForDefinition()`、`resourceTransactionOptionPoints()`。
 
 该项只评价 Destroy、Plunder、Transfer 已实际移除或转移的手牌身份价值；装备区资源不进入本项。设观察者为 `viewer`，玩家 `p` 持有定义 `c` 时：
 
 $$
-\boxed{ IdentityValue(p,c)=BaseCardValue(c)\times RESOURCE\_MATERIAL\_SCALE+MissingHandRoleContext(p,c) }
+{ IdentityValue(p,c)=BaseCardValue(c)\times RESOURCE\_MATERIAL\_SCALE+MissingHandRoleContext(p,c) }
 $$
 
 其中：
@@ -1481,7 +1438,7 @@ $$
 RESOURCE\_MATERIAL\_SCALE=0.4
 $$
 
-viewer 自己的 `HandRoleDelta` 已作为独立 contextual State term 进入 StateValue，因此本项只补具体手牌身份的基础材料价值，以及其他玩家缺失的同一 HandRole context。这里不是把 `Base + RoleDelta` 组合为 static resource asset，故不得单独把该补偿改成 `staticCardAssetValue()`；否则会与未重标的 viewer `HandRoleDelta` 产生视角不对称。Destroy/Plunder 候选的静态资源规范化另由第 22 节负责。
+viewer 自己的 `HandRoleDelta` 已作为独立 contextual State term 进入 StateValue。本项只补具体手牌身份的基础材料价值，以及其他玩家缺失的同一 HandRole context；Destroy/Plunder 候选的静态资源规范化由第 21 节定义。
 
 阵营符号统一为：
 
@@ -1522,7 +1479,7 @@ $$
 确定身份直接使用该定义。未知身份只查询当前来源匿名 bucket 的 Probability finite-pool：
 
 $$
-\boxed{ E[Transaction(source,receiver,c)]=\sum_dP(C=d)\times Transaction(source,receiver,d) }
+{ E[Transaction(source,receiver,c)]=\sum_dP(C=d)\times Transaction(source,receiver,d) }
 $$
 
 其中：
@@ -1533,7 +1490,7 @@ $$
 
 该概率来自 `queryProbability(..., bucketId=source.id).slotProbability`。
 
-`EffectScale` 优先读取 Simulator 为当前 transition 记录的单项实际资源移动事实；这使协调等后置摸牌不会用净手牌数掩盖已经发生的破坏、掠夺或转移。旧夹具或独立公式调用没有该事实时，才回退到以下身份/匿名槽差：
+`EffectScale` 优先读取 Simulator 为当前 transition 记录的单项实际资源移动事实；协调等后置摸牌不会用净手牌数掩盖已经发生的破坏、掠夺或转移。没有记录事实的独立公式输入回退到以下身份/匿名槽差：
 
 known identity 使用：
 $$
@@ -1548,17 +1505,17 @@ $$
 
 这个差值已经表达该资源真实发生移除或转移的概率。
 
-# 18. END Opportunity Penalty
+# 17. END Opportunity Penalty
 
-源码：`Evaluator.js:3865 endOpportunityPoints()`。
+源码：`Evaluator.js endOpportunityPoints()`。
 
 总 END penalty（State Points）：
 
 $$
-\boxed{ P_{END}=P_f+P_s+P_d }
+{ P_{END}=P_f+P_s+P_d }
 $$
 
-## 18.1 能量满溢 Pf
+## 17.1 能量满溢 Pf
 
 设：
 
@@ -1571,16 +1528,16 @@ Overflow =\max(0,E+G-E_{max})
 $$
 
 $$
-\boxed{ P_f=1.2\times Overflow }
+{ P_f=1.2\times Overflow }
 $$
 
 换成 u：
 
 $$
-\boxed{ P_{f,u}=0.24\times Overflow }
+{ P_{f,u}=0.24\times Overflow }
 $$
 
-## 18.2 技能能量准备压力 S(E)
+## 17.2 技能能量准备压力 S(E)
 
 若无主动技能或：
 
@@ -1597,7 +1554,7 @@ $$
 如果已具备发动权：
 
 $$
-\boxed{ S(E) =\sqrt{\frac{E-C+1}{E_{max}-C+1}} }
+{ S(E) =\sqrt{\frac{E-C+1}{E_{max}-C+1}} }
 $$
 
 当前代码没有额外经验归一化常量。
@@ -1611,7 +1568,7 @@ $$
 | 3 | √(2/3) ≈ 0.8165 |
 | 4 | 1 |
 
-## 18.3 普通 Legal skill state-value opportunity
+## 17.3 普通 Legal skill state-value opportunity
 
 除 X 技能外，每个普通 legal skill sibling 直接复用**同一次 transition evaluation**已经得到的完整 raw StateValue delta：
 
@@ -1622,7 +1579,7 @@ $$
 Evaluator 在完整 legal skill sibling 集合中选择最佳正变化：
 
 $$
-\boxed{\Delta_s^+=\max_{s\in LegalSkill}\max(0,\Delta_s)}
+{\Delta_s^+=\max_{s\in LegalSkill}\max(0,\Delta_s)}
 $$
 
 该值包含 StateValue 的全部既有分项；不新增第二套价值计算，也不读取 `baseTransition`、TransitionOption 或 continuation。Searcher 只提供完整 sibling transition terms，不聚合价值。
@@ -1633,12 +1590,12 @@ $$
 \Delta_s^+=0
 $$
 
-## 18.4 技能机会损失 Ps
+## 17.4 技能机会损失 Ps
 
 普通主动技能：
 
 $$
-\boxed{P_s^{normal}=S(E)\max(0.75,D(X))\Delta_s^+}
+{P_s^{normal}=S(E)\max(0.75,D(X))\Delta_s^+}
 $$
 
 X 技能（孤注）不使用 `S(E)` 或 `D(X)`。令当前能量真实结算的 StateDelta 为：
@@ -1662,7 +1619,7 @@ $$
 反事实不推进回合，不加入摸牌阶段、敌方行动或任何其它 World 变化。X 技能的 END 机会项为：
 
 $$
-\boxed{P_s^X=ENERGY\_STATE\_WEIGHT-(\Delta_{E+1}-\Delta_E)}
+{P_s^X=ENERGY\_STATE\_WEIGHT-(\Delta_{E+1}-\Delta_E)}
 $$
 
 当前 `ENERGY_STATE_WEIGHT=1.2`。满能量时 `E_next=E`，因此：
@@ -1683,7 +1640,7 @@ $$
 \Delta_s^+=0\Rightarrow P_s=0
 $$
 
-## 18.5 强制弃牌机会损失 Pd
+## 17.5 强制弃牌机会损失 Pd
 
 Pd 该项只在 END 的真实 Simulator 结果确实发生强制弃牌时考虑。 设 END 与同 parent sibling 的原始状态变化分别为：
 
@@ -1695,7 +1652,13 @@ $$
 \Delta_a = V_{state}(Y_a)-V_{state}(X)
 $$
 
-只有 sibling a 与 END 具有相同的动作前溢出量，并且通过真实 HP / 手牌状态变化把该溢出**完全消除到 0** 时，才形成 discard relief：
+只有 sibling a 与 END 具有相同的动作前溢出量，并且满足：
+
+$$
+AfterOverflow_a<BeforeOverflow_a
+$$
+
+时才形成 discard relief：
 
 $$
 Relief_d(a) = \max(0,\Delta_a-\Delta_{END})
@@ -1704,7 +1667,7 @@ $$
 Evaluator 对 Searcher 提供的完整 sibling transition terms 进行价值聚合：
 
 $$
-\boxed{ P_d=\max_a Relief_d(a) }
+{ P_d=\max_a Relief_d(a) }
 $$
 
 没有符合条件的 sibling 时：
@@ -1715,19 +1678,26 @@ $$
 
 该项使用 Raw StateDelta，不识别 Recover、装备或具体卡牌类型。
 
-## 18.6 END 最终公式
+## 17.6 空装备槽硬约束
 
 $$
-\boxed{ V_{END} =V_{baseTransition} -\frac{P_f+P_s+P_d}{5} }
+BeforeOverflow>0\land \neg HasEquipmentBefore\land ExistsLegalMaterializedEquipmentSibling
+\Rightarrow V_{END}=-\infty
+$$
+
+## 17.7 END 最终公式
+
+$$
+{ V_{END} =V_{baseTransition} -\frac{P_f+P_s+P_d}{5} }
 $$
 
 以 Utility 直接表示：
 
 $$
-\boxed{ P_{END,u} =0.24\times Overflow +\frac{P_s}{5}+\frac {P_d}5 }
+{ P_{END,u} =0.24\times Overflow +\frac{P_s}{5}+\frac {P_d}5 }
 $$
 
-# 19. Candidate 比较语义
+# 18. Candidate 比较语义
 
 源码：`Evaluator.compareCandidates()`、`Evaluator.js compareUtilityValues()`。
 
@@ -1746,10 +1716,10 @@ $$
 浮点 tolerance：
 
 $$
-\boxed{ Tolerance=Number.EPSILON\times\max(1,|V_L|,|V_R|) }
+{ Tolerance=Number.EPSILON\times\max(1,|V_L|,|V_R|) }
 $$
 
-该 tolerance 由 `Evaluator.js compareUtilityValues()` 唯一实现，并同时服务 ResourceSelectionUtility 与 generic Final Utility。它不是 Event/Probability 的 `PROBABILITY_EPSILON`，不会改变概率合并、AppliedProbability 或 SearchBudget 语义。
+该 tolerance 由 `Evaluator.js compareUtilityValues()` 唯一实现，并同时服务 ResourceSelectionUtility 与 generic Final Utility；Event/Probability 的 `PROBABILITY_EPSILON` 独立用于概率合并。
 
 同根 Destroy/Plunder 的完整层级为：
 
@@ -1765,10 +1735,10 @@ Generator stable enumeration
 
 Resource 非 tie 时 Final Utility 无权覆盖资源选择 authority；Resource tie 时也不得提前返回 0 跳过 Final Utility。
 
-# 20. Card / Resource Policy Value 公式
+# 19. Card / Resource Policy Value 公式
 
 这些值用于资源选择、弃牌、转移、response 或 search prior，本身不直接加进 Final Utility。
-## 20.1 已知牌 Transfer Card Value
+## 19.1 已知牌 Transfer Card Value
 
 基础：
 
@@ -1824,7 +1794,7 @@ $$
 V_{assault}=Base+1I[AttackUsed<AttackLimit]
 $$
 
-## 20.2 匿名 Transfer Card Value
+## 19.2 匿名 Transfer Card Value
 
 若存在 remaining counts：
 
@@ -1840,7 +1810,7 @@ $$
 
 这只是无有效 finite-pool 时的 unknown base expectation，不会作为每张普通手牌的永久 World StateValue。
 
-## 20.3 装备替换 Keep Deduction
+## 19.3 装备替换 Keep Deduction
 
 旧装备对角色价值：
 
@@ -1858,7 +1828,7 @@ $$
 Deduction\;+=4
 $$
 
-## 20.4 Discard Keep Value
+## 19.4 Discard Keep Value
 
 起点：
 
@@ -1887,7 +1857,7 @@ $$
 
 最终越低越优先弃置。
 
-## 20.5 Destroy / Plunder 已知资源 Utility
+## 19.5 Destroy / Plunder 已知资源 Utility
 
 ### Destroy
 
@@ -1914,12 +1884,12 @@ $$
 U_{plunder}=A+O
 $$
 
-## 20.6 匿名资源 Utility
+## 19.6 匿名资源 Utility
 
 有剩余池时：
 
 $$
-\boxed{ E[U]=\frac{\sum_dn_dU_d}{\sum_dn_d} }
+{ E[U]=\frac{\sum_dn_dU_d}{\sum_dn_d} }
 $$
 
 无有效池：
@@ -1928,17 +1898,17 @@ $$
 - plunder 己方：`0`
 - plunder 敌方：`2 × UNKNOWN_HAND_EXPECTED_VALUE`
 
-## 20.7 匿名获得资源 Utility
+## 19.7 匿名获得资源 Utility
 
 $$
-\boxed{ E[BaseCardValue] =\frac{\sum_dn_dBaseValue_d}{\sum_dn_d} }
+{ E[BaseCardValue] =\frac{\sum_dn_dBaseValue_d}{\sum_dn_d} }
 $$
 
 无池时回退 `UNKNOWN_HAND_EXPECTED_VALUE = 5.8`。
 
-## 20.8 Energy Device 技能门槛 Policy Value
+## 19.8 Energy Device 技能门槛 Policy Value
 
-这是资源选择策略值，**不是 Final Utility**。
+该值只用于资源选择策略，不进入 Final Utility。
 
 设：
 
@@ -1962,14 +1932,12 @@ $$
 行动者视角：
 
 $$
-\boxed{ ThresholdOption= \begin{cases} -LocalValue,&owner\;ally\\ +LocalValue,&owner\;enemy \end{cases} }
+{ ThresholdOption= \begin{cases} -LocalValue,&owner\;ally\\ +LocalValue,&owner\;enemy \end{cases} }
 $$
 
-# 21. Transfer 完整局部 Preference
+# 20. Transfer 完整局部 Preference
 
-源码：`Evaluator.js:1087–1287`。
-
-## 21.1 Resource relation utility
+## 20.1 Resource relation utility
 
 资源对来源价值 `Vs`、对接收者价值 `Vr`。
 
@@ -1997,7 +1965,7 @@ $$
 U=V_s-V_r
 $$
 
-## 21.2 手牌容量调整
+## 20.2 手牌容量调整
 
 来源溢出：
 
@@ -2037,7 +2005,7 @@ $$
 Score=-\infty
 $$
 
-# 22. Destroy / Plunder Resource Selection Comparator
+# 21. Destroy / Plunder Resource Selection Comparator
 
 源码：`Evaluator.resourceSelectionPreference()`、`Evaluator.compareCandidates()`。
 
@@ -2096,7 +2064,7 @@ $$
 ActorAcquisition=\begin{cases}(ExpectedBaseAiValue+ExpectedRoleDelta(actor))\times RESOURCE\_MATERIAL\_SCALE\times P_{applied},&plunder\\0,&destroy\end{cases}
 $$
 
-充能桩技能门槛项继续使用 20.8 的既有 policy authority：
+充能桩技能门槛项继续使用 19.8 的 policy authority：
 
 $$
 ThresholdUtility=ThresholdOption\times P_{applied}
@@ -2108,7 +2076,7 @@ $$
 ResourceSelectionUtility=\\ContextualFunctional\\+TargetStaticAsset\\+ActorAcquisition\\+ThresholdUtility
 $$
 
-`EquipmentStaticAssetDelta` 先从 `RawStateDelta` 同时剥离装备 Base/Role，再由 `TargetStaticAsset` 以同一语义加回一次；hand static asset 原本不永久进入普通 StateValue，只在本次具体 resource policy 中进入。Plunder 的 target denial 与 actor acquisition 使用各自角色的 RoleDelta，是同一实体的两个不同所有权后果，各计一次，不是重复计值。
+`EquipmentStaticAssetDelta` 先从 `RawStateDelta` 同时剥离装备 Base/Role，再由 `TargetStaticAsset` 以同一语义加回一次；hand static asset 只在本次具体 resource policy 中进入。Plunder 的 target denial 与 actor acquisition 使用各自角色的 RoleDelta，分别表示同一实体的两个所有权后果。
 
 对军火库、回收站与备用弹夹，Destroy/Plunder 没有任何装备名特判：
 
@@ -2118,35 +2086,37 @@ $$
 
 Destroy 移除敌方装备时，目标 Future denial 由 `RawStateDelta` 自然成为正 context；Plunder 同时保留目标 denial，并按既有 `ActorAcquisition` 记取得的静态资产。若实际 after World 让获得方装备生效，其新 StateValue Future 同样由 after-before 自然进入；当前真实 Plunder 把装备牌收入手牌时则不会虚构装备已生效。三项 Future 都不会被 `EquipmentStaticAssetDelta` 剥离，也不会再次进入 `TargetStaticAsset`、`ActorAcquisition` 或 threshold。
 
-`ResourceSelectionUtility` 只负责同一 Destroy/Plunder 根资源选择，不再作为额外项加进 Final Utility。比较层级与机器精度 tie contract 见第 19 节：
+`ResourceSelectionUtility` 只负责同一 Destroy/Plunder 根资源选择，不再作为额外项加进 Final Utility。比较层级与机器精度 tie contract 见第 18 节：
 
 ```text
 ResourceSelectionUtility → tie → Generic Final Utility → tie → stable order
 ```
 
-# 23. 全体受益：Mutual Benefit / Symbiosis
+# 22. Mutual Benefit receipt / Symbiosis
 
-## 23.1 Mutual Benefit 实际公开牌选择
+## 22.1 Mutual Benefit receipt
 
-这一节描述实际公开牌领取选择，与 16.3 的 Transition Option 静态 draft 分开。
-
-Controller 请求公开牌选择时，Simulator 对每张公开实体牌 `c` 构造合法领取结果 Worlds；Evaluator 只比较这些已构造 Worlds，不自行构造状态。
-
-对 recipient 的领取前 World `X` 与公开候选实体牌 `c`：
+`ReceiptWorlds` 复用同一 `EffectEventWorlds`。令 $B$ 为主动牌支付与 Counter 消费完成、但 receipt 未发生的 baseline World，$Y_c$ 为同一 effect event 成功且领取候选 $c$ 后的 World，$p=P(occurs)$。
 
 $$
-DraftValue(c)=\max_{Y\in ReceiptWorlds(c)}\left[V_{state}(Y)-V_{state}(X)\right]
+DraftValue(c)=\max_{Y\in ReceiptWorlds(c;EffectEventWorlds)}
+\left[V_{state}(Y)-V_{state}(B)\right]
 $$
 
-其中装备候选的 `ReceiptWorlds(c)` 包含合法的领取到手牌以及换装结果，因此已有同装备不会被硬性禁止，只按真实状态边际比较。
-
-最终选择：
-
 $$
-\boxed{c^*=\arg\max_c DraftValue(c)}
+c^*=\arg\max_c DraftValue(c)
 $$
 
-## 23.2 Symbiosis 直接收益
+`ReceiptWorlds` 含留手与合法换装结果。按来源座次依次物化 `{cardId,worldIndex}`；每次选择从生效分支的当前池消耗一张所选定义。
+
+$$
+StateDelta_{MutualBenefit}=V_{state}(B)-V_{state}(X)
++p\left[V_{state}(Y_{c^*})-V_{state}(B)\right]
+$$
+
+主动牌支付与 Counter 消费只进入 baseline delta；receipt delta 只乘一次同一 effect-event probability。
+
+## 22.2 Symbiosis 直接收益
 
 每名玩家：
 
@@ -2156,7 +2126,7 @@ $$
 
 由 Domain Combat/Card rules 决定真实治疗量。
 
-## 23.3 Team Net Benefit
+## 22.3 Team Net Benefit
 
 $$
 AllyBenefit=\sum_{ally}Benefit_i
@@ -2173,38 +2143,38 @@ $$
 Search prior 中 `symbiosisNetFromState()`：
 
 $$
-\boxed{SymbiosisPriorNet=4\times NetBenefit}
+{SymbiosisPriorNet=4\times NetBenefit}
 $$
 
-# 24. Resource / Response 状态投影
+# 23. Resource / Response 状态投影
 
-## 24.1 Selected hand resource state value
+## 23.1 Selected hand resource state value
 
 构造一个只含 1 张 hand 的 CardValue projection：
 
 $$
-\boxed{ SelectedHandStateValue =HandCountTerm+HandRoleTerm }
+{ SelectedHandStateValue =HandCountTerm+HandRoleTerm }
 $$
 
 匿名牌没有 role identity，因此只保留 `handCount=1.1`。
 
-## 24.2 Selected equipment state value
+## 23.2 Selected equipment state value
 
 $$
-\boxed{ SelectedEquipmentStateValue =EquipmentDelta+EquipmentRoleDelta }
+{ SelectedEquipmentStateValue =EquipmentDelta+EquipmentRoleDelta }
 $$
 
-# 25. Counter / Response 价值公式
+# 24. Counter / Response 价值公式
 
 这一部分决定“要不要响应”，属于响应策略，不直接额外加进 Final Utility；响应真实后果已经通过 Simulator → StateDelta 进入最终价值。
 
-## 25.1 Counter opportunity cost
+## 24.1 Counter opportunity cost
 
 $$
  C_0=BaseValue(counter)\times0.35 =8\times0.35 =2.8 
 $$
 
-## 25.2 Dynamic Counter 的 STAY / RESPOND 边际修正
+## 24.2 Dynamic Counter 的 STAY / RESPOND 边际修正
 
 设：
 
@@ -2302,7 +2272,7 @@ $$
 即：
 
 $$
-\boxed{Counter\iff G-O_C>C_0(1-p_C)}
+{Counter\iff G-O_C>C_0(1-p_C)}
 $$
 
 future selection 为 hand 时，响应者手牌中的 Counter 数量为 $c$，其它手牌数量为 $x$：
@@ -2319,7 +2289,7 @@ $$
 
 equipment 的保护价值包含在 $G_s$；equipment 不进入 hand 分母。
 
-## 25.3 Global Benefit Counter
+## 24.3 Global Benefit Counter
 
 令 root 全体受益净值：
 
@@ -2342,12 +2312,12 @@ $$
 最终：
 
 $$
-\boxed{Counter\iff Flip-Stay>2.8}
+{Counter\iff Flip-Stay>2.8}
 $$
 
 特殊保护：首层若 root source 是己方且 `allyBenefit>=0`，直接不反制。
 
-# 26. Block willingness
+# 25. Block willingness
 
 采用硬布尔合同。
 
@@ -2374,12 +2344,12 @@ $$
 最终：
 
 $$
-\boxed{ Block\iff SmallTeam\lor Lethal\lor LowHP\lor BlocksAbundant }
+{ Block\iff SmallTeam\lor Lethal\lor LowHP\lor BlocksAbundant }
 $$
 
-# 27. Guardian Aid
+# 26. Guardian Aid
 
-## 27.1 Planning 近似
+## 26.1 Planning 近似
 
 条件伤害减少：`Reduction`，触发概率 `p`。
 
@@ -2408,14 +2378,14 @@ $$
 使用护援 iff：
 
 $$
-\boxed{AidValue-StayValue>Threshold}
+{AidValue-StayValue>Threshold}
 $$
 
 Runtime 配对世界则直接以两个 World 的 `stateUtility` 得到 `AidValue/StayValue`，比较规则不变。
 
-# 28. Dying Rescue 救援价值
+# 27. Dying Rescue 救援价值
 
-## 28.1 目标行动资产
+## 27.1 目标行动资产
 
 战略角色标签：`support/healer/damage/control/tank`。
 
@@ -2429,22 +2399,22 @@ $$
 ImmediateDefeatRisk=true
 $$
 
-## 28.2 最后一张 Recover penalty
+## 27.2 最后一张 Recover penalty
 
 $$
 LastRecoverPenalty= \begin{cases} 3,&AvailableRecover\le1\land ResponderHP\le2\\ 1.5,&AvailableRecover\le1\land ResponderHP>2\\ 0,&AvailableRecover>1 \end{cases}
 $$
 
-## 28.3 生存价值
+## 27.3 生存价值
 
 $$
-\boxed{ SurvivalValue =5+ActionValue+8I[ImmediateDefeatRisk] }
+{ SurvivalValue =5+ActionValue+8I[ImmediateDefeatRisk] }
 $$
 
-## 28.4 Recover 机会成本
+## 27.4 Recover 机会成本
 
 $$
-\boxed{ RecoverOpportunityCost =BaseValue(recover)\times0.35+LastRecoverPenalty }
+{ RecoverOpportunityCost =BaseValue(recover)\times0.35+LastRecoverPenalty }
 $$
 
 因为 `BaseValue(recover)=6`：
@@ -2455,10 +2425,10 @@ $$
 6\times0.35=2.1
 $$
 
-## 28.5 Expected Rescue Value
+## 27.5 Expected Rescue Value
 
 $$
-\boxed{ ExpectedRescueValue =P_{success}\times SurvivalValue-RecoverOpportunityCost }
+{ ExpectedRescueValue =P_{success}\times SurvivalValue-RecoverOpportunityCost }
 $$
 
 一般 AI 救援 iff：
@@ -2473,7 +2443,7 @@ $$
 - 配置允许时 AI 救真人队友可强制 true；
 - 敌方/无资源/guaranteed impossible 恒 false。
 
-## 28.6 Rescue success probability
+## 27.6 Rescue success probability
 
 已知 Recover 容量：
 
@@ -2508,12 +2478,18 @@ $$
 Event/Probability 使用有限池超几何：
 
 $$
-\boxed{ P_{success} =P(X\ge RequiredUnknown),\quad X\sim Hypergeometric(N,K,UnknownSlots) }
+{ P_{success} =P(X\ge RequiredUnknown),\quad X\sim Hypergeometric(N,K,UnknownSlots) }
 $$
 
-若确定不可能或剩余池为空则为 0。
+$$
+P_{success}=\begin{cases}
+1,&KnownFeasibleRecovery\ge Need\ \lor\ RequiredUnknown\le0\\
+0,&RequiredUnknown>0\land(MaximumFeasibleRecovery<Need\ \lor\ N\le0)\\
+P(X\ge RequiredUnknown),&otherwise
+\end{cases}
+$$
 
-# 29. Planning Dying Rescue 近似
+# 28. Planning Dying Rescue 近似
 
 `decidePlanningDyingRescue()` 在搜索模拟中不展开 runtime 的完整匿名救援链，而使用当前 canonical Probability 的团队 Recover 期望：
 
@@ -2536,7 +2512,7 @@ $$
 规划成功概率近似：
 
 $$
-\boxed{ P_{success}^{planning} =\min\left(1,\frac{TeamRecover\times H_r}{Need}\right) }
+{ P_{success}^{planning} =\min\left(1,\frac{TeamRecover\times H_r}{Need}\right) }
 $$
 
 随后仍调用同一个 `dyingRescueValueTerms()`：
@@ -2547,20 +2523,20 @@ $$
 
 所以 planning/runtime 只改变成功概率事实的精度，不复制价值权重。
 
-# 30. Assault Discard 响应合同
+# 29. Assault Discard 响应合同
 
 `shouldRespond()` 对 `assaultDiscard` 的冻结规则：
 
 ### Provoke
 
 $$
-\boxed{DiscardAssault\iff HP\le2\;\lor\;HandCount>2}
+{DiscardAssault\iff HP\le2\;\lor\;HandCount>2}
 $$
 
 ### Duel
 
 $$
-\boxed{DiscardAssault=true}
+{DiscardAssault=true}
 $$
 
 ### 其它 assault-discard 场景
@@ -2568,24 +2544,24 @@ $$
 令自己已知 Assault 数为 `A`：
 
 $$
-\boxed{DiscardAssault\iff HP\le2\;\lor\;A>1}
+{DiscardAssault\iff HP\le2\;\lor\;A>1}
 $$
 
-该部分是响应 policy，不是 Final Utility。
+该部分只用于响应 policy，不进入 Final Utility。
 
-# 31. 当前突袭已知被动加伤
+# 30. 当前突袭已知被动加伤
 
 `knownPendingAssaultBonus()` 只读取公开可知的被动预览：
 
 $$
-\boxed{ KnownBonus =I[momentum]\cdot Momentum +I[gamble]\cdot AssaultBonus }
+{ KnownBonus =I[momentum]\cdot Momentum +I[gamble]\cdot AssaultBonus }
 $$
 
 Block willingness 中实际 `IncomingDamage` 会加上该已知 bonus。
 
-# 32. Leverage Assault willingness
+# 31. Leverage Assault willingness
 
-源码：`Evaluator.js:2659`。
+源码：`Evaluator.js`。
 
 设：
 
@@ -2622,35 +2598,35 @@ $$
 意愿分：
 
 $$
-\boxed{ W =0.42 +0.04\times EquipValue +TargetValue -FriendlyFirePenalty -0.2\times DefenseRisk -ConservePenalty }
+{ W =0.42 +0.04\times EquipValue +TargetValue -FriendlyFirePenalty -0.2\times DefenseRisk -ConservePenalty }
 $$
 
 使用 iff：
 
 $$
-\boxed{W\ge0.5}
+{W\ge0.5}
 $$
 
-# 33. Planning Dynamic Counter Gain 按卡牌公式
+# 32. Planning Dynamic Counter Gain 按卡牌公式
 
 前提：root actor 必须是 responder 的敌人，否则 gain=0。
 
 ## shockwave
 
 $$
-\boxed{ Gain=5\times(1-P_{block})\times I[Shield<1] }
+{ Gain=5\times(1-P_{block})\times I[Shield<1] }
 $$
 
 ## provoke
 
 $$
-\boxed{ Gain= \begin{cases} 1.1,&P(target\;assault)>0\\ 5,&otherwise \end{cases} }
+{ Gain= \begin{cases} 1.1,&P(target\;assault)>0\\ 5,&otherwise \end{cases} }
 $$
 
 ## duel
 
 $$
-\boxed{ Gain=5\times \begin{cases} 0.5,&P(target\;assault)>0\\ 1,&otherwise \end{cases} }
+{ Gain=5\times \begin{cases} 0.5,&P(target\;assault)>0\\ 1,&otherwise \end{cases} }
 $$
 
 ## scout
@@ -2670,19 +2646,19 @@ $$
 ## harvest
 
 $$
-\boxed{Gain=2\times1.1=2.2}
+{Gain=2\times1.1=2.2}
 $$
 
 ## charge
 
 $$
-\boxed{Gain=1.2}
+{Gain=1.2}
 $$
 
 ## exposeWeakness
 
 $$
-\boxed{Gain=1.5}
+{Gain=1.5}
 $$
 
 ## plunder
@@ -2691,6 +2667,16 @@ $$
 
 $$
 Gain=SelectedOwnerResourceStateValue + \begin{cases} SelectedActorResourceStateValue,&hand\\ 1.1,&equipment \end{cases}
+$$
+
+`uniform-hand` 的单张资源状态值：
+
+$$
+UnknownMass=\max(0,HandCount-KnownMass)
+$$
+
+$$
+UniformHandValue=\frac{KnownWeightedValue+UnknownMass\times AnonymousSingleValue}{HandCount}
 $$
 
 没有 selection 时：
@@ -2717,8 +2703,6 @@ $$
 Gain=1.1
 $$
 
-在该函数当前入口合同中，root actor 必须是 responder 的敌人，因此源码中依赖 `!actorEnemy` 的额外 `Threat` 分支在当前合法调用路径下不可达。
-
 ## transfer
 
 来源价值 `FromValue`、接收者价值 `ReceiverValue`：
@@ -2730,13 +2714,13 @@ $$
 ## counter
 
 $$
-\boxed{Gain=BaseValue(counter)=8}
+{Gain=BaseValue(counter)=8}
 $$
 
 ## seal / lightning
 
 $$
-\boxed{Gain=2.8}
+{Gain=2.8}
 $$
 
 ## leverage
@@ -2751,7 +2735,7 @@ $$
 
 其中非资源 root 的 $p_C=0$、$O_C=0$，因此退化为 $Gain>2.8$。
 
-# 34. Seal Counter
+# 33. Seal Counter
 
 当前剩余判定池给出 tactic judgment probability：
 
@@ -2768,16 +2752,16 @@ $$
 可避免负担：
 
 $$
-\boxed{ PreventedBurden =P_{skip}\times TurnOpportunity(holder) }
+{ PreventedBurden =P_{skip}\times TurnOpportunity(holder) }
 $$
 
 反制 iff：
 
 $$
-\boxed{PreventedBurden>2.8}
+{PreventedBurden>2.8}
 $$
 
-# 35. Root Counter paired-world gain
+# 34. Root Counter paired-world gain
 
 当 Controller/Simulator 已准备 root 的 `baseWorld` 与 `resolvedWorld`：
 
@@ -2785,27 +2769,29 @@ $$
 RootEffectValue =V_{state}(Resolved)-V_{state}(Base)
 $$
 
+Mutual Benefit 的 `Resolved` 为按 `EffectEventWorlds` 物化全部 receipt 的 World。
+
 若当前 `STAY` 会让 root 生效（`resolvesAtStay=true`）：
 
 $$
-\boxed{FlipGain=-RootEffectValue}
+{FlipGain=-RootEffectValue}
 $$
 
 否则：
 
 $$
-\boxed{FlipGain=+RootEffectValue}
+{FlipGain=+RootEffectValue}
 $$
 
-之后仍统一使用第 25.2 节的边际修正：
+之后仍统一使用第 24.2 节的边际修正：
 
 $$
-\boxed{FlipGain-O_C>C_0(1-p_C)}
+{FlipGain-O_C>C_0(1-p_C)}
 $$
 
 判断是否反制。
 
-# 36. Guardian STAY/AID paired-world value
+# 35. Guardian STAY/AID paired-world value
 
 Runtime 已有两个配对 World：
 
@@ -2826,22 +2812,22 @@ $$
 最终仍使用共享合同：
 
 $$
-\boxed{ AidValue-StayValue>\min(5,FutureInventory) }
+{ AidValue-StayValue>\min(5,FutureInventory) }
 $$
 
-# 37. Leverage Response Block Risk
+# 36. Leverage Response Block Risk
 
 由当前 finite-pool block density `d_block`：
 
 $$
-\boxed{ BlockRisk =\min(0.85,HandCount\times d_{block}) }
+{ BlockRisk =\min(0.85,HandCount\times d_{block}) }
 $$
 
 仅作为 `decideLeverageAssault()` 的 runtime fact。
 
-# 38. Search Scheduling 公式
+# 37. Search Scheduling 公式
 
-## 38.1 Root Scheduling 通用归一化
+## 37.1 Root Scheduling 通用归一化
 
 任何 root 的原始 `score` 除以预计分支工作量：
 
@@ -2852,7 +2838,7 @@ $$
 再有界化：
 
 $$
-\boxed{ RootSchedulingScore =\frac{Density}{1+|Density|} }
+{ RootSchedulingScore =\frac{Density}{1+|Density|} }
 $$
 
 因此始终压缩在 `(-1,1)`。
@@ -2865,7 +2851,7 @@ $$
 
 即仅保证合法 non-END 先展开。
 
-## 38.2 Skill root scheduling raw score
+## 37.2 Skill root scheduling raw score
 
 | **SkillRaw score** |                                     |
 | ------------------ | ----------------------------------- |
@@ -2887,7 +2873,7 @@ $$
 
 否则 1。
 
-## 38.3 Card root scheduling raw score
+## 37.3 Card root scheduling raw score
 
 初始：
 
@@ -2931,7 +2917,7 @@ Transfer：若 `selection.score` 有效，则直接用它作为 score。
 
 已有装备再打装备：减 `EquipmentKeepValueDeduction`。
 
-## 38.4 Root Branching Work
+## 37.4 Root Branching Work
 
 初始：
 
@@ -2957,9 +2943,9 @@ $$
 BranchingWork+=1+\sum_{responders}P(counter)
 $$
 
-# 39. Beam Action Utility / Search Prior
+# 38. Beam Action Utility / Search Prior
 
-## 39.1 END prior
+## 38.1 END prior
 
 若还有手牌：
 
@@ -2969,9 +2955,9 @@ $$
 
 否则 0。
 
-这只是 search prior，不是上文 END Final penalty。
+该值只用于 search prior，不进入 END Final penalty。
 
-## 39.2 Skill action prior
+## 38.2 Skill action prior
 
 | **Skill****`actionUtility`** |                                                   |
 | ---------------------------- | ------------------------------------------------- |
@@ -2991,7 +2977,7 @@ $$
 TargetPriority(target)
 $$
 
-## 39.3 breakArmyUtility
+## 38.3 breakArmyUtility
 
 手中突袭有效数量：
 
@@ -3012,20 +2998,20 @@ Extra=\min(1,\max(0,A-L))
 $$
 
 $$
-\boxed{ BreakArmyPrior=Extra\times RoleCardValue(actor,assault) }
+{ BreakArmyPrior=Extra\times RoleCardValue(actor,assault) }
 $$
 
-## 39.4 Lightning action prior
+## 38.4 Lightning action prior
 
 $$
-\boxed{ Prior_{lightning} =BaseValue(lightning) +0.4\times U(LightningLifecyclePoints) +IdentityDelta }
+{ Prior_{lightning} =BaseValue(lightning) +0.4\times U(LightningLifecyclePoints) +IdentityDelta }
 $$
 
-## 39.5 Seal action prior
+## 38.5 Seal action prior
 
-见第 40 节 `sealUseValue()`。
+见第 39 节 `sealUseValue()`。
 
-## 39.6 攻击目标 focus prior
+## 38.6 攻击目标 focus prior
 
 $$
 Focus =MissingHP\times3 +5I[HP\le2] +8I[HP\le1]
@@ -3041,17 +3027,57 @@ $$
 
 攻击己方：`-12`。
 
-## 39.7 Scout prior
+## 38.7 Resource / Charge / Transfer / Equipment prior
+
+Plunder / Destroy 的公开资源数量：
+
+$$
+ResourceCount=HandCount+EquipmentWeight
+$$
+
+其中 `EquipmentWeight=1` 用于 Plunder，`EquipmentWeight=2` 用于 Destroy；无装备时为 0。
+
+$$
+ActionUtility+=\min(5,ResourceCount)
+$$
+
+资源目标为队友时：
+
+$$
+ActionUtility-=30
+$$
+
+Assault、Duel、Plunder、Destroy 的敌方单目标加入 `TargetPriority(target)`；Shockwave 不加入该项。
+
+Charge：
+
+$$
+ActionUtility+=1.5(MaxEnergy-E)+4I[E<C\land E+1\ge C\land SkillUsesRemaining]
+$$
+
+Transfer：
+
+$$
+ActionUtility+=SelectionScore
+$$
+
+已有装备时使用装备牌：
+
+$$
+ActionUtility-=EquipmentKeepValueDeduction
+$$
+
+## 38.8 Scout prior
 
 $$
 RevealCoverage =\frac{\min(ActualNewRevealCount,UnknownCount)}{RevealLimit}
 $$
 
 $$
-\boxed{ ScoutPriorBonus =BaseValue(scout)\times RevealCoverage\times ScoutDecisionRelevance }
+{ ScoutPriorBonus =BaseValue(scout)\times RevealCoverage\times ScoutDecisionRelevance }
 $$
 
-## 39.7.1 `scoutDecisionRelevance()` 的轻量 prior 公式
+## 38.8.1 `scoutDecisionRelevance()` 的轻量 prior 公式
 
 该函数与正式 `privatePeekInformationValue()` 不同，只是 **Search Prior** 的廉价代理。
 
@@ -3076,7 +3102,7 @@ TeamThreat=\max_{ally}clamp\left( \frac{MaxHP-HP}{MaxHP}+\frac{IncomingExposure}
 $$
 
 $$
-\boxed{ ScoutRelevance =clamp\left(\max( U_B\cdot OffensiveDecision, U_C\cdot TacticDecision, U_A\cdot\max(TeamThreat,ProtectionDecision) )\right) }
+{ ScoutRelevance =clamp\left(\max( U_B\cdot OffensiveDecision, U_C\cdot TacticDecision, U_A\cdot\max(TeamThreat,ProtectionDecision) )\right) }
 $$
 
 ### 查看队友
@@ -3090,24 +3116,24 @@ EnemyKill=\max_{enemy}clamp\left(\frac{MaxHP-HP}{MaxHP}\right)
 $$
 
 $$
-\boxed{ ScoutRelevance =clamp\left(\max( AllySurvival\cdot\max(U_B,U_C), EnemyKill\cdot\max(OffensiveDecision,TacticDecision)\cdot U_A )\right) }
+{ ScoutRelevance =clamp\left(\max( AllySurvival\cdot\max(U_B,U_C), EnemyKill\cdot\max(OffensiveDecision,TacticDecision)\cdot U_A )\right) }
 $$
 
-## 39.8 Provoke prior
+## 38.9 Provoke prior
 
 对所有存活敌人：
 
 $$
-\boxed{ Bonus =\sum_e(1-P_e(assault))\times3 }
+{ Bonus =\sum_e(1-P_e(assault))\times3 }
 $$
 
-## 39.9 Duel prior
+## 38.10 Duel prior
 
 $$
-\boxed{ Bonus =(E[Assault_{actor}]-E[Assault_{target}])\times2 }
+{ Bonus =(E[Assault_{actor}]-E[Assault_{target}])\times2 }
 $$
 
-## 39.10 Symbiosis prior
+## 38.11 Symbiosis prior
 
 先：
 
@@ -3118,10 +3144,10 @@ $$
 然后：
 
 $$
-\boxed{ Value= \begin{cases} 8+Net+IdentityDelta,&Net>0\\ -9+Net+IdentityDelta,&Net\le0 \end{cases} }
+{ Value= \begin{cases} 8+Net+IdentityDelta,&Net>0\\ -9+Net+IdentityDelta,&Net\le0 \end{cases} }
 $$
 
-# 40. Seal Search Prior
+# 39. Seal Search Prior
 
 非法目标：
 
@@ -3150,12 +3176,12 @@ FUTURE\_DISCOUNT=0.65
 $$
 
 $$
-\boxed{ SealUseValue =BaseValue(seal) +P_{skip}\times TurnOpportunity(target)\times0.65\times Timing }
+{ SealUseValue =BaseValue(seal) +P_{skip}\times TurnOpportunity(target)\times0.65\times Timing }
 $$
 
 这只进入 search prior，不进入 Final StateDelta。
 
-# 41. Target Priority
+# 40. Target Priority
 
 源码：`StateValue.targetPriorityScore()`、`Evaluator.targetPriority()`。
 
@@ -3178,16 +3204,16 @@ $$
 难度缩放 target prior：
 
 $$
-\boxed{TargetPriority =TargetPriorityScore\times TARGET\_PRIORITY\_WEIGHT\times DifficultyMultiplier}
+{TargetPriority =TargetPriorityScore\times TARGET\_PRIORITY\_WEIGHT\times DifficultyMultiplier}
 $$
 
 其中 `TARGET_PRIORITY_WEIGHT=0.12`，由 Evaluator 作为 Target Priority Search Prior 的唯一权重 authority。
 
 非敌方或倍率 0：返回 0。
 
-# 42. Hidden / Domain Search Prior
+# 41. Hidden / Domain Search Prior
 
-## 42.1 Assault hidden block prior
+## 41.1 Assault hidden block prior
 
 对 Searcher 提供的匿名 hidden-world 样本：
 
@@ -3196,12 +3222,12 @@ BlockSampleRate =\frac{\#\{world:target\;contains\;block\}}{N}
 $$
 
 $$
-\boxed{HiddenPrior=-1.5\times BlockSampleRate}
+{HiddenPrior=-1.5\times BlockSampleRate}
 $$
 
 仅 assault。
 
-## 42.2 Expose / Assault marginal domain prior
+## 41.2 Expose / Assault marginal domain prior
 
 Searcher 通过 paired worlds 得到：
 
@@ -3209,10 +3235,10 @@ Searcher 通过 paired worlds 得到：
 - `assaultStacksCredit`
 
 $$
-\boxed{DomainPrior =0.4\times U(exposeMarginal+assaultStacksCredit)}
+{DomainPrior =0.4\times U(exposeMarginal+assaultStacksCredit)}
 $$
 
-## 42.3 Burning Field search credit
+## 41.3 Burning Field search credit
 
 $$
 SearchCredit=8
@@ -3220,23 +3246,23 @@ $$
 
 其它动作 0。
 
-## 42.4 总 Search Prior
+## 41.4 总 Search Prior
 
 $$
-\boxed{SearchPrior =HiddenPrior +ActionUtility +SearchCredit +DomainPrior}
+{SearchPrior =HiddenPrior +ActionUtility +SearchCredit +DomainPrior}
 $$
 
 所有这些都明确不进入 Final Utility。
 
-# 43. Expose Weakness paired-world marginal
+# 42. Expose Weakness paired-world marginal
 
-## 43.1 正边际
+## 42.1 正边际
 
 $$
 PositiveMarginal =\max(0,V_{state}(Boosted)-V_{state}(Baseline))
 $$
 
-## 43.2 Root provenance
+## 42.2 Root provenance
 
 $$
 Provenance_0=\max(0,RootExposeStacks)
@@ -3254,9 +3280,9 @@ $$
 P_{next} =\max\left(0,P_{current}\times\max\left(0,\frac{Stacks_{after}}{Stacks_{before}}\right)\right)
 $$
 
-如果不是 assault 则保持不变。
+非 assault 动作保持不变。
 
-# 44. Response Counterfactual 诊断公式
+# 43. Response Counterfactual 诊断公式
 
 这部分只做 diagnostics，不重复计入 Final Utility。
 
@@ -3280,29 +3306,45 @@ $$
 
 `Projected` 仅用于 response attribution ledger，不再次加进 transition value。
 
-# 45. Owner Ledger / Diagnostic Projection
+# 44. Owner Ledger / Diagnostic Projection
+
+before ledger 使用 before ProbabilityState 的 Radar judgment；after ledger 使用 after ProbabilityState 的 Radar judgment。
 
 对每个 owner 和每个 value field：
 
 $$
-\boxed{FieldDelta=AfterField-BeforeField}
+{FieldDelta=AfterField-BeforeField}
 $$
 
 Owner total：
 
 $$
-\boxed{OwnerTotal=\sum Fields}
+{OwnerTotal=\sum Fields}
 $$
 
-其中字段被归类为：
+Seal 的 owner-local StateValue contribution：
 
-- generic：handCount、energy
-- material：hp、shield、hp3Risk、hp2Risk、info、stacks、equipmentDelta、energyDeviceFuture、bubbleMachineFuture、death
-- threat：currentThreat、futureInventory、energyPressure、markThreat、radar
-- specific：handRole、equipmentRole
+$$
+SealOwnerValue=-LocalSealBurden
+$$
+
+阵营符号只在 Viewer projection 施加一次。
+
+字段分类：
+
+- generic：handCount
+- material：hp、shield、hp3Risk、hp2Risk、stacks、equipmentDelta、energyDeviceFuture、bubbleMachineFuture、battleDeviceFuture、recycleDeviceFuture、assaultMagazineFuture、death
+- threat：markThreat、residualExposureValue、radarFuture
+- specific：handRoleDelta、equipmentRole
 - outcome：danger
 - teamBurden：lightning、seal
 - teamValues：每个 battleTeam 一条 rescueReserve
+
+对每个 owner：
+
+$$
+\sum CategoryFields=OwnerTotal
+$$
 
 Viewer 投影：
 
@@ -3319,38 +3361,38 @@ Enemy=U(\sum EnemyOwnerTotal+\sum EnemyTeamValue)
 $$
 
 $$
-\boxed{ ProjectedTotal=Self+Ally-Enemy }
+{ ProjectedTotal=Self+Ally-Enemy }
 $$
 
 该 total 应等于相同 before/after StateDelta 的 HP-equivalent utility，只用于诊断一致性。
 
-# 46. Event / Probability 已有量：Evaluator 只消费，不重新定义
+# 45. Event / Probability 已有量：Evaluator 只消费，不重新定义
 
-以下量均来自 `ai/Event/Probability`，不是 Evaluator 自己的第二套概率系统。
-
-## 46.1 `PROBABILITY_EPSILON`
-
-$$
-\boxed{PROBABILITY\_EPSILON=10^{-12}}
-$$
-
-源码：`Event/Probability/Branch.js:21`。
-
-## 46.2 `clampProbability(x)`
+以下量均由 `ai/Event/Probability` 提供，Evaluator 不另建概率状态。
+`
+## 45.1 `PROBABILITY_EPSILON`
 
 $$
-\boxed{clamp(x)=\max(0,\min(1,x))}
+{PROBABILITY\_EPSILON=10^{-12}}
+$$
+
+源码：`Event/Probability/Branch.js`。
+
+## 45.2 `clampProbability(x)`
+
+$$
+{clamp(x)=\max(0,\min(1,x))}
 $$
 
 非数值按 0。
 
-## 46.3 `cardAvailability(card)`
+## 45.3 `cardAvailability(card)`
 
 $$
-\boxed{Availability=clamp(card.availability\;??\;1)}
+{Availability=clamp(card.availability\;??\;1)}
 $$
 
-## 46.4 `queryPlayerHandProbability(...)`
+## 45.4 `queryPlayerHandProbability(...)`
 
 Evaluator 使用其输出：
 
@@ -3360,28 +3402,28 @@ Evaluator 使用其输出：
 
 具体 finite-pool 算法由 Event/Probability 唯一拥有，Evaluator 不展开真实隐藏实体。
 
-## 46.5 `queryCurrentCardCounts(probabilityState)`
+## 45.5 `queryCurrentCardCounts(probabilityState)`
 
 返回当前有限剩余牌池的定义计数，用于：
 
 - Radar judgement；
 - Scout entropy；
-- Mutual Benefit draft；
+- Mutual Benefit receipt pool；
 - anonymous resource expectation；
 - rescue hypergeometric；
 - response density。
 
-## 46.6 `probabilityFromCurrentCounts(counts,id)`
+## 45.6 `probabilityFromCurrentCounts(counts,id)`
 
 返回给定 definition 在当前有限池中的 density/probability primitive。
 
 Evaluator 用于：Scout entropy、Leverage block risk、rescue density 等。
 
-## 46.7 `hypergeometricProbabilityAtLeast(...)`
+## 45.7 `hypergeometricProbabilityAtLeast(...)`
 
 救援未知 Recover 数量计算使用的无放回超几何尾概率。
 
-## 46.8 `buildRadarJudgmentProbabilities(...)`
+## 45.8 `buildRadarJudgmentProbabilities(...)`
 
 从当前 remaining finite pool 返回：
 
@@ -3392,7 +3434,7 @@ Evaluator 用于：Scout entropy、Leverage block risk、rescue density 等。
 
 Evaluator 使用 `.tactic` 计算 exposure mitigation 与 avoided Block demand，并使用 `.basic` 计算 expected basic judgment draw value；StateValue 不复制类别概率或 finite-pool 算法。
 
-## 46.9 `tacticJudgmentProbability(...)`
+## 45.9 `tacticJudgmentProbability(...)`
 
 用于 Seal counter：
 
@@ -3400,17 +3442,17 @@ $$
 P_{skip}=1-P_{tacticJudgment}
 $$
 
-## 46.10 `sealOutcomeProbabilities(...).skipAction`
+## 45.10 `sealOutcomeProbabilities(...).skipAction`
 
 Seal 生命周期的实际跳过行动概率；用于正式 `sealTeamBurden` 和 Seal prior。
 
-## 46.11 `getRangeConditionBranches(...)`
+## 45.11 `getRangeConditionBranches(...)`
 
 返回望远镜/屏障等共享距离条件的联合概率世界；`assaultRangeAllocation()` 在此基础上分配有限突袭库存。
 
-# 47. Domain 已有规则量：Evaluator 只读取
+# 46. Domain 已有规则量：Evaluator 只读取
 
-## 47.1 `getMaxEnergy(player)`
+## 46.1 `getMaxEnergy(player)`
 
 唯一最大能量规则 authority；用于：
 
@@ -3418,7 +3460,7 @@ Seal 生命周期的实际跳过行动概率；用于正式 `sealTeamBurden` 和
 - END overflow；
 - END skill readiness。
 
-## 47.2 `getTurnEnergyBreakdown(player)`
+## 46.2 `getTurnEnergyBreakdown(player)`
 
 提供：
 
@@ -3432,29 +3474,29 @@ $$
 G=baseAmount+teamBonus+equipmentBonus
 $$
 
-## 47.3 `activeSkillCost`
+## 46.3 `activeSkillCost`
 
 Canonical World 已携带正式技能费用；普通技能的 END `S(E)` 不重新读取/解释技能定义。
 X 技能反事实只使用 canonical World 的 `energy/maxEnergy` 与真实 Simulator 结算。
 
-## 47.4 `getRecoverHealAmount()` / `calculateHealAmount()`
+## 46.4 `getRecoverHealAmount()` / `calculateHealAmount()`
 
 分别用于：
 
 - 濒死救援所需 Recover 数量；
 - Symbiosis 的真实治疗量。
 
-## 47.5 `getAliveRing()`
+## 46.5 `getAliveRing()`
 
 只用于 Seal 的座次 timing prior。
 
-## 47.6 `getRequiredBlockCount()`
+## 46.6 `getRequiredBlockCount()`
 
 Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取普通需求与军火库需求；每个独立需求对应一次 judgment opportunity，StateValue 不硬编码军火库数量。
 
-# 48. 全部模块级数值常量总表
+# 47. 全部模块级数值常量总表
 
-## 48.1 StateValue.js
+## 47.1 StateValue.js
 
 | **常量值类型**             |      |                            |
 | -------------------------- | ---- | -------------------------- |
@@ -3467,7 +3509,7 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 | `HP3_RISK_WEIGHT`          | 0.2  | State Value                |
 | `HP2_RISK_WEIGHT`          | 0.6  | State Value                |
 
-## 48.2 CardValue.js
+## 47.2 CardValue.js
 
 | **常量值类型**                   |      |                             |
 | -------------------------------- | ---- | --------------------------- |
@@ -3491,7 +3533,7 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 
 `UNKNOWN_HAND_EXPECTED_VALUE` 只由 `getUnknownTransferCardValue()`、`getResourceUnknownUtility()` 与 `getUnknownAcquisitionUtility()` 在无有效 finite-pool 时消费；enemy Plunder 通过 `2 × UNKNOWN_HAND_EXPECTED_VALUE` 推导，不存在 `11.6` 第二 authority。
 
-## 48.3 Evaluator.js
+## 47.3 Evaluator.js
 
 | **常量值类型**                        |      |                          |
 | ------------------------------------- | ---- | ------------------------ |
@@ -3508,7 +3550,7 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 | `END_PRIOR_PENALTY`                   | 0.8  | Search prior only        |
 | `SKILL_THRESHOLD_PRIOR_BONUS`         | 4    | Search prior             |
 
-## 48.4 Event
+## 47.4 Event
 
 | **常量值Owner**       |         |                          |
 | --------------------- | ------- | ------------------------ |
@@ -3527,7 +3569,7 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 
 这些均已在各自公式章节逐项列出。
 
-# 49. 明确不进入 Final Utility 的值
+# 48. 明确不进入 Final Utility 的值
 
 以下虽然都由 Evaluator/CardValue/StateValue 计算，但**只用于搜索、策略或诊断**：
 
@@ -3550,7 +3592,7 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 
 它们不能和 `StateValue(Y)-StateValue(X)` 再相加，否则会形成 double count。
 
-# 50. 架构责任总结
+# 49. 架构责任总结
 
 | **层拥有什么公式不拥有什么** |                                                              |                                                              |
 | ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |

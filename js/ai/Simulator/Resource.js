@@ -933,6 +933,60 @@ export const withResource = (Base) => class Resource extends Base {
 
   /*
   功能
+  把一张公开确定领取牌按同一事件世界写入接收者手牌表示或直接装备槽。
+
+  调用方
+  Simulator.buildPublicCardReceiptOutcomes。
+
+  输入
+  World、接收者、cardId/definitionId、领取事件 Worlds，以及装备/牌池来源选项。
+
+  输出
+  实际领取的概率质量；无效输入或零质量返回零。
+
+  读取状态
+  Probability viewer、接收者 hand/knownCards/handCount、装备与领取事件 Worlds。
+
+  写入状态
+  手中结果写 hand 或 knownCards、handCount 与有限池；装备结果只写 equipment 与有限池。
+
+  调用函数
+  addSimulatedCardToHand、addSimulatedKnownCard、mutateHandProbability、setSimulatedEquipment、eventProbability。
+
+  边界与不变量
+  viewer 与 non-viewer 保持 canonical hand/knownCards 表示；同一公开定义只从 draw pool 移除一次；
+  直接装备结果不得先进入 hand bucket，也不得残留 hand identity 或 handCount。
+  */
+  receivePublicCard(state, player, identity, acquisitionWorlds, options = {}) {
+    if (!state || !player || !identity?.cardId || !identity?.definitionId
+      || !Array.isArray(acquisitionWorlds)) return 0;
+    const { equip = false, consumeFromDrawPool = false } = options ?? {};
+    const receivedProbability = this.eventProbability(acquisitionWorlds);
+    if (receivedProbability <= PROBABILITY_EPSILON) return 0;
+    if (equip) {
+      this.setSimulatedEquipment(player, identity.definitionId, receivedProbability);
+    } else if (Array.isArray(player.hand)) {
+      this.addSimulatedCardToHand(state, player, {
+        id:identity.cardId,
+        definitionId:identity.definitionId
+      }, acquisitionWorlds);
+    } else {
+      this.addSimulatedKnownCard(state, player, identity, acquisitionWorlds);
+    }
+    if (consumeFromDrawPool) {
+      this.mutateHandProbability(state, {
+        type:equip ? "REMOVE" : "ADD",
+        sourceBucketId:"outside/drawPool",
+        targetBucketId:equip ? "observed/removal" : player.id,
+        definitionId:identity.definitionId,
+        probability:receivedProbability
+      });
+    }
+    return receivedProbability;
+  }
+
+  /*
+  功能
   用同一联合条件世界从来源移除并向接收者增加确定牌身份。
 
   调用方

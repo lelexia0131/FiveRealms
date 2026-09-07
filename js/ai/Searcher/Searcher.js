@@ -606,12 +606,13 @@ considerIncumbent 与 prune。
   只写独立候选记录和显式诊断。
 
   调用函数
-  materializeValueTerms、Simulator.buildSkillEnergyCounterfactualWorlds、
+  materializeValueTerms、Simulator.getTransitionEvaluationWorlds/buildSkillEnergyCounterfactualWorlds、
   Evaluator.evaluateTransition/transitionDelta/composeSearchPrior。
 
   边界与不变量
   Searcher 只机械组装各 owner 的结果；X 技能 World clone、能量替换与技能结算全部归 Simulator，
-  Searcher 不写 World、不定义 value formula；调用方必须 finalize 后才能登记候选。
+  Searcher 不写 World、不定义 value formula；Simulator 已准备的 effect baseline 只透传给 Evaluator；
+  调用方必须 finalize 后才能登记候选。
   */
   evaluateCandidate({
     action,
@@ -642,11 +643,14 @@ considerIncumbent 与 prune。
       player.id,
       simulator
     );
+    const transitionEvaluationWorlds = simulator.getTransitionEvaluationWorlds?.(afterState)
+      ?? null;
     const baseTerms = assertCompleteTransitionTerms(this.evaluator.evaluateTransition({
       action,
       player,
       beforeState,
       afterState,
+      effectBaselineState:transitionEvaluationWorlds?.effectBaselineState ?? null,
       depth,
       resolutionScale,
       beforeLightningOutcomeSets,

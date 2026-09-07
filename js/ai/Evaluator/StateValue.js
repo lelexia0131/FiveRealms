@@ -1683,11 +1683,11 @@ death 与不含 hand/equipment intrinsic asset 的 terms。
 无。
 
 调用函数
-Probability、Threat primitives、skillReadinessThreat、各装备 Future Utility。
+Probability、Threat primitives 与各装备 Future Utility。
 
 边界与不变量
-不得拥有手牌或装备资产公式；雷达只消费 Evaluator 已计算的实际手牌状态值与 canonical Probability，
-skillReadiness 只评价已有技能在当前/下一能量阶段的可用机会；不得恢复按当前能量线性计分；
+不得拥有手牌或装备资产公式；雷达只消费 Evaluator 已计算的实际手牌状态值与 canonical Probability；
+Final StateValue 不包含技能 readiness，也不得恢复按当前能量线性计分；
 所有装备 Future 只表示尚未兑现的独立未来状态后果；普通手牌 Base material 不属于 StateValue，
 HandCount 与合法 HandRoleDelta 通过 Evaluator 的唯一 primitive 计入 Future。
 */
@@ -1751,7 +1751,6 @@ export function statePlayerValueTerms(
         player,
         equipmentFutureInputs?.blockSpendValueByPlayerId
       ),
-      skillReadiness: skillReadinessThreat(player),
       stacks: (player.exposeWeaknessStacks ?? 0) * 3,
       markThreat: -markThreat * 2,
       residualExposureValue: -residualExposure,

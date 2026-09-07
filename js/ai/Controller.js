@@ -495,7 +495,7 @@ function createRuntimeComposition({
     decideBlock:(...args) => evaluator.decidePlanningBlock(...args),
     decideGuardianAid:(...args) => evaluator.decidePlanningGuardianAid(...args),
     decideDyingRescue:(...args) => evaluator.decidePlanningDyingRescue(...args),
-    choosePublicCardId:(...args) => evaluator.choosePublicCardId(...args),
+    choosePublicCardOutcome:(...args) => evaluator.choosePublicCardOutcome(...args),
     resolveDiscardCandidates:chooseDiscardCandidates
   });
   return { evaluator, simulatorFactory };
@@ -1697,7 +1697,7 @@ export class Controller {
     );
     const card = cards.find((candidate) => candidate.id === cardId) ?? null;
     this.recordMainThreadOperation(
-      "Evaluator.choosePublicCardId",
+      "Evaluator.choosePublicCardOutcome",
       startedAt,
       { candidateCount:Array.isArray(cards) ? cards.length : "unavailable" }
     );
