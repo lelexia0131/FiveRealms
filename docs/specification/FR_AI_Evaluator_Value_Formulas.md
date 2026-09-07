@@ -1226,7 +1226,7 @@ $$
 总点数：
 
 $$
-\boxed{ P_{option} =P_{derivedOption}+P_{materializedOption} }
+\boxed{ P_{option} =P_{derivedOption} }
 $$
 
 其中：
@@ -1237,8 +1237,6 @@ $$ P_{derivedOption}= \begin{cases} ScoutOption,&Scout\\ SpyGapOption,&SpyGap\ i
 $$
 \boxed{ V_{option}=\frac{P_{option}}{5} }
 $$
-
-`materializedTransitionOptionPoints` 是上游已经完成的通用 option 结果，例如 adaptive-information 结果；Evaluator 不反向调用 Searcher。
 
 ## 16.1 Scout / SpyGap 私密信息价值
 
@@ -1549,26 +1547,6 @@ EffectScale_{unknown}=clamp_{[0,1]}\left(AnonymousSlots_{before}(source)-Anonymo
 $$
 
 这个差值已经表达该资源真实发生移除或转移的概率。
-
-## 16.5 Adaptive Information（保留的通用 option API）
-
-Evaluator 公式：
-
-$$
-\boxed{ AdaptiveInfo =\max\left(0,\frac{1}{N}\sum_{j=1}^{N}BestInformed_j-BestBaseline\right) }
-$$
-
-也就是：
-
-$$
-\boxed{E[\max U]-\max E[U]}
-$$
-
-Searcher 只负责物化 hidden worlds / follow-up；公式 owner 仍是 Evaluator。当前窥隙使用 16.1 的实际新增未知数量，不请求把至多两张观察扩大成完整 hidden-world 专化。
-
-源码：`Evaluator.js:2236 adaptiveInformationOptionPoints()`。
-
-
 
 # 18. END Opportunity Penalty
 

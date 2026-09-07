@@ -1388,7 +1388,6 @@ statePointsToUtility(points) = points / HP_VALUE
 RawStateDelta           = StateValuePoints(after) - StateValuePoints(before)
 DeltaStateUtility       = statePointsToUtility(RawStateDelta)
 TransitionOptionPoints  = derivedActionOptionPoints
-                        + materializedAdaptiveInformationOptionPoints
 TransitionOptionUtility = statePointsToUtility(TransitionOptionPoints)
 
 BaseTransition
@@ -1437,7 +1436,7 @@ FinalTransition
 
 X 技能不使用 `S(E)` / `D(X)`。Evaluator 识别该分类并给出 `E(next)=min(E+1,Emax)`；Searcher 只用 Simulator 在同一当前 World clone 上替换行动者能量并结算同一技能，不模拟下一回合、摸牌或敌方行动。Evaluator 比较已准备的 `RawStateDelta(X,E)` 与 `RawStateDelta(X,E(next))`，用现有 `ENERGY_STATE_WEIGHT=1.2` 计算 `Ps(X)`。满能量时两个 delta 相等，`Ps(X)=1.2`；该项不做非负截断。
 
-通用 Adaptive information API 仍保持 `E[max U] - max E[U]`，但当前窥隙不再把至多两张的新观察近似成完整 hidden-world 专化。Simulator 为每次实际伤害记录实际新增未知数量，Evaluator 复用私密查看信息公式，把对应 value 作为 generic `TransitionOptionPoints` 进入 `evaluateTransition`；Searcher candidate schema 与 `composeTransitionValue` 仍不知道 SpyGap。
+Simulator 为每次实际伤害记录实际新增未知数量，Evaluator 复用私密查看信息公式，把对应 value 作为 generic `TransitionOptionPoints` 进入 `evaluateTransition`；Searcher candidate schema 与 `composeTransitionValue` 仍不知道 SpyGap。
 
 `responseNet`、raw owner ledger、static CardValue、Search Prior 以及 expose/assault 的有限 beam 前瞻只用于诊断或搜索排序，不进入 final composition。强制弃牌机会只通过上述完整 sibling 的 `Pd` 进入 END，不能复制为另一份牌值或 fallback 评分。`STATE_UTILITY_PRIOR_WEIGHT=0.4` 只是为保持 beam 相对排序的 heuristic：它可消费按 HP 基线归一化的输入，但不是 Final Utility 换算，也不是 `0.08` 的替代。Raw State delta 在路径上严格 telescoping；depth 不缩放动作价值。
 
@@ -1675,7 +1674,7 @@ STEP 5.8 不重新设计架构，只在既有 owner 内关闭 value placement、
 - Radar 判得 Block 在同一防御分支立即加入有效容量；判定前容量使用 canonical count 字段保存，支付按判定槽位消费或保留 identity。防御成本只计算 demand 扣除同次判得 Block 后的净 HandState loss，避免 HandCount 与 HandRole phantom。
 - BattleDevice、RecycleDevice、Radar 与 AssaultMagazine 的动态 Future 由 StateValue 唯一拥有；Destroy/Plunder 只通过 before/after RawStateDelta 看见其 denial/acquisition context，不存在装备名 special bonus。
 - SpyGap 由 Simulator 的逐次实际伤害信息事件与 Evaluator 的实际新增未知数量共同决定；已知牌和同一路径已查看槽位不重复计值，结果并入 generic transition option。
-- Searcher generic schema、candidate 与 final composition 中的 SpyGap 具体字段/参数仍为零；通用 adaptive-information API 保留，但当前窥隙不请求完整 hidden-world 专化。
+- Searcher generic schema、candidate 与 final composition 中的 SpyGap 具体字段/参数仍为零。
 
 ### Test debt closure
 
@@ -1683,7 +1682,7 @@ STEP 5.8 Batch A 起始完整入口为 `1160/1754`，失败 `594`；当批 activ
 
 - 物理删除 `561` 个只保护旧 owner/private schema 或无效扁平 fixture 的测试注册；其中 old architecture `140`、stale expectation `155`、broken canonical fixture `266`。
 - `34` 个原失败合同通过 canonical Action/World fixture、harness 修正或已证明的 production root fix 转绿。
-- 当批新增 `3` 个 canonical 合同：V01 死价值链、V02 generic TransitionOption，以及后来确认保护了错误持久化合同的 Resource `energyBranches` 保留测试。
+- 当批新增的现行 canonical 合同包括 V01 死价值链，以及后来确认保护了错误持久化合同的 Resource `energyBranches` 保留测试。
 - 清理前的 `1192` 个通过测试在清理后一个也未丢失；active `OLD_ARCHITECTURE_TEST`、`STALE_EXPECTATION`、`BROKEN_CANONICAL_FIXTURE`、`AI_REAL_REGRESSION` 均为零。
 
 Post-5.8 Residue Cleanup B 将错误 Resource 合同迁移为 current-event energy uncertainty 与连续 transition genealogy 两项合同；当批完整入口为 `1199/1199`。

@@ -15466,7 +15466,7 @@ Evaluator.evaluateTransition、endOpportunityPoints。
 
 边界与不变量
 不新增价值计算；Ps 只读取 already-materialized skill transition 的完整 raw stateDelta，
-忽略非技能、负变化与 transition option，并由 Evaluator 选择最大正变化。
+忽略非技能与负变化，并由 Evaluator 选择最大正变化。
 */
 async function legalSkillStateValueOpportunityContract() {
   const game = makeBenchmarkGame({
@@ -15504,25 +15504,19 @@ async function legalSkillStateValueOpportunityContract() {
     });
     const baselineWorld = structuredClone(world);
     baselineWorld.players.find((entry) => entry.id === actor.id).hp = 2;
-    const transitionTerms = (action, afterState, materializedTransitionOptionPoints = 0) => (
+    const transitionTerms = (action, afterState) => (
       evaluator.evaluateTransition({
         action,
         player: baselineWorld.players.find((entry) => entry.id === actor.id),
         beforeState: baselineWorld,
-        afterState,
-        materializedTransitionOptionPoints
+        afterState
       })
     );
 
     const smallerGainWorld = structuredClone(baselineWorld);
     smallerGainWorld.players.find((entry) => entry.id === actor.id).hp += 1;
-    const smallerSkillTerms = transitionTerms(skillAction, smallerGainWorld, 100);
+    const smallerSkillTerms = transitionTerms(skillAction, smallerGainWorld);
     assert.ok(smallerSkillTerms.stateDelta > 0, "生命正变化必须进入完整 StateValue delta");
-    assert.equal(
-      smallerSkillTerms.transitionOptionPoints,
-      100,
-      "generic transition option 只用于证明 Ps 不读取 baseTransition"
-    );
 
     const largerGainWorld = structuredClone(smallerGainWorld);
     largerGainWorld.players.find((entry) => entry.id === actor.id).shield += 1;
@@ -15957,7 +15951,6 @@ function xSkillCounterfactualCooperativeCheckpointContract() {
   });
   searcher.candidateFaults = [];
   searcher.materializeValueTerms = () => ({
-    adaptiveInformationOptionPoints: 0,
     exposeMarginal: 0,
     assaultStacksCredit: 0
   });
@@ -15996,102 +15989,6 @@ function xSkillCounterfactualCooperativeCheckpointContract() {
 test(
   "AI·搜索：X 技能能量反事实 TIME checkpoint 丢弃 partial candidate 且不记 fault",
   xSkillCounterfactualCooperativeCheckpointContract
-);
-
-/*
-功能
-锁定自适应信息结果只作为 generic TransitionOption 进入 BaseTransition。
-
-调用方
-AI 架构与价值归属回归测试。
-
-输入
-无；函数内构造 generic transition option 的 before/after World。
-
-输出
-Promise；公式、owner 或 generic final composition 边界回归时抛出断言。
-
-读取状态
-canonical World、Evaluator generic option 公式和 Searcher 生产源码。
-
-写入状态
-仅独立 after World clone。
-
-调用函数
-Evaluator.adaptiveInformationTarget、adaptiveInformationOptionPoints、evaluateTransition、composeTransitionValue。
-
-边界与不变量
-E[max U] - max E[U] 公式保持；Searcher 不得识别具体角色/技能，Final compose 只识别 generic value category。
-*/
-async function adaptiveInformationTransitionOptionClosure() {
-  const game = makeBenchmarkGame({
-    players: [
-      {
-        id: "adaptive-actor",
-        team: "dawn",
-        character: "shade-agent",
-        hand: [makeBenchmarkCard("assault", "adaptive-assault")]
-      },
-      { id: "adaptive-target", team: "dusk", character: "oath-warden", hand: [] }
-    ],
-    options: { actorId: "adaptive-actor", seed: 20260814, nodeBudget: 20 }
-  });
-  try {
-    const actor = game.state.players[0];
-    const world = createInitialWorld(
-      actor.id,
-      game.state,
-      deriveCurrentCardCounts(actor, game.state)
-    );
-    const after = structuredClone(world);
-    const action = createAction({
-      type: "card",
-      actorId: actor.id,
-      cardId: "assault",
-      cardInstanceId: "adaptive-assault",
-      targetIds: ["adaptive-target"]
-    });
-    const evaluator = game.aiController.evaluator;
-    assert.equal(evaluator.adaptiveInformationTarget(world, after, action, actor.id), null);
-    const optionPoints = evaluator.adaptiveInformationOptionPoints(1, [2, 4]);
-    assert.equal(optionPoints, 2);
-    const terms = evaluator.evaluateTransition({
-      action,
-      player: world.players.find((player) => player.id === actor.id),
-      beforeState: world,
-      afterState: world,
-      materializedTransitionOptionPoints: optionPoints
-    });
-    assert.equal(terms.transitionOptionPoints, 2);
-    assert.equal(terms.transitionOptionValue, statePointsToUtility(2));
-    assert.equal(terms.baseTransition, statePointsToUtility(2));
-    assert.equal(
-      evaluator.composeTransitionValue({ baseTransition: terms.baseTransition }),
-      statePointsToUtility(2)
-    );
-    const searcherCode = (await readFile(
-      projectFile("js/ai/Searcher/Searcher.js"),
-      "utf8"
-    )).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
-    assert.doesNotMatch(searcherCode, /spyGap|shade-agent|窥隙/iu);
-    const evaluatorCode = (await readFile(
-      projectFile("js/ai/Evaluator/Evaluator.js"),
-      "utf8"
-    )).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
-    const composeStart = evaluatorCode.indexOf("composeTransitionValue(");
-    const composeEnd = evaluatorCode.indexOf("\n  }", composeStart) + 4;
-    assert.doesNotMatch(
-      evaluatorCode.slice(composeStart, composeEnd),
-      /spyGap|shade-agent|窥隙|assault|scout|leverage|mutualBenefit/iu
-    );
-  } finally {
-    disposeBenchmarkGame(game);
-  }
-}
-
-test(
-  "AI·价值归属：V02 generic 信息选项只经 TransitionOption 进入最终价值",
-  adaptiveInformationTransitionOptionClosure
 );
 
 /*
@@ -22180,7 +22077,6 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
     exposeMarginalStackDelta: () => 0,
     assaultMarginalStackCount: () => 0,
     advanceTransitionProvenance: () => null,
-    adaptiveInformationTarget: () => null,
     evaluateTransition: ({ action }) => ({
       resolutionScale: 1,
       baseTransition: action.baseValue,
@@ -22475,7 +22371,6 @@ async function runSearcherFaultBoundaryFixture(mode) {
     exposeMarginalStackDelta: () => 0,
     assaultMarginalStackCount: () => 0,
     advanceTransitionProvenance: () => null,
-    adaptiveInformationTarget: () => null,
     evaluateTransition: ({ action }) => {
       if (mode === "before-incumbent-evaluator-fault" && action === assault) {
         throw new Error("synthetic Evaluator fault before incumbent");

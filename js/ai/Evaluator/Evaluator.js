@@ -3026,66 +3026,6 @@ export class Evaluator {
 
   /*
   功能
-  保留通用自适应信息查询边界；当前窥隙价值已由实际新增信息事件直接结算。
-
-  调用方
-  Searcher 的 generic adaptive-information orchestration。
-
-  输入
-  before/after Worlds、canonical Action 与 actor ID。
-
-  输出
-  需要物化延迟信息时返回目标 ID，否则返回 null。
-
-  读取状态
-  当前没有延迟物化字段。
-
-  写入状态
-  无。
-
-  调用函数
-  clampProbability。
-
-  边界与不变量
-  Searcher contract 保持稳定；窥隙不得再依赖一次性额度或把已经知道的牌完整重揭示。
-  */
-  adaptiveInformationTarget(_beforeState, _afterState, _action, _actorId) {
-    return null;
-  }
-
-  /*
-  功能
-  把未知身份条件下的最佳后续值组合为自适应信息选项点数。
-
-  调用方
-  Searcher 完成 generic hidden-world/follow-up traversal 后。
-
-  输入
-  未观察基线最佳值与每个条件世界的观察后最佳值。
-
-  输出
-  非负 raw transition-option points。
-
-  读取状态
-  只读传入数值。
-
-  写入状态
-  无。
-
-  调用函数
-  无。
-
-  边界与不变量
-  公式冻结为 E[max utility] - max E[utility]；空样本与负边际返回零。
-  */
-  adaptiveInformationOptionPoints(baselineBest, informedBestValues) {
-    if (!Number.isFinite(baselineBest) || !informedBestValues?.length) return 0;
-    const informedTotal = informedBestValues.reduce((sum, value) => sum + value, 0);
-    return Math.max(0, informedTotal / informedBestValues.length - baselineBest);
-  }
-
-  /*
-  功能
   返回一次破势候选新增加、可供后续突袭比较的层数。
 
   调用方
@@ -4666,8 +4606,7 @@ export class Evaluator {
   Searcher candidate evaluation path。
 
   输入
-  动作、actor、before/after、horizon depth、上游已计算的 resolution scale
-  与 Searcher 物化的 generic transition-option points。
+  动作、actor、before/after、horizon depth 与上游已计算的 resolution scale。
 
   输出
   各命名 term、X 技能的下一能量反事实输入、END 独立装备槽事实与 baseTransition 的普通对象。
@@ -4695,7 +4634,6 @@ export class Evaluator {
     afterState,
     depth = 1,
     resolutionScale = 1,
-    materializedTransitionOptionPoints = 0,
     beforeLightningOutcomeSets = [],
     afterLightningOutcomeSets = []
   }) {
@@ -4720,7 +4658,7 @@ export class Evaluator {
       beforeState,
       afterState,
       effectResolutionScale
-    ) + materializedTransitionOptionPoints;
+    );
     const transitionOptionValue = statePointsToUtility(transitionOptionPoints);
     const transferEvaluation = action?.type === "card" && action?.cardId === "transfer"
       ? this.evaluateTransferAction(action, player, beforeState)

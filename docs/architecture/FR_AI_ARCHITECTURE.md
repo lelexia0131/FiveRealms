@@ -1148,7 +1148,7 @@ TerminalHeldOption / FrontierValue
 FinalTransition
 ```
 
-`TransitionOption` 是 generic value category，包含从当前 action transition 派生的 card/resource option，以及由 Searcher 物化、Evaluator 定义公式和归类的 adaptive-information option。
+`TransitionOption` 是 generic value category，包含从当前 action transition 派生的 card、resource 与实际新增未知信息 option。
 
 Final aggregation 不得包含：
 
@@ -1157,7 +1157,7 @@ Final aggregation 不得包含：
 - 具体卡牌名、角色名或技能名；
 - SpyGap 或其他具体业务项的一级参数。
 
-SpyGap 的真实技能 transition 仍归 Simulator；角色/技能识别与 `E[max U] - max E[U]` 仍归 Evaluator；hidden-world/follow-up traversal 仍归 Searcher。Searcher generic candidate schema 和 Final compose 只消费 `TransitionOptionPoints/Value`。
+SpyGap 的真实技能 transition 仍归 Simulator，实际新增未知信息价值归 Evaluator。Searcher generic candidate schema 和 Final compose 只消费 `TransitionOptionPoints/Value`。
 
 11. Canonical 数据结构
 
