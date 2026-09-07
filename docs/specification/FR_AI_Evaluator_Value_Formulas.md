@@ -85,12 +85,6 @@ $$
 V_{transitionOption} = U(P_{transitionOption})
 $$
 
-所以普通没有特殊 option 的动作实际上是：
-
-$$
-\boxed{ V_{baseTransition} = \frac{V_{state}(Y)-V_{state}(X)}{5} }
-$$
-
 源码：`Evaluator.js:3647 evaluateTransition()`。
 
 ## 0.4 牌堆与装备判定基线
@@ -103,12 +97,6 @@ $$
 | 战术牌 | 56 |
 | 装备牌 | 17 |
 | 总计 | 165 |
-
-所有运行中判定概率继续从扣除合法已知牌后的 remaining finite pool 动态计算。标准完整牌堆的装备类别概率为：
-
-$$
-\boxed{P(\text{equipment})=\frac{17}{165}\approx10.3030\%}
-$$
 
 # 1. 哪些公式真正进入 Final Utility
 
@@ -206,8 +194,6 @@ $$
 V_{baseTransition}=-\infty
 $$
 
-注意：`depth` 只用于诊断，不缩放价值。
-
 # 3. Transition State Delta
 
 给定动作A前后 World：
@@ -218,12 +204,6 @@ $$
 
 $$
 \boxed{ \Delta State =V_{state}(Y)-V_{state}(X) }
-$$
-
-换成最终 Utility：
-
-$$
-\boxed{ V_{stateDelta}=\frac{\Delta State}{5} }
 $$
 
 源码：`Evaluator.js:3609 transitionDelta()`。
@@ -275,8 +255,6 @@ $$
 $$
 
 其中前半由 `StateValue.js` 唯一拥有，手牌/装备 intrinsic asset 由 `CardValue.js` 唯一拥有。
-
-`HP3Risk` 与 `HP2Risk` 按玩家当前 HP 互斥：HP=3 时只有前者非零，HP=2 时只有后者非零，其它 HP 二者均为 0。
 
 源码：`StateValue.js:857 statePlayerValueTerms()`；`CardValue.js:744 cardPlayerValueTerms()`；`Evaluator.js:3374 playerValueTerms()`。
 
@@ -450,12 +428,6 @@ $$
 \boxed{ CurrentThreat = P_{assault}\times HP\_VALUE\times AssaultAllocation }
 $$
 
-即：
-
-$$
-CurrentThreat=5\times P_{assault}\times AssaultAllocation
-$$
-
 ## 6.3 未来突袭库存
 
 为了避免同一第一张突袭同时计入“当前威胁”和“未来库存”：
@@ -561,6 +533,7 @@ $$
 ## 7.2 低血量风险与附加剩余暴露度
 
 HP=3 与 HP=2 风险共用同一套附加暴露数据链：
+`defensiveStateValue()` 与完整玩家 StateValue 都复用 `lowHpThreatRiskTerms()`，一次取得互斥的 `hp3Risk` 与 `hp2Risk`。
 
 $$
 BufferExposure=\sum_{enemy}Exposure_{enemy\rightarrow player}
@@ -777,8 +750,6 @@ $$
 EquipmentStaticAsset=(BaseAiValue+RoleDelta)\times R_e\times RESOURCE\_MATERIAL\_SCALE
 $$
 
-`RoleCardValue = BaseAiValue + RoleDelta`；在“静态卡牌/资源资产”语义下二者同级、同尺度。现有 `HandRoleDelta` 是 viewer 自己已知手牌的独立 contextual State term，本轮没有全局重标。装备产生的真实状态后果（RadarFuture、EnergyDeviceFuture、BubbleMachineFuture、BattleDeviceFuture、RecycleDeviceFuture、AssaultMagazineFuture、distance/exposure）不属于静态资产，不乘材料尺度。
-
 ## 9.4 通用 Block 防御成本
 
 源码：`StateValue.expectedDefenseCost()`、`StateValue.expectedDamageStateLoss()`。
@@ -886,16 +857,6 @@ AssaultMagazineFuture=\max(0,OpportunityValue(withMagazine)-OpportunityValue(wit
 $$
 
 只有 1 张 Assault 时两世界均只能兑现 1 次，Future 为 0；库存超过基础上限时才出现正边际。retention 已在 `expectedUsableAssaultsNextTurn(withMagazine)` 内混合，外层不得再次相乘。
-
-## 9.8 装备 Future 防重复账本
-
-| term | StateValue | Resource special bonus | 已兑现 transition | retention |
-| --- | --- | --- | --- | --- |
-| BattleDeviceFuture | 一次 | 无 | 实际伤害/Block 支付只在 after state | 外层一次 |
-| RecycleDeviceFuture | 一次 | 无；旧 RecycleHeld 已删除 | 实际摸牌进入 HandCount，剩余额度同步下降 | 外层一次 |
-| AssaultMagazineFuture | 一次 | 无 | 实际 Assault 后果只在 after state | `expectedUsableAssaultsNextTurn()` 内一次 |
-
-三项均属于正式 StateValue 的 `RawStateDelta / ContextualFunctional`，不属于 Search Prior，也不属于 `resourceSelectionPreference()` 的装备名称 bonus。`BubbleMachineFuture` 的既有公式、规则与数值本轮未修改。
 
 # 10. 静态卡牌价值常量
 
@@ -3239,10 +3200,10 @@ $$
 难度缩放 target prior：
 
 $$
-\boxed{TargetPriority =TargetPriorityScore\times0.12\times DifficultyMultiplier}
+\boxed{TargetPriority =TargetPriorityScore\times TARGET\_PRIORITY\_WEIGHT\times DifficultyMultiplier}
 $$
 
-其中 0.12 是局部冻结系数 `Target priority` （见数值常量总表 48.4 Event）。
+其中 `TARGET_PRIORITY_WEIGHT=0.12`，由 Evaluator 作为 Target Priority Search Prior 的唯一权重 authority。
 
 非敌方或倍率 0：返回 0。
 
@@ -3565,6 +3526,7 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 | `TURN_TIMING_STEP`                    | 0.1  | Seal search prior        |
 | `BURNING_FIELD_SEARCH_PRIOR`          | 8    | Search prior             |
 | `STATE_UTILITY_PRIOR_WEIGHT`          | 0.4  | Search prior             |
+| `TARGET_PRIORITY_WEIGHT`              | 0.12 | Target priority search prior |
 | `END_PRIOR_PENALTY`                   | 0.8  | Search prior only        |
 | `SKILL_THRESHOLD_PRIOR_BONUS`         | 4    | Search prior             |
 
@@ -3578,7 +3540,6 @@ Block demand 数量的 Domain authority。Radar `expectedBlockDemand()` 读取�
 
 - Counter cost `×0.35`
 - Scout transition information `×0.35`
-- Target priority `×0.12`
 - Assault hidden prior `-1.5`
 - Root density `x/(1+|x|)`
 - Provoke prior `×3`

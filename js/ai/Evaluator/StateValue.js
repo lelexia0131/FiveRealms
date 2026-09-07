@@ -708,16 +708,18 @@ expectedDamageStateLoss。
 无。
 
 调用函数
-hp2ThreatRiskValue、shieldStateValue。
+lowHpThreatRiskTerms、shieldStateValue。
 
 边界与不变量
 阵亡严格返回现有死亡值；不包含材料、RoleDelta 或任何攻击来源价值。
 */
 function defensiveStateValue(player, residualExposure) {
   if (!player.alive) return -DEATH_VALUE;
+  const { hp3Risk, hp2Risk } = lowHpThreatRiskTerms(player, residualExposure);
   return player.hp * HP_VALUE
     + (player.hp <= 1 ? -DANGER_VALUE : 0)
-    + hp2ThreatRiskValue(player, residualExposure)
+    + hp3Risk
+    + hp2Risk
     + shieldStateValue(player, residualExposure);
 }
 
@@ -732,7 +734,7 @@ expectedDefenseCost。
 canonical World 与存活目标。
 
 输出
-生命、危险、护盾和 HP=2 风险共同形成的非负 State points。
+生命、危险、护盾和互斥低血风险共同形成的非负 State points。
 
 读取状态
 目标生命/护盾、当前攻击暴露、雷达保留概率与当前判定池。
@@ -741,7 +743,7 @@ canonical World 与存活目标。
 无。
 
 调用函数
-incomingExposure、radarMitigationUtility、shieldStateValue、hp2ThreatRiskValue。
+incomingExposure、radarMitigationUtility、defensiveStateValue。
 
 边界与不变量
 只构造局部数据反事实，不修改 World；伤害先消耗护盾，否则减少一点生命，致死时使用现有死亡值。

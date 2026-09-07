@@ -2219,8 +2219,9 @@ export function sealUseValue(actor, target, state) {
       * turnTimingFactor(state, actor, target);
 }
 
-const BURNING_FIELD_SEARCH_PRIOR = 8;
 // 这些权重只维持有限 beam 的相对探索顺序，不是单位换算，也不得进入 Final Utility。
+export const TARGET_PRIORITY_WEIGHT = 0.12;
+const BURNING_FIELD_SEARCH_PRIOR = 8;
 const STATE_UTILITY_PRIOR_WEIGHT = 0.4;
 
 const END_PRIOR_PENALTY = 0.8;
@@ -4368,7 +4369,8 @@ export class Evaluator {
       Number(this.getDifficultyMultiplier?.() ?? 1) || 0
     );
     if (!multiplier || !target || target.battleTeam === viewer.battleTeam) return 0;
-    return targetPriorityScore(viewer, target, memory, expectedDamage) * 0.12 * multiplier;
+    return targetPriorityScore(viewer, target, memory, expectedDamage)
+      * TARGET_PRIORITY_WEIGHT * multiplier;
   }
 
   /*

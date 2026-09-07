@@ -108,6 +108,7 @@ import { HP3_RISK_WEIGHT, HP2_RISK_WEIGHT } from "../js/ai/Evaluator/StateValue.
 import {
   Evaluator,
   MIN_TRANSFER_UTILITY,
+  TARGET_PRIORITY_WEIGHT,
   chooseDiscardCandidates,
   counterOpportunityCost,
   counterRootOverlapTerms,
@@ -29888,6 +29889,28 @@ test("AI·雷达：突袭、震荡、焚场与猎杀全部进入真实 Expected 
 
 // ---- AI 装备行为·军火库 ----
 
+test("AI·军火库：defensive value 统一消费 HP3/HP2 风险且其它 HP 不误生效", () => {
+  for (const [hp, maxHp, expectedLoss] of [
+    [3, 4, 5.84],
+    [2, 4, 10.74],
+    [5, 5, 5]
+  ]) {
+    const fixture = equipmentFutureFixture(null);
+    fixture.actor.energy = 1;
+    fixture.target.hp = hp;
+    fixture.target.maxHp = maxHp;
+    assertClose(
+      expectedDefenseCost(
+        fixture.state,
+        fixture.target,
+        getRequiredBlockCount(null, true),
+        HAND_COUNT_VALUE
+      ),
+      expectedLoss
+    );
+  }
+});
+
 test("AI·军火库：没有可兑现攻击或没有可达目标时 Future Utility 为零", () => {
   const noAttack = equipmentFutureFixture("battleDevice");
   const unreachable = equipmentFutureFixture("battleDevice", {
@@ -40123,6 +40146,26 @@ test("AI·威胁评估：targetPriorityScore 的稳定角色标签与近期攻�
   assert.equal(score(first), score(second));
   game.aiDifficultyMultiplier = 1;
   assert.ok(score(second) > score(first));
+});
+
+test("AI·威胁评估：Target Priority 命名权重保持既有数学结果", () => {
+  const viewer = { battleTeam:"dawn" };
+  const target = {
+    id:"target-priority-weight-target",
+    alive:true,
+    battleTeam:"dusk",
+    hp:3,
+    maxHp:4,
+    shield:0,
+    roleTags:[],
+    tags:[],
+    statuses:[]
+  };
+  const memory = { recentAggressors:{ [target.id]:2 } };
+  const evaluator = new Evaluator({ getDifficultyMultiplier:() => 2 });
+  assert.equal(TARGET_PRIORITY_WEIGHT, 0.12);
+  assertClose(targetPriorityScore(viewer, target, memory, 1), 6.5);
+  assertClose(evaluator.targetPriority(viewer, target, memory, 1), 1.56);
 });
 
 test("AI·威胁评估：目标优先级忽略手牌能量并保留残血与斩杀因素", () => {
