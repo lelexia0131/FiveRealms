@@ -64,6 +64,7 @@ import { createCardEffectRuntime } from "../application/action/CardEffectRuntime
 import { createSkillEffectRuntime } from "../application/action/SkillEffectRuntime.js";
 import { createPassiveSkillTriggerRegistry } from "../application/trigger/PassiveSkillTriggerRegistry.js";
 import { createRecycleDeviceTrigger } from "../application/trigger/RecycleDeviceTrigger.js";
+import { createBubbleMachineTrigger } from "../application/trigger/BubbleMachineTrigger.js";
 import { createGlobalTriggerRegistry } from "../application/trigger/GlobalTriggerRegistry.js";
 import { PublicCardPoolWorkflow } from "../application/action/PublicCardPoolWorkflow.js";
 import { createResourceWorkflow } from "../application/action/ResourceWorkflow.js";
@@ -203,19 +204,20 @@ function assembleApplicationBoundary(application) {
     无返回值。
 
     读取状态
-    recycleDeviceTrigger 与 globalTriggerRegistry。
+    recycleDeviceTrigger、bubbleMachineTrigger 与 globalTriggerRegistry。
 
     写入状态
-    由两个 registry 向 EventDispatcher 注册监听器。
+    由三个 registry 向 EventDispatcher 注册监听器。
 
     调用函数
-    RecycleDeviceTrigger.register、GlobalTriggerRegistry.register。
+    RecycleDeviceTrigger.register、BubbleMachineTrigger.register、GlobalTriggerRegistry.register。
 
     边界与不变量
     composition 只串接 registry，不拥有触发条件或规则分支。
     */
     registerGlobalRules() {
       application.recycleDeviceTrigger.register();
+      application.bubbleMachineTrigger.register();
       application.globalTriggerRegistry.register();
     },
     runGameLoop:application.turnWorkflow.runGameLoop,
@@ -537,6 +539,7 @@ class MatchApplication {
       choosePublicCard: (player, cards) => this.aiController.choosePublicCard(player, cards),
       chooseDiscards: (player, count) => this.aiController.chooseDiscards(player, count),
       chooseHiddenCards: (...args) => this.aiController.chooseHiddenCards(...args),
+      choosePostCounterResource: (...args) => this.aiController.choosePostCounterResource(...args),
       requestHiddenCards: (...args) => this.ui.requestHiddenCards?.(...args),
       requestZoneCard: (...args) => this.ui.requestZoneCard?.(this, ...args),
       resolveHiddenToken: (...args) => this.hiddenCardSelection.resolveToken(...args),
@@ -755,6 +758,13 @@ class MatchApplication {
       presentation: this.presentationPort,
       drawCards: (...args) => this.drawCards(...args)
     });
+    this.bubbleMachineTrigger = createBubbleMachineTrigger({
+      onEvent: (eventName, key, handler) => this.eventDispatcher.on(eventName, key, handler),
+      getState: () => this.state,
+      isSessionValid: (gameId) => this.isSessionValid(gameId),
+      presentation: this.presentationPort,
+      emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload)
+    });
     this.passiveTriggerRegistry = createPassiveSkillTriggerRegistry({
       onEvent: (eventName, key, handler) => this.eventDispatcher.on(eventName, key, handler),
       getState: () => this.state,
@@ -768,6 +778,7 @@ class MatchApplication {
       preparePrivateHandPeekIntent: (...args) => this.cardIntentRuntime.preparePrivateHandPeekIntent(...args),
       resolvePrivateHandPeekIntent: (...args) => this.cardIntentRuntime.resolvePrivateHandPeekIntent(...args),
       rememberPrivateCard: (...args) => this.rememberPrivateCard(...args),
+      publishFact: (type, payload) => this.eventDispatcher.publishFact(type, payload),
       choiceCoordinator: this.choiceCoordinator,
       choiceContexts: this.choiceContexts,
       createId
@@ -812,7 +823,8 @@ class MatchApplication {
       diagnostics: this.diagnosticsPort,
       random: () => this.random(),
       createId,
-      emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload)
+      emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload),
+      publishFact: (type, payload) => this.eventDispatcher.publishFact(type, payload)
     });
     this.cardIntentRuntime = createCardIntentRuntime({
       getState: () => this.state,
@@ -892,7 +904,8 @@ class MatchApplication {
           judgmentWorkflow,
           this.cardIntentRuntime,
           this.cardEffectRuntime,
-          this.publicCardPoolWorkflow
+          this.publicCardPoolWorkflow,
+          this.matchPerformanceSidecar.tracker
         ],
         randomPort:this.randomPort
       })
@@ -943,6 +956,9 @@ class MatchApplication {
       ),
       selectRuntimeEmergencyAction: (player, options) => (
         this.aiController.selectRuntimeEmergencyAction(player, options)
+      ),
+      selectRuntimeActionCapClosureAction: (player, options) => (
+        this.aiController.selectRuntimeActionCapClosureAction(player, options)
       ),
       playCard: (...args) => this.actionWorkflow.playCard(...args),
       useActiveSkill: (...args) => this.actionWorkflow.useActiveSkill(...args),

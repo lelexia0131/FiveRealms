@@ -32,7 +32,7 @@ import { getAiDelay } from "../utils/aiTiming.js";
 MatchApplication constructor。
 
 输入
-dependencies（state/ui/choiceContexts/AI capability/lifecycle）与可选外部注入 choicePort。
+dependencies（state/ui/choiceContexts/AI response/selection capability/lifecycle）与可选外部注入 choicePort。
 
 输出
 { choicePort, choiceCoordinator }。
@@ -47,7 +47,8 @@ dependencies（state/ui/choiceContexts/AI capability/lifecycle）与可选外部
 createUiChoiceAdapter、createAiChoiceAdapter、createChoicePort、createChoiceCoordinator。
 
 边界与不变量
-外部注入 port 优先；否则按 controllerType 路由；未知 actor 返回 cancelled。
+外部注入 port 优先；否则按 controllerType 路由；AI post-Counter resource capability 只经 adapter 注入；
+未知 actor 返回 cancelled。
 */
 export function createChoiceBoundary(dependencies, injectedPort = null) {
   const {
@@ -59,6 +60,7 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     choosePublicCard,
     chooseDiscards,
     chooseHiddenCards,
+    choosePostCounterResource,
     requestHiddenCards,
     requestZoneCard,
     resolveHiddenToken,
@@ -93,6 +95,7 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     choosePublicCard,
     chooseDiscards,
     chooseHiddenCards,
+    choosePostCounterResource,
     isSessionValid
   }));
   const aiPort = createChoicePort(createAiResponseTimingDecorator(rawAiPort, {

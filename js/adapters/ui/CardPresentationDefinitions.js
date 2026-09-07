@@ -177,6 +177,13 @@ export const CARD_PRESENTATION = Object.freeze({
     accent: "#7d8260",
     frameStyle: "machine",
   }),
+  bubbleMachine: Object.freeze({
+    categoryName: "装备牌",
+    art: "./assets/cards/bubble-machine.svg",
+    icon: "./assets/cards/bubble-machine.svg",
+    accent: "#4d91a8",
+    frameStyle: "machine",
+  }),
   defenseDevice: Object.freeze({
     categoryName: "装备牌",
     art: "./assets/cards/defense-device.svg",
@@ -189,6 +196,13 @@ export const CARD_PRESENTATION = Object.freeze({
     art: "./assets/cards/battle-device.svg",
     icon: "./assets/cards/battle-device.svg",
     accent: "#9a6139",
+    frameStyle: "machine",
+  }),
+  assaultMagazine: Object.freeze({
+    categoryName: "装备牌",
+    art: "./assets/cards/assault-magazine.svg",
+    icon: "./assets/cards/assault-magazine.svg",
+    accent: "#a76a3d",
     frameStyle: "machine",
   }),
   telescope: Object.freeze({

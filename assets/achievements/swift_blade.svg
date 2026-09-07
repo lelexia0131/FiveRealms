@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">快刀斩乱麻</title><desc id="desc">低视角的破城长街上，刃行者以多重残影穿过敌阵，三条交错刀光切开烟尘、旗帜与坠落石块。</desc>
+  <defs>
+    <linearGradient id="dusk" x2="1" y2="1"><stop stop-color="#25263f"/><stop offset=".5" stop-color="#695166"/><stop offset="1" stop-color="#b77b59"/></linearGradient>
+    <linearGradient id="paving" x2=".3" y2="1"><stop stop-color="#5f4a55"/><stop offset="1" stop-color="#181e33"/></linearGradient>
+    <linearGradient id="steel" x2="1" y2="1"><stop stop-color="#ffebba"/><stop offset=".45" stop-color="#bdded8"/><stop offset="1" stop-color="#698a9e"/></linearGradient>
+    <radialGradient id="dust"><stop stop-color="#f9d59d" stop-opacity=".6"/><stop offset="1" stop-color="#c79583" stop-opacity="0"/></radialGradient>
+    <g id="runner"><path d="m-32-35-39 40 33 17 32-13 43 27 20-18-40-44Z" fill="#344559" stroke="#acc6be" stroke-width="3"/><path d="m-29-25 30 28-32 18-32-13Z" fill="#8a9c9c"/><path d="m-48-46 15-27 30-2 18 24-17 24-31-6Z" fill="#a8b6ad" stroke="#e0d6b0" stroke-width="3"/><path d="m-40-54 35 4-8 9-20 1" fill="#263247"/><path d="M-42 19-74 56l-58 24 9 19 78-19 41-45M12 21l44 31 63-1 4-20-58-8-36-18" fill="#3e5164" stroke="#afc2b8" stroke-width="4"/><path d="m-26-26 45-33 70 15-3 19-62-5-28 26" fill="#6e858a" stroke="#c2cbb7" stroke-width="3"/><path d="m78-46 20-7 11 12-19 18" fill="#dcc4a0"/><path d="m92-49 126-50-107 69Z" fill="url(#steel)" stroke="#f8e7b7" stroke-width="2"/><path d="m87-30 15 14" stroke="#e6b97c" stroke-width="6"/><path d="M-49-22Q-103-88-154-58l68 34-69 21 102 16Z" fill="#77536c" stroke="#b899a3" stroke-width="3"/></g>
+  </defs>
+  <path d="M0 0h640v640H0Z" fill="url(#dusk)"/>
+  <path d="M0 0h118l34 192 47 24 33 151-94 72L0 356ZM437 0h71l-17 167 38 25 8 179 103-28V0Z" fill="#272b42"/>
+  <path d="M33 16 70 297l124 73M480 33l-20 263 119 61" fill="none" stroke="#677183" stroke-width="5"/>
+  <path d="m81 59 35 5m-29 57 35 6m-26 60 40 11m340-77 31 2m-34 56 34 7m-39 57 37 2" stroke="#9b9999" stroke-width="3"/>
+  <path d="M235 176h124v174H235Z" fill="#4d4c63"/><path d="m226 178 70-68 72 66-72-30Z" fill="#687084" stroke="#adaca5" stroke-width="3"/>
+  <path d="M281 239q22-27 42 0v111h-42Z" fill="#292d45"/><path d="M297 113V56l65 14-24 22-41-4" fill="#995d6a" stroke="#c49c8d" stroke-width="2"/>
+  <path d="M0 431 285 326l93 20 262 77v217H0Z" fill="url(#paving)"/>
+  <path d="M0 578 302 346m111 294-85-287m312 202L346 354M34 490l548 4M0 570l640 21" fill="none" stroke="#88777b" stroke-width="3"/>
+  <ellipse cx="358" cy="390" rx="267" ry="231" fill="url(#dust)"/>
+  <g fill="#3d3b51" stroke="#a18b85" stroke-width="3"><path d="m165 301 15-32 26 1 12 28-8 30 28 74-52 8-20-65-23 30-10-9 24-50Z"/><path d="m481 319 19-37 25 5 18 32-18 36 17 74-45-7-16-53-35 10-6-17 40-25Z"/></g>
+  <path d="m174 296 30 3m294 19 24 2" stroke="#d4b49b" stroke-width="3"/>
+  <use href="#runner" transform="translate(170 438) scale(.55) rotate(-9)" opacity=".2"/>
+  <use href="#runner" transform="translate(269 411) scale(.7) rotate(-9)" opacity=".35"/>
+  <path d="M-30 520Q334 440 639 146M-8 267Q363 448 676 300M26 643Q347 457 471-16" fill="none" stroke="#e9bc94" stroke-width="33" opacity=".14"/>
+  <path d="M-30 520Q334 440 639 146M-8 267Q363 448 676 300M26 643Q347 457 471-16" fill="none" stroke="#f4d8a5" stroke-width="8"/>
+  <path d="M-30 520Q334 440 639 146M-8 267Q363 448 676 300M26 643Q347 457 471-16" fill="none" stroke="#fff4d0" stroke-width="2"/>
+  <use href="#runner" transform="translate(379 428) rotate(-9) scale(1.05)"/>
+  <path d="M20 473 209 427M41 454l143-30M70 513l98-38M174 570l130-72" fill="none" stroke="#bcd0c6" stroke-width="3" opacity=".65"/>
+  <path d="m110 200 40-6 13 30-30 17ZM541 469l49-14 20 24-37 39ZM183 549l33-5 14 24-27 16ZM395 165l27-11 14 17-32 18Z" fill="#868289" stroke="#c5b3a2" stroke-width="3"/>
+  <path d="m150 166 23-31m-49 71-39 9m482 324 24 18m-68-64-27-12m-49-341 16-34" fill="none" stroke="#edcfa3" stroke-width="2"/>
+  <path d="m32 358 56 12-39 55-39-22ZM551 48l47 14-19 76-45-16Z" fill="#986776" stroke="#c29894" stroke-width="2"/>
+  <g fill="#ffebbc"><path d="m201 354 5-19 5 19 16 5-17 4-5 16-4-16-13-4ZM461 325l5-14 3 13 16 4-15 4-5 13-3-14-15-4Z"/><circle cx="341" cy="265" r="3"/><circle cx="100" cy="553" r="4"/><circle cx="575" cy="251" r="3"/><circle cx="426" cy="563" r="3"/></g>
+  <path d="M0 599 83 567l35 73H0M490 640l56-40 27 13 48-27 19 54Z" fill="#121b30"/>
+</svg>

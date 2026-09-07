@@ -59,5 +59,5 @@ export const MATCH_PERFORMANCE_POLICY = Object.freeze({
       contribution: 0.8
     })
   }),
-  controlCardIds: Object.freeze(["scout", "transfer", "plunder", "destroy"])
+  controlCardIds: Object.freeze(["transfer", "plunder", "destroy"])
 });

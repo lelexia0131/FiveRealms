@@ -39,7 +39,7 @@ import {
 } from "./Searcher/Searcher.js";
 import { Pattern } from "./Searcher/Pattern.js";
 import { Rng, hashSearchSeed } from "./Searcher/Rng.js";
-import { Simulator, tacticResolutionScale } from "./Simulator/Simulator.js";
+import { Simulator } from "./Simulator/Simulator.js";
 import {
   inAttackRange,
   sampleProbabilityWorlds
@@ -495,7 +495,7 @@ function createRuntimeComposition({
     decideBlock:(...args) => evaluator.decidePlanningBlock(...args),
     decideGuardianAid:(...args) => evaluator.decidePlanningGuardianAid(...args),
     decideDyingRescue:(...args) => evaluator.decidePlanningDyingRescue(...args),
-    choosePublicCardId:(...args) => evaluator.choosePublicCardId(...args),
+    choosePublicCardOutcome:(...args) => evaluator.choosePublicCardOutcome(...args),
     resolveDiscardCandidates:chooseDiscardCandidates
   });
   return { evaluator, simulatorFactory };
@@ -537,7 +537,6 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
   const searcher = new Searcher({
     evaluator,
     pattern:new Pattern(),
-    getResolutionScale:tacticResolutionScale,
     config,
     simulatorFactory,
     searchBudgetFactory:() => new SearchBudget({
@@ -741,7 +740,7 @@ export class Controller {
   从当前真实状态取得最终恢复分支共享的 canonical actions 与唯一 END。
 
   调用方
-  selectRuntimeRecoveryEndAction、selectRuntimeEmergencyAction。
+  selectRuntimeRecoveryEndAction、selectRuntimeEmergencyAction、selectRuntimeActionCapClosureAction。
 
   输入
   当前行动 Player。
@@ -829,7 +828,7 @@ export class Controller {
   当前行动 Player，以及由 TurnWorkflow 真实弃牌规则计算的正 mandatoryDiscardCount。
 
   输出
-  冻结 emergency 记录；优先返回 Generator 顺序中的首个安全 card，否则返回 canonical END。
+  冻结 emergency 记录；空装备槽优先返回安全装备，否则返回 Generator 顺序中的首个安全 card 或 canonical END。
 
   读取状态
   当前 GameState、Domain card definitions 与 Generator canonical Action 集合。
@@ -842,7 +841,7 @@ export class Controller {
 
   边界与不变量
   不评分、不调用 Evaluator/Searcher、不选择技能；只消费最新 Generator 已生成的完整 Action。
-  必须排除高风险牌、装备覆盖和队友参与动作；本入口不得用于无强制弃牌的恢复。
+  必须排除高风险牌、已有装备时的覆盖和队友参与动作；本入口不得用于无强制弃牌的恢复。
   */
   selectRuntimeEmergencyAction(player, { mandatoryDiscardCount = 0 } = {}) {
     if (!(Number(mandatoryDiscardCount) > 0)) {
@@ -860,7 +859,12 @@ export class Controller {
       if (!definition || (hasEquipment && definition.category === "equipment")) return false;
       return !hasEmergencyTeammateParticipant(action, currentPlayer, state.players);
     });
-    const action = safeCardActions[0] ?? endAction;
+    const equipmentAction = !hasEquipment
+      ? safeCardActions.find(
+          (candidate) => CARD_DEFINITIONS[candidate.cardId]?.category === "equipment"
+        ) ?? null
+      : null;
+    const action = equipmentAction ?? safeCardActions[0] ?? endAction;
     const status = safeCardActions.length > 0
       ? "SELECTED_SAFE_CARD"
       : "SELECTED_END_NO_SAFE_CARD";
@@ -875,6 +879,41 @@ export class Controller {
     });
     this.lastRuntimeEmergencyFallback = result;
     return result;
+  }
+
+  /*
+  功能
+  为正常 Action 上限后的 one-shot closure 选择最新 canonical equipment Action。
+
+  调用方
+  TurnWorkflow.takeAiPlayPhase。
+
+  输入
+  当前行动 Player 与真实规则计算的正 mandatoryDiscardCount。
+
+  输出
+  空装备槽且存在合法装备 Action 时返回该 canonical Action，否则返回 null。
+
+  读取状态
+  最新真实 Player、Generator canonical Action 集合与 Domain card definitions。
+
+  写入状态
+  无。
+
+  调用函数
+  getRuntimeRecoveryCandidates。
+
+  边界与不变量
+  不评分、不调用 Searcher/Evaluator、不生成第二套 Action；一次只消费一次最新 Generator candidates。
+  */
+  selectRuntimeActionCapClosureAction(player, { mandatoryDiscardCount = 0 } = {}) {
+    if (!(Number(mandatoryDiscardCount) > 0)) return null;
+    const { currentPlayer, actions } = this.getRuntimeRecoveryCandidates(player);
+    if (currentPlayer.equipment ?? currentPlayer.equipmentDefinitionId) return null;
+    return actions.find((action) => (
+      action.type === "card"
+        && CARD_DEFINITIONS[action.cardId]?.category === "equipment"
+    )) ?? null;
   }
 
   /*
@@ -1657,11 +1696,276 @@ export class Controller {
     );
     const card = cards.find((candidate) => candidate.id === cardId) ?? null;
     this.recordMainThreadOperation(
-      "Evaluator.choosePublicCardId",
+      "Evaluator.choosePublicCardOutcome",
       startedAt,
       { candidateCount:Array.isArray(cards) ? cards.length : "unavailable" }
     );
     return card;
+  }
+
+  /*
+  功能
+  在给定真实时点的 root actor World 中选择唯一 canonical post-Counter 资源语义。
+
+  调用方
+  choosePostCounterResource。
+
+  输入
+  当前 GameState、root card/source/targets、Transfer 公开声明、Counter depth 与是否 cooperative yield。
+
+  输出
+  Evaluator 选中的 canonical selection；无合法候选或会话失效时返回 null。
+
+  读取状态
+  root actor 合法视角 World、Generator selection candidates、Simulator root Worlds 与 Evaluator comparison。
+
+  写入状态
+  cooperative 模式只推进 yield；所有 World 都是独立投影或 clone，不写 GameState。
+
+  调用函数
+  createInitialWorld、Generator future-selection methods、Simulator.buildRootFlipWorlds、
+  Evaluator.chooseFutureResourceSelectionOutcome、yieldControl。
+
+  边界与不变量
+  Generator 只枚举，Simulator 只物化，Evaluator 是 selection value/comparison 的唯一 owner；
+  Counter 前的 private selection 不得作为输入，Transfer 只沿用公开 source/receiver。
+  */
+  async chooseCanonicalPostCounterSelection({
+    state,
+    rootCard,
+    rootSourceId,
+    rootTargetIds,
+    counterDepth = 0,
+    publicTransferContext = null,
+    cooperativeYield = false
+  }) {
+    const rootSource = state?.players?.find(
+      (player) => player.id === rootSourceId && player.alive
+    ) ?? null;
+    if (!rootSource) return null;
+    const selectionWorld = createInitialWorld(
+      rootSource.id,
+      state,
+      deriveCurrentCardCounts(rootSource, state)
+    );
+    const selectionActor = selectionWorld.players.find(
+      (player) => player.id === rootSource.id
+    ) ?? null;
+    const selections = this.actionGenerator.getFutureRootSelections(
+      selectionWorld,
+      rootCard,
+      rootTargetIds,
+      { publicTransferContext }
+    );
+    if (!selectionActor || !selections.length) return null;
+    const simulator = this.simulatorFactory();
+    const actorOutcomes = [];
+    for (const selection of selections) {
+      const action = this.actionGenerator.createRootResolutionAction(
+        selectionWorld,
+        rootCard,
+        rootSourceId,
+        rootTargetIds,
+        { futureSelection:selection }
+      );
+      if (!action) continue;
+      const rootWorlds = simulator.buildRootFlipWorlds(selectionWorld, action, counterDepth);
+      if (!rootWorlds) continue;
+      if (cooperativeYield && !(await this.yieldControl(state.gameId))) return null;
+      actorOutcomes.push({
+        action,
+        rootWorlds:{
+          ...rootWorlds,
+          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(rootWorlds.baseWorld),
+          resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
+            rootWorlds.resolvedWorld
+          )
+        }
+      });
+    }
+    return this.evaluator.chooseFutureResourceSelectionOutcome(
+      selectionWorld,
+      selectionActor,
+      actorOutcomes
+    )?.action?.selection ?? null;
+  }
+
+  /*
+  功能
+  为真实 AI 在完整 Counter chain 后重新选择并绑定当前资源实体。
+
+  调用方
+  AiChoiceAdapter 的 plunder/destroy/transfer hidden-card request。
+
+  输入
+  真实行动者、资源拥有者与包含 purpose/card/Transfer receiver 的私有执行上下文。
+
+  输出
+  frozen { selection, card, zone }；当前声明或资源已失效时返回 null。
+
+  读取状态
+  当前 GameState、行动者合法记忆、公开资源与 canonical selection owners。
+
+  写入状态
+  仅 anonymous hand 实体绑定时推进 search RNG；不修改 GameState。
+
+  调用函数
+  chooseCanonicalPostCounterSelection、bindCanonicalHiddenCards。
+
+  边界与不变量
+  只处理 plunder/destroy/transfer；不信任 Counter 前 planning selection；Transfer source/receiver
+  必须保持公开声明，具体 hand card、Plunder/Destroy zone 与实体都从当前真实状态重新决定。
+  */
+  async choosePostCounterResource(actor, owner, context = null) {
+    const state = this.getState();
+    const gameId = state.gameId;
+    const purpose = context?.purpose ?? null;
+    const receiver = context?.receiver ?? null;
+    if (!["plunder", "destroy", "transfer"].includes(purpose)
+      || !actor?.alive || !owner?.alive
+      || !state.players.includes(actor) || !state.players.includes(owner)
+      || (purpose === "transfer"
+        && (!receiver?.alive || !state.players.includes(receiver) || receiver === owner))) return null;
+    const rootCard = {
+      ...CARD_DEFINITIONS[purpose],
+      id:context?.card?.id ?? `post-counter-${purpose}`
+    };
+    const publicTransferContext = purpose === "transfer"
+      ? {
+          fromPlayerId:owner.id,
+          receiverPlayerId:receiver.id
+        }
+      : null;
+    const selection = await this.chooseCanonicalPostCounterSelection({
+      state,
+      rootCard,
+      rootSourceId:actor.id,
+      rootTargetIds:purpose === "transfer" ? [] : [owner.id],
+      publicTransferContext
+    });
+    const latestState = this.getState();
+    const currentOwner = latestState.players.find(
+      (player) => player.id === owner.id && player.alive
+    ) ?? null;
+    if (!selection || !this.isSessionValid(gameId) || !actor.alive || !currentOwner) return null;
+    if (selection.zone === "equipment") {
+      const card = currentOwner.equipment;
+      return card && card.definitionId === selection.definitionId
+        ? Object.freeze({ selection, card, zone:"equipment" })
+        : null;
+    }
+    if (selection.zone !== "hand") return null;
+    const excludedCardIds = purpose === "transfer" && context?.card?.id
+      ? new Set([context.card.id])
+      : null;
+    const [card] = this.bindCanonicalHiddenCards(
+      currentOwner,
+      selection,
+      1,
+      excludedCardIds
+    );
+    return card
+      ? Object.freeze({ selection, card, zone:"hand" })
+      : null;
+  }
+
+  /*
+  功能
+  投影资源类 root 在 Counter chain 后的 canonical selection，并准备响应者价值 terms。
+
+  调用方
+  buildResponseDecisionContext 的普通 Counter 分支。
+
+  输入
+  响应者视角 World/player、root card/source/targets、Counter depth 与 Transfer 公开声明。
+
+  输出
+  `{ futureSelectionOutcomes, futureCounterTerms }`；没有合法未来选择时两个字段均为空。
+
+  读取状态
+  仅响应者合法 World、Generator 匿名/公开 candidates 与预物化期望 Worlds。
+
+  写入状态
+  只推进 cooperative yield；所有 World 都是独立投影或 clone，不写 GameState。
+
+  调用函数
+  Generator.getResponderSafeFutureRootSelections/createRootResolutionAction、
+  Simulator.buildFutureResourceSelectionWorlds、Evaluator.chooseFutureResourceSelectionOutcome、
+  Evaluator.futureSelectionCounterTerms、yieldControl。
+
+  边界与不变量
+  只在响应者信息内估计 actor 收益，不能读取 raw GameState 或 actor 私人 World；
+  private hand 只有一个匿名候选，确定策略只返回 weight=1，runtime 可以选择不同具体牌。
+  */
+  async buildFutureResourceCounterProjection({
+    responseWorld,
+    responder,
+    rootCard,
+    rootSourceId,
+    rootTargetIds,
+    counterDepth,
+    publicTransferContext
+  }) {
+    const empty = Object.freeze({
+      futureSelectionOutcomes:null,
+      futureCounterTerms:null
+    });
+    const sourceView = responseWorld.players.find(
+      (player) => player.id === rootSourceId && player.alive
+    ) ?? null;
+    if (!sourceView) return empty;
+    const selections = this.actionGenerator.getResponderSafeFutureRootSelections(
+      responseWorld,
+      rootCard,
+      rootTargetIds,
+      { publicTransferContext }
+    );
+    const simulator = this.simulatorFactory();
+    const outcomes = [];
+    for (const selection of selections) {
+      const action = this.actionGenerator.createRootResolutionAction(
+        responseWorld, rootCard, rootSourceId, rootTargetIds, { futureSelection:selection }
+      );
+      if (!action) continue;
+      const worlds = simulator.buildFutureResourceSelectionWorlds(responseWorld, action, counterDepth);
+      if (!worlds) continue;
+      if (!(await this.yieldControl(responseWorld.gameId))) return null;
+      outcomes.push({
+        action,
+        rootWorlds:{
+          ...worlds,
+          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.baseWorld),
+          resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
+            worlds.resolvedWorld
+          )
+        }
+      });
+    }
+    const selected = this.evaluator.chooseFutureResourceSelectionOutcome(
+      responseWorld, sourceView, outcomes
+    );
+    if (!selected) return empty;
+    const futureSelectionOutcomes = Object.freeze([Object.freeze({
+      weight:1,
+      selection:selected.action.selection,
+      rootWorlds:selected.action.selection.zone === "hand" ? null : selected.rootWorlds,
+      resolvesAtStay:(counterDepth % 2) === 0
+    })]);
+    const responderView = responseWorld.players.find(
+      (player) => player.id === responder.id
+    ) ?? null;
+    const targetViews = rootTargetIds.map((targetId) => (
+      responseWorld.players.find((player) => player.id === targetId)
+    )).filter(Boolean);
+    const futureCounterTerms = this.evaluator.futureSelectionCounterTerms(
+      responseWorld,
+      responderView,
+      sourceView,
+      rootCard,
+      targetViews,
+      futureSelectionOutcomes
+    );
+    return Object.freeze({ futureSelectionOutcomes, futureCounterTerms });
   }
 
   /*
@@ -1713,18 +2017,7 @@ export class Controller {
       publicTransferContext:rawContext.publicTransferContext
         ? Object.freeze({
             fromPlayerId:rawContext.publicTransferContext.fromPlayerId ?? null,
-            receiverPlayerId:rawContext.publicTransferContext.receiverPlayerId ?? null,
-            zone:rawContext.publicTransferContext.zone ?? "hand"
-          })
-        : null,
-      publicSelectionContext:rawContext.publicSelectionContext
-        ? Object.freeze({
-            ownerPlayerId:rawContext.publicSelectionContext.ownerPlayerId ?? null,
-            zone:rawContext.publicSelectionContext.zone ?? null,
-            selectedCount:Math.max(
-              0,
-              Math.floor(Number(rawContext.publicSelectionContext.selectedCount) || 0)
-            )
+            receiverPlayerId:rawContext.publicTransferContext.receiverPlayerId ?? null
           })
         : null,
       card:rawCard ? Object.freeze({
@@ -1778,7 +2071,8 @@ export class Controller {
       lightningCounterWorlds:null,
       sealCounterTerms:null,
       rootFlipWorlds:null,
-      counterSelection:null
+      futureSelectionOutcomes:null,
+      futureCounterTerms:null
     };
     if (!(await this.yieldControl(state.gameId))) return null;
     if (type === "leverageAssault") {
@@ -1842,19 +2136,31 @@ export class Controller {
         ?? rawContext.rootSource?.id
         ?? rawContext.source?.id
         ?? null;
-      const rootAction = this.actionGenerator.createRootResolutionAction(
-        world,
-        rootCard,
-        rootSourceId,
-        Array.isArray(rawContext.rootTargetIds) ? rawContext.rootTargetIds : [],
-        {
-          selection:rawContext.selection ?? null,
-          publicTransferContext:publicContext.publicTransferContext,
-          publicSelectionContext:publicContext.publicSelectionContext
-        }
-      );
-      if (rootAction) {
-        decision.counterSelection = rootAction.selection;
+      const rootTargetIds = Array.isArray(rawContext.rootTargetIds)
+        ? rawContext.rootTargetIds
+        : [];
+      if (["plunder", "destroy", "transfer"].includes(rootCard?.definitionId)) {
+        const projection = await this.buildFutureResourceCounterProjection({
+          responseWorld:world,
+          responder:responderView,
+          rootCard,
+          rootSourceId,
+          rootTargetIds,
+          counterDepth:rawContext.counterDepth ?? 0,
+          publicTransferContext:publicContext.publicTransferContext
+        });
+        if (!projection) return null;
+        decision.futureSelectionOutcomes = projection.futureSelectionOutcomes;
+        decision.futureCounterTerms = projection.futureCounterTerms;
+      } else {
+        const rootAction = this.actionGenerator.createRootResolutionAction(
+          world,
+          rootCard,
+          rootSourceId,
+          rootTargetIds,
+          { selection:rawContext.selection ?? null }
+        );
+        if (!rootAction) return decision;
         const simulator = this.simulatorFactory();
         const worlds = simulator.buildRootFlipWorlds(
           world,

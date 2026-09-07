@@ -1,6 +1,6 @@
 /*
 模块职责
-唯一拥有 FiveRealms 二十六种卡牌的纯静态领域定义；不含 AI 价值、UI 素材、展示样式或运行时 resolver。
+唯一拥有 FiveRealms 二十八种卡牌的纯静态领域定义；不含 AI 价值、UI 素材、展示样式或运行时 resolver。
 
 上游
 Domain card rules、Application action、AI 与 presentation consumers。
@@ -353,7 +353,7 @@ export const CARD_DEFINITIONS = Object.freeze({
     category: "equipment",
     targetType: "self",
     subtypes: Object.freeze(["equipment", "energy"]),
-    description: "回合开始获得能量时额外获得1点。",
+    description: "你的回合开始获得能量时额外获得1点。",
     turnEnergyBonus: 1,
   }),
 
@@ -372,6 +372,22 @@ export const CARD_DEFINITIONS = Object.freeze({
     description: "每回合使用战术牌后摸1张，即使该牌被反制；每回合最多触发2次。",
     triggerDrawCount: 1,
     maxUsesPerTurn: 2,
+  }),
+
+  bubbleMachine: Object.freeze({
+    usageMode: "active",
+    responseTypes: Object.freeze([]),
+    counterable: false,
+    counterScope: "card",
+    ignoresDistance: false,
+    selectionFlow: Object.freeze([]),
+    definitionId: "bubbleMachine",
+    name: "泡泡机",
+    category: "equipment",
+    targetType: "self",
+    subtypes: Object.freeze(["equipment", "shield"]),
+    description: "你的回合开始时，若你当前没有护盾，获得1点护盾。",
+    turnShieldGain: 1,
   }),
 
   defenseDevice: Object.freeze({
@@ -403,6 +419,22 @@ export const CARD_DEFINITIONS = Object.freeze({
     subtypes: Object.freeze(["equipment", "attack"]),
     description: "你的「突袭」与「震荡」需要目标一次使用2张「格挡」才能防御；数量不足时不会消耗已有「格挡」。",
     assaultRequiredBlockCount: 2,
+  }),
+
+  assaultMagazine: Object.freeze({
+    usageMode: "active",
+    responseTypes: Object.freeze([]),
+    counterable: false,
+    counterScope: "card",
+    ignoresDistance: false,
+    selectionFlow: Object.freeze([]),
+    definitionId: "assaultMagazine",
+    name: "备用弹夹",
+    category: "equipment",
+    targetType: "self",
+    subtypes: Object.freeze(["equipment", "assault-capacity"]),
+    description: "你每个出牌阶段主动使用「突袭」的次数上限 +2。",
+    attackLimitBonus: 2,
   }),
 
   telescope: Object.freeze({

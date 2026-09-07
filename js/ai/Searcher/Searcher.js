@@ -128,7 +128,6 @@ export class Searcher {
   constructor({
     evaluator,
     pattern,
-    getResolutionScale,
     config,
     simulatorFactory,
     searchBudgetFactory,
@@ -142,7 +141,6 @@ export class Searcher {
       pattern
     };
     const capabilities = {
-      getResolutionScale,
       simulatorFactory,
       searchBudgetFactory,
       deduplicateActions,
@@ -345,7 +343,6 @@ considerIncumbent 与 prune。
           remainingProvenance:candidate.remainingProvenance,
           remainingHistory:[candidate.remainingProvenance],
           candidateLedger:candidate.candidateLedger,
-          frontierResidual:candidate.frontierResidual,
           completedAtWorkCount:candidate.completedAtWorkCount,
           ...this.advancePatternState(patternProposals, candidate.action, 0, [], world)
       };
@@ -589,42 +586,6 @@ considerIncumbent 与 prune。
 
   /*
   功能
-  执行并记录一次 Searcher 显式发起的 StateValue 查询。
-
-  调用方
-  bestFollowUpUtility。
-
-  输入
-  World、viewer ID、已准备的 lightning outcome sets 与可选 SearchBudget。
-
-  输出
-  Evaluator.stateUtility 返回的 State points。
-
-  读取状态
-  Evaluator 与输入 World。
-
-  写入状态
-  只写 SearchBudget stateUtility 计数/耗时。
-
-  调用函数
-  Evaluator.stateUtility、SearchBudget.observeStateUtility、searchDiagnosticNow。
-
-  边界与不变量
-  诊断时钟不进入值公式；一次调用只计一次，异常仍保留已消耗耗时。
-  */
-  evaluateStateUtility(state, viewerId, lightningOutcomeSets, searchBudget = null) {
-    const startedAt = searchDiagnosticNow();
-    try {
-      return this.evaluator.stateUtility(state, viewerId, lightningOutcomeSets);
-    } finally {
-      searchBudget?.observeStateUtility?.(
-        Math.max(0, searchDiagnosticNow() - startedAt)
-      );
-    }
-  }
-
-  /*
-  功能
   把一次已经模拟完成的 canonical Action 组装为完整可比较搜索候选。
 
   调用方
@@ -643,12 +604,13 @@ considerIncumbent 与 prune。
   只写独立候选记录和显式诊断。
 
   调用函数
-  materializeValueTerms、Simulator.buildSkillEnergyCounterfactualWorlds、
-  Evaluator.evaluateTransition/transitionDelta/frontierResidual/composeSearchPrior。
+  materializeValueTerms、Simulator.getTransitionEvaluationWorlds/buildSkillEnergyCounterfactualWorlds、
+  Evaluator.evaluateTransition/transitionDelta/composeSearchPrior。
 
   边界与不变量
   Searcher 只机械组装各 owner 的结果；X 技能 World clone、能量替换与技能结算全部归 Simulator，
-  Searcher 不写 World、不定义 value formula；调用方必须 finalize 后才能登记候选。
+  Searcher 不写 World、不定义 value formula；Simulator 已准备的 effect baseline 只透传给 Evaluator；
+  调用方必须 finalize 后才能登记候选。
   */
   evaluateCandidate({
     action,
@@ -667,28 +629,22 @@ considerIncumbent 与 prune。
       afterState,
       action,
       actorId:player.id,
-      depth,
       remainingProvenance,
       simulator,
-      context,
       searchBudget
     });
     const beforeLightningOutcomeSets = simulator.buildLightningOutcomeSets(beforeState);
     const afterLightningOutcomeSets = simulator.buildLightningOutcomeSets(afterState);
-    const resolutionScale = this.getResolutionScale(
-      action,
-      beforeState,
-      player.id,
-      simulator
-    );
+    const transitionEvaluationWorlds = simulator.getTransitionEvaluationWorlds?.(afterState)
+      ?? null;
     const baseTerms = assertCompleteTransitionTerms(this.evaluator.evaluateTransition({
       action,
       player,
       beforeState,
       afterState,
+      effectBaselineState:transitionEvaluationWorlds?.effectBaselineState ?? null,
+      effectResolutionScale:transitionEvaluationWorlds?.effectResolutionScale ?? 1,
       depth,
-      resolutionScale,
-      materializedTransitionOptionPoints:terms.adaptiveInformationOptionPoints ?? 0,
       beforeLightningOutcomeSets,
       afterLightningOutcomeSets
     }));
@@ -755,10 +711,6 @@ considerIncumbent 与 prune。
     const responseNet = (candidateLedger?.responses ?? [])
       .reduce((sum, response) => sum + (response.netValue ?? 0), 0);
     const terminal = Boolean(afterState.playPhaseEnded);
-    const frontierResidual = terminal
-      ? this.evaluator.frontierResidual(afterState, player.id)
-      : null;
-    const frontierValue = this.evaluator.terminalFrontierValue(frontierResidual, terminal);
     const lightningOutcomeWorlds = this.evaluator.requiresActionLightningOutcomes(action)
       ? simulator.buildLightningOutcomeWorlds(
           beforeState,
@@ -797,8 +749,6 @@ considerIncumbent 与 prune。
       remainingProvenance:terms.nextProvenance,
       candidateLedger,
       responseNet,
-      frontierResidual,
-      frontierValue,
       domainPrior,
       searchCredit,
       prior
@@ -825,28 +775,31 @@ considerIncumbent 与 prune。
   无；返回新的完整候选记录。
 
   调用函数
-  Evaluator.endOpportunityPoints、composeTransitionValue、isValidFinalUtility。
+  Evaluator.finalizeEndTransition、composeTransitionValue、isValidFinalUtility。
 
   边界与不变量
-  Searcher 不定义数值公式；END 只能接收同 parent 的全部完整 sibling terms；
+  Searcher 不定义数值公式；END 只能接收同 parent 的全部完整 sibling action facts 与 terms；
   非法 Final Utility 是当前 candidate fault，不能登记为 complete candidate。
   */
   finalizeCandidate(candidate, siblingCandidates = []) {
-    const endOpportunityPoints = candidate.action?.type === "end"
-      ? this.evaluator.endOpportunityPoints(
-          candidate.baseTerms,
-          siblingCandidates.map((sibling) => ({
-            actionType:sibling.action?.type ?? null,
-            transitionTerms:sibling.baseTerms,
-            nextEnergyStateDelta:sibling.nextEnergyStateDelta
-          }))
-        )
-      : 0;
-    const transitionValue = this.evaluator.composeTransitionValue({
-      baseTransition:candidate.baseTransition,
-      frontierValue:candidate.frontierValue,
-      endOpportunityPoints
-    });
+    const siblingTransitionTerms = candidate.action?.type === "end"
+      ? siblingCandidates.map((sibling) => ({
+          actionType:sibling.action?.type ?? null,
+          cardId:sibling.action?.cardId ?? null,
+          transitionTerms:sibling.baseTerms,
+          nextEnergyStateDelta:sibling.nextEnergyStateDelta
+        }))
+      : [];
+    const transitionValue = candidate.action?.type === "end"
+      ? this.evaluator.finalizeEndTransition({
+          baseTransition:candidate.baseTransition,
+          endTransitionTerms:candidate.baseTerms,
+          siblingTransitionTerms
+        })
+      : this.evaluator.composeTransitionValue({
+          baseTransition:candidate.baseTransition,
+          endOpportunityPoints:0
+        });
     if (!isValidFinalUtility(transitionValue)) {
       throw new TypeError("Evaluator 必须返回合法 Final Utility");
     }
@@ -864,7 +817,7 @@ considerIncumbent 与 prune。
   含 Evaluator 诊断 的完整候选。
 
   输出
-  canonical Action、投影、响应与 frontier 数值。
+  canonical Action、投影与响应数值。
 
   读取状态
   candidateLedger。
@@ -883,8 +836,7 @@ considerIncumbent 与 prune。
       action:candidate.action,
       projected:candidate.candidateLedger.projected,
       responses:candidate.candidateLedger.responses,
-      responseNet:candidate.responseNet,
-      frontierValue:candidate.frontierValue
+      responseNet:candidate.responseNet
     };
   }
 
@@ -1085,7 +1037,6 @@ search 的逐层 beam expansion。
         ...node.remainingHistory,
         candidate.remainingProvenance
       ],
-      frontierResidual:candidate.frontierResidual,
       completedAtWorkCount:candidate.completedAtWorkCount,
       ...patternState
     };
@@ -1816,115 +1767,6 @@ search 的 root 与逐层 beam 完整节点登记点。
 
   /*
   功能
-  枚举一个状态的后续合法候选并返回其中最高的状态效用。
-
-  调用方
-  evaluateAdaptiveInformationValue。
-
-  输入
-  World、viewer ID、复用 Simulator 与可选搜索预算。
-
-  输出
-  最佳后续状态效用；没有候选时返回当前状态效用。
-
-  读取状态
-  generate、Simulator.apply 与 evaluator.stateUtility。
-
-  写入状态
-  只写 Simulator 返回的独立后续状态。
-
-  调用函数
-  generate、simulator.apply、evaluator.stateUtility。
-
-  边界与不变量
-  每个候选从同一输入状态独立模拟；end 候选保持生成顺序参与同分；
-  nested State Value 查询继承同一 SearchBudget。
-  */
-  bestFollowUpUtility(state, actorId, simulator, searchBudget = null) {
-    searchBudget?.checkpointCurrentWork?.();
-    const candidates = this.generateActions(state, actorId, searchBudget);
-    let best = -Infinity;
-    for (const candidate of candidates) {
-      searchBudget?.checkpointCurrentWork?.();
-      searchBudget?.observeSimulation();
-      const after = simulator.apply(state, candidate);
-      searchBudget?.checkpointCurrentWork?.();
-      const utility = this.evaluateStateUtility(
-        after,
-        actorId,
-        simulator.buildLightningOutcomeSets(after),
-        searchBudget
-      );
-      if (utility > best) best = utility;
-    }
-    return Number.isFinite(best)
-      ? best
-      : this.evaluateStateUtility(
-          state,
-          actorId,
-          simulator.buildLightningOutcomeSets(state),
-          searchBudget
-        );
-  }
-
-  /*
-  功能
-  编排一次由 Evaluator 声明的自适应信息价值查询。
-
-  调用方
-  materializeValueTerms 的根层信息价值分支。
-
-  输入
-  before/after、viewer ID、复用 Simulator、领域 context 与可选搜索预算。
-
-  输出
-  Evaluator 返回的非负 raw information option value；无样本或目标缺失时为零。
-
-  读取状态
-  context 当前 Probability 查询输入、afterState 后续候选与 Evaluator value requests。
-
-  写入状态
-  只写 Simulator 返回的独立世界。
-
-  调用函数
-  Evaluator.adaptiveInformationTarget、specializeHiddenWorld、bestFollowUpUtility、
-  Evaluator.adaptiveInformationOptionPoints。
-
-  边界与不变量
-  Searcher 只执行通用隐藏世界和后续候选遍历；身份识别与 E[max]-max(E) 公式只属于 Evaluator。
-  */
-  evaluateAdaptiveInformationOptionPoints(beforeState, afterState, action, actorId, simulator, context, searchBudget = null) {
-    const targetId = this.evaluator.adaptiveInformationTarget(
-      beforeState,
-      afterState,
-      action,
-      actorId
-    );
-    if (!targetId) return 0;
-    const handSamples = this.getUnknownHandEstimate(context).worlds;
-    if (!handSamples.length) return 0;
-    searchBudget?.checkpointCurrentWork?.();
-    const baselineBest = this.bestFollowUpUtility(afterState, actorId, simulator, searchBudget);
-    const informedBestValues = [];
-    for (const world of handSamples) {
-      searchBudget?.checkpointCurrentWork?.();
-      const specializedBefore = simulator.specializeHiddenWorld(beforeState, world, actorId);
-      searchBudget?.observeSimulation();
-      const specializedAfter = simulator.apply(specializedBefore, action);
-      searchBudget?.checkpointCurrentWork?.();
-      const informedBest = this.bestFollowUpUtility(
-        specializedAfter,
-        actorId,
-        simulator,
-        searchBudget
-      );
-      informedBestValues.push(informedBest);
-    }
-    return this.evaluator.adaptiveInformationOptionPoints(baselineBest, informedBestValues);
-  }
-
-  /*
-  功能
   遍历 Evaluator 指定的后续候选并比较 Simulator paired Worlds。
 
   调用方
@@ -2076,10 +1918,10 @@ search 的 root 与逐层 beam 完整节点登记点。
   Searcher.evaluateCandidate。
 
   输入
-  before/after、动作、行动者、搜索深度、回合开始时已有层的来源记录与 Simulator。
+  before/after、动作、行动者、回合开始时已有层的来源记录与 Simulator。
 
   输出
-  exposeMarginal、assaultStacksCredit、information value 与 remainingProvenance。
+  exposeMarginal、assaultStacksCredit 与 remainingProvenance。
 
   读取状态
   Evaluator value requests 及配对反事实所需过滤状态。
@@ -2088,21 +1930,18 @@ search 的 root 与逐层 beam 完整节点登记点。
   仅通过反事实辅助函数写独立状态。
 
   调用函数
-  evaluateFollowUpMarginal、evaluateCurrentActionMarginal、evaluateAdaptiveInformationOptionPoints 与 Evaluator provenance。
+  evaluateFollowUpMarginal、evaluateCurrentActionMarginal 与 Evaluator provenance。
 
   边界与不变量
-  Searcher 不读取具体牌或角色 identity；所有业务识别和价值公式都由 Evaluator 返回；
-  信息项只在根层物化，避免深层反事实递归枚举隐藏世界。
+  Searcher 不读取具体牌或角色 identity；所有业务识别和价值公式都由 Evaluator 返回。
   */
   materializeValueTerms({
     beforeState,
     afterState,
     action,
     actorId,
-    depth,
     remainingProvenance,
     simulator,
-    context = null,
     searchBudget = null
   }) {
     const exposeMarginal = this.evaluateFollowUpMarginal(
@@ -2128,21 +1967,9 @@ search 的 root 与逐层 beam 完整节点登记点。
       actorId,
       remainingProvenance
     );
-    const adaptiveInformationOptionPoints = depth === 1
-      ? this.evaluateAdaptiveInformationOptionPoints(
-          beforeState,
-          afterState,
-          action,
-          actorId,
-          simulator,
-          context,
-          searchBudget
-        )
-      : 0;
     return {
       exposeMarginal,
       assaultStacksCredit,
-      adaptiveInformationOptionPoints,
       nextProvenance
     };
   }
@@ -2648,37 +2475,6 @@ export class SearchBudget {
     this.counterfactualDurationMs += duration;
     this.stateUtilityDurationMs += duration;
     return this.counterfactualCalls;
-  }
-
-  /*
-  功能
-  记录一次 Searcher 显式 StateValue 查询的调用与耗时。
-
-  调用方
-  Searcher.evaluateStateUtility。
-
-  输入
-  非负墙钟耗时。
-
-  输出
-  更新后的 stateUtilityCalls。
-
-  读取状态
-  当前 StateValue 诊断计数。
-
-  写入状态
-  stateUtilityCalls 加一并累加 duration。
-
-  调用函数
-  无。
-
-  边界与不变量
-  只统计已经实际发起的查询；不参与搜索、预算或 Final Utility。
-  */
-  observeStateUtility(durationMs = 0) {
-    this.stateUtilityCalls += 1;
-    this.stateUtilityDurationMs += Math.max(0, Number(durationMs) || 0);
-    return this.stateUtilityCalls;
   }
 
   /*

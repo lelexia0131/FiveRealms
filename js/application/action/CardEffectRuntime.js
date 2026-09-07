@@ -17,6 +17,7 @@ private intent 只存在于当前调用栈；public context 不泄漏 hidden car
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、ActionLegality 或 concrete adapters。
 */
+import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions.js";
 import { isExposeWeaknessConsumable } from "../../domain/rules/status/StatusRules.js";
 import { getAssaultBaseDamage, getChargeEnergyAmount, getDuelDamage, getHarvestDrawCount, getMutualBenefitRevealCount, getNextExposeWeaknessStacks, getProvokeDamage, getRecoverHealAmount, getScoutMaxRevealCount, getShieldAmount, getShockwaveDamage, getSymbiosisHealAmount } from "../../domain/rules/card/CardEffectRules.js";
 import { changeShield } from "../../domain/state/transitions/ResourceTransitions.js";
@@ -29,7 +30,7 @@ const REQUIRED_DEPENDENCIES = [
   "discardCardFromHand", "rememberPrivateCard", "cardLabelForHuman", "seatOrderFrom",
   "getEnemies", "responseWorkflow", "publicCardPool", "resolveLeverage",
   "getCardTargets", "getTransferSources", "getTransferReceivers", "diagnostics",
-  "random", "createId", "emitEvent"
+  "random", "createId", "emitEvent", "publishFact"
 ];
 
 /*
@@ -151,20 +152,38 @@ assault 的 direct callers。
 按 signature 返回。
 
 读取状态
-runtime/card/skill facts。
+当前总突袭次数、非装备上限、备用弹夹消耗次数与 forced assault 上下文。
 
 写入状态
-无直接 Domain write。
+经 RuleUsageTransition 原子推进 attackUsed 与可选 assaultMagazineUsed。
 
 调用函数
-下游 collaborator。
+incrementAttackUsed、伤害与状态下游 collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+只有正常主动突袭在非装备额度耗尽后才消费备用弹夹；借势等 forced assault 不计入该装备额度。
 */
     async assault(source, card, targets, context) {
       const state = runtime.getState();
-      incrementAttackUsed(state, source);
+      const magazineLimit = Math.max(
+        0,
+        Number(CARD_DEFINITIONS.assaultMagazine.attackLimitBonus) || 0
+      );
+      const magazineUsed = Math.max(
+        0,
+        Math.min(magazineLimit, Number(source.turnFlags.assaultMagazineUsed) || 0)
+      );
+      const nonEquipmentUsed = Math.max(0, source.turnFlags.attackUsed - magazineUsed);
+      const consumesMagazine = !context.forcedAssault
+        && source.equipment?.definitionId === "assaultMagazine"
+        && nonEquipmentUsed >= source.turnFlags.attackLimit
+        && magazineUsed < magazineLimit;
+      incrementAttackUsed(
+        state,
+        source,
+        1,
+        consumesMagazine ? magazineUsed + 1 : magazineUsed
+      );
       runtime.diagnostics.recordAssaultUse({ sourceId: source.id });
       const stacks = getNextExposeWeaknessStacks(source.statuses.exposeWeakness) - 1;
       if (isExposeWeaknessConsumable(source.statuses.exposeWeakness)) {
@@ -300,13 +319,13 @@ scout 的 direct callers。
 runtime/card/skill facts。
 
 写入状态
-无直接 Domain write。
+观察者私密知识；MVP 事实只携带实际新增未知张数。
 
 调用函数
-下游 collaborator。
+rememberPrivateCard、publishFact 与私密展示 collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+不重复 Domain rule 决定；已知牌可再次查看但不得重复产生信息价值。
 */
     async scout(source, card, targets, context) {
       const gameId = runtime.getState().gameId;
@@ -314,7 +333,19 @@ runtime/card/skill facts。
       const intent = resolvePrivateSelectionIntent(source, card, target, context, "hand");
       const chosen = intent?.cards.slice(0, getScoutMaxRevealCount()) ?? [];
       if (!chosen.length) return { resolved: false };
-      for (const seen of chosen) runtime.rememberPrivateCard(source, target, seen);
+      const newlyKnownCount = chosen.reduce(
+        (count, seen) => count + (runtime.rememberPrivateCard(source, target, seen) ? 1 : 0),
+        0
+      );
+      if (newlyKnownCount > 0) {
+        await runtime.publishFact("privateCardsRevealed", {
+          source,
+          target,
+          effectDefinitionId: card.definitionId,
+          actualNewCount: newlyKnownCount
+        });
+      }
+      if (!runtime.isSessionValid(gameId)) return { resolved: false };
       if (source.controllerType === "human") await runtime.presentation.showPrivateReveal({ title: `${target.name}的手牌情报`, cardIds: chosen.map((card) => card.id) });
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
       runtime.presentation.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);
@@ -628,28 +659,28 @@ runtime/card/skill facts。
 
 /*
 功能
-执行 duel 卡牌效果 sequencing。
+执行决斗卡牌的交替突袭响应，并发布该真实 Duel session 的生命周期事实。
 
 调用方
-duel 的 direct callers。
+CardEffectRuntime.resolve。
 
 输入
-按 signature 传入的 runtime facts。
+source、duel card、唯一 target 与父 Action context。
 
 输出
-按 signature 返回。
+成功结算无显式返回；session 取消时返回 { resolved:false }。
 
 读取状态
-runtime/card/skill facts。
+MatchState session、参战玩家存活状态与内部 duelContext。
 
 写入状态
-无直接 Domain write。
+内部 duelContext；伤害仍经 combat workflow 写入 Domain state。
 
 调用函数
-下游 collaborator。
+runtime.publishFact、responseWorkflow.requestAssaultDiscard、runtime.damage 与 presentation collaborators。
 
 边界与不变量
-不重复 Domain rule 决定。
+父 Action resolutionId 是本次 Duel session 的唯一身份；生命周期事实只由真实 Duel resolver 发布，响应突袭沿用该身份。
 */
     async duel(source, card, targets, context) {
       const state = runtime.getState();
@@ -657,11 +688,32 @@ runtime/card/skill facts。
       const target = targets[0];
       let current = target;
       let opponent = source;
-      duelContext = { sourceId: source.id, targetId: target.id, currentId: target.id };
+      duelContext = {
+        resolutionId: context.resolutionId,
+        sourceId: source.id,
+        targetId: target.id,
+        currentId: target.id
+      };
+      await runtime.publishFact("duelStarted", {
+        source,
+        target,
+        resolutionId: context.resolutionId
+      });
+      if (!runtime.isSessionValid(gameId)) return { resolved: false };
       while (current.alive && opponent.alive && !state.isGameOver) {
         duelContext.currentId = current.id;
         runtime.presentation.showDuel({ playerId: current.id, opponentId: opponent.id });
-        const assault = await runtime.responseWorkflow.requestAssaultDiscard(current, "在决斗中打出突袭", { source: opponent, target: current, card });
+        const assault = await runtime.responseWorkflow.requestAssaultDiscard(
+          current,
+          "在决斗中打出突袭",
+          {
+            source: opponent,
+            target: current,
+            card,
+            usageContext: "duel",
+            parentResolutionId: context.resolutionId
+          }
+        );
         if (!runtime.isSessionValid(gameId) || assault.status === "cancelled") return { resolved: false };
         if (assault.status !== "used") {
           runtime.presentation.log(`${current.name}在决斗中败下阵来。`, "important");
@@ -671,6 +723,12 @@ runtime/card/skill facts。
         }
         [current, opponent] = [opponent, current];
       }
+      if (!runtime.isSessionValid(gameId)) return { resolved: false };
+      await runtime.publishFact("duelEnded", {
+        source,
+        target,
+        resolutionId: context.resolutionId
+      });
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
       duelContext = null;
       runtime.presentation.hideDuel();
@@ -834,6 +892,32 @@ runtime/card/skill facts。
     async recycleDevice(source, card, _targets, context) { return resolveEquipment(source, card, context); },
 /*
 功能
+执行 bubbleMachine 装备效果 sequencing。
+
+调用方
+bubbleMachine 的 direct callers。
+
+输入
+按 signature 传入的 runtime facts。
+
+输出
+按 signature 返回。
+
+读取状态
+runtime/card/skill facts。
+
+写入状态
+无直接 Domain write。
+
+调用函数
+resolveEquipment。
+
+边界与不变量
+只复用通用装备槽与替换流程；装备瞬间不增加护盾。
+*/
+    async bubbleMachine(source, card, _targets, context) { return resolveEquipment(source, card, context); },
+/*
+功能
 执行 defenseDevice 装备效果 sequencing。
 
 调用方
@@ -884,6 +968,32 @@ runtime/card/skill facts。
 不重复 Domain rule 决定。
 */
     async battleDevice(source, card, _targets, context) { return resolveEquipment(source, card, context); },
+/*
+功能
+执行 assaultMagazine 装备效果 sequencing。
+
+调用方
+assaultMagazine 的 direct callers。
+
+输入
+按 signature 传入的 runtime facts。
+
+输出
+按 signature 返回。
+
+读取状态
+runtime/card/skill facts。
+
+写入状态
+无直接 Domain write。
+
+调用函数
+resolveEquipment。
+
+边界与不变量
+只进入唯一装备槽；主动突袭有效上限由 Domain TeamRules 查询即时派生。
+*/
+    async assaultMagazine(source, card, _targets, context) { return resolveEquipment(source, card, context); },
 /*
 功能
 执行 telescope 装备效果 sequencing。
@@ -1045,7 +1155,7 @@ runtime/card/skill facts。
   Object.freeze。
 
   边界与不变量
-  checkpoint 只含公开 player IDs，不持有新的真实实体。
+  checkpoint 只含父 Action resolutionId 与公开 player IDs，不持有新的真实实体。
   */
   function captureActionCheckpoint() {
     return duelContext ? Object.freeze({ ...duelContext }) : null;

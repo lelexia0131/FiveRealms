@@ -1336,6 +1336,65 @@ export function queryPlayerHandProbability(state, player, definitionId, minimum 
 
 /*
 功能
+查询 canonical 手牌 selection 命中指定卡牌定义的概率。
+
+调用方
+Evaluator 的 Counter root overlap value primitive 与直接概率测试。
+
+输入
+ProbabilityState、World 玩家、canonical hand selection 与目标 definitionId。
+
+输出
+零到一的当前选择命中概率。
+
+读取状态
+确定身份 availability、玩家合法自有手牌、匿名 finite-pool slot 与公开 handCount。
+
+写入状态
+无；查询结果只存在于当前调用栈。
+
+调用函数
+cardAvailability、queryPlayerHandProbability、Pool.queryProbability、clampProbability。
+
+边界与不变量
+known 只绑定 selection 指定实体；unknown 只查询匿名 slot；uniform-hand 对当前完整手牌期望占比求值；
+不得读取未被 World 暴露的真实隐藏身份，也不得把 value 或 response 意愿混入概率结果。
+*/
+export function queryHandSelectionProbability(state, player, selection, definitionId) {
+  if (!player || selection?.zone !== "hand" || !definitionId) return 0;
+  if (selection.selectionKind === "known") {
+    const selectedIdentity = [
+      ...(Array.isArray(player.hand) ? player.hand : []),
+      ...(Array.isArray(player.knownCards) ? player.knownCards : [])
+    ].find((entry) => (
+      (entry.id ?? entry.cardId) === selection.cardId
+    )) ?? null;
+    const selectedDefinitionId = selection.definitionId
+      ?? selectedIdentity?.definitionId
+      ?? null;
+    return selectedIdentity && selectedDefinitionId === definitionId
+      ? cardAvailability(selectedIdentity)
+      : 0;
+  }
+  if (selection.selectionMode === "uniform-hand") {
+    const handCount = Math.max(0, Number(player.handCount) || 0);
+    if (handCount <= PROBABILITY_EPSILON) return 0;
+    const expected = queryPlayerHandProbability(
+      state,
+      player,
+      definitionId
+    ).expected;
+    return clampProbability(Number.isFinite(expected) ? expected / handCount : 0);
+  }
+  if (selection.selectionKind !== "unknown") return 0;
+  return clampProbability(queryProbability(state, {
+    definitionId,
+    bucketId:player.id
+  }).slotProbability);
+}
+
+/*
+功能
 按给定响应顺序直接计算首个拥有目标资源的响应者概率。
 
 调用方

@@ -13,6 +13,7 @@ import {
 import { evaluateMatchAchievements } from "../js/ui/history/achievements/AchievementTracker.js";
 import { HistoryStatsManager } from "../js/ui/history/HistoryStatsManager.js";
 import { MatchPerformanceTracker } from "../js/ui/results/MatchPerformanceTracker.js";
+import { calculatePerformance } from "../js/ui/results/MatchPerformanceCalculator.js";
 import { MatchMvpResultView } from "../js/ui/results/MatchMvpResultView.js";
 import { HistoryArchiveView } from "../js/ui/history/HistoryArchiveView.js";
 import { AchievementView } from "../js/ui/history/achievements/AchievementView.js";
@@ -86,13 +87,16 @@ function result(overrides = {}) {
     initialTeamSize: 2,
     teammateCharacterIds: ["oath-warden"],
     won: true,
+    aliveAtEnd: true,
     isMvp: true,
     finalScore: 1001,
     effectiveRounds: 4,
     totals: { enemyHpDamage: 12, enemyKills: 2 },
     combatStats: { totalDamage: 12, damageTaken: 8, support: 0 },
     achievementFacts: {
-      activeSkillUses: 3, activeAssaultUses: 0, rescueCount: 3, maxTurnDamage: 3, maxTurnKills: 2,
+      activeSkillUses: 3, activeAssaultUses: 0, committedAssaultUses: 0,
+      maxCommittedAssaultsInDuel: 0,
+      rescueCount: 3, maxTurnDamage: 3, maxTurnKills: 2,
       maxHandCount: 16, equipmentUses: 10, lightningCasts: 2, lightningHits: 2,
       teammateDeaths: 0, maxAliveRound: 0, clutchEnemyCounts: [2, 3]
     },
@@ -235,7 +239,127 @@ async function evaluateTrackedAttack(finalAttackDamage, targetHp) {
   return { actualDamage, humanResult, unlocked };
 }
 
-export function registerHistoryAchievementTests(test) {
+/*
+功能
+创建使用真实 DyingWorkflow 与 MatchPerformanceTracker 的定向救援夹具。
+
+调用方
+征途成就救援事件回归测试。
+
+输入
+测试运行器提供的 makeGame/makePlayer/instance，以及目标初始生命和各救援者调息数量。
+
+输出
+Game、濒死目标、救援者与 tracker。
+
+读取状态
+测试 Game fixture 的真实玩家、牌区与事件总线。
+
+写入状态
+设置目标生命并向救援者手牌加入调息。
+
+调用函数
+makePlayer、instance、makeGame、MatchPerformanceTracker.initializeRoster。
+
+边界与不变量
+目标不持有调息；只有显式配置的同阵营真人救援者会接受 dyingRescue 响应。
+*/
+function createTrackedRescueFixture(
+  { makeGame, makePlayer, instance },
+  { targetHp, rescuerCardCounts }
+) {
+  const target = makePlayer("achievement-rescue-target", 0, "dawn", "human");
+  target.hp = targetHp;
+  const rescuers = [];
+  for (const [index, count] of rescuerCardCounts.entries()) {
+    const rescuer = makePlayer(`achievement-rescuer-${index}`, index + 1, "dawn", "human");
+    rescuer.hand.push(...Array.from({ length: count }, () => instance("recover")));
+    rescuers.push(rescuer);
+  }
+  const enemy = makePlayer("achievement-rescue-enemy", rescuers.length + 1, "dusk");
+  const { game } = makeGame([target, ...rescuers, enemy], {
+    response: (request) => request.type === "dyingRescue"
+  });
+  const tracker = game.matchPerformanceSidecar.tracker;
+  tracker.initializeRoster();
+  return { game, target, rescuers, tracker };
+}
+
+/*
+功能
+创建由真实 Duel Action、响应支付和 MatchPerformanceTracker 组成的成就测试夹具。
+
+调用方
+难分上下的同场、跨场、本人/对手、即时达成与 rollback 回归测试。
+
+输入
+Game 测试构造器，以及双方突袭数和决斗牌数。
+
+输出
+game、tracker、双方玩家与决斗牌实体。
+
+读取状态
+无。
+
+写入状态
+只初始化独立测试 Game 的玩家手牌与 tracker roster。
+
+调用函数
+makePlayer、instance、makeGame、MatchPerformanceTracker.initializeRoster。
+
+边界与不变量
+双方都走真实 response workflow；本地成就所属玩家固定为 human，所有卡牌均为独立实体。
+*/
+function createEvenlyMatchedDuelFixture(gameFixtures, {
+  humanAssaults = 0,
+  opponentAssaults = 0,
+  duelCards = 1
+} = {}) {
+  const { makeGame, makePlayer, instance } = gameFixtures;
+  const human = makePlayer("evenly-matched-human", 0, "dawn", "human");
+  const opponent = makePlayer("evenly-matched-opponent", 1, "dusk", "human");
+  const duels = Array.from({ length: duelCards }, () => instance("duel"));
+  human.hand.push(...Array.from({ length: humanAssaults }, () => instance("assault")));
+  opponent.hand.push(
+    ...duels,
+    ...Array.from({ length: opponentAssaults }, () => instance("assault"))
+  );
+  const { game } = makeGame([human, opponent], {
+    response: (request) => request.type === "assaultDiscard"
+  });
+  game.state.currentPlayerIndex = opponent.seatIndex;
+  const tracker = game.matchPerformanceSidecar.tracker;
+  tracker.initializeRoster();
+  return { game, tracker, human, opponent, duels };
+}
+
+/*
+功能
+注册征途成就定义、事实链、持久化与展示的定向测试。
+
+调用方
+tests/run.mjs。
+
+输入
+测试注册函数，以及真实 Game 测试夹具构造器。
+
+输出
+无返回值。
+
+读取状态
+各测试在执行时读取独立 fixture 与生产成就定义。
+
+写入状态
+仅向传入测试注册器添加测试。
+
+调用函数
+test、makeGame、makePlayer、instance。
+
+边界与不变量
+每个测试使用独立状态；不运行 Balance、自博弈或随机长局。
+*/
+export function registerHistoryAchievementTests(test, gameFixtures) {
+  const { makeGame, makePlayer, instance } = gameFixtures;
   test("UI·征途成就：首次 duo 解锁提示一次且重复达成不再提示", async () => {
     const storage = memoryStorage();
     let index = 0;
@@ -455,10 +579,10 @@ export function registerHistoryAchievementTests(test) {
       { id: "h", tier: "hidden", order: 1 }
     ];
     assert.deepEqual(sortAchievements(source).map((entry) => entry.id), ["a", "b", "z", "h"]);
-    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 40);
+    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 50);
   });
 
-  test("UI·征途成就：档案页渲染全部四十张卡并保留隐藏卡面", async () => {
+  test("UI·征途成就：档案页渲染全部五十张卡并保留隐藏卡面", async () => {
     const storage = memoryStorage();
     const manager = new HistoryStatsManager({ storage });
     const root = { innerHTML: "", addEventListener() {} };
@@ -468,8 +592,8 @@ export function registerHistoryAchievementTests(test) {
       root.innerHTML.indexOf('<section class="history-section history-achievements"'),
       root.innerHTML.indexOf('<section class="history-section" aria-labelledby="history-travelers-title">')
     );
-    assert.equal((achievementMarkup.match(/class="achievement-card /g) ?? []).length, 40);
-    assert.equal((achievementMarkup.match(/journey-progress-segment/g) ?? []).length, 40);
+    assert.equal((achievementMarkup.match(/class="achievement-card /g) ?? []).length, 50);
+    assert.equal((achievementMarkup.match(/journey-progress-segment/g) ?? []).length, 50);
     assert.match(achievementMarkup, /每一道亮起的铭痕，都来自一场真实终局[\s\S]*?achievement-journey-progress/);
     assert.doesNotMatch(achievementMarkup, /achievement-journey-sigil|journey-crest-mark/);
     assert.equal((achievementMarkup.match(/is-hidden-locked/g) ?? []).length, 10);
@@ -491,7 +615,7 @@ export function registerHistoryAchievementTests(test) {
     assert.match(achievementCss, /\.achievement-modal\s*\{[^}]*border:\s*1px solid var\(--achievement-tier-border\)[^}]*background:\s*var\(--achievement-tier-surface\)/s);
     assert.match(achievementCss, /\.achievement-modal-art > span:not\(\.achievement-crest\)/);
     assert.match(achievementCss, /\.achievement-card\.is-partial\s*\{[^}]*0 0 20px var\(--achievement-tier-glow\)/s);
-    assert.match(achievementCss, /\.journey-progress-track\s*\{[^}]*repeat\(40, minmax\(0, 1fr\)\)/s);
+    assert.match(achievementCss, /\.journey-progress-track\s*\{[^}]*repeat\(50, minmax\(0, 1fr\)\)/s);
     assert.match(achievementCss, /\.achievement-card\.is-partial, \.achievement-modal\.is-partial\s*\{[^}]*--achievement-art-brightness:\s*\.84/s);
     assert.match(achievementCss, /\.achievement-card\.is-complete, \.achievement-modal\.is-complete\s*\{[^}]*--achievement-art-brightness:\s*1\.08/s);
     assert.match(achievementCss, /\.achievement-card > img\s*\{[^}]*filter: saturate\(var\(--achievement-art-saturation\)\) brightness\(var\(--achievement-art-brightness\)\)/s);
@@ -502,7 +626,7 @@ export function registerHistoryAchievementTests(test) {
   test("UI·征途成就：标题长度有层次且无人倒下使用战旗插画", () => {
     const titles = ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title);
     const lengths = new Set(titles.map((title) => [...title].length));
-    assert.equal(new Set(titles).size, 40);
+    assert.equal(new Set(titles).size, 50);
     assert.ok(lengths.size >= 3);
     assert.ok(titles.every((title) => !/[。！？]$/.test(title)));
     const flawless = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "flawless_victory");
@@ -563,10 +687,10 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(evaluated.includes("last_stand_trio"), false);
   });
 
-  test("UI·征途成就：四十项定义、ID、艺术资源与模式范围完整", () => {
-    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 40);
-    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id)).size, 40);
-    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title)).size, 40);
+  test("UI·征途成就：五十项定义、ID、艺术资源与模式范围完整", () => {
+    assert.equal(ACHIEVEMENT_DEFINITIONS.length, 50);
+    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.id)).size, 50);
+    assert.equal(new Set(ACHIEVEMENT_DEFINITIONS.map((definition) => definition.title)).size, 50);
     for (const definition of ACHIEVEMENT_DEFINITIONS) {
       assert.match(definition.id, /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
       assert.ok(existsSync(new URL(`../${definition.artwork.slice(2)}`, import.meta.url)), definition.id);
@@ -579,6 +703,7 @@ export function registerHistoryAchievementTests(test) {
     const singlePunch = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "single_punch");
     const seriousPunch = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "serious_punch");
     const accidentalSuccess = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "accidental_success");
+    const evenlyMatched = ACHIEVEMENT_DEFINITIONS.find((definition) => definition.id === "evenly_matched");
     assert.deepEqual([rescueChain.title, rescueChain.criteria], ["医术高超", "单场成功救下至少 2 次濒死友军。"]);
     assert.deepEqual([rescueMaster.title, rescueMaster.criteria], ["轮回天生", "单场成功救下至少 3 次濒死友军。"]);
     assert.equal(heavyBlow.tier, "common");
@@ -586,6 +711,10 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(ace.criteria, "二人小队中玩家单场击杀全部敌人。");
     assert.equal(singlePunch.criteria, "打出的一次攻击造成至少 3 点伤害。");
     assert.equal(seriousPunch.criteria, "打出的一次攻击造成至少 5 点伤害。");
+    assert.deepEqual(
+      [evenlyMatched.title, evenlyMatched.tier, evenlyMatched.description, evenlyMatched.criteria, evenlyMatched.teamScope],
+      ["难分上下", "epic", "你在决斗中至少坚持了 3 个回合。", "同一次决斗中，玩家本人实际打出至少 3 次突袭。", "both"]
+    );
     assert.deepEqual(
       [accidentalSuccess.title, accidentalSuccess.tier, accidentalSuccess.hidden, accidentalSuccess.criteria],
       ["歪打正着", "hidden", true, "全程未打出突袭并成为全场最高火力者。"]
@@ -597,6 +726,277 @@ export function registerHistoryAchievementTests(test) {
       ACHIEVEMENT_DEFINITIONS.slice(6, 9).map((definition) => definition.id),
       ["full_health", "heavy_blow", "win_streak_three"]
     );
+  });
+
+  test("UI·征途成就：角色技能与回合条件严格验证阈值和角色", () => {
+    for (const [id, characterId, key, threshold, title, tier] of [
+      ["lavish_discard", "blade-walker", "maxTurnDiscards", 6, "挥金如土", "epic"],
+      ["shadow_collector", "shade-agent", "stolenCards", 6, "拾喽", "epic"],
+      ["healing_angel", "spirit-medic", "symbiosisHealing", 6, "天使", "epic"],
+      ["fate_gambler", "fate-gambler", "allInEntries", 5, "赌徒", "epic"],
+      ["blazing_encampment", "ember-magus", "burningFieldDamage", 10, "火烧联营", "legendary"],
+      ["swift_blade", "blade-walker", "maxTurnDamage", 8, "快刀斩乱麻", "legendary"]
+    ]) {
+      const definition = ACHIEVEMENT_DEFINITIONS.find((entry) => entry.id === id);
+      assert.deepEqual([definition.title, definition.tier, definition.teamScope], [title, tier, "both"]);
+      assert.equal(evaluateAchievementForTest(id, { characterId }, { [key]: threshold - 1 }), false, id);
+      assert.equal(evaluateAchievementForTest(id, { characterId }, { [key]: threshold }), true, id);
+      assert.equal(evaluateAchievementForTest(id, { characterId }, { [key]: threshold + 1 }), true, id);
+      if (id !== "lavish_discard") {
+        assert.equal(evaluateAchievementForTest(id, { characterId: "other" }, { [key]: threshold }), false, id);
+      }
+    }
+    for (const [completedHunts, damagingHunts, expected] of [[2, 2, false], [3, 3, true], [4, 4, true], [4, 3, false]]) {
+      assert.equal(evaluateAchievementForTest("unerring_hunt", { characterId: "trail-hunter" }, {
+        completedHunts, damagingHunts
+      }), expected);
+    }
+    assert.equal(evaluateAchievementForTest("unerring_hunt", { characterId: "shade-agent" }, {
+      completedHunts: 3, damagingHunts: 3
+    }), false);
+    assert.match(ACHIEVEMENT_DEFINITIONS.find((entry) => entry.id === "unerring_hunt").criteria, /3次猎杀/);
+  });
+
+  test("UI·征途成就：贡献和支援直接使用 MVP 单项分数且不乘终局系数", () => {
+    for (const [id, characterId, dimension, title] of [
+      ["generous_resonance", "resonance-tuner", "contribution", "慈善家"],
+      ["steadfast_pillar", "oath-warden", "support", "中流砥柱"]
+    ]) {
+      const definition = ACHIEVEMENT_DEFINITIONS.find((entry) => entry.id === id);
+      assert.deepEqual([definition.title, definition.tier, definition.teamScope], [title, "epic", "both"]);
+      for (const score of [199, 200, 201]) {
+        assert.equal(evaluateAchievementForTest(id, {
+          characterId, scores: { [dimension]: score },
+          raw: { [dimension]: 999 }, finalScore: 9999, roundMultiplier: 2, victoryMultiplier: 2
+        }), score >= 200, `${id}:${score}`);
+      }
+      assert.equal(evaluateAchievementForTest(id, { characterId, scores: { [dimension]: 200 }, finalScore: 0 }), true);
+      assert.equal(evaluateAchievementForTest(id, { characterId: "blade-walker", scores: { [dimension]: 200 } }), false);
+      assert.equal(evaluateAchievementForTest(id, { characterId, scores: {}, raw: { [dimension]: 200 } }), false);
+      const performance = calculatePerformance({
+        characterId, initialTeamSize: 2, effectiveRounds: 5, won: true, aliveAtEnd: true,
+        totals: { enemyHpDamage: 0, enemyKills: 0, allyHealing: 6, allyRescueHealing: 0,
+          allyMitigation: 0, allyShieldAbsorbed: 0, hpDamageTaken: 0, cardsPlayed: 0,
+          skillEnergySpent: 0, enemyControls: 0 },
+        contributionFacts: { allyCardsGranted: 10 }
+      });
+      assert.equal(performance.scores[dimension], 200);
+      assert.notEqual(performance.raw[dimension], 200);
+      assert.notEqual(performance.roundMultiplier, 1);
+      assert.notEqual(performance.victoryMultiplier, 1);
+      assert.equal(evaluateAchievementForTest(id, performance), true);
+    }
+  });
+
+  test("UI·征途成就：真实弃牌即时累计并排除响应、破坏、转移和阵亡清理", async () => {
+    const actor = makePlayer("discard-actor", 0, "dawn", "human", 1);
+    const ally = makePlayer("discard-ally", 1, "dawn");
+    const enemy = makePlayer("discard-enemy", 2, "dusk");
+    const { game } = makeGame([actor, ally, enemy], { response: (request) => request.type === "skill" });
+    game.passiveTriggerRegistry.registerForPlayers([actor]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    await game.eventDispatcher.emit("turnStart", { player: actor });
+    actor.hand.push(...Array.from({ length: 9 }, () => instance("charge")));
+    await game.turnWorkflow.handleDiscardPhase(actor, game.state.gameId);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 5);
+    actor.hand.push(instance("block"));
+    await game.resourceWorkflow.payCardsFromHandAtomically(actor, [actor.hand.at(-1)], "响应支付");
+    await game.discardCardFromHand(actor, actor.hand[0], "破坏", { silent: true });
+    await game.resourceWorkflow.moveCardBetweenHands(actor, enemy, actor.hand[0], "窃取");
+    const used = actor.hand[0];
+    await game.resourceWorkflow.moveHandToResolving(actor, used);
+    await game.resourceWorkflow.finishResolvingToDiscard(used);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 5);
+    actor.hand.push(instance("charge"));
+    await game.damage(enemy, ally, 2, { canBlock: false });
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 6);
+    await game.eventDispatcher.emit("turnEnd", { player: actor });
+    actor.hand.push(...Array.from({ length: 7 }, () => instance("charge")));
+    await game.turnWorkflow.handleDiscardPhase(actor, game.state.gameId);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 6);
+    await game.eventDispatcher.emit("turnStart", { player: actor });
+    assert.equal(tracker.recordFor(actor).achievementFacts.turnDiscards, 0);
+    actor.hand.push(...Array.from({ length: 8 }, () => instance("charge")));
+    await game.dyingWorkflow.kill(actor, enemy);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDiscards, 6);
+    game.dispose();
+  });
+
+  test("UI·征途成就：窃取按真实获牌且滋荣只计实际治疗包括自疗", async () => {
+    for (const characterIndex of [3, 2]) {
+      const actor = makePlayer("skill-actor", 0, "dawn", "human", characterIndex);
+      const ally = makePlayer("skill-ally", 1, "dawn");
+      const enemy = makePlayer("skill-enemy", 2, "dusk");
+      const { game } = makeGame([actor, ally, enemy], { random: () => 0 });
+      const tracker = game.matchPerformanceSidecar.tracker;
+      tracker.initializeRoster();
+      for (let index = 0; index < 6; index += 1) {
+        actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+        actor.energy = 2;
+        if (characterIndex === 3) {
+          if (index === 5) enemy.equipment = instance("energyDevice");
+          else enemy.hand.push(instance("charge"));
+          assert.equal(await game.useActiveSkill(actor, "stealSkill", [enemy]), true);
+          assert.equal(tracker.recordFor(actor).achievementFacts.stolenCards, index + 1);
+        } else {
+          const target = index % 2 ? ally : actor;
+          target.hp = target.maxHp - 1;
+          assert.equal(await game.useActiveSkill(actor, "symbiosis", [target]), true);
+          assert.equal(tracker.recordFor(actor).achievementFacts.symbiosisHealing, index + 1);
+        }
+      }
+      if (characterIndex === 3) {
+        assert.equal(tracker.recordFor(actor).totals.enemyControls, 6);
+        await game.eventDispatcher.publishFact("cardsStolen", {
+          source: actor, skill: { id: "stealSkill" },
+          steals: [{ target: ally, actualAmount: 1 }, { target: null, actualAmount: 1 }]
+        });
+        assert.equal(tracker.recordFor(actor).achievementFacts.stolenCards, 6);
+        assert.equal(await game.useActiveSkill(actor, "stealSkill", [enemy]), false);
+        assert.equal(tracker.recordFor(actor).achievementFacts.stolenCards, 6);
+      } else {
+        await game.heal(actor, ally, 10, { skill: "symbiosis" });
+        await game.heal(actor, actor, 10, { skill: "symbiosis" });
+        ally.hp -= 1;
+        await game.heal(actor, ally, 1, { card: instance("recover") });
+        assert.equal(tracker.recordFor(actor).achievementFacts.symbiosisHealing, 6);
+        assert.equal(tracker.recordFor(actor).totals.allyHealing, 4);
+      }
+      game.dispose();
+    }
+  });
+
+  test("UI·征途成就：孤注只计进入转换且技能回滚与新局清空事实", async () => {
+    const actor = makePlayer("all-in-actor", 0, "dawn", "human", 6);
+    const enemy = makePlayer("all-in-enemy", 1, "dusk");
+    let roll = 0;
+    const { game } = makeGame([actor, enemy], { random: () => roll });
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    for (let index = 0; index < 6; index += 1) {
+      actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+      actor.energy = 1;
+      if (index !== 1) delete actor.statuses.allIn;
+      assert.equal(await game.useActiveSkill(actor, "allIn", []), true);
+      assert.equal(tracker.recordFor(actor).achievementFacts.allInEntries, index === 0 ? 1 : index);
+    }
+    delete actor.statuses.allIn;
+    actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+    actor.energy = 1;
+    roll = 0.99;
+    await game.useActiveSkill(actor, "allIn", []);
+    assert.equal(tracker.recordFor(actor).achievementFacts.allInEntries, 5);
+    roll = 0;
+    actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+    actor.energy = 1;
+    const originalLog = game.log;
+    game.log = () => { throw new Error("skill effect rollback"); };
+    await assert.rejects(game.useActiveSkill(actor, "allIn", []), /skill effect rollback/);
+    game.log = originalLog;
+    assert.equal(tracker.recordFor(actor).achievementFacts.allInEntries, 5);
+    assert.equal(Boolean(actor.statuses.allIn), false);
+    tracker.initializeRoster();
+    const facts = tracker.recordFor(actor).achievementFacts;
+    for (const key of ["allInEntries", "stolenCards", "symbiosisHealing", "completedHunts", "damagingHunts", "burningFieldDamage", "maxTurnDiscards", "maxTurnDamage"]) {
+      assert.equal(facts[key], 0, key);
+    }
+    game.dispose();
+  });
+
+  test("UI·征途成就：猎杀完成按实际伤害去重且致胜命中进入终局", async () => {
+    for (const outcome of ["hit", "shield", "block", "cancel", "rollback", "victory"]) {
+      const actor = makePlayer(`hunt-${outcome}`, 0, "dawn", "human", 5);
+      const enemy = makePlayer("hunt-enemy", 1, "dusk", "human");
+      const ally = makePlayer("hunt-ally", 2, "dawn");
+      const fallenA = makePlayer("hunt-fallen-a", 3, "dusk");
+      const fallenB = makePlayer("hunt-fallen-b", 4, "dusk");
+      const { game } = makeGame([actor, enemy, ally, fallenA, fallenB], { response: (request) => outcome === "block" && request.type === "block" });
+      const tracker = game.matchPerformanceSidecar.tracker;
+      tracker.initializeRoster();
+      fallenA.alive = false;
+      fallenB.alive = false;
+      for (let index = 0; index < 3; index += 1) {
+        actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+        actor.energy = 2;
+        enemy.hp = enemy.maxHp;
+        enemy.statuses.huntMark = { sourceId: actor.id };
+        assert.equal(await game.useActiveSkill(actor, "hunt", [enemy]), true);
+      }
+      assert.equal(tracker.recordFor(actor).achievementFacts.completedHunts, 3);
+      assert.equal(tracker.recordFor(actor).achievementFacts.damagingHunts, 3);
+      actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+      actor.energy = 2;
+      enemy.hp = outcome === "victory" ? 1 : enemy.maxHp;
+      enemy.statuses.huntMark = { sourceId: actor.id };
+      if (outcome === "shield") enemy.shield = 2;
+      if (outcome === "block") enemy.hand.push(instance("block"));
+      if (outcome === "cancel") game.eventDispatcher.on("beforeDamage", "test:cancel-hunt", (event) => { event.cancelled = true; });
+      if (outcome === "rollback") {
+        game.eventDispatcher.on("afterDamage", "test:rollback-hunt", () => { throw new Error("hunt rollback"); });
+        await assert.rejects(game.useActiveSkill(actor, "hunt", [enemy]), /hunt rollback/);
+      } else {
+        assert.equal(await game.useActiveSkill(actor, "hunt", [enemy]), true);
+      }
+      const snapshot = tracker.finalizeMatch();
+      const facts = snapshot.players[0].achievementFacts;
+      assert.equal(facts.completedHunts, outcome === "rollback" ? 3 : 4, outcome);
+      assert.equal(facts.damagingHunts, ["hit", "victory"].includes(outcome) ? 4 : 3, outcome);
+      const unlocked = evaluateMatchAchievements(snapshot, actor.id, createEmptyAchievementData().streaks).unlocked;
+      assert.equal(unlocked.includes("unerring_hunt"), ["hit", "rollback", "victory"].includes(outcome), outcome);
+      if (outcome === "victory") assert.equal(game.state.isGameOver, true);
+      game.dispose();
+    }
+  });
+
+  test("UI·征途成就：焚场与单回合伤害复用 Combat 实际生命伤害", async () => {
+    for (const characterIndex of [4, 0]) {
+      const actor = makePlayer("damage-actor", 0, "dawn", "human", characterIndex);
+      const ally = makePlayer("damage-ally", 1, "dawn");
+      const enemy = makePlayer("damage-enemy", 2, "dusk");
+      const { game } = makeGame([actor, ally, enemy]);
+      const tracker = game.matchPerformanceSidecar.tracker;
+      tracker.initializeRoster();
+      await game.eventDispatcher.emit("turnStart", { player: actor });
+      for (let index = 0; index < 10; index += 1) {
+        enemy.hp = enemy.maxHp;
+        if (characterIndex === 4) {
+          actor.energy = 3;
+          actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+          assert.equal(await game.useActiveSkill(actor, "burningField", []), true);
+          assert.equal(tracker.recordFor(actor).achievementFacts.burningFieldDamage, index + 1);
+        } else {
+          if (index === 7) {
+            assert.equal(tracker.recordFor(actor).achievementFacts.maxTurnDamage, 7);
+            await game.eventDispatcher.emit("turnEnd", { player: actor });
+            await game.eventDispatcher.emit("turnStart", { player: actor });
+          }
+          await game.damage(actor, enemy, 1, { canBlock: false });
+        }
+      }
+      const facts = tracker.recordFor(actor).achievementFacts;
+      if (characterIndex === 4) {
+        enemy.hp = enemy.maxHp;
+        await game.damage(actor, enemy, 1, { skill: "hunt" });
+        assert.equal(facts.burningFieldDamage, 10);
+      } else {
+        assert.equal(facts.maxTurnDamage, 7);
+        enemy.hp = enemy.maxHp;
+        enemy.shield = 3;
+        await game.damage(actor, enemy, 3);
+        assert.equal(facts.turnDamage, 3);
+        for (let index = 0; index < 5; index += 1) {
+          enemy.hp = enemy.maxHp;
+          await game.damage(actor, enemy, 1);
+        }
+        assert.equal(facts.maxTurnDamage, 8);
+        await game.eventDispatcher.emit("turnEnd", { player: actor });
+        enemy.hp = enemy.maxHp;
+        await game.damage(actor, enemy, 2);
+        assert.equal(facts.maxTurnDamage, 8);
+      }
+      game.dispose();
+    }
   });
 
   test("UI·征途成就：新增判定严格遵守阈值、存活与真实来源", () => {
@@ -611,6 +1011,8 @@ export function registerHistoryAchievementTests(test) {
 
     assert.equal(evaluateAchievementForTest("self_lightning", {}, { selfLightningHit: true }), true);
     assert.equal(evaluateAchievementForTest("self_lightning", {}, { selfLightningHit: false, lightningDamageTakenHits: 1 }), false);
+    assert.equal(evaluateAchievementForTest("rescue_beacon", {}, { rescueCount: 0 }), false);
+    assert.equal(evaluateAchievementForTest("rescue_beacon", {}, { rescueCount: 1 }), true);
     assert.equal(evaluateAchievementForTest("rescue_chain", {}, { rescueCount: 1 }), false);
     assert.equal(evaluateAchievementForTest("rescue_chain", {}, { rescueCount: 2 }), true);
     assert.equal(evaluateAchievementForTest("rescue_master", {}, { rescueCount: 2 }), false);
@@ -646,25 +1048,546 @@ export function registerHistoryAchievementTests(test) {
     assert.equal(evaluateAchievementForTest("damage_taken_twelve", { combatStats: { damageTaken: 12 } }), true);
     assert.equal(evaluateAchievementForTest("card_creator", {}, { cardsGained: 100 }), false);
     assert.equal(evaluateAchievementForTest("card_creator", {}, { cardsGained: 101 }), true);
-    const allScores = { activity: 101, support: 101, contribution: 101, control: 101, skill: 101, firepower: 101 };
-    assert.equal(evaluateAchievementForTest("all_rounder", { scores: { ...allScores, support: 100 } }), false);
+    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 9 }), false);
+    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 10 }), true);
+    assert.equal(evaluateAchievementForTest("overflowing_grimoire", {}, { maxHandCount: 11 }), true);
+    const allScores = { activity: 100, support: 100, contribution: 100, control: 100, skill: 100, firepower: 100 };
     assert.equal(evaluateAchievementForTest("all_rounder", { scores: allScores }), true);
+    assert.equal(evaluateAchievementForTest("all_rounder", { scores: { ...allScores, support: 99 } }), false);
+    assert.equal(evaluateAchievementForTest("all_rounder", {
+      scores: Object.fromEntries(Object.keys(allScores).map((dimension) => [dimension, 101]))
+    }), true);
 
     const lowerFirepower = [{ playerId: "ai-1", raw: { firepower: 4 }, scores: { firepower: 999 } }];
     const higherFirepower = [{ playerId: "ai-1", raw: { firepower: 6 } }];
     const tiedFirepower = [{ playerId: "ai-1", raw: { firepower: 5 } }];
     assert.equal(evaluateAchievementForTest(
-      "accidental_success", { raw: { firepower: 5 }, scores: { firepower: 0 } }, { activeAssaultUses: 0 }, {}, {}, lowerFirepower
+      "accidental_success", { raw: { firepower: 5 }, scores: { firepower: 0 } }, { committedAssaultUses: 0 }, {}, {}, lowerFirepower
     ), true);
     assert.equal(evaluateAchievementForTest(
-      "accidental_success", { raw: { firepower: 5 } }, { activeAssaultUses: 1 }, {}, {}, lowerFirepower
+      "accidental_success", { raw: { firepower: 5 } }, { committedAssaultUses: 1 }, {}, {}, lowerFirepower
     ), false);
     assert.equal(evaluateAchievementForTest(
-      "accidental_success", { raw: { firepower: 5 } }, { activeAssaultUses: 0 }, {}, {}, higherFirepower
+      "accidental_success", { raw: { firepower: 5 } }, { committedAssaultUses: 0 }, {}, {}, higherFirepower
     ), false);
     assert.equal(evaluateAchievementForTest(
-      "accidental_success", { raw: { firepower: 5 } }, { activeAssaultUses: 0 }, {}, {}, tiedFirepower
+      "accidental_success", { raw: { firepower: 5 } }, { committedAssaultUses: 0 }, {}, {}, tiedFirepower
     ), true);
+  });
+
+  test("UI·征途成就：收藏家保留隐藏属性并使用新文案", () => {
+    const definition = ACHIEVEMENT_DEFINITIONS.find(({ id }) => id === "overflowing_grimoire");
+    assert.equal(definition.title, "收藏家");
+    assert.equal(definition.criteria, "自己的一个行动回合中，手牌数量曾不少于 10 张");
+    assert.equal(definition.description, "你喜欢收藏奇珍异宝，成为了名副其实的大收藏家。");
+    assert.equal(definition.hidden, true);
+    assert.equal(definition.tier, "hidden");
+  });
+
+  test("UI·征途成就：收藏家不计开局或他人回合手牌且本人回合开始可达成", async () => {
+    const actor = makePlayer("human", 0, "dawn", "human");
+    const enemy = makePlayer("collector-enemy", 1, "dusk");
+    actor.hand = Array.from({ length: 10 }, () => instance("charge"));
+    const { game } = makeGame([actor, enemy]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 0);
+    assert.equal(tracker.recordFor(actor).achievementFacts.cardsGained, 10);
+    await game.eventDispatcher.emit("turnStart", { player: enemy });
+    game.state.deck.cards.push(instance("charge"));
+    await game.drawCards(actor, 1, "收藏家回合外获牌");
+    assert.equal(actor.hand.length, 11);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 0);
+    await game.eventDispatcher.emit("turnEnd", { player: enemy });
+    game.state.deck.cards.push(instance("charge"));
+    await game.drawCards(actor, 1, "收藏家行动回合间获牌");
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 0);
+    actor.hand.splice(0, 2);
+    await game.eventDispatcher.emit("turnStart", { player: actor });
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 10);
+    const matchResult = tracker.finalizeMatch();
+    assert.ok(evaluateMatchAchievements(
+      matchResult, actor.id, createEmptyAchievementData().streaks
+    ).unlocked.includes("overflowing_grimoire"));
+    game.dispose();
+  });
+
+  test("UI·征途成就：收藏家本人回合中达到十张后减少及结束仍保留达成事实", async () => {
+    const actor = makePlayer("human", 0, "dawn", "human");
+    const enemy = makePlayer("collector-enemy", 1, "dusk");
+    actor.hand = Array.from({ length: 9 }, () => instance("charge"));
+    const { game } = makeGame([actor, enemy]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    await game.eventDispatcher.emit("turnStart", { player: actor });
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 9);
+    game.state.deck.cards.push(instance("charge"));
+    await game.drawCards(actor, 1, "收藏家回合内获牌");
+    assert.equal(actor.hand.length, 10);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 10);
+    actor.hand.splice(0, 2);
+    await game.eventDispatcher.emit("afterCardMove", { from: "hand", to: "discard", player: actor });
+    await game.eventDispatcher.emit("turnEnd", { player: actor });
+    assert.equal(actor.hand.length, 8);
+    assert.equal(tracker.recordFor(actor).achievementFacts.maxHandCount, 10);
+    await game.eventDispatcher.emit("turnStart", { player: enemy });
+    const matchResult = tracker.finalizeMatch();
+    assert.ok(evaluateMatchAchievements(
+      matchResult, actor.id, createEmptyAchievementData().streaks
+    ).unlocked.includes("overflowing_grimoire"));
+    game.dispose();
+  });
+
+  test("UI·征途成就：无人倒下同时要求胜利、本人存活与队友无人死亡", () => {
+    assert.equal(evaluateAchievementForTest(
+      "flawless_victory", { won: true, aliveAtEnd: true }, { teammateDeaths: 0 }
+    ), true);
+    assert.equal(evaluateAchievementForTest(
+      "flawless_victory", { won: true, aliveAtEnd: false }, { teammateDeaths: 0 }
+    ), false);
+    assert.equal(evaluateAchievementForTest(
+      "flawless_victory", { won: true, aliveAtEnd: true }, { teammateDeaths: 1 }
+    ), false);
+    assert.equal(evaluateAchievementForTest(
+      "flawless_victory", { won: false, aliveAtEnd: true }, { teammateDeaths: 0 }
+    ), false);
+  });
+
+  test("UI·征途成就：成功救援按濒死事件及参与者去重提交", async () => {
+    const direct = createTrackedRescueFixture(gameFixtures, {
+      targetHp: 0,
+      rescuerCardCounts: [1]
+    });
+    assert.equal(await direct.game.dyingWorkflow.enter(direct.target, null), true);
+    assert.equal(direct.tracker.recordFor(direct.rescuers[0]).achievementFacts.rescueCount, 1);
+    direct.game.dispose();
+
+    const repeated = createTrackedRescueFixture(gameFixtures, {
+      targetHp: -2,
+      rescuerCardCounts: [3]
+    });
+    const countsBeforeSuccess = [];
+    repeated.game.eventDispatcher.on("afterHeal", "test:rescue-await-success", () => {
+      countsBeforeSuccess.push(
+        repeated.tracker.recordFor(repeated.rescuers[0]).achievementFacts.rescueCount
+      );
+    });
+    assert.equal(await repeated.game.dyingWorkflow.enter(repeated.target, null), true);
+    assert.deepEqual(countsBeforeSuccess, [0, 0, 0]);
+    assert.equal(repeated.tracker.recordFor(repeated.rescuers[0]).achievementFacts.rescueCount, 1);
+    repeated.game.dispose();
+
+    const shared = createTrackedRescueFixture(gameFixtures, {
+      targetHp: -1,
+      rescuerCardCounts: [1, 1]
+    });
+    assert.equal(await shared.game.dyingWorkflow.enter(shared.target, null), true);
+    assert.deepEqual(shared.rescuers.map((rescuer) => (
+      shared.tracker.recordFor(rescuer).achievementFacts.rescueCount
+    )), [1, 1]);
+    shared.game.dispose();
+  });
+
+  test("UI·征途成就：失败救援不计且两个独立成功濒死事件可累计", async () => {
+    const failed = createTrackedRescueFixture(gameFixtures, {
+      targetHp: -2,
+      rescuerCardCounts: [1, 1]
+    });
+    assert.equal(await failed.game.dyingWorkflow.enter(failed.target, null), false);
+    assert.deepEqual(failed.rescuers.map((rescuer) => (
+      failed.tracker.recordFor(rescuer).achievementFacts.rescueCount
+    )), [0, 0]);
+    failed.game.dispose();
+
+    const twice = createTrackedRescueFixture(gameFixtures, {
+      targetHp: 0,
+      rescuerCardCounts: [2]
+    });
+    assert.equal(await twice.game.dyingWorkflow.enter(twice.target, null), true);
+    twice.target.hp = 0;
+    assert.equal(await twice.game.dyingWorkflow.enter(twice.target, null), true);
+    assert.equal(twice.tracker.recordFor(twice.rescuers[0]).achievementFacts.rescueCount, 2);
+    twice.game.dispose();
+  });
+
+  test("UI·征途成就：普通、响应与借势突袭均写入 committed 事实", async () => {
+    assert.equal(evaluateAchievementForTest(
+      "accidental_success",
+      { raw: { firepower: 5 } },
+      { committedAssaultUses: 0 },
+      {},
+      {},
+      [{ playerId: "other", raw: { firepower: 4 } }]
+    ), true);
+
+    const ordinaryActor = makePlayer("achievement-assault-action", 0, "dawn", "human");
+    const ordinaryEnemy = makePlayer("achievement-assault-action-enemy", 1, "dusk");
+    const ordinaryAssault = instance("assault");
+    ordinaryActor.hand.push(ordinaryAssault);
+    const ordinary = makeGame([ordinaryActor, ordinaryEnemy]);
+    ordinary.game.matchPerformanceSidecar.tracker.initializeRoster();
+    assert.equal(await ordinary.game.playCard(ordinaryActor, ordinaryAssault, [ordinaryEnemy]), true);
+    assert.deepEqual([
+      ordinary.game.matchPerformanceSidecar.tracker.recordFor(ordinaryActor).achievementFacts.activeAssaultUses,
+      ordinary.game.matchPerformanceSidecar.tracker.recordFor(ordinaryActor).achievementFacts.committedAssaultUses,
+      ordinary.game.matchPerformanceSidecar.tracker.recordFor(ordinaryActor).achievementFacts.maxCommittedAssaultsInDuel
+    ], [1, 1, 0]);
+    ordinary.game.dispose();
+
+    const responder = makePlayer("achievement-assault-response", 0, "dawn", "human");
+    const responseEnemy = makePlayer("achievement-assault-response-enemy", 1, "dusk");
+    responder.hand.push(instance("assault"));
+    const response = makeGame([responder, responseEnemy], {
+      response: (request) => request.type === "assaultDiscard"
+    });
+    response.game.matchPerformanceSidecar.tracker.initializeRoster();
+    const responseResult = await response.game.responseWorkflow.requestAssaultDiscard(
+      responder,
+      "在决斗中打出突袭",
+      { source: responseEnemy, target: responder, card: instance("duel") }
+    );
+    assert.equal(responseResult.status, "used");
+    assert.deepEqual([
+      response.game.matchPerformanceSidecar.tracker.recordFor(responder).achievementFacts.activeAssaultUses,
+      response.game.matchPerformanceSidecar.tracker.recordFor(responder).achievementFacts.committedAssaultUses,
+      response.game.matchPerformanceSidecar.tracker.recordFor(responder).achievementFacts.maxCommittedAssaultsInDuel
+    ], [0, 1, 0]);
+    response.game.dispose();
+
+    const leverageSource = makePlayer("achievement-leverage-source", 0, "dawn", "human");
+    const leverageResponder = makePlayer("achievement-leverage-responder", 1, "dusk", "human");
+    const leverage = instance("leverage");
+    const forcedAssault = instance("assault");
+    const equipment = instance("energyDevice");
+    leverageSource.hand.push(leverage);
+    leverageResponder.hand.push(forcedAssault);
+    leverageResponder.equipment = equipment;
+    const leverageFixture = makeGame([leverageSource, leverageResponder], {
+      response: (request) => request.type === "leverageAssault"
+    });
+    leverageFixture.game.matchPerformanceSidecar.tracker.initializeRoster();
+    assert.equal(await leverageFixture.game.playCard(leverageSource, leverage, [], {
+      firstTargetId: leverageResponder.id,
+      equipmentCardId: equipment.id,
+      equipmentDefinitionId: equipment.definitionId,
+      secondTargetId: leverageSource.id
+    }), true);
+    assert.deepEqual([
+      leverageFixture.game.matchPerformanceSidecar.tracker.recordFor(leverageResponder).achievementFacts.activeAssaultUses,
+      leverageFixture.game.matchPerformanceSidecar.tracker.recordFor(leverageResponder).achievementFacts.committedAssaultUses,
+      leverageFixture.game.matchPerformanceSidecar.tracker.recordFor(leverageResponder).achievementFacts.maxCommittedAssaultsInDuel
+    ], [0, 1, 0]);
+    leverageFixture.game.dispose();
+  });
+
+  test("UI·难分上下：同一次决斗本人提交三次突袭后解锁", async () => {
+    const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
+      humanAssaults: 3,
+      opponentAssaults: 2
+    });
+    assert.equal(await fixture.game.playCard(
+      fixture.opponent,
+      fixture.duels[0],
+      [fixture.human]
+    ), true);
+    const matchResult = fixture.tracker.finalizeMatch();
+    const humanResult = matchResult.players.find((player) => player.playerId === fixture.human.id);
+    assert.equal(humanResult.achievementFacts.maxCommittedAssaultsInDuel, 3);
+    assert.ok(evaluateMatchAchievements(
+      matchResult,
+      fixture.human.id,
+      createEmptyAchievementData().streaks
+    ).unlocked.includes("evenly_matched"));
+    const storage = memoryStorage();
+    const archive = await new HistoryStatsManager({ storage }).recordMatchResult(
+      matchResult,
+      fixture.human.id
+    );
+    assert.ok(archive.newlyUnlockedAchievements.some(
+      (unlock) => unlock.achievementId === "evenly_matched"
+    ));
+    assert.ok(storage.readObject().achievements.records.evenly_matched.duo.unlockedAt);
+    const achievementCard = archive.achievements.cards.find((item) => item.id === "evenly_matched");
+    assert.deepEqual(
+      [achievementCard.tier, achievementCard.description, achievementCard.status],
+      ["epic", "你在决斗中至少坚持了 3 个回合。", "PARTIAL"]
+    );
+    fixture.game.dispose();
+  });
+
+  test("UI·难分上下：同一次决斗本人只提交两次突袭不解锁", async () => {
+    const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
+      humanAssaults: 2,
+      opponentAssaults: 2
+    });
+    assert.equal(await fixture.game.playCard(
+      fixture.opponent,
+      fixture.duels[0],
+      [fixture.human]
+    ), true);
+    const matchResult = fixture.tracker.finalizeMatch();
+    assert.equal(matchResult.players[0].achievementFacts.maxCommittedAssaultsInDuel, 2);
+    assert.equal(evaluateMatchAchievements(
+      matchResult,
+      fixture.human.id,
+      createEmptyAchievementData().streaks
+    ).unlocked.includes("evenly_matched"), false);
+    fixture.game.dispose();
+  });
+
+  test("UI·难分上下：两次决斗合计三次突袭不会跨 Duel session 累计", async () => {
+    const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
+      humanAssaults: 2,
+      opponentAssaults: 2,
+      duelCards: 2
+    });
+    assert.equal(await fixture.game.playCard(
+      fixture.opponent,
+      fixture.duels[0],
+      [fixture.human]
+    ), true);
+    fixture.human.hand.push(instance("assault"));
+    assert.equal(await fixture.game.playCard(
+      fixture.opponent,
+      fixture.duels[1],
+      [fixture.human]
+    ), true);
+    const matchResult = fixture.tracker.finalizeMatch();
+    assert.equal(matchResult.players[0].achievementFacts.committedAssaultUses, 3);
+    assert.equal(matchResult.players[0].achievementFacts.maxCommittedAssaultsInDuel, 2);
+    assert.equal(evaluateMatchAchievements(
+      matchResult,
+      fixture.human.id,
+      createEmptyAchievementData().streaks
+    ).unlocked.includes("evenly_matched"), false);
+    fixture.game.dispose();
+  });
+
+  test("UI·难分上下：第三次 committed 当场满足且无需等待第三次对手响应", async () => {
+    const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
+      humanAssaults: 3,
+      opponentAssaults: 2
+    });
+    const observedCommits = [];
+    fixture.game.eventDispatcher.on(
+      "cardCommitted",
+      "test:evenly-matched-third-commit",
+      (event) => event.source === fixture.human && event.usageContext === "duel"
+        && observedCommits.push({ ...fixture.tracker.recordFor(fixture.human).achievementFacts })
+    );
+    assert.equal(await fixture.game.playCard(
+      fixture.opponent,
+      fixture.duels[0],
+      [fixture.human]
+    ), true);
+    assert.deepEqual([
+      observedCommits[2].activeDuelCommittedAssaults,
+      observedCommits[2].maxCommittedAssaultsInDuel
+    ], [3, 3]);
+    assert.deepEqual([
+      fixture.tracker.recordFor(fixture.human).achievementFacts.activeDuelResolutionId,
+      fixture.tracker.recordFor(fixture.human).achievementFacts.activeDuelCommittedAssaults,
+      fixture.tracker.recordFor(fixture.human).achievementFacts.maxCommittedAssaultsInDuel
+    ], [null, 0, 3]);
+    fixture.game.dispose();
+  });
+
+  test("UI·难分上下：本人两次加对手一次不计为本人三次", async () => {
+    const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
+      humanAssaults: 2,
+      opponentAssaults: 1
+    });
+    assert.equal(await fixture.game.playCard(
+      fixture.opponent,
+      fixture.duels[0],
+      [fixture.human]
+    ), true);
+    const humanFacts = fixture.tracker.recordFor(fixture.human).achievementFacts;
+    const opponentFacts = fixture.tracker.recordFor(fixture.opponent).achievementFacts;
+    assert.deepEqual([
+      humanFacts.maxCommittedAssaultsInDuel,
+      opponentFacts.maxCommittedAssaultsInDuel
+    ], [2, 1]);
+    assert.equal(evaluateAchievementForTest(
+      "evenly_matched",
+      {},
+      { maxCommittedAssaultsInDuel: humanFacts.maxCommittedAssaultsInDuel }
+    ), false);
+    fixture.game.dispose();
+  });
+
+  test("UI·难分上下：普通出牌阶段提交三次突袭不计入决斗", async () => {
+    const fixture = createEvenlyMatchedDuelFixture(gameFixtures, { duelCards: 0 });
+    for (let index = 0; index < 3; index += 1) {
+      await fixture.game.eventDispatcher.emit("cardCommitted", {
+        source: fixture.human,
+        card: instance("assault"),
+        usageContext: "action",
+        resolutionId: `ordinary-assault-${index}`
+      });
+    }
+    const facts = fixture.tracker.recordFor(fixture.human).achievementFacts;
+    assert.deepEqual([
+      facts.committedAssaultUses,
+      facts.activeAssaultUses,
+      facts.maxCommittedAssaultsInDuel
+    ], [3, 3, 0]);
+    assert.equal(evaluateAchievementForTest(
+      "evenly_matched",
+      {},
+      { maxCommittedAssaultsInDuel: facts.maxCommittedAssaultsInDuel }
+    ), false);
+    fixture.game.dispose();
+  });
+
+  test("UI·难分上下：第三次突袭所在 Action rollback 后不计", async () => {
+    const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
+      humanAssaults: 3,
+      opponentAssaults: 2
+    });
+    const humanDuelCommits = [];
+    fixture.game.eventDispatcher.on(
+      "cardCommitted",
+      "test:evenly-matched-rollback-observer",
+      (event) => event.source === fixture.human && event.usageContext === "duel"
+        && humanDuelCommits.push(event)
+    );
+    fixture.game.eventDispatcher.on(
+      "cardUsed",
+      "test:evenly-matched-rollback",
+      () => assert.fail("rollback evenly matched duel")
+    );
+    await assert.rejects(
+      fixture.game.playCard(fixture.opponent, fixture.duels[0], [fixture.human]),
+      /rollback evenly matched duel/
+    );
+    const facts = fixture.tracker.recordFor(fixture.human).achievementFacts;
+    assert.equal(humanDuelCommits.length, 3);
+    assert.deepEqual([
+      facts.activeDuelResolutionId,
+      facts.activeDuelCommittedAssaults,
+      facts.maxCommittedAssaultsInDuel
+    ], [null, 0, 0]);
+    fixture.game.dispose();
+  });
+
+  test("UI·难分上下：达成后新决斗重置临时计数但保留已达成事实", async () => {
+    const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
+      humanAssaults: 3,
+      opponentAssaults: 2,
+      duelCards: 2
+    });
+    assert.equal(await fixture.game.playCard(
+      fixture.opponent,
+      fixture.duels[0],
+      [fixture.human]
+    ), true);
+    let secondDuelStartFacts = null;
+    fixture.game.eventDispatcher.on(
+      "duelStarted",
+      "test:evenly-matched-next-duel",
+      () => secondDuelStartFacts = { ...fixture.tracker.recordFor(fixture.human).achievementFacts }
+    );
+    assert.equal(await fixture.game.playCard(
+      fixture.opponent,
+      fixture.duels[1],
+      [fixture.human]
+    ), true);
+    const matchResult = fixture.tracker.finalizeMatch();
+    assert.deepEqual([
+      secondDuelStartFacts.activeDuelCommittedAssaults,
+      secondDuelStartFacts.maxCommittedAssaultsInDuel
+    ], [0, 3]);
+    assert.equal(matchResult.players[0].achievementFacts.maxCommittedAssaultsInDuel, 3);
+    assert.ok(evaluateMatchAchievements(
+      matchResult,
+      fixture.human.id,
+      createEmptyAchievementData().streaks
+    ).unlocked.includes("evenly_matched"));
+    fixture.game.dispose();
+  });
+
+  test("UI·征途成就：非法、未提交与 rollback 突袭不污染 committed 事实", async () => {
+    const actor = makePlayer("achievement-assault-rollback", 0, "dawn", "human");
+    const ally = makePlayer("achievement-assault-rollback-ally", 1, "dawn");
+    const enemy = makePlayer("achievement-assault-rollback-enemy", 2, "dusk");
+    const illegalAssault = instance("assault");
+    const rollbackAssault = instance("assault");
+    actor.hand.push(illegalAssault, rollbackAssault);
+    const { game } = makeGame([actor, ally, enemy]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    assert.equal(await game.playCard(actor, illegalAssault, [ally]), false);
+    assert.equal(tracker.recordFor(actor).achievementFacts.committedAssaultUses, 0);
+    game.eventDispatcher.on("cardUsed", "test:rollback-assault-achievement-fact", (event) => {
+      if (event.card === rollbackAssault) throw new Error("rollback assault fact");
+    });
+    await assert.rejects(
+      game.playCard(actor, rollbackAssault, [enemy]),
+      /rollback assault fact/
+    );
+    assert.deepEqual([
+      tracker.recordFor(actor).achievementFacts.activeAssaultUses,
+      tracker.recordFor(actor).achievementFacts.committedAssaultUses
+    ], [0, 0]);
+    game.dispose();
+  });
+
+  test("UI·征途成就：真实 1v3 后进入 1v2 会保留两个残局档位", async () => {
+    const survivor = makePlayer("achievement-clutch-survivor", 0, "dawn", "human");
+    const ally = makePlayer("achievement-clutch-ally", 1, "dawn");
+    const enemies = [
+      makePlayer("achievement-clutch-enemy-a", 2, "dusk"),
+      makePlayer("achievement-clutch-enemy-b", 3, "dusk"),
+      makePlayer("achievement-clutch-enemy-c", 4, "dusk")
+    ];
+    const { game } = makeGame([survivor, ally, ...enemies]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    ally.hp = 0;
+    await game.dyingWorkflow.kill(ally, enemies[0]);
+    assert.deepEqual([...tracker.recordFor(survivor).achievementFacts.clutchEnemyCounts], [3]);
+    enemies[0].hp = 0;
+    await game.dyingWorkflow.kill(enemies[0], survivor);
+    game.state.winnerTeam = "dawn";
+    const snapshot = tracker.finalizeMatch();
+    const player = snapshot.players.find((entry) => entry.playerId === survivor.id);
+    const unlocked = evaluateMatchAchievements(
+      snapshot,
+      survivor.id,
+      createEmptyAchievementData().streaks
+    ).unlocked;
+    assert.deepEqual(player.achievementFacts.clutchEnemyCounts, [2, 3]);
+    assert.equal(unlocked.includes("last_stand_duo"), true);
+    assert.equal(unlocked.includes("last_stand_duo_three"), true);
+    game.dispose();
+  });
+
+  test("UI·征途成就：只形成 1v3 不会自动产生 1v2 残局事实", async () => {
+    const survivor = makePlayer("achievement-clutch-only-three", 0, "dawn", "human");
+    const ally = makePlayer("achievement-clutch-only-three-ally", 1, "dawn");
+    const enemies = [
+      makePlayer("achievement-clutch-only-three-a", 2, "dusk"),
+      makePlayer("achievement-clutch-only-three-b", 3, "dusk"),
+      makePlayer("achievement-clutch-only-three-c", 4, "dusk")
+    ];
+    const { game } = makeGame([survivor, ally, ...enemies]);
+    const tracker = game.matchPerformanceSidecar.tracker;
+    tracker.initializeRoster();
+    ally.hp = 0;
+    await game.dyingWorkflow.kill(ally, enemies[0]);
+    game.state.winnerTeam = "dawn";
+    const snapshot = tracker.finalizeMatch();
+    const player = snapshot.players.find((entry) => entry.playerId === survivor.id);
+    const unlocked = evaluateMatchAchievements(
+      snapshot,
+      survivor.id,
+      createEmptyAchievementData().streaks
+    ).unlocked;
+    assert.deepEqual(player.achievementFacts.clutchEnemyCounts, [3]);
+    assert.equal(unlocked.includes("last_stand_duo"), false);
+    assert.equal(unlocked.includes("last_stand_duo_three"), true);
+    game.dispose();
   });
 
   test("UI·征途成就：攻击峰值使用 HP cap 前最终结算伤害", async () => {
@@ -802,8 +1725,9 @@ export function registerHistoryAchievementTests(test) {
     await dispatcher.emit("afterDamage", { source: actor, target: enemy, actualAmount: 2, finalAttackDamage: 2, shieldAbsorbed: 0, resolutionId: "attack-2" });
     await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
     await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
-    assert.equal(tracker.recordFor(actor).achievementFacts.rescueCount, 2);
+    assert.equal(tracker.recordFor(actor).achievementFacts.rescueCount, 0);
     await dispatcher.emit("afterHeal", { source: actor, target: ally, actualAmount: 1, isDyingRescue: true });
+    await dispatcher.emit("playerRescued", { target: ally });
     const assault = { definitionId: "assault", category: "basic" };
     await dispatcher.emit("beforeCardUse", { source: actor, card: assault, cancelled: true });
     await dispatcher.emit("cardCommitted", { source: enemy, card: assault, usageContext: "action" });
@@ -811,6 +1735,7 @@ export function registerHistoryAchievementTests(test) {
     await dispatcher.emit("cardCommitted", { source: actor, card: assault, usageContext: "leverageAssault" });
     await dispatcher.emit("cardCommitted", { source: actor, card: { definitionId: "lightning" }, usageContext: "action" });
     assert.equal(tracker.recordFor(actor).achievementFacts.activeAssaultUses, 0);
+    assert.equal(tracker.recordFor(actor).achievementFacts.committedAssaultUses, 2);
     await dispatcher.emit("cardCommitted", { source: actor, card: assault, usageContext: "action" });
     await dispatcher.emit("cardUsed", { source: actor, card: { definitionId: "lightning", category: "tactic" }, resolved: true });
     await dispatcher.emit("afterDamage", { source: null, target: enemy, actualAmount: 3, shieldAbsorbed: 0, damageType: "lightning", metadata: { originPlayerId: actor.id } });
@@ -831,7 +1756,8 @@ export function registerHistoryAchievementTests(test) {
     const facts = playerResult.achievementFacts;
     assert.equal(facts.activeSkillUses, 1);
     assert.equal(facts.activeAssaultUses, 1);
-    assert.equal(facts.rescueCount, 3);
+    assert.equal(facts.committedAssaultUses, 3);
+    assert.equal(facts.rescueCount, 1);
     assert.equal(facts.maxTurnDamage, 3);
     assert.equal(facts.lightningCasts, 1);
     assert.equal(facts.lightningHits, 1);

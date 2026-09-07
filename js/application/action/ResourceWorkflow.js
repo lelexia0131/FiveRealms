@@ -226,7 +226,7 @@ export function createResourceWorkflow(runtime) {
     弃牌、响应费用、技能费用与阵亡清理流程。
 
     输入
-    Player、当前手牌 Card entity、原因与 logReason/silent 选项。
+    Player、当前手牌 Card entity、原因与 logReason/silent/isDiscard 选项。
 
     输出
     Promise<boolean>，仅成功提交移动时为 true。
@@ -242,11 +242,13 @@ export function createResourceWorkflow(runtime) {
 
     边界与不变量
     beforeCardMove 后重新验证同一实体仍在手牌；取消或旧会话不产生移动。
+    isDiscard 由真实弃牌规则显式提供；破坏与阵亡清理虽然进入弃牌堆，也不属于弃牌。
     */
     async discardCardFromHand(player, card, reason = "弃置", options = {}) {
       const gameId = state().gameId;
       if (!active(gameId) || player.hand.indexOf(card) < 0) return false;
-      const move = { type:"beforeCardMove", card, from:"hand", to:"discard", player, reason, cancelled:false };
+      const move = { type:"beforeCardMove", card, from:"hand", to:"discard", player, reason, cancelled:false,
+        isDiscard: options.isDiscard === true };
       await runtime.emitEvent("beforeCardMove", move);
       if (!active(gameId) || move.cancelled || player.hand.indexOf(card) < 0) return false;
       moveCardBetweenZones(state(), player.hand, state().deck.discardPile, card);

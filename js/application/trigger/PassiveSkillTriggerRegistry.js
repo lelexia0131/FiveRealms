@@ -19,16 +19,16 @@ Domain mutation 经 transitions/workflows；trigger runtime state 经 transition
 */
 import { PASSIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTransitions.js";
-import { addSpyGapPendingTarget, addTrackingTarget, markCategoryUsed, removeSpyGapPendingTarget, setCoordinationTriggered, setGambleTriggered, setGuardianAidUsed, setLastEmberResolutionId, setMomentum, setRejuvenationTriggerCount, setSpyGapTriggered, setTrackingTurnNumber } from "../../domain/state/transitions/RuleUsageTransitions.js";
+import { addSpyGapPendingTarget, addTrackingTarget, markCategoryUsed, removeSpyGapPendingTarget, setCoordinationTriggered, setGambleTriggered, setGuardianAidUsed, setLastEmberResolutionId, setMomentum, setRejuvenationTriggerCount, setTrackingTurnNumber } from "../../domain/state/transitions/RuleUsageTransitions.js";
 import { getAllInAssaultBonus } from "../../domain/rules/status/StatusRules.js";
 import { createDiscardChoiceRequest } from "../choice/DiscardChoiceRequest.js";
-import { canRevealSpyGap, canTriggerCoordination, canTriggerEmber, canTriggerGamble, canTriggerGuardianAid, canTriggerMomentumCategory, canTriggerRejuvenation, canTriggerSpyGapAfterDamage, canTriggerSpyGapOnRescue, canTriggerTrackingTarget, isHuntMarkExpiredForOwner, shouldAddAllInDamage, shouldAddMomentumDamage, shouldAdvanceTrackingClock, shouldCleanupExpiredHuntMarks, shouldConsumeAllIn, shouldConsumeMomentum, shouldIgnoreEmberDuplicate, shouldQueueSpyGapOnDying, shouldRemoveSpyGapPendingOnDead, shouldResetMomentumAtTurnEnd, shouldResetRejuvenationAtTurnStart } from "../../domain/rules/skill/PassiveSkillRules.js";
+import { canRevealSpyGap, canTriggerEmber, canTriggerGamble, canTriggerGuardianAid, canTriggerMomentumCategory, canTriggerRejuvenation, canTriggerSpyGapAfterDamage, canTriggerSpyGapOnRescue, canTriggerTrackingTarget, getCoordinationTriggerTarget, isHuntMarkExpiredForOwner, shouldAddAllInDamage, shouldAddMomentumDamage, shouldAdvanceTrackingClock, shouldCleanupExpiredHuntMarks, shouldConsumeAllIn, shouldConsumeMomentum, shouldIgnoreEmberDuplicate, shouldQueueSpyGapOnDying, shouldRemoveSpyGapPendingOnDead, shouldResetMomentumAtTurnEnd, shouldResetRejuvenationAtTurnStart } from "../../domain/rules/skill/PassiveSkillRules.js";
 
 const REQUIRED_DEPENDENCIES = [
   "onEvent", "getState", "isSessionValid", "presentation", "random", "responseWorkflow",
   "discardCardFromHand", "drawCards", "gainEnergy", "preparePrivateHandPeekIntent",
-  "resolvePrivateHandPeekIntent", "rememberPrivateCard", "choiceCoordinator",
-  "choiceContexts", "createId"
+  "resolvePrivateHandPeekIntent", "rememberPrivateCard", "publishFact",
+  "choiceCoordinator", "choiceContexts", "createId"
 ];
 
 /*
@@ -181,7 +181,7 @@ const PASSIVE_SKILLS = {
         .map((cardId) => owner.hand.find((card) => card.id === cardId))
         .find(Boolean) ?? null;
       if (!discard) return;
-      const moved = await runtime.discardCardFromHand(owner, discard, "护援", { logReason:"「护援」" });
+      const moved = await runtime.discardCardFromHand(owner, discard, "护援", { logReason:"「护援」", isDiscard: true });
       if (!runtime.isSessionValid(gameId) || !moved) return;
       setGuardianAidUsed(runtime.getState(), owner, true);
       const reduction = PASSIVE_SKILL_DEFINITIONS.guardianAid.damageReduction;
@@ -243,7 +243,7 @@ const PASSIVE_SKILLS = {
 
   /*
   功能
-  注册窥隙被动监听器；窥隙额度与 pending 目标经 RuleUsageTransition。
+  注册不限次数的窥隙被动监听器；仅濒死后置目标经 RuleUsageTransition。
 
   调用方
   registerPassiveSkills。
@@ -258,10 +258,10 @@ const PASSIVE_SKILLS = {
   EventDispatcher、伤害/救援事件与手牌。
 
   写入状态
-  spyGap flags 经 RuleUsageTransition。
+  spyGapPendingTargetIds 经 RuleUsageTransition；私密知识经 CardKnowledgeAdapter。
 
   调用函数
-  setSpyGapTriggered、setSpyGapPendingTargetIds、add/removeSpyGapPendingTarget。
+  add/removeSpyGapPendingTarget、私密选择与 privateCardsRevealed fact。
 
   边界与不变量
   私密窥牌与日志顺序不变。
@@ -269,7 +269,7 @@ const PASSIVE_SKILLS = {
   spyGap(game, owner) {
     /*
     功能
-    执行一次窥隙查看并提交触发额度。
+    执行一次窥隙查看并发布实际新增未知信息事实。
 
     调用方
     spyGap 内部监听器。
@@ -281,27 +281,38 @@ const PASSIVE_SKILLS = {
     无返回值。
 
     读取状态
-    owner 额度、目标手牌与 HiddenCardChoiceWorkflow 私密选择。
+    目标手牌、owner 当前私密知识与 HiddenCardChoiceWorkflow 私密选择。
 
     写入状态
-    spyGapTriggered 经 RuleUsageTransition；AI 记忆经既有 API。
+    AI 记忆经既有 API；MVP 事实只携带实际新增未知张数。
 
     调用函数
-    setSpyGapTriggered、runtime.preparePrivateHandPeekIntent。
+    runtime.preparePrivateHandPeekIntent、rememberPrivateCard、publishFact。
 
     边界与不变量
-    只查看合法数量且不公开牌面。
+    只查看合法数量且不公开牌面；已知牌可再次查看但不得重复产生信息价值。
     */
     async function revealGap(target) {
       const gameId = runtime.getState().gameId;
       if (!canRevealSpyGap(owner, target)) return;
-      setSpyGapTriggered(runtime.getState(), owner, true);
       const maxRevealCount = PASSIVE_SKILL_DEFINITIONS.spyGap.maxRevealCount;
       const intent = await runtime.preparePrivateHandPeekIntent(owner, target, maxRevealCount, `窥隙：选择查看${target.name}至多${maxRevealCount}张手牌`);
       if (!runtime.isSessionValid(gameId)) return;
       const seen = runtime.resolvePrivateHandPeekIntent(owner, intent);
       if (!seen.length) return;
-      for (const card of seen) runtime.rememberPrivateCard(owner, target, card);
+      const newlyKnownCount = seen.reduce(
+        (count, card) => count + (runtime.rememberPrivateCard(owner, target, card) ? 1 : 0),
+        0
+      );
+      if (newlyKnownCount > 0) {
+        await runtime.publishFact("privateCardsRevealed", {
+          source: owner,
+          target,
+          effectDefinitionId: "spyGap",
+          actualNewCount: newlyKnownCount
+        });
+      }
+      if (!runtime.isSessionValid(gameId)) return;
       if (owner.controllerType === "human") await runtime.presentation.showPrivateReveal({ title: `窥隙：${target.name}的手牌`, cardIds: seen.map((card) => card.id) });
       if (!runtime.isSessionValid(gameId)) return;
       runtime.presentation.log(`${owner.name}触发「窥隙」，查看了${target.name}的${seen.length}张手牌。`);
@@ -314,7 +325,6 @@ const PASSIVE_SKILLS = {
         return;
       }
       if (!shouldQueueSpyGapOnDying(owner, event)) return;
-      if (!owner.turnFlags.spyGapPendingTargetIds) setSpyGapPendingTargetIds(runtime.getState(), owner, new Set());
       addSpyGapPendingTarget(runtime.getState(), owner, event.target.id);
     });
 
@@ -478,25 +488,38 @@ const PASSIVE_SKILLS = {
   无返回值。
 
   读取状态
-  EventDispatcher、卡牌有效目标与额度。
+  EventDispatcher、卡牌有效目标、牌堆与额度。
 
   写入状态
-  coordinationTriggered 经 RuleUsageTransition。
+  coordinationTriggered 经 RuleUsageTransition；摸牌经 ResourceWorkflow。
 
   调用函数
-  setCoordinationTriggered、runtime.drawCards。
+  getCoordinationTriggerTarget、setCoordinationTriggered、runtime.drawCards、publishFact。
 
   边界与不变量
   每回合只触发一次。
   */
   coordination(game, owner) {
     runtime.onEvent("cardUsed", `${owner.id}:coordination`, async (event) => {
-      if (!canTriggerCoordination(owner, event)) return;
+      const teammate = getCoordinationTriggerTarget(owner, event);
+      if (!teammate) return;
       setCoordinationTriggered(runtime.getState(), owner, true);
       const gameId = runtime.getState().gameId;
-      const drawn = await runtime.drawCards(owner, PASSIVE_SKILL_DEFINITIONS.coordination.drawCount, "协调", { silent:true });
+      const ownDrawn = await runtime.drawCards(owner, PASSIVE_SKILL_DEFINITIONS.coordination.drawCount, "协调", { silent:true });
       if (!runtime.isSessionValid(gameId)) return;
-      runtime.presentation.log(`${owner.name}触发「协调」，${drawn ? `摸${drawn}张牌` : "但未摸到牌"}。`);
+      const teammateDrawn = await runtime.drawCards(teammate, PASSIVE_SKILL_DEFINITIONS.coordination.drawCount, "协调", { silent:true });
+      if (teammateDrawn > 0) {
+        await runtime.publishFact("cardsGranted", {
+          source: owner,
+          skill: PASSIVE_SKILL_DEFINITIONS.coordination,
+          grants: Object.freeze([Object.freeze({ target: teammate, actualAmount: teammateDrawn })])
+        });
+      }
+      if (!runtime.isSessionValid(gameId)) return;
+      runtime.presentation.log(
+        `${owner.name}触发「协调」，自己${ownDrawn ? `摸${ownDrawn}张牌` : "未摸到牌"}，`
+        + `${teammate.name}${teammateDrawn ? `摸${teammateDrawn}张牌` : "未摸到牌"}。`
+      );
     });
   }
 };

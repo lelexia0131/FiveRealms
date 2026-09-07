@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">百发百中</title><desc id="desc">苍苔原密林的高低路径间，三道猎杀轨迹穿过不同敌影，近景猎手正收回发光的短刃。</desc>
+  <defs>
+    <linearGradient id="forest" x2="1" y2=".4"><stop stop-color="#0f2633"/><stop offset=".55" stop-color="#395c62"/><stop offset="1" stop-color="#232c46"/></linearGradient>
+    <linearGradient id="floor" x2=".5" y2="1"><stop stop-color="#50716d"/><stop offset="1" stop-color="#102c39"/></linearGradient>
+    <radialGradient id="moon"><stop stop-color="#d9e9cc" stop-opacity=".55"/><stop offset="1" stop-color="#a6d3c8" stop-opacity="0"/></radialGradient>
+    <linearGradient id="hunter" x2="1" y2="1"><stop stop-color="#7d9690"/><stop offset=".5" stop-color="#3b5869"/><stop offset="1" stop-color="#192d45"/></linearGradient>
+    <g id="quarry"><path d="M-10 2-19 49 4 42l19 6L13 2Z" fill="#253448" stroke="#819b98" stroke-width="2"/><path d="m-12-4-2-18 12-13 17 12-1 18Z" fill="#526876"/><path d="m-13 12-15 19m41-18 17 6m-34 24-8 20m16-20 10 19" stroke="#7d9490" stroke-width="5"/><path d="m-21-1 42 25" stroke="#efc995" stroke-width="4"/><path d="m-24-5 50 29" stroke="#f9e6b9" stroke-width="2"/></g>
+  </defs>
+  <path d="M0 0h640v640H0Z" fill="url(#forest)"/>
+  <circle cx="427" cy="107" r="189" fill="url(#moon)"/>
+  <path d="M168 0h18l10 375h-27ZM288 0h21l-2 340h-27ZM385 0h16l-5 294h-22ZM523 0h24l-14 410h-19Z" fill="#698482" opacity=".35"/>
+  <path d="m176 91-47-53m175 116 42-56m52-52 42-40m86 163 54-81" fill="none" stroke="#78928b" stroke-width="9" opacity=".3"/>
+  <path d="M0 383 155 310l95 28 135-88 127 57 128-60v393H0Z" fill="url(#floor)"/>
+  <path d="M285 640 404 515 348 447 500 364 401 315 454 274" fill="none" stroke="#9fae92" stroke-width="45" opacity=".28"/>
+  <path d="M0 0h58l15 259 62 116-43 24-57-93L0 322ZM580 0h60v466l-72-40 36-129-36-88Z" fill="#102633"/>
+  <path d="m26 73 12 228 53 73M600 60l20 114-20 121" fill="none" stroke="#42616a" stroke-width="5"/>
+  <path d="M50 98 155 44 216 0M602 178l-65-69-79-24" fill="none" stroke="#182f3c" stroke-width="24"/>
+  <path d="M0 449 86 395l102 31 35 52-93 162H0Z" fill="#1a3343"/>
+  <path d="m46 455 43-34 83 27m-48 11 26 29-63 23" fill="none" stroke="#6e9085" stroke-width="4"/>
+  <use href="#quarry" transform="translate(455 234) scale(.7)"/><use href="#quarry" transform="translate(357 344) scale(.91)"/><use href="#quarry" transform="translate(506 461) scale(1.16)"/>
+  <g fill="none" stroke-linecap="round"><path d="M206 430Q253 215 458 233M211 440Q272 284 361 346M219 450Q385 366 510 464" stroke="#b1d6b3" stroke-width="14" opacity=".1"/><path d="M206 430Q253 215 458 233M211 440Q272 284 361 346M219 450Q385 366 510 464" stroke="#d7deb1" stroke-width="3"/></g>
+  <g stroke="#f2dfa3" stroke-width="2" fill="none"><path d="m428 211-9 19 12 15m48-25 12 17-9 18m-147 62-11 23 12 18m45-31 13 20-8 22m85 124-16 28 11 25m63-42 13 29-15 23"/></g>
+  <path d="M45 640 96 499l37-96 62-42 53 51-23 81 54 102-77 45Z" fill="url(#hunter)" stroke="#9cad9e" stroke-width="3"/>
+  <path d="m126 414 3-44 28-42 39-8 47 60-42 47Z" fill="#617980"/>
+  <path d="m152 381 39-38 31 34-22 37-36-9Z" fill="#152b3d"/><path d="m183 379 25-3" stroke="#e8d79e" stroke-width="3"/>
+  <path d="M137 431 170 467 229 443l23 22-79 55-55-39" fill="#476171" stroke="#bac6a9" stroke-width="3"/>
+  <path d="m233 445 25-8 13 9-18 22-12-8" fill="#bfc3a6"/><path d="m254 441 92-63-64 91Z" fill="#dfe9c6" stroke="#9ecac1" stroke-width="2"/><path d="m251 460 14 20" stroke="#d8c58e" stroke-width="6"/>
+  <path d="m164 530-34 81m73-101 43 91M130 423l-62 80 42-20-24 71 56-45" fill="none" stroke="#8ea59f" stroke-width="3"/>
+  <path d="m91 518 93-64m-51-87 58 16" stroke="#b79e79" stroke-width="6"/>
+  <g fill="#a5c2a0"><path d="m317 534 15-7-4 12-12 4Zm28-30 13-5-3 10-12 5Zm69-75 12-5-2 10-13 5Z"/><path d="m68 131 17-10-2 16-10 2Zm460 409 14-7-3 12-11 3Z"/></g>
+  <path d="M0 624q40-59 108-35l23 51H0M528 640l24-63 8 39 30-62-4 65 42-34-15 55" fill="#0b2636"/>
+  <g fill="#e5dbac"><circle cx="269" cy="310" r="3"/><circle cx="393" cy="405" r="3"/><circle cx="483" cy="326" r="2"/><circle cx="224" cy="207" r="2"/></g>
+</svg>

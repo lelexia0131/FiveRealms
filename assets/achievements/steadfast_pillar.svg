@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">中流砥柱</title><desc id="desc">从翻涌急流向上望去，守誓者站在断桥的支柱旁撑住光幕，护送同伴越过碎石与箭雨。</desc>
+  <defs>
+    <linearGradient id="storm" x2=".7" y2="1"><stop stop-color="#1c263c"/><stop offset=".5" stop-color="#5c6579"/><stop offset="1" stop-color="#123449"/></linearGradient>
+    <linearGradient id="river" x2=".5" y2="1"><stop stop-color="#5c9fa7"/><stop offset="1" stop-color="#102d43"/></linearGradient>
+    <linearGradient id="wall" x2="1" y2="0"><stop stop-color="#bddccd" stop-opacity=".05"/><stop offset=".9" stop-color="#dae8c3" stop-opacity=".4"/><stop offset="1" stop-color="#f4e7b0" stop-opacity=".7"/></linearGradient>
+    <linearGradient id="armor" x2="1" y2=".8"><stop stop-color="#c1b898"/><stop offset=".45" stop-color="#6b7d86"/><stop offset="1" stop-color="#283b56"/></linearGradient>
+    <radialGradient id="impact"><stop stop-color="#fff4ba" stop-opacity=".8"/><stop offset="1" stop-color="#bde9dc" stop-opacity="0"/></radialGradient>
+  </defs>
+  <path d="M0 0h640v640H0Z" fill="url(#storm)"/>
+  <path d="M0 194 88 129 160 174 219 138 314 206 400 145 477 183 560 115 640 152v234H0Z" fill="#2b3b52"/>
+  <path d="M0 300 81 234 129 245v-79l37-22 40 26v137l80-31 124 52 97-91 55 11V133l39-35 36 31v156l43 20v169H0Z" fill="#233247"/>
+  <path d="m178 178 12 6v45h-12m392-36 14-10v44h-14" fill="#b8b79e" opacity=".6"/>
+  <path d="M0 424q109-41 220 0t216 0 204 5v211H0Z" fill="url(#river)"/>
+  <path d="M0 450q98-56 204 9t249 0 187 15M-22 524q115-74 225 5t242-3 218 32M-20 603q152-91 266 0t214-9 197 13" fill="none" stroke="#96c5c4" stroke-width="9" opacity=".5"/>
+  <path d="m39 382 87-36 282-34 183-70 49 27-20 55-184 63-286 28-111 30Z" fill="#6b7281" stroke="#b8b5a0" stroke-width="4"/>
+  <path d="m48 416 114-30 240-25 204-78M83 371l14 57m70-82 7 65m67-73 6 65m82-76 7 66m121-86 15 66m55-88 15 64" fill="none" stroke="#35485e" stroke-width="5"/>
+  <path d="m266 383-26 168 49 42 42-55 12-166Z" fill="#4c5e71" stroke="#aeb4a4" stroke-width="3"/>
+  <path d="m273 432 45-5-8 80-39 34m-30 10 37 10" fill="none" stroke="#77939a" stroke-width="4"/>
+  <path d="m207 411-18 21 12 30 28-32-12-28m149-14 31-18 18 39-28 22-16-16" fill="#99a8a4" stroke="#344b61" stroke-width="3"/>
+  <path d="M292 384q167-10 219-77L445 101q-99 78-171 63Z" fill="url(#wall)"/>
+  <path d="M445 101 511 307q-55 73-219 77" stroke="#f6e1a6" stroke-width="5" fill="none"/>
+  <path d="m424 167 37 113-53 35m-86-116 30 136 109-55M289 248l149-39" fill="none" stroke="#c8e3c6" stroke-width="2" opacity=".45"/>
+  <path d="m280 363-1-132 53-29 52 26 10 104-32 55-39-31Z" fill="url(#armor)" stroke="#dfd3a9" stroke-width="4"/>
+  <path d="m300 211-9-36 27-25 39 13 9 38-31 23Z" fill="#748896" stroke="#e5d7aa" stroke-width="3"/>
+  <path d="m307 185 43 5-3 10-32 1Z" fill="#172c41"/><path d="m333 159 3 20" stroke="#fff0bd" stroke-width="3"/>
+  <path d="m283 248-42 28-25 62m151-93 43-25 32-67" fill="none" stroke="#b4b4a0" stroke-width="20"/>
+  <path d="m270 254-34 16 13 29 32-14m99-33 34-14-9-29-32 11" fill="#526d80" stroke="#d8cfac" stroke-width="3"/>
+  <path d="m309 347-24 48-32 3m94-41 18 31 36-8" fill="none" stroke="#879c9d" stroke-width="19"/>
+  <path d="M281 234q-73 53-131 58l111 45 15-40Z" fill="#514a67" stroke="#9c95a6" stroke-width="3"/>
+  <path d="M119 350 111 321l15-17 20 9 1 24 15 9-12 32-36 8Z" fill="#9badad" stroke="#d1d5b9" stroke-width="2"/>
+  <path d="m511 283-2-36 15-19 23 9 7 27 16 10-22 29-32 5Z" fill="#879fa6" stroke="#cdd2b8" stroke-width="2"/>
+  <path d="m133 329 36 15 36-7m315-78-39 5" fill="none" stroke="#d4d5bc" stroke-width="6"/>
+  <circle cx="457" cy="218" r="70" fill="url(#impact)"/>
+  <g stroke="#e5d2a1" stroke-width="3"><path d="m574 160-107 56m102-93-113 67m153 62-124 25"/><path d="m467 216 19-2-10-13m-18-10 18-1-8-12m17 101 17-3-9-10"/></g>
+  <path d="m454 214-18-17m26 27 7 21m-16-11-23 7m26-31 3-20" stroke="#fff4c1" stroke-width="4"/>
+  <path d="M0 558q74-33 161 15m-82 15 126 12m195-124q65 41 159 0m-123 29 116-5M171 544l43-9m-51-34 34 13" fill="none" stroke="#d3e3cf" stroke-width="4"/>
+  <path d="m495 557 59-46 32 32 54 13v84H426Z" fill="#132b41"/>
+</svg>

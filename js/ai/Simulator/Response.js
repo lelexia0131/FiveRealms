@@ -139,7 +139,7 @@ export const withResponse = (Base) => class Response extends Base {
   Simulator.apply、consumeCountersForCardScope 与 tacticResolutionScale。
 
   输入
-  World、行动者、战术牌、目标列表与可选 canonical selection。
+  World、行动者、战术牌、目标列表、可选 canonical selection 与已物化 root Worlds。
 
   输出
   包含 resolutionChance、互斥响应结果和每名响应者边际消费质量的独立对象。
@@ -155,13 +155,15 @@ export const withResponse = (Base) => class Response extends Base {
 
   边界与不变量
   链顺序只计算一次；逐玩家边际不得独立相乘；返回结果不得修改任何响应容量。
+  互利响应必须消费同一组真实 receipt Worlds，不得另算静态 draft。
   */
   evaluateCardScopeCounterResponses(
     state,
     actor,
     card,
     targets = [],
-    selection = null
+    selection = null,
+    rootFlipWorlds = null
   ) {
     this.checkpointSearchWork();
     const roster = projectCanonicalSeatRoster(state.players);
@@ -175,7 +177,15 @@ export const withResponse = (Base) => class Response extends Base {
       const counterProbability = queryPlayerHandProbability(
         state.probabilityState, player, "counter"
       ).probability;
-      const decision = this.counterDecision(state, player, actor, card, targets, selection) === true;
+      const decision = this.counterDecision(
+        state,
+        player,
+        actor,
+        card,
+        targets,
+        selection,
+        rootFlipWorlds
+      ) === true;
       contenders.push({ player, counterProbability, decision, effectiveProbability:0 });
     }
     const active = contenders.filter((contender) => contender.decision);
@@ -252,7 +262,7 @@ export const withResponse = (Base) => class Response extends Base {
   card-scope 与 target-scope 响应查询。
 
   输入
-  World、响应者、行动者、卡牌、目标列表与可选 selection。
+  World、响应者、行动者、卡牌、目标列表、可选 selection 与已物化 root Worlds。
 
   输出
   确定的 respond / do not respond 布尔值。
@@ -269,9 +279,18 @@ export const withResponse = (Base) => class Response extends Base {
   边界与不变量
   Simulation 不复制价值公式；root 递归守卫只阻止重复反事实，不改变普通响应。
   */
-  counterDecision(state, responder, actor, card, targets, selection = null) {
+  counterDecision(
+    state,
+    responder,
+    actor,
+    card,
+    targets,
+    selection = null,
+    rootFlipWorlds = null
+  ) {
     return this.decideCounter(state, responder, actor, card, targets, selection, {
       simulatingRootResolution:this._simulatingRootResolution,
+      rootFlipWorlds
     });
   }
 
@@ -382,11 +401,13 @@ export const withResponse = (Base) => class Response extends Base {
         blockUsed:responseMatches(branch)
       };
     });
-    const judgmentBlockCards = Array.isArray(options.judgmentBlockCards)
-      ? options.judgmentBlockCards.filter(Boolean)
-      : options.judgmentBlockCard
-        ? [options.judgmentBlockCard]
-        : [];
+    const judgmentBlockEntries = Array.isArray(options.judgmentBlockEntries)
+      ? options.judgmentBlockEntries.filter((entry) => entry?.card)
+      : Array.isArray(options.judgmentBlockCards)
+        ? options.judgmentBlockCards.filter(Boolean).map((card, slot) => ({ card, slot }))
+        : options.judgmentBlockCard
+          ? [{ card:options.judgmentBlockCard, slot:0 }]
+          : [];
     const outcomeWorlds = this.projectProbabilityWork(
       resolved,
       (branch) => ({
@@ -406,7 +427,7 @@ export const withResponse = (Base) => class Response extends Base {
       expectedBlockSpend,
       payment:{
         identityWorlds,
-        judgmentBlockCards,
+        judgmentBlockEntries,
         preJudgmentPartition,
         joined:resolved.map(({ blockWilling, ...branch }) => ({
           ...branch,

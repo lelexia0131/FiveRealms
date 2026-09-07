@@ -27,7 +27,8 @@ import { createChoiceResult } from "../../application/ports/ChoicePort.js";
 composition boundary。
 
 输入
-注入的 choice context resolver、shouldRespond、choosePublicCard 与 isSessionValid。
+注入的 choice context resolver、response/public/discard/hidden capabilities、
+post-Counter resource selection capability 与 isSessionValid。
 
 输出
 冻结 { request } adapter。
@@ -42,7 +43,8 @@ composition boundary。
 createChoiceResult。
 
 边界与不变量
-不执行 delay/thinking/prompt；publicCard 只 bridge choosePublicCard。
+不执行 delay/thinking/prompt；资源类 hidden request 只 bridge canonical post-Counter selection，
+不读取或比较真实未知牌面。
 */
 export function createAiChoiceAdapter({
   getChoiceContext,
@@ -50,6 +52,7 @@ export function createAiChoiceAdapter({
   choosePublicCard,
   chooseDiscards,
   chooseHiddenCards,
+  choosePostCounterResource,
   isSessionValid
 }) {
   if (typeof getChoiceContext !== "function" || typeof shouldRespond !== "function"
@@ -78,7 +81,7 @@ export function createAiChoiceAdapter({
     无。
 
     调用函数
-    getChoiceContext、shouldRespond、choosePublicCard、createChoiceResult。
+    getChoiceContext、shouldRespond、choosePublicCard、choosePostCounterResource、createChoiceResult。
 
     边界与不变量
     AI policy/search/planner 不变；不拥有 Application delay 或 presentation state。
@@ -88,6 +91,21 @@ export function createAiChoiceAdapter({
         const choiceContext = getChoiceContext(choiceRequest.requestId);
         if (!choiceContext?.actor || !choiceContext?.owner
           || !isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
+        if (["plunder", "destroy", "transfer"].includes(choiceContext.aiContext?.purpose)) {
+          if (typeof choosePostCounterResource !== "function") {
+            return createChoiceResult("cancelled", {
+              reason:"post-counter-resource-adapter-unavailable"
+            });
+          }
+          const chosen = await choosePostCounterResource(
+            choiceContext.actor,
+            choiceContext.owner,
+            choiceContext.aiContext
+          );
+          return chosen?.card?.id && isSessionValid(choiceRequest.gameId)
+            ? createChoiceResult("selected", { selectedIds:[chosen.card.id] })
+            : createChoiceResult("declined");
+        }
         if (choiceRequest.constraints.mode === "zone") {
           return createChoiceResult("declined", { reason:"canonical-zone-selection-required" });
         }

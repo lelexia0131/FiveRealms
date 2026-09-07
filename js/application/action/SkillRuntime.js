@@ -129,7 +129,7 @@ export function canUseActiveSkill(match, source, skill, explicitCost = null) {
   const reasons = {
     barrier:"没有存活队友",
     symbiosis:"自己和队友都未受伤",
-    stealSkill:"距离2内没有持有手牌或装备的敌人",
+    stealSkill:"没有持有手牌或装备的敌人",
     hunt:"没有猎印目标",
     resonance:"没有存活队友"
   };

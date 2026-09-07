@@ -48,7 +48,7 @@ createPlayerRecord。
 玩家开局手牌数量。
 
 输出
-从初始手牌峰值开始、其余归零的成就事实与局内集合。
+获牌数从初始手牌开始、其余归零的成就事实与局内集合。
 
 读取状态
 无。
@@ -60,16 +60,29 @@ createPlayerRecord。
 Set。
 
 边界与不变量
-集合只在 tracker 内可变，冻结快照输出数组；初始手牌作为本局首批获牌计数，最高存活轮次只由 roundStart 推进。
+集合只在 tracker 内可变，冻结快照输出数组；初始手牌作为本局首批获牌计数，手牌峰值只在本人行动回合采样；
+单次决斗计数只活在 Duel 生命周期内，冻结时只保留本局单次最高值。
 */
 function createAchievementFacts(initialHandCount) {
   return {
     activeSkillUses: 0,
     activeAssaultUses: 0,
+    committedAssaultUses: 0,
+    activeDuelResolutionId: null,
+    activeDuelCommittedAssaults: 0,
+    maxCommittedAssaultsInDuel: 0,
     rescueCount: 0,
     maxTurnDamage: 0,
+    maxTurnDiscards: 0,
+    stolenCards: 0,
+    symbiosisHealing: 0,
+    allInEntries: 0,
+    completedHunts: 0,
+    damagingHunts: 0,
+    lastHuntResolutionId: null,
+    burningFieldDamage: 0,
     maxTurnKills: 0,
-    maxHandCount: Math.max(0, Number(initialHandCount) || 0),
+    maxHandCount: 0,
     equipmentUses: 0,
     lightningCasts: 0,
     lightningHits: 0,
@@ -84,7 +97,45 @@ function createAchievementFacts(initialHandCount) {
     maxAliveRound: 0,
     clutchEnemyCounts: new Set(),
     turnDamage: 0,
+    turnDiscards: 0,
     turnKills: 0
+  };
+}
+
+/*
+功能
+复制一名玩家的 tracker-owned 可变记录，用于真实 Action rollback checkpoint。
+
+调用方
+MatchPerformanceTracker.captureActionCheckpoint。
+
+输入
+当前玩家 raw record。
+
+输出
+不共享 totals、contributionFacts、achievementFacts 或残局集合的记录副本。
+
+读取状态
+传入 record。
+
+写入状态
+无。
+
+调用函数
+Set。
+
+边界与不变量
+玩家身份等不可变标量保持原值；只复制 tracker 自有可变容器，不复制真实 Player entity。
+*/
+function clonePlayerRecord(record) {
+  return {
+    ...record,
+    totals: { ...record.totals },
+    contributionFacts: { ...record.contributionFacts },
+    achievementFacts: {
+      ...record.achievementFacts,
+      clutchEnemyCounts: new Set(record.achievementFacts.clutchEnemyCounts)
+    }
   };
 }
 
@@ -165,14 +216,18 @@ record。
 Object.freeze。
 
 边界与不变量
-effectiveRounds 至少为一；胜负按玩家自己的开局阵营判定；快照不共享可变 totals 引用。
+effectiveRounds 至少为一；胜负按玩家自己的开局阵营判定；快照不共享可变 totals 引用，也不暴露已结束 Duel 的临时 identity/count。
 */
 function freezePlayerRecord(record, aliveAtEnd, winnerTeam, player) {
   const {
     turnDamage: _turnDamage,
+    turnDiscards: _turnDiscards,
+    lastHuntResolutionId: _lastHuntResolutionId,
     turnKills: _turnKills,
     damageResolutionId: _damageResolutionId,
     damageResolutionTotal: _damageResolutionTotal,
+    activeDuelResolutionId: _activeDuelResolutionId,
+    activeDuelCommittedAssaults: _activeDuelCommittedAssaults,
     clutchEnemyCounts,
     ...achievementFacts
   } = record.achievementFacts;
@@ -269,9 +324,14 @@ export class MatchPerformanceTracker {
       cardCommitted: (event) => this.handleCardCommitted(event),
       cardUsed: (event) => this.handleCardUsed(event),
       cardsGranted: (event) => this.handleCardsGranted(event),
+      privateCardsRevealed: (event) => this.handlePrivateCardsRevealed(event),
+      cardsStolen: (event) => this.handleCardsStolen(event),
       sealSettled: (event) => this.handleSealSettled(event),
       skillEnergyPaid: (event) => this.handleSkillEnergyPaid(event),
+      duelStarted: (event) => this.handleDuelStarted(event),
+      duelEnded: (event) => this.handleDuelEnded(event),
       activeSkillUsed: (event) => this.handleActiveSkillUsed(event),
+      playerRescued: (event) => this.handlePlayerRescued(event),
       playerDead: (event) => this.handlePlayerDead(event)
     };
     for (const [eventName, handler] of Object.entries(handlers)) {
@@ -347,8 +407,104 @@ export class MatchPerformanceTracker {
     this.gameId = null;
     this.pendingResolvedCounter = null;
     this.pendingMutualBenefitHands = new Map();
+    this.pendingRescueContributors = new Map();
     this.currentTurnPlayerId = null;
     this.finalizedSnapshot = null;
+  }
+
+  /*
+  功能
+  捕获真实 Action 开始前的全部 tracker-owned 可变事实。
+
+  调用方
+  ActionTransaction composition participant。
+
+  输入
+  无。
+
+  输出
+  可供 restoreActionCheckpoint 恢复的独立 checkpoint。
+
+  读取状态
+  records、护盾账、资源关联、救援参与者、当前回合与最终快照。
+
+  写入状态
+  无。
+
+  调用函数
+  clonePlayerRecord、Map、Set、Object.freeze。
+
+  边界与不变量
+  checkpoint 不持有任何 tracker 可变容器；真实 Player 引用只保留在既有短期关联事实中。
+  */
+  captureActionCheckpoint() {
+    return Object.freeze({
+      records: new Map([...this.records].map(([playerId, record]) => [
+        playerId,
+        clonePlayerRecord(record)
+      ])),
+      shieldSourceLedgers: new Map([...this.shieldSourceLedgers].map(([playerId, entries]) => [
+        playerId,
+        entries.map((entry) => ({ ...entry }))
+      ])),
+      gameId: this.gameId,
+      pendingResolvedCounter: this.pendingResolvedCounter ? {
+        ...this.pendingResolvedCounter,
+        effectiveTargetIds: [...this.pendingResolvedCounter.effectiveTargetIds]
+      } : null,
+      pendingMutualBenefitHands: new Map([...this.pendingMutualBenefitHands].map(([
+        resolutionId,
+        hands
+      ]) => [resolutionId, new Map(hands)])),
+      pendingRescueContributors: new Map([...this.pendingRescueContributors].map(([
+        targetId,
+        contributorIds
+      ]) => [targetId, new Set(contributorIds)])),
+      currentTurnPlayerId: this.currentTurnPlayerId,
+      finalizedSnapshot: this.finalizedSnapshot
+    });
+  }
+
+  /*
+  功能
+  恢复真实 Action 开始前的全部 tracker-owned 可变事实。
+
+  调用方
+  ActionTransaction rollback。
+
+  输入
+  captureActionCheckpoint 返回的 checkpoint。
+
+  输出
+  无返回值。
+
+  读取状态
+  checkpoint。
+
+  写入状态
+  records、护盾账、资源关联、救援参与者、当前回合与最终快照。
+
+  调用函数
+  无。
+
+  边界与不变量
+  不修改订阅、EventDispatcher 或真实 GameState；失败 Action 发布过的统计事实全部回到开始边界。
+  */
+  restoreActionCheckpoint(checkpoint) {
+    if (!(checkpoint?.records instanceof Map)
+      || !(checkpoint.shieldSourceLedgers instanceof Map)
+      || !(checkpoint.pendingMutualBenefitHands instanceof Map)
+      || !(checkpoint.pendingRescueContributors instanceof Map)) {
+      throw new TypeError("MatchPerformanceTracker Action checkpoint 非法");
+    }
+    this.records = checkpoint.records;
+    this.shieldSourceLedgers = checkpoint.shieldSourceLedgers;
+    this.gameId = checkpoint.gameId;
+    this.pendingResolvedCounter = checkpoint.pendingResolvedCounter;
+    this.pendingMutualBenefitHands = checkpoint.pendingMutualBenefitHands;
+    this.pendingRescueContributors = checkpoint.pendingRescueContributors;
+    this.currentTurnPlayerId = checkpoint.currentTurnPlayerId;
+    this.finalizedSnapshot = checkpoint.finalizedSnapshot;
   }
 
   /*
@@ -694,7 +850,7 @@ export class MatchPerformanceTracker {
   player.hand。
 
   写入状态
-  对应 achievementFacts 的 turnDamage、turnKills 与 maxHandCount。
+  对应 achievementFacts 的 turnDamage、turnDiscards、turnKills 与 maxHandCount。
 
   调用函数
   recordFor、Math.max。
@@ -707,6 +863,7 @@ export class MatchPerformanceTracker {
     if (!record) return;
     this.currentTurnPlayerId = event.player.id;
     record.achievementFacts.turnDamage = 0;
+    record.achievementFacts.turnDiscards = 0;
     record.achievementFacts.turnKills = 0;
     record.achievementFacts.maxHandCount = Math.max(
       record.achievementFacts.maxHandCount,
@@ -745,13 +902,13 @@ export class MatchPerformanceTracker {
 
   /*
 功能
-在牌区移动提交后记录真实获牌，并更新当前行动者在自己出牌阶段的手牌峰值。
+在牌区移动提交后记录真实获牌、本人回合弃牌累计与手牌峰值。
 
   调用方
   afterCardMove listener。
 
   输入
-  无；读取当前 authoritative state。
+  afterCardMove 的牌区、玩家与 isDiscard 标记，以及当前 authoritative state。
 
   输出
   无返回值。
@@ -760,15 +917,24 @@ export class MatchPerformanceTracker {
   phase、currentPlayerIndex、当前玩家 hand。
 
 写入状态
-收牌者 achievementFacts.cardsGained 与当前玩家 achievementFacts.maxHandCount。
+收牌者 cardsGained 与当前玩家 maxHandCount、turnDiscards、maxTurnDiscards。
 
   调用函数
   recordFor、Math.max。
 
 边界与不变量
-获牌按每张 afterCardMove 累计；只在 turnStart/turnEnd 界定的本人行动回合采样手牌峰值，响应者手牌变化不会被误算。
+获牌按每张 afterCardMove 累计；手牌峰值和弃牌只在 turnStart/turnEnd 界定的本人行动回合累计。
+弃牌只接受规则入口显式标记的移动；使用、打出、破坏与阵亡清理不能从弃牌堆去向反推。
   */
   handleAfterCardMove(event = {}) {
+    if (event.isDiscard === true && event.from === "hand" && event.to === "discard"
+      && event.player?.id === this.currentTurnPlayerId) {
+      const facts = this.recordFor(event.player)?.achievementFacts;
+      if (facts) {
+        facts.turnDiscards += 1;
+        facts.maxTurnDiscards = Math.max(facts.maxTurnDiscards, facts.turnDiscards);
+      }
+    }
     if (event.to === "hand") {
       const recipient = event.player ?? event.toPlayer;
       const recipientRecord = this.recordFor(recipient);
@@ -834,10 +1000,10 @@ export class MatchPerformanceTracker {
   结构化 afterDamage fact。
 
 写入状态
-合法 provider 的 allyMitigation/allyShieldAbsorbed、target.hpDamageTaken/闪电命中与 source.enemyHpDamage/单次攻击峰值。
+合法 provider 的 allyMitigation/allyShieldAbsorbed、target.hpDamageTaken/闪电命中与 source.enemyHpDamage/单次攻击峰值，以及焚场伤害与猎杀结果。
 
   调用函数
-  settleMitigationContributions、settleShieldAbsorption、recordFor。
+  settleMitigationContributions、settleShieldAbsorption、recordFor、recordCompletedHunt。
 
 边界与不变量
 承伤与火力只取 actualAmount；单次攻击峰值只取同一 afterDamage 事实中的 finalAttackDamage，保留 HP/护盾截断前数值；
@@ -866,6 +1032,9 @@ export class MatchPerformanceTracker {
     const record = this.recordFor(event.source);
     if (record) {
       record.totals.enemyHpDamage += actualAmount;
+      if (event.skill === "burningField") record.achievementFacts.burningFieldDamage += actualAmount;
+      // 致胜伤害会在技能返回前冻结终局；在同一权威伤害事实处收束猎杀，再按 resolutionId 排除完成通知的重复计数。
+      if (event.skill === "hunt") this.recordCompletedHunt(record, event.resolutionId, actualAmount);
       const finalAttackDamage = Math.max(0, Number(event.finalAttackDamage) || 0);
       if (finalAttackDamage > 0) {
         const resolutionId = event.resolutionId ?? null;
@@ -924,7 +1093,7 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  累计真正由玩家导致的敌方阵亡，并在死者阵营只剩一人时维护残局快照。
+  累计真正由玩家导致的敌方阵亡，并在死亡改变存活人数后维护双方真实残局快照。
 
   调用方
   playerDead listener。
@@ -939,18 +1108,19 @@ export class MatchPerformanceTracker {
   结构化 playerDead fact。
 
   写入状态
-  合法击杀者的 enemyKills，以及唯一存活队友的 clutchEnemyCount。
+  合法击杀者的 enemyKills、队友死亡数，以及所有唯一幸存者真实经历的残局档位。
 
   调用函数
   getState、recordFor。
 
   边界与不变量
-  友军击杀、自杀和无来源环境死亡不计击杀，但仍可形成残局；只记录至少 1v2，已记录人数只允许保持或扩大。
+  友军击杀、自杀和无来源环境死亡不计击杀，但仍可形成残局；只记录真实出现的 1v2/1v3，已有档位不删除。
   */
   handlePlayerDead(event) {
     const source = event.source;
     const target = event.target;
     if (!target) return;
+    this.pendingRescueContributors.delete(target.id);
     if (source && source.id !== target.id && source.battleTeam !== target.battleTeam) {
       const sourceRecord = this.recordFor(source);
       if (sourceRecord) {
@@ -973,26 +1143,29 @@ export class MatchPerformanceTracker {
         record.achievementFacts.teammateDeaths += 1;
       }
     }
-    const survivingAllies = players.filter(
-      (player) => player.alive && player.battleTeam === target.battleTeam
-    );
-    if (survivingAllies.length !== 1) return;
-    const survivorRecord = this.recordFor(survivingAllies[0]);
-    const clutchEnemyCount = players.filter(
-      (player) => player.alive && player.battleTeam !== target.battleTeam
-    ).length;
-    if (!survivorRecord || clutchEnemyCount < 2) return;
-    survivorRecord.achievementFacts.clutchEnemyCounts.add(clutchEnemyCount);
-    // 残局档位属于减员方的唯一幸存者；后续状态变化不得把更早的高档残局降级。
-    survivorRecord.clutchEnemyCount = Math.max(
-      survivorRecord.clutchEnemyCount ?? 0,
-      clutchEnemyCount
-    );
+    for (const survivor of players.filter((player) => player.alive)) {
+      const survivingAllies = players.filter(
+        (player) => player.alive && player.battleTeam === survivor.battleTeam
+      );
+      if (survivingAllies.length !== 1) continue;
+      const clutchEnemyCount = players.filter(
+        (player) => player.alive && player.battleTeam !== survivor.battleTeam
+      ).length;
+      if (clutchEnemyCount !== 2 && clutchEnemyCount !== 3) continue;
+      const survivorRecord = this.recordFor(survivor);
+      if (!survivorRecord) continue;
+      survivorRecord.achievementFacts.clutchEnemyCounts.add(clutchEnemyCount);
+      // 数组事实保留每个真实档位；旧标量只为现有展示兼容而保留历史最大值。
+      survivorRecord.clutchEnemyCount = Math.max(
+        survivorRecord.clutchEnemyCount ?? 0,
+        clutchEnemyCount
+      );
+    }
   }
 
   /*
   功能
-  累计对队友实际普通治疗或濒死救援治疗。
+  累计对队友实际普通治疗或濒死救援治疗，并登记当前濒死事件的真实贡献者。
 
   调用方
   afterHeal listener。
@@ -1007,22 +1180,66 @@ export class MatchPerformanceTracker {
   结构化 afterHeal fact。
 
   写入状态
-  source allyHealing 或 allyRescueHealing。
+  source allyHealing 或 allyRescueHealing、滋荣实际治疗累计，以及目标对应的去重救援参与者。
 
   调用函数
   areAllies、recordFor。
 
   边界与不变量
-  自疗和敌方治疗不计；同一笔救援只进入 rescue bucket，评分时再乘二。
+  MVP 不计自疗和敌方治疗，滋荣成就包含实际自疗；同一笔救援只进入 rescue bucket，评分时再乘二；rescueCount 等待 playerRescued 才提交。
   */
   handleAfterHeal(event) {
+    const sourceRecord = this.recordFor(event.source);
+    if (sourceRecord && event.skill === "symbiosis") {
+      // 滋荣允许自疗；成就使用实际治疗量，但不改变 MVP 排除自疗的既有支援口径。
+      sourceRecord.achievementFacts.symbiosisHealing += Math.max(0, Number(event.actualAmount) || 0);
+    }
     if (!this.areAllies(event.source, event.target)) return;
     const record = this.recordFor(event.source);
     if (!record) return;
     const amount = Math.max(0, Number(event.actualAmount) || 0);
     const key = event.isDyingRescue ? "allyRescueHealing" : "allyHealing";
     record.totals[key] += amount;
-    if (event.isDyingRescue && amount > 0) record.achievementFacts.rescueCount += 1;
+    if (!event.isDyingRescue || amount <= 0) return;
+    const contributors = this.pendingRescueContributors.get(event.target.id) ?? new Set();
+    contributors.add(event.source.id);
+    this.pendingRescueContributors.set(event.target.id, contributors);
+  }
+
+  /*
+  功能
+  在真实 playerRescued commit 时为本次濒死事件的每名实际贡献者各提交一次救援。
+
+  调用方
+  playerRescued listener。
+
+  输入
+  含 target 的正式成功脱离濒死事件。
+
+  输出
+  无返回值。
+
+  读取状态
+  pendingRescueContributors 与玩家 records。
+
+  写入状态
+  各贡献者 rescueCount，并消费目标对应的参与者集合。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  同一次濒死事件按玩家 ID 去重；没有正数救援贡献者时不计，失败死亡由 playerDead 丢弃集合。
+  */
+  handlePlayerRescued(event) {
+    const targetId = event.target?.id;
+    if (!targetId) return;
+    const contributors = this.pendingRescueContributors.get(targetId);
+    this.pendingRescueContributors.delete(targetId);
+    for (const contributorId of contributors ?? []) {
+      const record = this.recordFor(contributorId);
+      if (record) record.achievementFacts.rescueCount += 1;
+    }
   }
 
   /*
@@ -1127,6 +1344,80 @@ export class MatchPerformanceTracker {
 
   /*
   功能
+  按实际新增未知牌数量累计窥探与窥隙的敌方控制事实。
+
+  调用方
+  privateCardsRevealed fact listener。
+
+  输入
+  含 source、target、effectDefinitionId 与 actualNewCount 的已提交私密查看事实。
+
+  输出
+  无返回值。
+
+  读取状态
+  source/target 阵营与 source record。
+
+  写入状态
+  source record 的 enemyControls。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  只接受窥探或窥隙对敌方实际新增的未知牌；每张固定计 0.25，不读取牌面或 AI 信息价值。
+  */
+  handlePrivateCardsRevealed(event) {
+    if (!["scout", "spyGap"].includes(event?.effectDefinitionId)
+      || !event.source || !event.target
+      || event.target.battleTeam === event.source.battleTeam) return;
+    const actualNewCount = Math.max(0, Math.floor(Number(event.actualNewCount) || 0));
+    const record = this.recordFor(event.source);
+    if (record && actualNewCount > 0) record.totals.enemyControls += actualNewCount * 0.25;
+  }
+
+  /*
+  功能
+  按主动窃取成功后的实际获得数量累计敌方控制与成就获牌事实。
+
+  调用方
+  cardsStolen fact listener。
+
+  输入
+  含 source、skill 与 steals 的事务提交后事实。
+
+  输出
+  无返回值。
+
+  读取状态
+  source/target 阵营与 source record。
+
+  写入状态
+  source record 的 enemyControls 与窃取实际获牌累计。
+
+  调用函数
+  recordFor。
+
+  边界与不变量
+  只接受窃取技能从敌方实际获得的正数牌；每张计一分，空结果和其它技能不计。
+  */
+  handleCardsStolen(event) {
+    if (event?.skill?.id !== "stealSkill" || !event.source || !Array.isArray(event.steals)) return;
+    const record = this.recordFor(event.source);
+    if (!record) return;
+    for (const steal of event.steals) {
+      if (!steal?.target || steal.target.battleTeam === event.source.battleTeam) continue;
+      const actualAmount = Math.max(
+        0,
+        Math.floor(Number(steal.actualAmount) || 0)
+      );
+      record.achievementFacts.stolenCards += actualAmount;
+      record.totals.enemyControls += actualAmount;
+    }
+  }
+
+  /*
+  功能
   按互利前后权威手牌差值结算友方正贡献与敌方负贡献。
 
   调用方
@@ -1204,7 +1495,7 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  累计已提交主动牌，并从最终 cardUsed 语义派生控制、资源贡献与保护事实。
+  累计已提交主动牌，并从最终 cardUsed 语义派生非窥牌控制、资源贡献与保护事实。
 
   调用方
   cardUsed listener。
@@ -1225,7 +1516,8 @@ export class MatchPerformanceTracker {
   recordFor、areAllies、settleMutualBenefitContribution、settleProtectedAllyResourceAction。
 
   边界与不变量
-  Activity 只计 play phase 中当前行动者没有 response usageContext 的主动牌，是否被反制不影响计数；响应牌仍可进入 Control/Contribution。
+  Activity 只计 play phase 中当前行动者没有 response usageContext 的主动牌，是否被反制不影响计数；
+  窥探/窥隙按实际新增未知张数由 privateCardsRevealed 唯一计分，响应牌仍可进入 Control/Contribution。
   */
   handleCardUsed(event) {
     const source = event.source;
@@ -1354,7 +1646,79 @@ export class MatchPerformanceTracker {
 
   /*
   功能
-  记录真人玩家正式提交的主动突袭次数。
+  以真实 Duel resolver 发布的生命周期事实初始化参战玩家的本次决斗突袭计数。
+
+  调用方
+  duelStarted listener。
+
+  输入
+  含 source、target 与父 Duel Action resolutionId 的 immutable fact。
+
+  输出
+  无返回值。
+
+  读取状态
+  参战玩家对应的 tracker records。
+
+  写入状态
+  对应 achievementFacts.activeDuelResolutionId 与 activeDuelCommittedAssaults。
+
+  调用函数
+  recordFor、Set。
+
+  边界与不变量
+  只有具备稳定 resolutionId 的真实 Duel 才建立会话；新决斗必须从零开始，已记录的单次最高值不清除。
+  */
+  handleDuelStarted(event) {
+    if (!event.resolutionId) return;
+    const participantIds = new Set([event.source?.id, event.target?.id].filter(Boolean));
+    for (const playerId of participantIds) {
+      const facts = this.recordFor(playerId)?.achievementFacts;
+      if (!facts) continue;
+      facts.activeDuelResolutionId = event.resolutionId;
+      facts.activeDuelCommittedAssaults = 0;
+    }
+  }
+
+  /*
+  功能
+  在真实 Duel resolver 收束时结束参战玩家的临时突袭计数。
+
+  调用方
+  duelEnded listener。
+
+  输入
+  含 source、target 与父 Duel Action resolutionId 的 immutable fact。
+
+  输出
+  无返回值。
+
+  读取状态
+  参战玩家当前 activeDuelResolutionId。
+
+  写入状态
+  匹配会话的 activeDuelResolutionId 与 activeDuelCommittedAssaults。
+
+  调用函数
+  recordFor、Set。
+
+  边界与不变量
+  迟到或不匹配的结束事实不能清除另一场决斗；单次最高值作为本局已达成事实继续保留。
+  */
+  handleDuelEnded(event) {
+    if (!event.resolutionId) return;
+    const participantIds = new Set([event.source?.id, event.target?.id].filter(Boolean));
+    for (const playerId of participantIds) {
+      const facts = this.recordFor(playerId)?.achievementFacts;
+      if (!facts || facts.activeDuelResolutionId !== event.resolutionId) continue;
+      facts.activeDuelResolutionId = null;
+      facts.activeDuelCommittedAssaults = 0;
+    }
+  }
+
+  /*
+  功能
+  记录真人玩家正式提交的突袭事实，并按父 Duel resolution 累计同一次决斗内的本人突袭。
 
   调用方
   cardCommitted listener。
@@ -1366,23 +1730,34 @@ export class MatchPerformanceTracker {
   无返回值。
 
   读取状态
-  source.controllerType、card.definitionId 与 usageContext。
+  source.controllerType、card.definitionId、usageContext、parentResolutionId 与当前 Duel 生命周期。
 
   写入状态
-  source achievementFacts.activeAssaultUses。
+  source achievementFacts 的 committedAssaultUses、activeAssaultUses、activeDuelCommittedAssaults 与 maxCommittedAssaultsInDuel。
 
   调用函数
   recordFor。
 
   边界与不变量
-  只接受真人在普通 action 上下文提交的突袭；AI、响应、借势强制突袭和提交前取消均不计数。
+  committedAssaultUses 接受真人全部正式提交的突袭；决斗计数还要求显式 duel usage 与匹配父 resolution；
+  activeAssaultUses 仍只接受普通 action，AI、其他玩家、非决斗响应与提交前取消均不计入本人成就事实。
   */
   handleCardCommitted(event) {
     if (event.source?.controllerType !== "human"
-      || event.card?.definitionId !== "assault"
-      || event.usageContext !== "action") return;
+      || event.card?.definitionId !== "assault") return;
     const record = this.recordFor(event.source);
-    if (record) record.achievementFacts.activeAssaultUses += 1;
+    if (!record) return;
+    record.achievementFacts.committedAssaultUses += 1;
+    if (event.usageContext === "action") record.achievementFacts.activeAssaultUses += 1;
+    const facts = record.achievementFacts;
+    if (event.usageContext !== "duel"
+      || !event.parentResolutionId
+      || facts.activeDuelResolutionId !== event.parentResolutionId) return;
+    facts.activeDuelCommittedAssaults += 1;
+    facts.maxCommittedAssaultsInDuel = Math.max(
+      facts.maxCommittedAssaultsInDuel,
+      facts.activeDuelCommittedAssaults
+    );
   }
 
   /*
@@ -1393,7 +1768,7 @@ export class MatchPerformanceTracker {
   activeSkillUsed listener。
 
   输入
-  含 source 与 skill 的 immutable fact。
+  含 source、skill、resolutionId 与 enteredAllIn 的 immutable fact。
 
   输出
   无返回值。
@@ -1402,17 +1777,55 @@ export class MatchPerformanceTracker {
   source 对应 tracker record。
 
   写入状态
-  achievementFacts.activeSkillUses。
+  achievementFacts.activeSkillUses、allInEntries 与猎杀完成事实。
 
   调用函数
-  recordFor。
+  recordFor、recordCompletedHunt。
 
   边界与不变量
-  免费主动技能也计一次；非法、取消、回滚和被动触发均不会发布该事实。
+  免费主动技能也计一次；非法、取消、回滚和被动触发均不会发布该事实；孤注只计效果端确认的实际进入转换。
   */
   handleActiveSkillUsed(event) {
     const record = this.recordFor(event.source);
-    if (record) record.achievementFacts.activeSkillUses += 1;
+    if (!record) return;
+    record.achievementFacts.activeSkillUses += 1;
+    if (event.skill?.id === "allIn" && event.enteredAllIn === true) record.achievementFacts.allInEntries += 1;
+    // 取消伤害或目标失效可能没有 afterDamage；已完成的技能仍须留下无伤害的一次猎杀。
+    if (event.skill?.id === "hunt") this.recordCompletedHunt(record, event.resolutionId, 0);
+  }
+
+  /*
+  功能
+  按一次猎杀的结算身份累计完成与实际伤害命中次数。
+
+  调用方
+  handleAfterDamage、handleActiveSkillUsed。
+
+  输入
+  来源玩家记录、正式技能 resolutionId 与 Combat actualAmount。
+
+  输出
+  无返回值。
+
+  读取状态
+  achievementFacts.lastHuntResolutionId。
+
+  写入状态
+  本局 completedHunts、damagingHunts 与最后一次猎杀身份。
+
+  调用函数
+  无。
+
+  边界与不变量
+  猎杀每次只结算一个目标且主动动作串行；伤害收束与技能完成通知共享身份，只计一次。
+  仅实际生命伤害为命中，零伤害完成会永久破坏本局全中条件；回滚由既有 tracker checkpoint 恢复。
+  */
+  recordCompletedHunt(record, resolutionId, actualAmount) {
+    const facts = record.achievementFacts;
+    if (!resolutionId || facts.lastHuntResolutionId === resolutionId) return;
+    facts.lastHuntResolutionId = resolutionId;
+    facts.completedHunts += 1;
+    if (actualAmount > 0) facts.damagingHunts += 1;
   }
 
   /*

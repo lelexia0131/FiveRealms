@@ -254,8 +254,7 @@ canTriggerSpyGapAfterDamage consumers。
 */
 export function canTriggerSpyGapAfterDamage(owner, event) {
   return Boolean(owner?.alive && event?.source?.id === owner.id && event.target?.alive
-    && event.target.battleTeam !== owner.battleTeam && event.actualAmount > 0
-    && !owner.turnFlags.spyGapTriggered);
+    && event.target.battleTeam !== owner.battleTeam && event.actualAmount > 0);
 }
 
 /*
@@ -285,8 +284,7 @@ canRevealSpyGap consumers。
 */
 export function canRevealSpyGap(owner, target) {
   return Boolean(owner?.alive && target?.alive && target.hp > 0
-    && target.battleTeam !== owner.battleTeam
-    && !owner.turnFlags.spyGapTriggered && target.hand.length);
+    && target.battleTeam !== owner.battleTeam && target.hand.length);
 }
 
 /*
@@ -317,7 +315,7 @@ shouldQueueSpyGapOnDying consumers。
 export function shouldQueueSpyGapOnDying(owner, event) {
   return Boolean(owner?.alive && event?.source?.id === owner.id && event.target?.alive
     && event.target.battleTeam !== owner.battleTeam && event.actualAmount > 0
-    && !owner.turnFlags.spyGapTriggered && event.target.hp <= 0);
+    && event.target.hp <= 0);
 }
 
 /*
@@ -678,8 +676,37 @@ canTriggerCoordination consumers。
 保持纯决定，不写状态。
 */
 export function canTriggerCoordination(owner, event) {
-  return Boolean(owner?.alive && event.resolved === true && event.source?.id === owner.id
-    && !owner.turnFlags.coordinationTriggered
-    && (event.effectiveTargets ?? []).some((target) => target?.alive && target.id !== owner.id
-      && target.battleTeam === owner.battleTeam));
+  return Boolean(getCoordinationTriggerTarget(owner, event));
+}
+
+/*
+功能
+返回一次卡牌结算中实际触发协调的唯一队友。
+
+调用方
+canTriggerCoordination 与 coordination passive。
+
+输入
+技能 owner 与最终 cardUsed 事件。
+
+输出
+按 effectiveTargets 顺序找到的第一名合法队友；不满足条件时返回 null。
+
+读取状态
+owner 存活/协调额度与事件最终有效目标。
+
+写入状态
+无。
+
+调用函数
+Array.find。
+
+边界与不变量
+多目标牌也只能选择一名实际触发者；自己、敌人、死亡目标和未结算事件都不能触发。
+*/
+export function getCoordinationTriggerTarget(owner, event) {
+  if (!owner?.alive || event?.resolved !== true || event.source?.id !== owner.id
+    || owner.turnFlags.coordinationTriggered) return null;
+  return (event.effectiveTargets ?? []).find((target) => target?.alive
+    && target.id !== owner.id && target.battleTeam === owner.battleTeam) ?? null;
 }

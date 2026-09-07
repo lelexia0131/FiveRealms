@@ -55,9 +55,8 @@ export const ACTIVE_SKILL_DEFINITIONS = Object.freeze({
     cost: 2,
     limitPerTurn: 2,
     targetType: "enemyWithCardsOrEquipment",
-    rangeRule: "fixed",
-    range: 2,
-    description: "消耗2点能量，选择距离2内一名持有手牌或装备的敌人作为目标，将其全部手牌与装备区牌组成统一候选集合，等概率随机获得其中1张并收入手牌；每回合最多发动2次。"
+    rangeRule: "unlimited",
+    description: "消耗2点能量，选择一名持有手牌或装备的敌人，将其全部手牌与装备区牌组成统一候选集合，等概率随机获得其中1张并收入手牌；每回合最多发动2次。"
   }),
   burningField: Object.freeze({
     id: "burningField",
@@ -136,9 +135,9 @@ export const PASSIVE_SKILL_DEFINITIONS = Object.freeze({
   spyGap: Object.freeze({
     id: "spyGap",
     name: "窥隙",
-    description: "每回合首次对敌人造成实际伤害后，私下查看其至多2张手牌。",
+    description: "对敌人造成实际伤害后，私下选择并查看该敌人至多2张手牌。",
     triggerText: "对敌人造成实际伤害后",
-    limitText: "每回合限触发1次",
+    limitText: "不限制触发次数",
     maxRevealCount: 2
   }),
   ember: Object.freeze({
@@ -170,7 +169,7 @@ export const PASSIVE_SKILL_DEFINITIONS = Object.freeze({
   coordination: Object.freeze({
     id: "coordination",
     name: "协调",
-    description: "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌。",
+    description: "每回合首次令另一名队友成为卡牌的有效作用目标后，你与该队友各摸1张牌。",
     triggerText: "令另一名队友成为卡牌的有效作用目标后",
     limitText: "每回合限触发1次",
     drawCount: 1

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">挥金如土</title><desc id="desc">俯瞰紫夜市集，披风旅人扬手将金色牌页撒向灯火与高低错落的屋顶。</desc>
+  <defs>
+    <linearGradient id="sky" x2=".3" y2="1"><stop stop-color="#101326"/><stop offset=".6" stop-color="#493756"/><stop offset="1" stop-color="#af7452"/></linearGradient>
+    <radialGradient id="lamp"><stop stop-color="#ffe5a0" stop-opacity=".85"/><stop offset="1" stop-color="#e4a45f" stop-opacity="0"/></radialGradient>
+    <linearGradient id="silk" x2="1" y2="1"><stop stop-color="#807098"/><stop offset=".5" stop-color="#3b355a"/><stop offset="1" stop-color="#15192c"/></linearGradient>
+    <linearGradient id="paper" x2="1" y2="1"><stop stop-color="#fff2c5"/><stop offset=".5" stop-color="#dec38b"/><stop offset="1" stop-color="#a16b56"/></linearGradient>
+    <g id="card"><rect x="-20" y="-31" width="40" height="62" rx="3" fill="url(#paper)" stroke="#fff0bd" stroke-width="2"/><path d="M-14-23h28v46h-28zM0-14 9 0 0 14-9 0z" fill="none" stroke="#855367" stroke-width="2"/><path d="M-9-19h18M-9 19h18" stroke="#ac795e"/></g>
+  </defs>
+  <path fill="url(#sky)" d="M0 0h640v640H0z"/>
+  <circle cx="464" cy="314" r="255" fill="url(#lamp)"/>
+  <path d="M0 253 54 202 111 240 159 173 214 228 266 183 337 219 395 147 451 207 500 164 562 216 640 179v302H0Z" fill="#292a40"/>
+  <g fill="#bb9775" opacity=".7"><path d="M143 231h8v20h-8zM167 211h8v21h-8zM250 218h9v18h-9zM386 207h8v18h-8zM407 202h8v18h-8zM493 218h9v20h-9zM550 244h8v19h-8z"/></g>
+  <path d="M0 360 83 303l94 59-15 136H0M448 303l79-58 113 66v208H448" fill="#393044" stroke="#8a615e" stroke-width="3"/>
+  <path d="M-8 361 83 293l100 68-96-27ZM439 305l89-70 121 77-117-40Z" fill="#1c2034" stroke="#c2926c" stroke-width="3"/>
+  <path d="m180 441 175-114 97 133 188 113v67H118Z" fill="#362835"/>
+  <path d="m323 349 29-18 99 146 189 100M189 457l63-42M220 497l87-55M326 571l86-43" fill="none" stroke="#b18060" stroke-width="3" opacity=".6"/>
+  <path d="M65 311v99m-20-67h40l-5 56H50ZM530 255v129m-19-57h38l-6 40h-26Z" fill="#e5ae6e" stroke="#4d3643" stroke-width="5"/>
+  <circle cx="65" cy="376" r="65" fill="url(#lamp)"/><circle cx="530" cy="350" r="70" fill="url(#lamp)"/>
+  <path d="M0 517 237 451 343 640H0Z" fill="#14182a"/><path d="M0 510 240 442 255 466 0 548Z" fill="#756174" stroke="#b7a28f" stroke-width="3"/>
+  <path d="M50 640 93 461l-39-80 56-76 71 20 29 91 81 142 81 82Z" fill="url(#silk)" stroke="#a99aba" stroke-width="3"/>
+  <path d="m107 316 31-40 45 8 22 37-49 28Z" fill="#241f39"/><path d="m145 294 35 8 8 29-26 8-20-21" fill="#bea284"/>
+  <path d="m174 350 68 28 57-55 28 27-69 87-76-22" fill="#6a5a80" stroke="#d1b38f" stroke-width="4"/>
+  <path d="m293 328 9-34 29-14 13 4-25 17 37-13 7 7-37 21 26-2 3 9-31 23Z" fill="#e9c193" stroke="#825b66" stroke-width="2"/>
+  <path d="M113 431 91 601l88-73 88 87-77-176M69 385l68 54 68-16" fill="none" stroke="#b29db4" stroke-width="3" opacity=".7"/>
+  <path d="M304 315C367 165 495 226 601 101M314 313C406 282 512 366 614 279M327 317C405 419 479 447 574 427" fill="none" stroke="#e9c58f" stroke-width="2" opacity=".5"/>
+  <use href="#card" transform="translate(330 252) rotate(-25) scale(.85)"/><use href="#card" transform="translate(406 172) rotate(28)"/>
+  <use href="#card" transform="translate(514 194) rotate(61) scale(.7)"/><use href="#card" transform="translate(566 100) rotate(-14) scale(.52)"/>
+  <use href="#card" transform="translate(428 333) rotate(-46) scale(.72)"/><use href="#card" transform="translate(574 319) rotate(27) scale(.9)"/>
+  <use href="#card" transform="translate(410 443) rotate(18) scale(1.12)"/><use href="#card" transform="translate(531 496) rotate(67) scale(1.25)"/>
+  <use href="#card" transform="translate(241 127) rotate(-40) scale(.53)"/>
+  <g fill="#ffe6a0"><path d="m352 199 4-11 5 11-5 9ZM471 269l5-13 5 13-5 10ZM362 390l4-9 5 9-5 9Z"/><circle cx="486" cy="107" r="3"/><circle cx="459" cy="464" r="4"/><circle cx="572" cy="225" r="3"/><circle cx="267" cy="267" r="3"/><circle cx="372" cy="98" r="2"/></g>
+  <path d="M0 620 174 570l29 70H0Z" fill="#0d1425"/>
+</svg>

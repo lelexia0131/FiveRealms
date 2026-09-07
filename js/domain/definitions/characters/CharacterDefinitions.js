@@ -54,7 +54,7 @@ export const CHARACTER_DEFINITIONS = Object.freeze([
     name: "影客",
     loreFaction: "无灯港",
     maxHp: 4,
-    initialEnergy: 0,
+    initialEnergy: 2,
     passiveSkillIds: Object.freeze(["spyGap"]),
     activeSkillIds: Object.freeze(["stealSkill"]),
     description: "往返暗潮市集的情报客，相信一张被看见的牌就不再是秘密。"
@@ -94,7 +94,7 @@ export const CHARACTER_DEFINITIONS = Object.freeze([
     name: "调律师",
     loreFaction: "鸣风塔",
     maxHp: 4,
-    initialEnergy: 1,
+    initialEnergy: 0,
     passiveSkillIds: Object.freeze(["coordination"]),
     activeSkillIds: Object.freeze(["resonance"]),
     description: "借风塔谐振器校准队友的行动，让每一次协作都产生新的回响。"

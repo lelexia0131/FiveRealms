@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" role="img" aria-labelledby="title desc">
+  <title id="title">拾喽</title><desc id="desc">雨夜的无灯港，影客藏在近处石拱后，以细紫光牵走远处桌边的六张牌。</desc>
+  <defs>
+    <linearGradient id="night" x2="1" y2="1"><stop stop-color="#132c37"/><stop offset=".6" stop-color="#21213e"/><stop offset="1" stop-color="#090f22"/></linearGradient>
+    <linearGradient id="street" x2="0" y2="1"><stop stop-color="#4b6570"/><stop offset="1" stop-color="#131b30"/></linearGradient>
+    <radialGradient id="mist"><stop stop-color="#8bd5cf" stop-opacity=".5"/><stop offset="1" stop-color="#659fae" stop-opacity="0"/></radialGradient>
+    <linearGradient id="cloak" x2="1" y2=".6"><stop stop-color="#5b527c"/><stop offset=".5" stop-color="#25223e"/><stop offset="1" stop-color="#101426"/></linearGradient>
+    <g id="page"><path d="M-15-22 17-19 13 25-18 20Z" fill="#a4c5ca" stroke="#ece2bb" stroke-width="2"/><path d="m0-12 7 13-9 11-6-13Z" fill="#535477"/><path d="M-9-16 10-14M-10 16l16 2" stroke="#5f6b8a"/></g>
+  </defs>
+  <path d="M0 0h640v640H0z" fill="url(#night)"/>
+  <path d="M95 0h76v375H53V77ZM221 35l110-35v367H201ZM370 0h153v449H369Z" fill="#192335"/>
+  <path d="M167 113 192 81v314h-29M325 156l42-18v287h-42" fill="#3e4659"/>
+  <path d="M216 371 371 353 586 640H0Z" fill="url(#street)"/>
+  <path d="m259 387-94 253M324 383l134 257M188 456l220-8M135 513l321-5M50 590l490-7" fill="none" stroke="#80aaa9" stroke-width="2" opacity=".4"/>
+  <ellipse cx="283" cy="335" rx="182" ry="246" fill="url(#mist)"/>
+  <path d="M234 98h64v189h-64Z" fill="#101d2c" stroke="#75968f" stroke-width="3"/>
+  <path d="M264 100v185m-30-100h64m-64 48h64" stroke="#3c666d" stroke-width="5"/>
+  <path d="M179 122q105 44 200-14" fill="none" stroke="#979782" stroke-width="2"/><path d="M291 145v24m-13 0h27l-5 44h-19Z" fill="#d6c895" stroke="#697e7d" stroke-width="3"/>
+  <path d="M106 640V208Q109 44 332 0H0v640Z" fill="#0d1827"/>
+  <path d="M85 470V204Q97 61 282 13M44 206l53 4M72 129l47 21M127 68l30 33M13 297h76M16 389h71" fill="none" stroke="#385064" stroke-width="5"/>
+  <path d="m146 387 142-26 43 29-149 36Z" fill="#785d5e" stroke="#b6a68b" stroke-width="3"/><path d="m180 425-14 94m141-118 19 84" stroke="#403d51" stroke-width="10"/>
+  <path d="m160 363-16-38 15-30 31 3 12 33-10 27 38 25-12 20-60-11" fill="#1c2635"/><path d="m157 313 36 5-7 8-28-2" fill="#809b9d"/>
+  <path d="M469 640 395 491l27-120 69-69 67 50 13 83 69 145v50Z" fill="url(#cloak)" stroke="#7a769d" stroke-width="3"/>
+  <path d="M412 389q10-91 79-93l72 72-52 74-72-12Z" fill="#464460"/>
+  <path d="m436 387 52-54 44 36-28 56-53-5Z" fill="#101728"/><path d="m468 384 13-3m18-1 12-4" stroke="#aee0d1" stroke-width="3"/>
+  <path d="M479 447 422 456 384 414l-35 13 42 78 83 21" fill="#4b466d" stroke="#ac98b4" stroke-width="3"/>
+  <path d="m381 419-30-14-35 4-14 15 6 7 25-10 30 9-40 3 2 10 42 1Z" fill="#a4a2b1" stroke="#625a7d" stroke-width="2"/>
+  <g fill="none" stroke="#bcabf1" stroke-width="2" opacity=".8"><path d="M195 372C191 277 343 292 345 419"/><path d="M206 367C238 226 396 299 353 422"/><path d="M217 367C343 242 420 380 360 429"/></g>
+  <use href="#page" transform="translate(202 351) rotate(-12) scale(.65)"/><use href="#page" transform="translate(233 304) rotate(19) scale(.7)"/>
+  <use href="#page" transform="translate(292 285) rotate(42) scale(.8)"/><use href="#page" transform="translate(344 315) rotate(68) scale(.9)"/>
+  <use href="#page" transform="translate(377 360) rotate(10)"/><use href="#page" transform="translate(349 402) rotate(-30) scale(1.08)"/>
+  <path d="M518 453 539 596M427 528l62 91M442 464l-31 32" fill="none" stroke="#787493" stroke-width="3"/>
+  <g stroke="#92b5c5" stroke-width="2" opacity=".3"><path d="m361 48-15 44m-137 88-12 35m198 100-11 33M146 531l-17 53m225-83-11 31M506 98l-15 42m-65 77-13 40"/></g>
+  <path d="M15 559h85m113-55h64m-52 86h97m-180 20h63" stroke="#8fb1b4" stroke-width="3" opacity=".6"/>
+</svg>

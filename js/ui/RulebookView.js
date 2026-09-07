@@ -57,7 +57,7 @@ const CARD_GROUPS = Object.freeze({
   control:Object.freeze(["scout", "transfer", "plunder", "destroy", "counter"]),
   pressure:Object.freeze(["exposeWeakness", "shockwave", "provoke", "leverage", "duel"]),
   supply:Object.freeze(["harvest", "mutualBenefit", "symbiosis", "seal", "lightning"]),
-  equipment:Object.freeze(["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"])
+  equipment:Object.freeze(["energyDevice", "recycleDevice", "bubbleMachine", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"])
 });
 
 const CHARACTER_PAIRS = Object.freeze([
@@ -445,6 +445,7 @@ export function buildRulebookPages() {
         ${cardGridTemplate(CARD_GROUPS.equipment, false, "is-equipment")}
         <div class="rulebook-rule-strip">
           <div><strong>装备与替换</strong><span>打出新装备时立即生效，并把原装备移入弃牌堆。</span></div>
+          <div><strong>泡泡机</strong><span>每个自己的回合开始仅检查一次；已有护盾或回合中途变为0时不会补充。</span></div>
           <div><strong>被取得或破坏</strong><span>掠夺、破坏、借势与窃取会按各自规则移动或弃置装备；离开装备槽后效果结束。</span></div>
           <div><strong>阵亡清理</strong><span>阵亡角色的装备和全部手牌一同进入弃牌堆。</span></div>
         </div>`

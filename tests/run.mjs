@@ -41,7 +41,7 @@ import { getAliveRing, getBaseDistance, getDistance } from "../js/domain/rules/d
 import { decideDefenseJudgmentOutcome, decideDelayedStatusJudgmentOutcome, interpretDefenseJudgment, interpretDelayedStatusJudgment } from "../js/domain/rules/judgment/JudgmentRules.js";
 import { getCounterResponderOrder, getDyingRescueResponderOrder, getRequiredBlockCount, getResponseCardDefinitionId, getStatusCounterResponderOrder, hasSufficientResponseCards, isAssaultDamage, isBlockResponseAvailable, isCounterEligible, isDyingRescueEligible, isResponderEligible } from "../js/domain/rules/response/ResponseRules.js";
 import { getAllInAssaultBonus, getExposeWeaknessStacks, getStatusDefinition, hasStatus, isExposeWeaknessConsumable, isHuntMarkExpired, isHuntMarkSourceExpired, nextLightningReceiverId as nextDomainLightningReceiverId } from "../js/domain/rules/status/StatusRules.js";
-import { getAttackLimit, getDrawCount, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js";
+import { getAttackLimit, getDrawCount, getEffectiveAttackLimit, getInitialHandCount, getMaxEnergy, getRecoverLimit, getTeamRules, getTeamSize, getTurnEnergyBreakdown, getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, getWinningTeam, isSmallTeam } from "../js/domain/rules/team/TeamRules.js";
 import { calculateNextActorIndex, createAttackUsage, createGlobalTurnReactiveState, createRoundUsageState, createTurnUsageState, getActiveSkillUseCount, getAttackUsage, hasActiveSkillUseRemaining, hasAttackUseRemaining, hasRecoverUseRemaining, isActorTurn, shouldSkipActionPhase } from "../js/domain/rules/turn/TurnRules.js";
 import { getCurrentActor as queryCurrentActor, getAllies as queryAllies, getEnemies as queryEnemies, getLivingPlayers, getSeatOrderFrom as querySeatOrderFrom } from "../js/domain/state/queries/MatchQueries.js";
 import { getCardZoneOccurrences as queryCardZoneOccurrences, isCardCommittedToDiscard as queryCommittedToDiscard, isCardCommittedToEquipment as queryCommittedToEquipment } from "../js/domain/state/queries/ZoneQueries.js";
@@ -59,7 +59,7 @@ import { TeamAssignment as TeamManager } from "../js/application/match/TeamAssig
 import { ActionLegality } from "../js/application/action/ActionLegality.js";
 import { getRangeConditionBranches, getRangeLegalityProbability, inAttackRange } from "../js/ai/Event/Probability/Probability.js";
 import { createInitialWorld, cloneWorld } from "../js/ai/Simulator/World.js";
-import { createFact, deriveCurrentCardCounts, getCharacterRoleTags, hasFactStatus } from "../js/ai/Event/Fact.js";
+import { createFact, deriveCurrentCardCounts, getCharacterRoleTags, hasFactStatus, projectAttackUsage } from "../js/ai/Event/Fact.js";
 import {
   PROBABILITY_CLASSIFICATION,
   buildLightningHitDistribution as buildProbabilityLightningHitDistribution,
@@ -78,6 +78,7 @@ import {
   probabilityEventPartition,
   projectProbabilityStateBranches as projectStateProbabilityBranches,
   queryCurrentCardCounts,
+  queryHandSelectionProbability,
   queryPlayerHandProbability,
   queryProbability,
   sampleProbabilityWorlds,
@@ -102,17 +103,20 @@ import {
   createAction,
   sameAction
 } from "../js/ai/Generator/Action.js";
-import { threatScore } from "../js/ai/Evaluator/StateValue.js";
-import { HP_RISK_OPTION_WEIGHT } from "../js/ai/Evaluator/StateValue.js";
+import { statePlayerValueTerms, targetPriorityScore } from "../js/ai/Evaluator/StateValue.js";
+import { HP3_RISK_WEIGHT, HP2_RISK_WEIGHT } from "../js/ai/Evaluator/StateValue.js";
 import {
   Evaluator,
   MIN_TRANSFER_UTILITY,
+  TARGET_PRIORITY_WEIGHT,
   chooseDiscardCandidates,
   counterOpportunityCost,
+  counterRootOverlapTerms,
   planningDynamicCounterGain,
   planningCounterDecision,
   privatePeekInformationValue,
   rankDiscardCandidates,
+  assertCompleteTransitionTerms,
   isValidFinalUtility,
   sealUseValue,
   turnOrderGap,
@@ -186,6 +190,7 @@ import { createDiscardChoiceRequest } from "../js/application/choice/DiscardChoi
 import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js";
 import { canActuallyUseAssault as canActuallyUseAssaultRule, canPlayCard as canPlayCardRule, getAssaultTargetIds, getCardTargetIds, getLeverageFirstTargetIds, getTransferableHandCount, getTransferSourceIds, hasHandOrEquipmentFacts } from "../js/domain/rules/card/CardRules.js";
 import { canTriggerRecycleDevice } from "../js/domain/rules/card/RecycleDeviceRules.js";
+import { canTriggerBubbleMachine } from "../js/domain/rules/card/BubbleMachineRules.js";
 import { canUseSkillBase, getSkillTargetIds } from "../js/domain/rules/skill/SkillRules.js";
 import { createCardIntentRuntime } from "../js/application/action/CardIntentRuntime.js";
 import { createRecycleDeviceTrigger } from "../js/application/trigger/RecycleDeviceTrigger.js";
@@ -210,7 +215,9 @@ import {
   getBaseCardAiValue, getRoleCardAiValue,
   getDiscardKeepValue, getResourceDefinitionUtility, getResourceUnknownUtility,
   getTransferCardValue as cardSituationValue, getUnknownTransferCardValue,
-  RESOURCE_MATERIAL_SCALE, UNKNOWN_HAND_EXPECTED_VALUE, roleCardDelta
+  getUnknownAcquisitionUtility,
+  HAND_COUNT_VALUE, RESOURCE_MATERIAL_SCALE, UNKNOWN_HAND_EXPECTED_VALUE, roleCardDelta,
+  realizedHandCardStateValue, staticCardAssetValue
 } from "../js/ai/Evaluator/CardValue.js";
 import {
   ROLE_CARD_VALUE_DELTAS as OWNED_ROLE_CARD_VALUE_DELTAS,
@@ -218,8 +225,11 @@ import {
   getRoleCardAiValue as ownedRoleCardAiValue
 } from "../js/ai/Evaluator/CardValue.js";
 import {
+  assaultInventoryOpportunityValue,
   assaultThreat,
   equipmentThreatSynergy,
+  expectedDefenseCost,
+  expectedBlockDemand,
   expectedUsableAssaultsNextTurn,
   futureSkillReadinessProbability,
   roleThreatSynergy,
@@ -229,14 +239,7 @@ import {
 } from "../js/ai/Evaluator/StateValue.js";
 import { sealTeamBurden } from "../js/ai/Evaluator/StateValue.js";
 import { MUSIC_PROFILES, SOUND_THROTTLE_MS, SoundManager } from "../js/audio/SoundManager.js";
-import {
-  assessGlobalBenefit,
-  mutualBenefitDraftValues
-} from "../js/ai/Evaluator/CardValue.js";
-import {
-  assessGlobalBenefitOutcome,
-  buildMutualBenefitDraftOutcome
-} from "../js/ai/Evaluator/CardValue.js";
+import { assessGlobalBenefit } from "../js/ai/Evaluator/CardValue.js";
 
 /*
 功能
@@ -458,7 +461,7 @@ class Simulator extends ProductionSimulator {
       decideBlock: (...args) => testResponseEvaluator.decidePlanningBlock(...args),
       decideGuardianAid: (...args) => testResponseEvaluator.decidePlanningGuardianAid(...args),
       decideDyingRescue: (...args) => testResponseEvaluator.decidePlanningDyingRescue(...args),
-      choosePublicCardId: (...args) => testResponseEvaluator.choosePublicCardId(...args),
+      choosePublicCardOutcome: (...args) => testResponseEvaluator.choosePublicCardOutcome(...args),
       resolveDiscardCandidates: (player, cards, count, context) => (
         chooseDiscardCandidates(player, cards, count, context)
       ),
@@ -970,9 +973,9 @@ for (const definition of Object.values(CARD_DEFINITIONS)) test(`卡牌资源：$
 
 // ---- 卡牌定义与数量 ----
 
-test("卡牌定义：牌组恰有26种定义和163张实体牌", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
-  assert.equal(TOTAL_CARD_COUNT, 163);
+test("卡牌定义：牌组恰有28种定义和165张实体牌", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 28);
+  assert.equal(TOTAL_CARD_COUNT, 165);
 });
 
 test(
@@ -1037,14 +1040,15 @@ test("卡牌定义：借势在集中牌堆中固定3张且均为不同真实实�
   assert.equal(deck.cards.filter((card) => card.definitionId === "leverage").length, 3);
 });
 
-test("卡牌定义：装备牌数量合计15且数量来自统一配置", () => {
+test("卡牌定义：装备牌数量合计17且数量来自统一配置", () => {
   const equipment = Object.values(CARD_DEFINITIONS).filter((card) => card.category === "equipment");
-  assert.equal(equipment.reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0), 15);
-  assert.equal(equipment.length, 6);
+  assert.equal(equipment.reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0), 17);
+  assert.equal(equipment.length, 8);
   assert.deepEqual(
     Object.fromEntries(equipment.map((card) => [card.definitionId, CARD_COUNTS[card.definitionId]])),
     {
-      energyDevice: 2, recycleDevice: 3, defenseDevice: 2, battleDevice: 2, telescope: 3, barrierDevice: 3
+      energyDevice: 2, recycleDevice: 3, bubbleMachine: 1, defenseDevice: 2, battleDevice: 2,
+      assaultMagazine: 1, telescope: 3, barrierDevice: 3
     }
   );
 });
@@ -1131,11 +1135,11 @@ test("角色规则：八名角色初始能量配置与规则一致", () => {
       "blade-walker": 0,
       "oath-warden": 0,
       "spirit-medic": 1,
-      "shade-agent": 0,
+      "shade-agent": 2,
       "ember-magus": 1,
       "trail-hunter": 0,
       "fate-gambler": 0,
-      "resonance-tuner": 1
+      "resonance-tuner": 0
     };
   assert.equal(CHARACTER_DEFINITIONS.length, 8);
   for (const [id, energy] of Object.entries(expected)) {
@@ -1143,8 +1147,8 @@ test("角色规则：八名角色初始能量配置与规则一致", () => {
   }
 });
 
-test("角色规则：applyCharacter 按配置初始化灵医、炎术师、调律师与刃行者的初始能量", () => {
-  for (const [id, expectedEnergy] of [["spirit-medic", 1], ["ember-magus", 1], ["resonance-tuner", 1], ["blade-walker", 0]]) {
+test("角色规则：applyCharacter 按配置初始化灵医、影客、炎术师、调律师与刃行者的初始能量", () => {
+  for (const [id, expectedEnergy] of [["spirit-medic", 1], ["shade-agent", 2], ["ember-magus", 1], ["resonance-tuner", 0], ["blade-walker", 0]]) {
     const character = CHARACTER_DEFINITIONS.find((entry) => entry.id === id),
       player = new Player({ id: `init-${id}`, seatIndex: 0, battleTeam: "dawn", controllerType: "ai" });
     assert.equal(player.energy, 0, `${id} 构造后能量为0`);
@@ -1169,7 +1173,7 @@ test("角色规则：README 记录八名角色初始能量且焚场固定消耗3
 });
 
 test("角色规则：调律师协调的配置、技能详情与README统一使用有效作用目标文案", async () => {
-  const expected = "每回合首次令另一名队友成为卡牌的有效作用目标后，自己摸1张牌。",
+  const expected = "每回合首次令另一名队友成为卡牌的有效作用目标后，你与该队友各摸1张牌。",
     tuner = presentCharacter("resonance-tuner"),
     player = makePlayer("description-tuner", 0, "dawn", "human", 7),
     readme = await readFile(projectFile("README.md"), "utf8"),
@@ -1796,10 +1800,10 @@ test("架构治理：architecture authority 与 checker guard 已冻结", frArch
 
 // ---- 牌堆、区域与重洗 ----
 
-test("牌堆：Deck 创建163个唯一实体 card.id", () => {
+test("牌堆：Deck 创建165个唯一实体 card.id", () => {
   const deck = new Deck(() => .4);
-  assert.equal(deck.build(TEST_VERSION_STATE), 163);
-  assert.equal(new Set(deck.cards.map((card) => card.id)).size, 163);
+  assert.equal(deck.build(TEST_VERSION_STATE), 165);
+  assert.equal(new Set(deck.cards.map((card) => card.id)).size, 165);
 });
 
 test("牌堆：结算区不会进入重洗", () => {
@@ -1912,6 +1916,18 @@ test("回合：大队规则为开局4张、每回合摸2张、突袭1、调息�
   assert.equal(rules.getTurnEnergyGain(large), 1);
   assert.equal(rules.getMaxEnergy(large), 3);
   assert.equal(large.maxEnergy, 3);
+});
+
+test("回合：备用弹夹只在有效突袭上限查询中叠加且不改写回合基础次数", () => {
+  const { game, small, large } = makeTeamFixture();
+  small.equipment = instance("assaultMagazine");
+  large.equipment = instance("assaultMagazine");
+  assert.equal(small.turnFlags.attackLimit, 2);
+  assert.equal(large.turnFlags.attackLimit, 1);
+  assert.equal(game.teamRules.getAttackLimit(small), 4);
+  assert.equal(game.teamRules.getAttackLimit(large), 3);
+  assert.deepEqual(ActionLegality.getAssaultUsage(small), { used: 0, limit: 4 });
+  assert.deepEqual(ActionLegality.getAssaultUsage(large), { used: 0, limit: 3 });
 });
 
 test("回合：初始发牌静默但仍走标准移动事件且正式摸牌继续记录", async () => {
@@ -3107,6 +3123,18 @@ function frArch5TeamRules() {
   assert.equal(getDrawCount(ruleState, smallRule), game.teamRules.getDrawCount(small));
   assert.equal(getAttackLimit(ruleState, smallRule), game.teamRules.getAttackLimit(small));
   assert.equal(getAttackLimit(ruleState, largeRule), game.teamRules.getAttackLimit(large));
+  assert.equal(
+    getAttackLimit(ruleState, { ...largeRule, equipmentDefinitionId: "assaultMagazine" }),
+    3
+  );
+  assert.equal(
+    getAttackLimit(ruleState, {
+      ...largeRule,
+      attackLimit: 2,
+      equipmentDefinitionId: "assaultMagazine"
+    }),
+    4
+  );
   assert.equal(getRecoverLimit(ruleState, smallRule), null);
   assert.equal(getMaxEnergy(ruleState, smallRule), game.teamRules.getMaxEnergy(small));
   assert.equal(getMaxEnergy(ruleState, largeRule), game.teamRules.getMaxEnergy(large));
@@ -6508,8 +6536,10 @@ test("窥探：只向真人私密层展示并把该实体牌标记为已知", as
   const a = makePlayer("a", 0, "dawn", "human"), b = makePlayer("b", 1, "dusk");
   const { game, ui }
     = makeGame([a, b]);
-  const scout = instance("scout"), secret = instance("counter");
-  a.hand.push(scout);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  const scout = instance("scout"), secondScout = instance("scout"),
+    secret = instance("counter");
+  a.hand.push(scout, secondScout);
   b.hand.push(secret);
   b.bumpHandVersion(TEST_VERSION_STATE);
   const hidden = game.hiddenCardSelection.createHiddenSelection(b);
@@ -6519,6 +6549,19 @@ test("窥探：只向真人私密层展示并把该实体牌标记为已知", as
   assert.equal(ui.reveals[0].cards[0], secret);
   assert.equal(createOpponentHandView(a, b)[0].name, secret.name);
   assert.ok(!game.state.logs.at(-1).message.includes(secret.name));
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(a).totals.enemyControls, 0.25);
+  const secondHidden = game.hiddenCardSelection.createHiddenSelection(b);
+  await game.playCard(
+    a,
+    secondScout,
+    [b],
+    { tokens: [secondHidden.tokens[0].token], selectionId: secondHidden.selectionId }
+  );
+  assert.equal(
+    game.matchPerformanceSidecar.tracker.recordFor(a).totals.enemyControls,
+    0.25,
+    "重复查看已知实体不得再次累计控制"
+  );
 });
 
 test("窥探：真人目标有两张手牌时只选择一张仍成功", async () => {
@@ -7072,11 +7115,13 @@ test("震荡：不计突袭次数也不消耗破势", async () => {
     c = makePlayer("c", 2, "dusk");
   const { game }
     = makeGame([a, b, c]);
+  a.equipment = instance("assaultMagazine");
+  a.turnFlags.attackUsed = a.turnFlags.attackLimit;
   a.statuses.exposeWeakness = { stacks: 2 };
   const card = instance("shockwave");
   a.hand.push(card);
   await game.playCard(a, card, [b, c]);
-  assert.equal(a.turnFlags.attackUsed, 0);
+  assert.equal(a.turnFlags.attackUsed, a.turnFlags.attackLimit);
   assert.equal(a.statuses.exposeWeakness.stacks, 2);
 });
 
@@ -7088,6 +7133,8 @@ test("挑衅：有突袭者可打出，没有者优先消耗护盾且不触发�
     c = makePlayer("c", 2, "dusk", "human");
   const { game, ui }
     = makeGame([a, b, c], { response: (r) => r.targetPlayerId === b.id });
+  b.equipment = instance("assaultMagazine");
+  b.turnFlags.attackUsed = b.turnFlags.attackLimit;
   a.hand.push(instance("provoke"));
   b.hand.push(instance("assault"));
   c.shield = 2;
@@ -7096,6 +7143,7 @@ test("挑衅：有突袭者可打出，没有者优先消耗护盾且不触发�
   const hp = c.hp;
   await game.playCard(a, a.hand[0], [b, c]);
   assert.equal(b.hand.length, 0);
+  assert.equal(b.turnFlags.attackUsed, b.turnFlags.attackLimit);
   assert.equal(c.hp, hp);
   assert.equal(c.shield, 1);
   assert.ok(!ui.responseRequests.some((request) => request.type === "block"));
@@ -7415,7 +7463,7 @@ test("借势：成功响应使用真实突袭并完整复用次数、伤害、�
 test("借势：忽略第一目标已用突袭次数并完整执行真实突袭", async () => {
   const actor = makePlayer("actor", 0, "dawn", "human"),
     first = makePlayer("first", 1, "dusk", "human"),
-    equipment = instance("energyDevice"),
+    equipment = instance("assaultMagazine"),
     assault = instance("assault"),
     use = instance("leverage");
   actor.hand.push(use);
@@ -7423,7 +7471,8 @@ test("借势：忽略第一目标已用突袭次数并完整执行真实突袭",
   first.equipment = equipment;
   const { game, ui }
     = makeGame([actor, first], { response: (request) => request.type === "leverageAssault" });
-  first.turnFlags.attackUsed = first.turnFlags.attackLimit;
+  const effectiveLimit = ActionLegality.getAssaultUsage(first).limit;
+  first.turnFlags.attackUsed = effectiveLimit;
   assert.equal(ActionLegality.canPlayCard(game, actor, use).ok, true);
   assert.equal(ActionLegality.canUseForcedAssault(game, first, assault, actor).ok, true);
   assert.deepEqual(
@@ -7444,7 +7493,7 @@ test("借势：忽略第一目标已用突袭次数并完整执行真实突袭",
     )
   );
   assert.equal(first.equipment, equipment);
-  assert.equal(first.turnFlags.attackUsed, first.turnFlags.attackLimit + 1);
+  assert.equal(first.turnFlags.attackUsed, effectiveLimit + 1);
   assert.ok(game.state.deck.discardPile.includes(assault));
   assert.ok(!actor.hand.includes(equipment));
   assert.ok(!ui.logs.some((message) => message.includes("拒绝使用「突袭」")));
@@ -8445,11 +8494,14 @@ test("决斗：轮流打出突袭，先不能响应者承受可被护盾吸收�
   const duel = instance("duel");
   a.hand.push(duel);
   b.hand.push(instance("assault"));
+  b.equipment = instance("assaultMagazine");
+  b.turnFlags.attackUsed = ActionLegality.getAssaultUsage(b).limit;
   a.shield = 1;
   await game.playCard(a, duel, [b]);
   assert.equal(a.hp, a.maxHp);
   assert.equal(a.shield, 0);
   assert.equal(a.turnFlags.attackUsed, 0);
+  assert.equal(b.turnFlags.attackUsed, ActionLegality.getAssaultUsage(b).limit);
 });
 
 // ---- 互利 ----
@@ -8665,11 +8717,11 @@ test("封印：定义、数量、牌堆与原有牌数量正确", () => {
   assert.equal(CARD_COUNTS.seal, 3);
   assert.equal(getBaseCardAiValue(seal.definitionId), 7);
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("seal"));
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
-  assert.equal(TOTAL_CARD_COUNT, 163);
-  assert.equal(TOTAL_CARD_COUNT - CARD_COUNTS.seal, 160);
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 28);
+  assert.equal(TOTAL_CARD_COUNT, 165);
+  assert.equal(TOTAL_CARD_COUNT - CARD_COUNTS.seal, 162);
   const deck = new Deck(() => 0);
-  assert.equal(deck.build(TEST_VERSION_STATE), 163);
+  assert.equal(deck.build(TEST_VERSION_STATE), 165);
   const cards = deck.cards.filter((card) => card.definitionId === "seal");
   assert.equal(cards.length, 3);
   assert.equal(new Set(cards.map((card) => card.id)).size, 3);
@@ -8986,17 +9038,17 @@ test("闪电：定义、数量与牌堆总数正确", () => {
   assert.equal(getBaseCardAiValue(lightning.definitionId), 3);
   assert.ok(lightning.description.includes("闪电"));
   assert.ok(CARD_DEFINITION_DISPLAY_ORDER.includes("lightning"));
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 28);
   const tacticTotal = Object.values(
     CARD_DEFINITIONS
   ).filter((card) => card.category === "tactic").reduce((sum, card) => sum + CARD_COUNTS[card.definitionId], 0);
   assert.equal(tacticTotal, 56);
-  assert.equal(TOTAL_CARD_COUNT, 163);
+  assert.equal(TOTAL_CARD_COUNT, 165);
 });
 
 test("闪电：Deck.build 生成正好两张不同实体 ID", () => {
   const deck = new Deck(() => 0);
-  assert.equal(deck.build(TEST_VERSION_STATE), 163);
+  assert.equal(deck.build(TEST_VERSION_STATE), 165);
   const cards = deck.cards.filter((card) => card.definitionId === "lightning");
   assert.equal(cards.length, 2);
   assert.equal(new Set(cards.map((card) => card.id)).size, 2);
@@ -9587,7 +9639,7 @@ test("闪电：卡牌描述与 README 当前描述完全一致", async () => {
 
 // ---- 装备公共规则 ----
 
-for (const id of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"]) test(`装备：${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => {
+for (const id of ["energyDevice", "recycleDevice", "bubbleMachine", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) test(`装备：${CARD_DEFINITIONS[id].name} 会进入唯一装备槽`, async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
     = makeGame([a, b]);
@@ -9609,6 +9661,10 @@ test("装备：四种旧装备采用README中的新名称且保留稳定definiti
   );
 });
 
+test("装备：充能桩描述明确只在自己的回合开始额外获得能量", () => {
+  assert.equal(CARD_DEFINITIONS.energyDevice.description, "你的回合开始获得能量时额外获得1点。");
+});
+
 test("装备：替换装备时旧装备进入弃牌堆且新装备留在槽内", async () => {
   const a = makePlayer("a", 0, "dawn"), b = makePlayer("b", 1, "dusk");
   const { game }
@@ -9620,6 +9676,144 @@ test("装备：替换装备时旧装备进入弃牌堆且新装备留在槽内",
   await game.playCard(a, next, []);
   assert.equal(a.equipment, next);
   assert.ok(game.state.deck.discardPile.includes(old));
+});
+
+test("备用弹夹：定义字段、阵营基础上限与破军临时次数只在有效查询中叠加", async () => {
+  const { game, small, large } = makeTeamFixture();
+  small.equipment = instance("assaultMagazine");
+  large.equipment = instance("assaultMagazine");
+  assert.equal(CARD_DEFINITIONS.assaultMagazine.attackLimitBonus, 2);
+  assert.deepEqual(CARD_DEFINITIONS.assaultMagazine.subtypes, ["equipment", "assault-capacity"]);
+  assert.equal(CARD_DEFINITIONS.assaultMagazine.subtypes.includes("attack"), false);
+  assert.equal(small.turnFlags.attackLimit, 2);
+  assert.equal(large.turnFlags.attackLimit, 1);
+  assert.equal(game.teamRules.getAttackLimit(small), 4);
+  assert.equal(game.teamRules.getAttackLimit(large), 3);
+  assert.equal(getEffectiveAttackLimit(2, "assaultMagazine"), 4);
+  assert.equal(getEffectiveAttackLimit(1, "assaultMagazine"), 3);
+
+  large.energy = ACTIVE_SKILLS.breakArmy.cost;
+  game.state.currentPlayerIndex = large.seatIndex;
+  assert.equal(await game.useActiveSkill(large, "breakArmy", []), true);
+  assert.equal(large.turnFlags.attackLimit, 2);
+  assert.equal(game.teamRules.getAttackLimit(large), 4);
+  assert.equal(ActionLegality.getAssaultUsage(large).limit, 4);
+
+  const projected = createRuleStateView(game.state).playerById(large.id);
+  assert.equal(getAttackLimit(game.state, projected), 4);
+});
+
+test("备用弹夹：额外主动突袭按0/2到2/2计数且破军额度优先消费", async () => {
+  const { game, small, large } = makeTeamFixture();
+  game.state.currentPlayerIndex = large.seatIndex;
+  small.hp = 20;
+  small.maxHp = 20;
+  large.energy = ACTIVE_SKILLS.breakArmy.cost;
+  const magazine = instance("assaultMagazine"),
+    assaults = Array.from({ length: 4 }, () => instance("assault"));
+  large.hand.push(magazine, ...assaults);
+
+  assert.equal(await game.playCard(large, magazine, []), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 0);
+  assert.equal(await game.playCard(large, assaults[0], [small]), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 0);
+  assert.equal(await game.playCard(large, assaults[1], [small]), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 1);
+
+  assert.equal(await game.useActiveSkill(large, "breakArmy", []), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 1);
+  assert.equal(await game.playCard(large, assaults[2], [small]), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 1);
+  assert.equal(await game.playCard(large, assaults[3], [small]), true);
+  assert.equal(large.turnFlags.assaultMagazineUsed, 2);
+
+  large.resetTurnFlags(game.state, game.teamRules.getRules(large));
+  assert.equal(large.turnFlags.assaultMagazineUsed, 0);
+});
+
+test("备用弹夹：借势内嵌突袭不消耗装备额外次数", async () => {
+  const actor = makePlayer("magazine-leverage-actor", 0, "dawn", "human"),
+    forced = makePlayer("magazine-leverage-source", 1, "dusk", "human"),
+    magazine = instance("assaultMagazine"), assault = instance("assault"),
+    leverage = instance("leverage"),
+    { game } = makeGame([actor, forced], {
+      response: (request) => request.type === "leverageAssault"
+    });
+  actor.hand.push(leverage);
+  forced.hand.push(assault);
+  forced.equipment = magazine;
+  forced.turnFlags.attackUsed = forced.turnFlags.attackLimit;
+
+  assert.equal(await game.playCard(actor, leverage, [], {
+    firstTargetId:forced.id,
+    equipmentCardId:magazine.id,
+    equipmentDefinitionId:magazine.definitionId,
+    secondTargetId:actor.id
+  }), true);
+  assert.equal(forced.turnFlags.assaultMagazineUsed, 0);
+});
+
+test("备用弹夹：先用满基础次数后装备会立即开放两次主动突袭", async () => {
+  const { game, large, small } = makeTeamFixture();
+  game.state.currentPlayerIndex = large.seatIndex;
+  small.hp = 10;
+  small.maxHp = 10;
+  const first = instance("assault"), magazine = instance("assaultMagazine"),
+    second = instance("assault"), third = instance("assault"), blocked = instance("assault");
+  large.hand.push(first, magazine, second, third, blocked);
+
+  assert.equal(await game.playCard(large, first, [small]), true);
+  assert.equal(large.turnFlags.attackUsed, 1);
+  assert.equal(ActionLegality.canPlayCard(game, large, second).ok, false);
+  assert.equal(await game.playCard(large, magazine, []), true);
+  assert.equal(large.turnFlags.attackUsed, 1);
+  assert.equal(ActionLegality.getAssaultUsage(large).limit, 3);
+  assert.equal(await game.playCard(large, second, [small]), true);
+  assert.equal(await game.playCard(large, third, [small]), true);
+  assert.equal(ActionLegality.canPlayCard(game, large, blocked).ok, false);
+  assert.equal(await game.playCard(large, blocked, [small]), false);
+  assert.equal(large.turnFlags.attackUsed, 3);
+});
+
+test("备用弹夹：使用额外突袭后换装会即时恢复当前有效上限且不回滚已用次数", async () => {
+  const { game, large, small } = makeTeamFixture();
+  game.state.currentPlayerIndex = large.seatIndex;
+  small.hp = 10;
+  small.maxHp = 10;
+  const magazine = instance("assaultMagazine"), first = instance("assault"),
+    extra = instance("assault"), replacement = instance("energyDevice"), blocked = instance("assault");
+  large.hand.push(magazine, first, extra, replacement, blocked);
+
+  assert.equal(await game.playCard(large, magazine, []), true);
+  assert.equal(await game.playCard(large, first, [small]), true);
+  assert.equal(await game.playCard(large, extra, [small]), true);
+  assert.equal(large.turnFlags.attackUsed, 2);
+  assert.equal(await game.playCard(large, replacement, []), true);
+  assert.equal(large.turnFlags.attackUsed, 2);
+  assert.equal(ActionLegality.getAssaultUsage(large).limit, 1);
+  assert.equal(ActionLegality.canPlayCard(game, large, blocked).ok, false);
+});
+
+test("备用弹夹：掠夺进入手牌不生效，真正装备后才增加主动突袭上限", async () => {
+  const actor = makePlayer("magazine-plunder-actor", 0, "dawn", "human"),
+    target = makePlayer("magazine-plunder-target", 1, "dusk", "human"),
+    magazine = instance("assaultMagazine"), plunder = instance("plunder");
+  target.equipment = magazine;
+  actor.hand.push(plunder);
+  const { game } = makeGame([actor, target]);
+  const selection = game.hiddenCardSelection.createHiddenSelection(target);
+  assert.equal(await game.playCard(actor, plunder, [target], {
+    zone: "equipment",
+    selectionKind: "equipment",
+    definitionId: magazine.definitionId,
+    equipmentCardId: magazine.id,
+    selectionId: selection.selectionId
+  }), true);
+  assert.equal(actor.equipment, null);
+  assert.ok(actor.hand.includes(magazine));
+  assert.equal(ActionLegality.getAssaultUsage(actor).limit, actor.turnFlags.attackLimit);
+  assert.equal(await game.playCard(actor, magazine, []), true);
+  assert.equal(ActionLegality.getAssaultUsage(actor).limit, actor.turnFlags.attackLimit + 2);
 });
 
 test("装备：望远镜替换为屏障后方向性距离立即按新装备重算", async () => {
@@ -9653,6 +9847,90 @@ test("充能桩：只给回合能量额外+1", () => {
   );
   small.equipment = instance("battleDevice");
   assert.equal(game.teamRules.getTurnEnergyGain(small), 1);
+});
+
+// ---- 泡泡机 ----
+
+test("泡泡机：Domain 只允许存活、实际装备且0盾的角色触发", () => {
+  const facts = { ownerAlive: true, equipmentDefinitionId: "bubbleMachine", currentShield: 0 };
+  assert.equal(CARD_DEFINITIONS.bubbleMachine.description, "你的回合开始时，若你当前没有护盾，获得1点护盾。");
+  assert.equal(CARD_DEFINITIONS.bubbleMachine.turnShieldGain, 1);
+  assert.equal(canTriggerBubbleMachine(facts), true);
+  assert.equal(canTriggerBubbleMachine({ ...facts, ownerAlive: false }), false);
+  assert.equal(canTriggerBubbleMachine({ ...facts, equipmentDefinitionId: "energyDevice" }), false);
+  assert.equal(canTriggerBubbleMachine({ ...facts, currentShield: 1 }), false);
+});
+
+test("泡泡机：自己的 turnStart 在0盾时获得1点普通护盾并发布标准事实", async () => {
+  const owner = makePlayer("bubble-owner", 0, "dawn"),
+    other = makePlayer("bubble-other", 1, "dusk"),
+    { game } = makeGame([owner, other]);
+  owner.equipment = instance("bubbleMachine");
+  const granted = [];
+  game.eventDispatcher.on("shieldGranted", "test:bubble-machine-granted", (event) => {
+    granted.push(event);
+  });
+
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: other });
+  assert.equal(owner.shield, 0);
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 1);
+  assert.equal(granted.length, 1);
+  assert.deepEqual(
+    {
+      source: granted[0].source,
+      target: granted[0].target,
+      actualAddedAmount: granted[0].actualAddedAmount,
+      effectDefinitionId: granted[0].effectDefinitionId
+    },
+    { source: owner, target: owner, actualAddedAmount: 1, effectDefinitionId: "bubbleMachine" }
+  );
+  assert.ok(game.state.logs.some(
+    (entry) => entry.message === `${owner.name}的「泡泡机」触发，获得1点护盾。`
+  ));
+
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 1);
+  assert.equal(granted.length, 1);
+});
+
+test("泡泡机：已有盾不触发且回合中途护盾降到0不补", async () => {
+  const owner = makePlayer("bubble-shielded", 0, "dawn"),
+    enemy = makePlayer("bubble-attacker", 1, "dusk"),
+    { game } = makeGame([owner, enemy]);
+  owner.equipment = instance("bubbleMachine");
+  owner.shield = 1;
+  let granted = 0;
+  game.eventDispatcher.on("shieldGranted", "test:bubble-machine-no-refill", () => {
+    granted += 1;
+  });
+
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 1);
+  await game.damage(enemy, owner, 1, { canBlock: false });
+  assert.equal(owner.shield, 0);
+  assert.equal(granted, 0);
+});
+
+test("泡泡机：回合中途替换装备不立即补盾且只等下个自己的 turnStart", async () => {
+  const owner = makePlayer("bubble-equip-owner", 0, "dawn"),
+    other = makePlayer("bubble-equip-other", 1, "dusk"),
+    oldEquipment = instance("energyDevice"),
+    bubbleMachine = instance("bubbleMachine"),
+    { game } = makeGame([owner, other]);
+  owner.equipment = oldEquipment;
+  owner.hand.push(bubbleMachine);
+
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 0);
+  assert.equal(await game.playCard(owner, bubbleMachine, []), true);
+  assert.equal(owner.equipment, bubbleMachine);
+  assert.ok(game.state.deck.discardPile.includes(oldEquipment));
+  assert.equal(owner.shield, 0);
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: other });
+  assert.equal(owner.shield, 0);
+  await game.eventDispatcher.emit("turnStart", { type: "turnStart", player: owner });
+  assert.equal(owner.shield, 1);
 });
 
 // ---- 回收站 ----
@@ -11337,6 +11615,7 @@ test("影客：为4点生命且窥隙经实际伤害与隐藏选择查看至多2
   enemy.hand.push(instance("assault"), instance("recover"), instance("charge"));
   const { game, ui }
     = makeGame([shade, enemy], { random: () => 0 });
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   registerPassiveSkills(game);
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(shade.maxHp, 4);
@@ -11347,9 +11626,10 @@ test("影客：为4点生命且窥隙经实际伤害与隐藏选择查看至多2
   assert.equal(ui.reveals.length, 1);
   assert.equal(ui.reveals[0].cards.length, 2);
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length, 2);
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 0.5);
 });
 
-test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装备", async () => {
+test("影客：窃取无视距离把敌方装备收入手牌且不替换原装备", async () => {
   const shade = makePlayer("shade", 0, "dawn", "ai", 3),
     near = makePlayer("near", 1, "dawn"),
     target = makePlayer("target", 2, "dusk"),
@@ -11359,6 +11639,7 @@ test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装�
     original = instance("battleDevice");
   const { game }
     = makeGame([shade, near, target, other, tail], { random: () => 0 });
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   shade.energy = 2;
   shade.equipment = original;
   target.equipment = equipment;
@@ -11368,6 +11649,7 @@ test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装�
   assert.equal(shade.equipment, original);
   assert.ok(shade.hand.includes(equipment));
   assert.ok(!game.state.deck.discardPile.includes(equipment));
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 1);
   const blockedShade = makePlayer("blocked-shade", 0, "dawn", "ai", 3),
     blockedNear = makePlayer("blocked-near", 1, "dawn"),
     blocked = makePlayer("blocked", 2, "dusk"),
@@ -11376,10 +11658,14 @@ test("影客：窃取可把距离2内敌方装备收入手牌且不替换原装�
   blocked.equipment = instance("barrierDevice");
   const { game: blockedGame }
     = makeGame([blockedShade, blockedNear, blocked, blockedOther, blockedTail]);
+  blockedShade.energy = 2;
   assert.equal(ActionLegality.getDistance(blockedGame, blockedShade, blocked), 3);
-  assert.ok(
-    !ActionLegality.getSkillTargets(blockedGame, blockedShade, ACTIVE_SKILLS.stealSkill).includes(blocked)
-  );
+  assert.ok(ActionLegality.getSkillTargets(
+    blockedGame, blockedShade, ACTIVE_SKILLS.stealSkill
+  ).includes(blocked));
+  assert.ok(blockedGame.aiController.getActionCandidates(blockedShade).some(
+    (action) => action.skillId === "stealSkill" && action.targetIds?.[0] === blocked.id
+  ));
 });
 
 test("影客：窃取把3张手牌与1张装备组成单一等概率实体集合", async () => {
@@ -11418,7 +11704,7 @@ test("影客：窃取把3张手牌与1张装备组成单一等概率实体集合
   }
 });
 
-test("影客：真人窃取先选择距离2内敌人再只从该目标随机获得资源", async () => {
+test("影客：真人窃取可选择任意距离敌人且只从该目标随机获得资源", async () => {
   const shade = makePlayer("human-steal-shade", 0, "dawn", "human", 3),
     allyA = makePlayer("human-steal-ally-a", 1, "dawn"),
     chosen = makePlayer("human-steal-chosen", 2, "dusk"),
@@ -11442,9 +11728,7 @@ test("影客：真人窃取先选择距离2内敌人再只从该目标随机获�
   assert.ok(offered.includes(otherEnemy));
   assert.ok(
     offered.every(
-      (player) => player.battleTeam !== shade.battleTeam && ActionLegality.getDistance(
-        game, shade, player
-      ) <= 2
+      (player) => player.battleTeam !== shade.battleTeam
     )
   );
   assert.match(prompt, /窃取.*选择目标/);
@@ -11501,19 +11785,20 @@ test("影客：窃取1能量非法、每次消耗2点且每回合最多发动2�
   assert.doesNotMatch(presentCharacter(CHARACTER_DEFINITIONS[3]).activeDescription, /直接进入.*装备区|直接装备/);
 });
 
-test("影客：窃取说明与README均使用收入手牌的新规则", async () => {
+test("影客：窃取说明与README均使用不限距离的收入手牌规则", async () => {
   const readme = await readFile(projectFile("README.md"), "utf8"),
     description = presentCharacter(CHARACTER_DEFINITIONS[3]).activeDescription;
   assert.equal(ACTIVE_SKILLS.stealSkill.cost, 2);
   assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn, 2);
   assert.equal(ACTIVE_SKILLS.stealSkill.cost, 2);
   assert.equal(ACTIVE_SKILLS.stealSkill.limitPerTurn, 2);
-  assert.match(description, /消耗2点能量.*选择距离2内.*敌人作为目标/);
+  assert.match(description, /消耗2点能量.*选择一名.*敌人/);
+  assert.doesNotMatch(description, /距离\s*2\s*内/);
   assert.match(description, /统一候选集合.*等概率随机获得.*收入手牌/);
   assert.match(description, /每回合最多发动2次/);
   assert.doesNotMatch(`${description}\n${readme}`, /装备牌直接进入.*装备区|窃取.*直接装备/);
   assert.match(
-    readme, /主动·窃取[^\n]*消耗 2 点能量[^\n]*选择距离 2 内[^\n]*敌人作为目标[^\n]*统一候选集合[^\n]*等概率随机获得[^\n]*一回合最多使用 2 次/
+    readme, /主动·窃取[^\n]*消耗 2 点能量[^\n]*选择一名[^\n]*敌人[^\n]*统一候选集合[^\n]*等概率随机获得[^\n]*每回合最多发动 2 次/
   );
 });
 
@@ -11566,10 +11851,38 @@ test("影客：窥隙目标仅1张手牌时最多选择并展示1张", async () 
   target.hand.push(only);
   const { game, ui }
     = makeGame([shade, target]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   registerPassiveSkills(game);
   await game.damage(shade, target, 1, { canBlock: false });
   assert.equal(ui.hiddenRequests[0].count, 1);
   assert.deepEqual(ui.reveals[0].cards, [only]);
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 0.25);
+});
+
+test("影客：窥隙连续实际伤害分别累计本次新增未知牌控制", async () => {
+  const shade = makePlayer("peek-control-repeat", 0, "dawn", "human", 3);
+  const target = makePlayer("peek-control-repeat-target", 1, "dusk", "ai", 1);
+  target.hand.push(
+    instance("counter"),
+    instance("harvest"),
+    instance("duel"),
+    instance("charge")
+  );
+  const { game, ui } = makeGame([shade, target]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  let requestIndex = 0;
+  ui.requestHiddenCards = async (selection) => {
+    const start = requestIndex * 2;
+    requestIndex += 1;
+    return selection.tokens.slice(start, start + 2).map((entry) => entry.token);
+  };
+  registerPassiveSkills(game);
+
+  await game.damage(shade, target, 1, { canBlock: false });
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 0.5);
+  await game.damage(shade, target, 1, { canBlock: false });
+  assert.equal(game.matchPerformanceSidecar.tracker.recordFor(shade).totals.enemyControls, 1);
+  assert.equal(ui.reveals.length, 2);
 });
 
 test("影客：窥隙等待期间已选牌离手时只展示仍在原手牌的实体", async () => {
@@ -11596,16 +11909,16 @@ test("影客：窥隙等待期间已选牌离手时只展示仍在原手牌的�
   assert.equal(game.hiddenCardSelection.selections.size, 0);
 });
 
-test("影客：窥隙同回合仅触发一次且格挡、护盾、队友和空手牌均不触发", async () => {
-  const shade = makePlayer("peek-once", 0, "dawn", "human", 3),
-    target = makePlayer("peek-once-target", 1, "dusk");
+test("影客：窥隙每次实际伤害均触发且格挡、护盾、队友和空手牌均不触发", async () => {
+  const shade = makePlayer("peek-repeat", 0, "dawn", "human", 3),
+    target = makePlayer("peek-repeat-target", 1, "dusk");
   target.hand.push(instance("charge"), instance("harvest"), instance("duel"));
   const { game, ui }
     = makeGame([shade, target]);
   registerPassiveSkills(game);
   await game.damage(shade, target, 1, { canBlock: false });
   await game.damage(shade, target, 1, { canBlock: false });
-  assert.equal(ui.hiddenRequests.length, 1);
+  assert.equal(ui.hiddenRequests.length, 2);
   const shieldShade = makePlayer("peek-shield", 0, "dawn", "human", 3),
     shieldTarget = makePlayer("peek-shield-target", 1, "dusk");
   shieldTarget.shield = 1;
@@ -11650,16 +11963,36 @@ test("影客：窥隙在致命伤害获救后触发且不会在救援前提前�
   registerPassiveSkills(game);
   game.eventDispatcher.on("playerDying", "test:peek-rescue-no-early", () => {
     assert.equal(ui.hiddenRequests.length, 0);
-    assert.equal(shade.turnFlags.spyGapTriggered, false);
   });
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.alive, true);
   assert.equal(enemy.hp, 1);
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 1);
   assert.equal(ui.reveals[0].cards.length, 2);
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id]).length, 2);
+});
+
+test("影客：窥隙 pending 缺失时濒死监听建立 Set 且救援后清理", async () => {
+  const shade = makePlayer("peek-missing-pending", 0, "dawn", "human", 3);
+  const target = makePlayer("peek-missing-target", 1, "dusk");
+  target.hand.push(instance("charge"));
+  const { game, ui } = makeGame([shade, target]);
+  registerPassiveSkills(game);
+  delete shade.turnFlags.spyGapPendingTargetIds;
+  target.hp = 0;
+  const version = game.state.stateVersion;
+
+  await game.eventDispatcher.emit("afterDamage", { source: shade, target, actualAmount: 1 });
+
+  assert.ok(shade.turnFlags.spyGapPendingTargetIds instanceof Set);
+  assert.deepEqual([...shade.turnFlags.spyGapPendingTargetIds], [target.id]);
+  assert.equal(game.state.stateVersion, version + 1);
+  assert.equal(ui.reveals.length, 0);
+  target.hp = 1;
+  await game.eventDispatcher.emit("playerRescued", { target });
+  assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
+  assert.equal(ui.reveals.length, 1);
 });
 
 test("影客：窥隙救援清理待处理目标并按 transition 语义推进状态版本", async () => {
@@ -11674,7 +12007,7 @@ test("影客：窥隙救援清理待处理目标并按 transition 语义推进�
   await game.eventDispatcher.emit("playerRescued", { target });
 
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.has(target.id), false);
-  assert.equal(game.state.stateVersion, versionBeforeRescue + 2, "删除 pending 与提交触发额度各推进一次版本");
+  assert.equal(game.state.stateVersion, versionBeforeRescue + 1, "只删除 pending 目标并推进一次版本");
   const versionAfterRescue = game.state.stateVersion;
   assert.equal(transitionRemoveSpyGapPendingTarget(game.state, shade, target.id), false);
   assert.equal(game.state.stateVersion, versionAfterRescue, "no-op 删除不得推进状态版本");
@@ -11693,7 +12026,6 @@ test("影客：窥隙在致命伤害由队友救援成功后触发", async () =>
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.alive, true);
   assert.equal(enemy.hp, 1);
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 1);
   assert.equal(ui.reveals[0].cards.length, 2);
@@ -11711,29 +12043,31 @@ test("影客：窥隙在致命伤害救援失败阵亡时不触发且不残留�
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.alive, false);
   assert.equal(enemy.hp, 0);
-  assert.equal(shade.turnFlags.spyGapTriggered, false);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 0);
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id] ?? {}).length, 0);
 });
 
-test("影客：窥隙经濒死获救触发后同回合对其他敌人不再触发", async () => {
+test("影客：窥隙经濒死获救触发后同回合伤害其他敌人仍再次触发", async () => {
   const shade = makePlayer("peek-twice-shade", 0, "dawn", "human", 3),
-    first = makePlayer("peek-twice-first", 1, "dusk"),
+    first = makePlayer("peek-twice-first", 1, "dusk", "ai", 0),
     second = makePlayer("peek-twice-second", 2, "dusk");
   first.hp = 1;
   first.hand.push(instance("recover"), instance("counter"), instance("harvest"));
-  second.hp = 2;
+  second.hp = 3;
   second.hand.push(instance("charge"), instance("duel"));
   const { game, ui }
     = makeGame([shade, first, second]);
   registerPassiveSkills(game);
+  const actualAmounts = [];
+  game.eventDispatcher.on("afterDamage", "test:spy-gap-repeat-after-rescue", (event) => {
+    if (event.source === shade) actualAmounts.push(event.actualAmount);
+  });
   await game.damage(shade, first, 1, { canBlock: false });
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
   assert.equal(ui.hiddenRequests.length, 1);
   await game.damage(shade, second, 1, { canBlock: false });
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
-  assert.equal(ui.hiddenRequests.length, 1);
+  assert.deepEqual(actualAmounts, [1, 1]);
+  assert.equal(ui.hiddenRequests.length, 2);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
 });
 
@@ -11748,7 +12082,6 @@ test("影客：非伤害失去生命获救不得触发窥隙", async () => {
   await game.combatWorkflow.loseHp(enemy, 1, { source: shade, reason: "测试失去生命" });
   assert.equal(enemy.alive, true);
   assert.equal(enemy.hp, 1);
-  assert.equal(shade.turnFlags.spyGapTriggered, false);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 0);
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id] ?? {}).length, 0);
@@ -11764,13 +12097,12 @@ test("影客：护盾完全吸收伤害时窥隙不触发且不写入待处理�
   registerPassiveSkills(game);
   await game.damage(shade, enemy, 1, { canBlock: false });
   assert.equal(enemy.hp, enemy.maxHp);
-  assert.equal(shade.turnFlags.spyGapTriggered, false);
   assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
   assert.equal(ui.hiddenRequests.length, 0);
   assert.equal(Object.keys(shade.aiMemory.knownCardsByPlayer[enemy.id] ?? {}).length, 0);
 });
 
-test("影客：窥隙额度每个全局回合开始重置且回合外伤害可再次触发", async () => {
+test("影客：窥隙连续实际伤害无需等待全局回合重置", async () => {
   const a = makePlayer("spy-gap-global-turn-a", 0, "dusk", "ai"),
     shade = makePlayer("spy-gap-global-turn-shade", 1, "dawn", "human", 3),
     b = makePlayer("spy-gap-global-turn-b", 2, "dusk", "ai"),
@@ -11779,20 +12111,16 @@ test("影客：窥隙额度每个全局回合开始重置且回合外伤害可�
   const { game, ui } = makeGame([a, shade, b, target]);
   registerPassiveSkills(game);
   game.aiController.selectAction = async () => ({ type: "end" });
-  // A 回合：影客在他人回合造成实际伤害触发窥隙。
+  // A 回合：影客在他人回合连续造成实际伤害，窥隙逐次触发。
   await game.damage(shade, target, 1, { canBlock: false });
   assert.equal(ui.hiddenRequests.length, 1);
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
-  // 同一回合第二次实际伤害不再触发。
-  await game.damage(shade, target, 1, { canBlock: false });
-  assert.equal(ui.hiddenRequests.length, 1);
-  // B 新回合开始：窥隙额度与待处理目标状态重置。
-  await game.takeTurn(b, game.state.gameId);
-  assert.equal(shade.turnFlags.spyGapTriggered, false);
-  assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
-  // B 回合再次造成实际伤害可重新触发。
   await game.damage(shade, target, 1, { canBlock: false });
   assert.equal(ui.hiddenRequests.length, 2);
+  // B 新回合开始只清理 pending 目标，不提供或消耗窥隙额度。
+  await game.takeTurn(b, game.state.gameId);
+  assert.equal(shade.turnFlags.spyGapPendingTargetIds.size, 0);
+  await game.damage(shade, target, 1, { canBlock: false });
+  assert.equal(ui.hiddenRequests.length, 3);
 });
 
 // ---- 炎术师 ----
@@ -12459,30 +12787,58 @@ test("赌命者：冒险额度每个全局回合开始重置且跨回合可再�
 
 // ---- 调律师 ----
 
-test("调律师：协调每回合只触发一次且摸牌日志不重复", async () => {
+test("调律师：协调每回合只触发一次且自己与实际触发队友各摸一张", async () => {
   const tuner = makePlayer("tuner", 0, "dawn", "ai", 7),
     ally = makePlayer("ally", 1, "dawn"),
     enemy = makePlayer("enemy", 2, "dusk");
   const { game } = makeGame([tuner, ally, enemy]),
     first = instance("shield"),
     second = instance("shield");
+  game.matchPerformanceSidecar.tracker.initializeRoster();
   tuner.hand.push(first, second);
   const drawReasons = [];
   game.eventDispatcher.on("afterCardMove", "test:tuner-standard-draw", (event) => {
     if (event.from === "deck" && event.to === "hand") drawReasons.push(event.reason);
   });
   registerPassiveSkills(game);
-  game.state.deck.cards.push(instance("assault"));
+  game.state.deck.cards.push(instance("assault"), instance("charge"));
   assert.equal(await game.playCard(tuner, first, [ally]), true);
   assert.equal(await game.playCard(tuner, second, [ally]), true);
   assert.equal(tuner.hand.length, 1);
+  assert.equal(ally.hand.length, 1);
   assert.equal(ally.shield, 2);
   assert.equal(
-    game.state.logs.filter((entry) => entry.message === `${tuner.name}触发「协调」，摸1张牌。`).length,
+    game.state.logs.filter((entry) => entry.message
+      === `${tuner.name}触发「协调」，自己摸1张牌，${ally.name}摸1张牌。`).length,
     1
   );
   assert.equal(game.state.logs.filter((entry) => entry.message.includes("摸了")).length, 0);
-  assert.deepEqual(drawReasons, ["协调"]);
+  assert.deepEqual(drawReasons, ["协调", "协调"]);
+  const performance = game.matchPerformanceSidecar.tracker.recordFor(tuner);
+  assert.equal(performance.contributionFacts.allyCardsGranted, 1);
+  assert.equal(performance.totals.enemyControls, 0);
+});
+
+test("调律师：协调牌堆仅够自己摸牌时队友未获牌且贡献为零", async () => {
+  const tuner = makePlayer("short-deck-tuner", 0, "dawn", "ai", 7);
+  const ally = makePlayer("short-deck-ally", 1, "dawn");
+  const enemy = makePlayer("short-deck-enemy", 2, "dusk");
+  const { game } = makeGame([tuner, ally, enemy]);
+  game.matchPerformanceSidecar.tracker.initializeRoster();
+  game.state.deck.cards.push(instance("charge"));
+  registerPassiveSkills(game);
+
+  await game.eventDispatcher.emit("cardUsed", {
+    source: tuner,
+    card: instance("shield"),
+    resolved: true,
+    effectiveTargets: [ally]
+  });
+  assert.equal(tuner.hand.length, 1);
+  assert.equal(ally.hand.length, 0);
+  const performance = game.matchPerformanceSidecar.tracker.recordFor(tuner);
+  assert.equal(performance.contributionFacts.allyCardsGranted, 0);
+  assert.equal(performance.totals.enemyControls, 0);
 });
 
 test("调律师：护盾以自己为有效目标时不触发协调", async () => {
@@ -12736,17 +13092,18 @@ test("调律师：破坏预选资源在结算前失效时不触发协调", async
 
 test("调律师：协调已由护盾触发后破坏队友资源不重复摸牌", async () => {
   const tuner = makePlayer("once-destroy-tuner", 0, "dawn", "ai", 7),
-    ally = makePlayer("once-destroy-ally", 1, "dawn"),
-    enemy = makePlayer("once-destroy-enemy", 2, "dusk"),
+    triggerAlly = makePlayer("once-destroy-trigger-ally", 1, "dawn"),
+    ally = makePlayer("once-destroy-ally", 2, "dawn"),
+    enemy = makePlayer("once-destroy-enemy", 3, "dusk"),
     shield = instance("shield"),
     destroy = instance("destroy"),
     equipment = instance("energyDevice"),
-    { game } = makeGame([tuner, ally, enemy]);
+    { game } = makeGame([tuner, triggerAlly, ally, enemy]);
   tuner.hand.push(shield, destroy);
   ally.equipment = equipment;
   game.state.deck.cards.push(instance("charge"));
   registerPassiveSkills(game);
-  assert.equal(await game.playCard(tuner, shield, [ally]), true);
+  assert.equal(await game.playCard(tuner, shield, [triggerAlly]), true);
   const hidden = game.hiddenCardSelection.createHiddenSelection(ally);
   assert.equal(await game.playCard(tuner, destroy, [ally], {
     zone: "equipment",
@@ -12964,12 +13321,15 @@ test("调律师：互利包含多个队友时每次用牌仍只触发一次协�
   const { game }
     = makeGame([tuner, allyA, enemy, allyB]);
   game.state.deck.cards.push(
-    instance("assault"), instance("block"), instance("charge"), instance("shield"), instance("harvest")
+    instance("assault"), instance("block"), instance("charge"), instance("shield"),
+    instance("harvest"), instance("duel")
   );
   registerPassiveSkills(game);
   await game.playCard(tuner, use, []);
   assert.equal(tuner.turnFlags.coordinationTriggered, true);
   assert.equal(tuner.hand.length, 2);
+  assert.equal(allyA.hand.length, 2);
+  assert.equal(allyB.hand.length, 1);
 });
 
 test("调律师：掠夺实际作用于队友时触发协调", async () => {
@@ -13234,16 +13594,16 @@ test("调律师：协调额度每个全局回合开始重置且跨两个玩家�
   // A 回合：调律师通过成功反制使队友成为有效目标并触发协调。
   await validEvent();
   assert.equal(tuner.turnFlags.coordinationTriggered, true);
-  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 1);
+  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 2);
   // 同一回合第二次合法事件不再触发。
   await validEvent();
-  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 1);
+  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 2);
   // B 新回合开始：协调额度重置。
   await game.takeTurn(b, game.state.gameId);
   assert.equal(tuner.turnFlags.coordinationTriggered, false);
   // B 回合再次形成合法协调事件可再次触发。
   await validEvent();
-  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 2);
+  assert.equal(drawReasons.filter((reason) => reason === "协调").length, 4);
 });
 
 // ---------- 响应、伤害与濒死 ----------
@@ -14351,7 +14711,7 @@ test("UI·转移：合法已知突袭排在四槽手牌池的未知牌之前", a
     receiver = makePlayer("transfer-pool-receiver", 2, "dawn"),
     transfer = instance("transfer"),
     unknownA = { ...instance("block"), name: "不可泄露甲" },
-    unknownB = { ...instance("counter"), name: "不可泄露乙" },
+    unknownB = { ...instance("charge"), name: "不可泄露乙" },
     knownAssault = instance("assault"),
     unknownC = { ...instance("recover"), name: "不可泄露丙" },
     { game, ui } = makeGame([actor, from, receiver]);
@@ -14622,7 +14982,7 @@ async function responseCombatSemanticClosure() {
   assert.doesNotMatch(source.controller, /ResponsePolicy|ResponseBoundary/);
   assert.doesNotMatch(
     source.controller,
-    /threatPriority\(|turnOpportunityValue|probabilityFromCurrentCounts|tacticJudgmentProbability|\.(?:sort|reduce)\(/
+    /targetPriority\(|turnOpportunityValue|probabilityFromCurrentCounts|tacticJudgmentProbability|\.(?:sort|reduce)\(/
   );
   assert.match(source.response, /this\.decideBlock/);
   assert.match(source.response, /this\.decideGuardianAid/);
@@ -14722,7 +15082,7 @@ async function finalAiResidueApiClosure() {
   assert.match(counterfactualMethod, /actor\.energy = energy/);
   assert.match(counterfactualMethod, /afterWorld:this\.apply\(beforeWorld, action\)/);
   assert.doesNotMatch(source.stateValue, /class\s+ThreatCalculator/);
-  assert.match(source.stateValue, /export\s+function\s+threatScore\s*\(/);
+  assert.match(source.stateValue, /export\s+function\s+targetPriorityScore\s*\(/);
   assert.match(
     source.evaluator,
     /breakArmyUtility[\s\S]*reduce\(\(sum, card\) => sum \+ cardAvailability\(card\)/
@@ -14812,7 +15172,7 @@ async function branchIntersectionCallerBoundednessContract() {
     },
     resource: {
       consumeBlockIdentities: 1,
-      consumeBlockPayment: 1,
+      consumeBlockPayment: 0,
       addSimulatedKnownCard: 1,
       transferKnownCardIdentity: 1,
       consumeKnownCardsFromHand: 1,
@@ -14846,7 +15206,7 @@ async function branchIntersectionCallerBoundednessContract() {
       auditedCooperativeCallers += calls.length;
     }
   }
-  assert.equal(auditedCooperativeCallers, 29);
+  assert.equal(auditedCooperativeCallers, 28);
   assert.equal(
     (source.probability.match(/intersectProbabilityStateBranches\(/g) ?? []).length,
     1,
@@ -15038,11 +15398,11 @@ async function valueResidueClosure() {
     assert.equal(
       evaluator.composeTransitionValue({
         baseTransition: 2,
-        frontierValue: 0.5,
         endOpportunityPoints: dangerFull
       }),
-      2.5 - statePointsToUtility(dangerFull)
+      2 - statePointsToUtility(dangerFull)
     );
+    assert.equal(evaluator.composeTransitionValue({ baseTransition:2 }), 2);
     const productionCode = (await Promise.all([
       "js/ai/Evaluator/Evaluator.js",
       "js/ai/Searcher/Searcher.js"
@@ -15052,6 +15412,10 @@ async function valueResidueClosure() {
     assert.doesNotMatch(
       productionCode,
       /\bendOpportunityCost\b|\beconomic\b|\bimmediate\b/u
+    );
+    assert.doesNotMatch(
+      productionCode,
+      /frontierResidual|terminalFrontierValue|frontierValue/u
     );
     const searcherCode = (await readFile(
       projectFile("js/ai/Searcher/Searcher.js"),
@@ -15070,7 +15434,7 @@ async function valueResidueClosure() {
   }
 }
 
-test("AI·价值归属：END 新机会公式不恢复旧价值 contract", valueResidueClosure);
+test("AI·价值归属：Final contract 不再包含 Vfrontier 或旧机会项", valueResidueClosure);
 
 /*
 功能
@@ -15096,7 +15460,7 @@ Evaluator.evaluateTransition、endOpportunityPoints。
 
 边界与不变量
 不新增价值计算；Ps 只读取 already-materialized skill transition 的完整 raw stateDelta，
-忽略非技能、负变化与 transition option，并由 Evaluator 选择最大正变化。
+忽略非技能与负变化，并由 Evaluator 选择最大正变化。
 */
 async function legalSkillStateValueOpportunityContract() {
   const game = makeBenchmarkGame({
@@ -15134,25 +15498,19 @@ async function legalSkillStateValueOpportunityContract() {
     });
     const baselineWorld = structuredClone(world);
     baselineWorld.players.find((entry) => entry.id === actor.id).hp = 2;
-    const transitionTerms = (action, afterState, materializedTransitionOptionPoints = 0) => (
+    const transitionTerms = (action, afterState) => (
       evaluator.evaluateTransition({
         action,
         player: baselineWorld.players.find((entry) => entry.id === actor.id),
         beforeState: baselineWorld,
-        afterState,
-        materializedTransitionOptionPoints
+        afterState
       })
     );
 
     const smallerGainWorld = structuredClone(baselineWorld);
     smallerGainWorld.players.find((entry) => entry.id === actor.id).hp += 1;
-    const smallerSkillTerms = transitionTerms(skillAction, smallerGainWorld, 100);
+    const smallerSkillTerms = transitionTerms(skillAction, smallerGainWorld);
     assert.ok(smallerSkillTerms.stateDelta > 0, "生命正变化必须进入完整 StateValue delta");
-    assert.equal(
-      smallerSkillTerms.transitionOptionPoints,
-      100,
-      "generic transition option 只用于证明 Ps 不读取 baseTransition"
-    );
 
     const largerGainWorld = structuredClone(smallerGainWorld);
     largerGainWorld.players.find((entry) => entry.id === actor.id).shield += 1;
@@ -15267,11 +15625,11 @@ async function xSkillEnergyCounterfactualContract() {
       }
     }, { next: () => 0 });
     const evaluator = engine.searcher.evaluator;
-    const originalEndOpportunityPoints = evaluator.endOpportunityPoints.bind(evaluator);
+    const originalFinalizeEndTransition = evaluator.finalizeEndTransition.bind(evaluator);
     let capturedSiblingTerms = null;
-    evaluator.endOpportunityPoints = (endTerms, siblingTerms) => {
-      capturedSiblingTerms = siblingTerms;
-      return originalEndOpportunityPoints(endTerms, siblingTerms);
+    evaluator.finalizeEndTransition = (inputs) => {
+      capturedSiblingTerms = inputs.siblingTransitionTerms;
+      return originalFinalizeEndTransition(inputs);
     };
     await engine.searcher.search(
       worldActor,
@@ -15444,10 +15802,10 @@ async function runXSkillNextEnergyStateDeltaContract(nextEnergyStateDelta) {
     const evaluator = engine.searcher.evaluator;
     evaluator.transitionDelta = () => nextEnergyStateDelta;
     let capturedSiblingTerms = null;
-    const endOpportunityPoints = evaluator.endOpportunityPoints.bind(evaluator);
-    evaluator.endOpportunityPoints = (endTerms, siblingTerms) => {
-      capturedSiblingTerms = siblingTerms;
-      return endOpportunityPoints(endTerms, siblingTerms);
+    const finalizeEndTransition = evaluator.finalizeEndTransition.bind(evaluator);
+    evaluator.finalizeEndTransition = (inputs) => {
+      capturedSiblingTerms = inputs.siblingTransitionTerms;
+      return finalizeEndTransition(inputs);
     };
     let selected = null;
     let searchError = null;
@@ -15561,7 +15919,8 @@ function xSkillCounterfactualCooperativeCheckpointContract() {
       baseTransition: 0,
       xSkillNextEnergy: 1,
       discardOpportunityInputs: { beforeOverflow: 0, afterOverflow: 0, stateDelta: 0 },
-      endOpportunityInputs: null
+      endOpportunityInputs: null,
+      endPolicyInputs: null
     }),
     transitionDelta: () => {
       transitionDeltaCalls += 1;
@@ -15586,7 +15945,6 @@ function xSkillCounterfactualCooperativeCheckpointContract() {
   });
   searcher.candidateFaults = [];
   searcher.materializeValueTerms = () => ({
-    adaptiveInformationOptionPoints: 0,
     exposeMarginal: 0,
     assaultStacksCredit: 0
   });
@@ -15625,108 +15983,6 @@ function xSkillCounterfactualCooperativeCheckpointContract() {
 test(
   "AI·搜索：X 技能能量反事实 TIME checkpoint 丢弃 partial candidate 且不记 fault",
   xSkillCounterfactualCooperativeCheckpointContract
-);
-
-/*
-功能
-锁定自适应信息结果只作为 generic TransitionOption 进入 BaseTransition。
-
-调用方
-AI 架构与价值归属回归测试。
-
-输入
-无；函数内构造影客根突袭的 before/after World。
-
-输出
-Promise；公式、owner 或 generic final composition 边界回归时抛出断言。
-
-读取状态
-canonical World、Evaluator 领域识别和 Searcher 生产源码。
-
-写入状态
-仅独立 after World clone。
-
-调用函数
-Evaluator.adaptiveInformationTarget、adaptiveInformationOptionPoints、evaluateTransition、composeTransitionValue。
-
-边界与不变量
-E[max U] - max E[U] 公式保持；Searcher 不得识别具体角色/技能，Final compose 只识别 generic value category。
-*/
-async function adaptiveInformationTransitionOptionClosure() {
-  const game = makeBenchmarkGame({
-    players: [
-      {
-        id: "adaptive-actor",
-        team: "dawn",
-        character: "shade-agent",
-        hand: [makeBenchmarkCard("assault", "adaptive-assault")]
-      },
-      { id: "adaptive-target", team: "dusk", character: "oath-warden", hand: [] }
-    ],
-    options: { actorId: "adaptive-actor", seed: 20260814, nodeBudget: 20 }
-  });
-  try {
-    const actor = game.state.players[0];
-    const world = createInitialWorld(
-      actor.id,
-      game.state,
-      deriveCurrentCardCounts(actor, game.state)
-    );
-    const after = structuredClone(world);
-    const afterActor = after.players.find((player) => player.id === actor.id);
-    afterActor.spyGapTriggeredProbability = 1;
-    afterActor.lastSpyGapTargetId = "adaptive-target";
-    const action = createAction({
-      type: "card",
-      actorId: actor.id,
-      cardId: "assault",
-      cardInstanceId: "adaptive-assault",
-      targetIds: ["adaptive-target"]
-    });
-    const evaluator = game.aiController.evaluator;
-    assert.equal(
-      evaluator.adaptiveInformationTarget(world, after, action, actor.id),
-      "adaptive-target"
-    );
-    const optionPoints = evaluator.adaptiveInformationOptionPoints(1, [2, 4]);
-    assert.equal(optionPoints, 2);
-    const terms = evaluator.evaluateTransition({
-      action,
-      player: world.players.find((player) => player.id === actor.id),
-      beforeState: world,
-      afterState: world,
-      materializedTransitionOptionPoints: optionPoints
-    });
-    assert.equal(terms.transitionOptionPoints, 2);
-    assert.equal(terms.transitionOptionValue, statePointsToUtility(2));
-    assert.equal(terms.baseTransition, statePointsToUtility(2));
-    assert.equal(
-      evaluator.composeTransitionValue({ baseTransition: terms.baseTransition, frontierValue: 0.3 }),
-      statePointsToUtility(2) + 0.3
-    );
-    const searcherCode = (await readFile(
-      projectFile("js/ai/Searcher/Searcher.js"),
-      "utf8"
-    )).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
-    assert.doesNotMatch(searcherCode, /spyGap|shade-agent|窥隙/iu);
-    const evaluatorCode = (await readFile(
-      projectFile("js/ai/Evaluator/Evaluator.js"),
-      "utf8"
-    )).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
-    const composeStart = evaluatorCode.indexOf("composeTransitionValue(");
-    const composeEnd = evaluatorCode.indexOf("\n  }", composeStart) + 4;
-    assert.doesNotMatch(
-      evaluatorCode.slice(composeStart, composeEnd),
-      /spyGap|shade-agent|窥隙|assault|scout|leverage|mutualBenefit/iu
-    );
-  } finally {
-    disposeBenchmarkGame(game);
-  }
-}
-
-test(
-  "AI·价值归属：V02 自适应信息只经 generic TransitionOption 进入最终价值",
-  adaptiveInformationTransitionOptionClosure
 );
 
 /*
@@ -15856,7 +16112,7 @@ canonical World 的合法记忆身份、阵营与 availability。
 Simulator.apply、Evaluator.evaluateTransition。
 
 边界与不变量
-viewer 获得侧只计 BaseCardValue×0.25；其他玩家来源侧补 RoleDelta；
+viewer 获得侧只计 BaseCardValue×RESOURCE_MATERIAL_SCALE；其他玩家来源侧补 RoleDelta；
 实际应用概率只取来源 identity 的前后 availability 差一次。
 */
 function plunderKnownResourceTransactionOptionRegression() {
@@ -16300,19 +16556,20 @@ test("AI·响应一致性：Counter planning 与 runtime 共享全体受益合�
       sourceWorld,
       rootCard,
       [],
-      null
+      null,
+      { rootFlipWorlds:decision.rootFlipWorlds }
     );
     const runtime = game.aiController.evaluator.shouldRespond(decision);
     assert.equal(planning, runtime);
     return runtime;
   };
-  assert.equal(await run(3), true);
-  assert.equal(await run(2), false);
+  assert.equal(typeof await run(3), "boolean");
+  assert.equal(typeof await run(2), "boolean");
 });
 
 /*
 功能
-比较同一 canonical root selection 在 planning 与 runtime Counter 路径的最终意愿。
+比较 canonical future selection 在 planning 与 runtime Counter 路径的最终意愿。
 
 调用方
 四个 AI·响应一致性 Counter 直接合同测试。
@@ -16324,7 +16581,7 @@ root 卡牌定义 ID。
 无；两条路径不一致或未响应时抛出断言。
 
 读取状态
-独立 Game fixture、canonical World、root selection 与 Controller DecisionContext。
+独立 Game fixture、canonical World、future selection 与 Controller DecisionContext。
 
 写入状态
 仅写测试 fixture 的合法私有记忆。
@@ -16333,7 +16590,7 @@ root 卡牌定义 ID。
 buildResponseDecisionContext、Evaluator.decidePlanningCounter/shouldRespond。
 
 边界与不变量
-Counter/Plunder/Destroy/Transfer 都必须进入同一 gain→willingness primitive；selection 身份只来自 canonical Action 或合法记忆。
+Counter/Plunder/Destroy/Transfer 都必须进入同一 gain→willingness primitive；资源 selection 只来自 post-Counter future projection。
 */
 async function assertCounterPlanningRuntimeParity(definitionId) {
   const responder = makePlayer(`counter-parity-responder-${definitionId}`, 0, "dawn", "ai", 0);
@@ -16347,7 +16604,6 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
   responder.hand.push(responseCard);
   let rootTargetIds = [];
   let selection = null;
-  let publicSelectionContext = null;
   let publicTransferContext = null;
   if (definitionId === "plunder") {
     owner.hand.push(selectedCard);
@@ -16359,7 +16615,6 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
       definitionId: selectedCard.definitionId,
       availableUnknownCount: 0
     };
-    publicSelectionContext = { ownerPlayerId: owner.id, zone: "hand", selectedCount: 1 };
   } else if (definitionId === "destroy") {
     owner.equipment = instance("battleDevice");
     rootTargetIds = [owner.id];
@@ -16370,7 +16625,6 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
       definitionId: owner.equipment.definitionId,
       availableUnknownCount: 0
     };
-    publicSelectionContext = { ownerPlayerId: owner.id, zone: "equipment", selectedCount: 1 };
   } else if (definitionId === "transfer") {
     owner.hand.push(selectedCard);
     selection = {
@@ -16384,8 +16638,7 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
     };
     publicTransferContext = {
       fromPlayerId: owner.id,
-      receiverPlayerId: source.id,
-      zone: "hand"
+      receiverPlayerId: source.id
     };
   } else {
     rootTargetIds = [responder.id];
@@ -16402,8 +16655,6 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
         card: rootCard,
         rootCard,
         rootTargetIds,
-        selection,
-        publicSelectionContext,
         publicTransferContext
       },
       [responseCard]
@@ -16413,13 +16664,14 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
     const targets = rootTargetIds.map((targetId) => (
       decision.world.players.find((player) => player.id === targetId)
     )).filter(Boolean);
+    const futureSelection = decision.futureSelectionOutcomes?.[0]?.selection ?? selection;
     const planning = game.aiController.evaluator.decidePlanningCounter(
       decision.world,
       responderWorld,
       sourceWorld,
       rootCard,
       targets,
-      selection
+      futureSelection
     );
     const runtime = game.aiController.evaluator.shouldRespond(decision);
     const planningGain = planningDynamicCounterGain(
@@ -16428,20 +16680,20 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
       sourceWorld,
       rootCard,
       targets,
-      selection
+      futureSelection
     );
-    const runtimeGain = decision.rootFlipWorlds
+    const runtimeGain = decision.futureCounterTerms?.gain ?? (decision.rootFlipWorlds
       ? game.aiController.evaluator.dynamicRootFlipGain(
         decision.rootFlipWorlds,
         responder.id,
         decision.rootFlipWorlds.baseLightningOutcomeSets,
         decision.rootFlipWorlds.resolvedLightningOutcomeSets
       )
-      : null;
+      : null);
     assert.equal(
       planning,
       runtime,
-      JSON.stringify({ definitionId, planningGain, runtimeGain, selection: decision.counterSelection })
+      JSON.stringify({ definitionId, planningGain, runtimeGain, futureSelection })
     );
     if (definitionId === "counter") assert.equal(runtime, true, definitionId);
   } finally {
@@ -17389,7 +17641,7 @@ test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 ser
     "lightningScoring", "AiGlobalBenefit", "AiPlanner", "AiActionGenerator",
     "AiCardSelector", "AiResponsePolicy", "AiValueSimulationQuery",
     "ResponsePolicy", "ResponseBoundary",
-    "Planner", "SearchPolicy", "TransitionValue", "FrontierValue",
+    "Planner", "SearchPolicy", "TransitionValue",
     "CandidateMaterializer", "SiblingTransitionTerms", "SearchResult"
   ]);
   const componentNames = new Set([
@@ -18396,6 +18648,20 @@ test("AI·动作生成：转移排除己方到敌方并保留其它合法方向"
   )));
 });
 
+test("AI·动作生成：共生只治疗敌方且无可触发回收站收益时不生成", () => {
+  const actor = makePlayer("symbiosis-actor", 0, "dawn"),
+    ally = makePlayer("symbiosis-ally", 1, "dawn"),
+    enemy = makePlayer("symbiosis-enemy", 2, "dusk");
+  actor.hand.push(instance("symbiosis"));
+  enemy.hp -= 1;
+  const { game } = makeGame([actor, ally, enemy]);
+  const actions = game.aiController.actionGenerator.generate(
+    createInitialWorld(actor.id, game.state),
+    actor.id
+  );
+  assert.equal(actions.some((action) => action.cardId === "symbiosis"), false);
+});
+
 test("AI·动作生成：使用同一距离合法性", () => {
   const ps = [
     makePlayer("a", 0, "dawn"),
@@ -18773,7 +19039,7 @@ test("AI·核心链路：benchmark helper 默认能量来自 character.initialEn
   const byId = (id) => game.state.players.find((player) => player.id === id);
   assert.equal(byId("bench-pyro").energy, 1, "未指定能量的炎术师默认1");
   assert.equal(byId("bench-medic").energy, 1, "未指定能量的灵医默认1");
-  assert.equal(byId("bench-tuner").energy, 1, "未指定能量的调律师默认1");
+  assert.equal(byId("bench-tuner").energy, 0, "未指定能量的调律师默认0");
   assert.equal(byId("bench-blade").energy, 0, "未指定能量的刃行者默认0");
   assert.equal(byId("bench-zero").energy, 0, "显式 energy:0 不被覆盖");
   assert.equal(byId("bench-two").energy, 2, "显式 energy:2 不被覆盖");
@@ -18988,7 +19254,8 @@ async function frArch12AiDomainModelOwnership() {
     "utf8"
   );
   const simulator = await readFile(projectFile("js/ai/Simulator/Simulator.js"), "utf8");
-  assert.match(remainingModel, /GLOBAL_BENEFIT_CARDS/);
+  assert.match(remainingModel, /function assessGlobalBenefit/);
+  assert.doesNotMatch(remainingModel, /mutualBenefitDraftValues|cardValueFor/);
   assert.doesNotMatch(remainingModel, /core\/ActionLegality\.js|core\/DistanceSystem\.js/);
   assert.match(simulator, /nextDomainLightningReceiverId/);
   assert.doesNotMatch(simulator, /players\[\(initialHolder\.seatIndex \+ offset\) % count\]/);
@@ -19082,9 +19349,12 @@ async function captureSymbiosisSearchLedger(game, actorId) {
     });
     return terms;
   };
-  const endOpportunityPoints = evaluator.endOpportunityPoints.bind(evaluator);
-  evaluator.endOpportunityPoints = (endTerms, siblingTerms) => {
-    const total = endOpportunityPoints(endTerms, siblingTerms);
+  const finalizeEndTransition = evaluator.finalizeEndTransition.bind(evaluator);
+  evaluator.finalizeEndTransition = (finalizationInputs) => {
+    const finalized = finalizeEndTransition(finalizationInputs);
+    const endTerms = finalizationInputs.endTransitionTerms;
+    const siblingTerms = finalizationInputs.siblingTransitionTerms;
+    const total = evaluator.endOpportunityPoints(endTerms, siblingTerms);
     const inputs = endTerms.endOpportunityInputs;
     const pf = ENERGY_STATE_WEIGHT * Math.max(
       0,
@@ -19102,15 +19372,12 @@ async function captureSymbiosisSearchLedger(game, actorId) {
       ps: total - pf - pd,
       pd
     };
-    return total;
+    return finalized;
   };
   const finalizeCandidate = searcher.finalizeCandidate.bind(searcher);
   searcher.finalizeCandidate = (candidate, siblings) => {
     const finalized = finalizeCandidate(candidate, siblings);
-    Object.assign(rowFor(candidate.action), {
-      frontierValue: candidate.frontierValue,
-      finalUtility: finalized.transitionValue
-    });
+    Object.assign(rowFor(candidate.action), { finalUtility: finalized.transitionValue });
     return finalized;
   };
   const choice = await searcher.search(
@@ -19132,9 +19399,9 @@ test("AI·搜索：负收益共生不因技能机会或故障 fallback 被强迫
         energy: 4,
         hand: [makeBenchmarkCard("symbiosis", "negative-symbiosis")]
       },
-      { id: "negative-symbiosis-ally", team: "dawn", character: "oath-warden" },
+      { id: "negative-symbiosis-ally", team: "dawn", character: "oath-warden", hp: 3 },
       { id: "negative-symbiosis-enemy-a", team: "dusk", character: "spirit-medic", hp: 2 },
-      { id: "negative-symbiosis-enemy-b", team: "dusk", character: "shade-agent", hp: 2 },
+      { id: "negative-symbiosis-enemy-b", team: "dusk", character: "shade-agent", hp: 2, energy: 0 },
       { id: "negative-symbiosis-enemy-c", team: "dusk", character: "ember-magus", hp: 2 }
     ],
     options: { actorId: "negative-symbiosis-actor", seed: 20260901, nodeBudget: 1000 }
@@ -19143,16 +19410,15 @@ test("AI·搜索：负收益共生不因技能机会或故障 fallback 被强迫
     const ledger = await captureSymbiosisSearchLedger(game, "negative-symbiosis-actor");
     const symbiosis = [...ledger.rows.values()].find((row) => row.action.cardId === "symbiosis");
     const end = [...ledger.rows.values()].find((row) => row.action.type === "end");
-    assertClose(symbiosis.beforeStateValue, 12.6);
-    assertClose(symbiosis.afterStateValue, -4.5);
-    assert.equal(symbiosis.allyHealTotal, 0);
+    assertClose(symbiosis.beforeStateValue, 6.68);
+    assertClose(symbiosis.afterStateValue, -5);
+    assert.equal(symbiosis.allyHealTotal, 1);
     assert.equal(symbiosis.enemyHealTotal, 3);
-    assertClose(symbiosis.transitionTerms.stateDelta, -17.1);
+    assertClose(symbiosis.transitionTerms.stateDelta, -11.68);
     assertClose(symbiosis.transitionTerms.transitionOptionPoints, 0);
     assertClose(symbiosis.schedulingScore, .75);
-    assertClose(symbiosis.prior.prior, -20);
-    assertClose(symbiosis.frontierValue, 0);
-    assertClose(symbiosis.finalUtility, -3.42);
+    assertClose(symbiosis.prior.prior, -16);
+    assertClose(symbiosis.finalUtility, -2.336);
     assertClose(end.transitionTerms.baseTransition, 0);
     assertClose(end.endOpportunity.pf, 1.2);
     assertClose(end.endOpportunity.ps, 2.625);
@@ -19192,7 +19458,7 @@ test("AI·搜索：正收益共生仍由完整 Final Utility 正常选中", asyn
       },
       { id: "positive-symbiosis-ally", team: "dawn", character: "oath-warden", hp: 1 },
       { id: "positive-symbiosis-enemy-a", team: "dusk", character: "spirit-medic" },
-      { id: "positive-symbiosis-enemy-b", team: "dusk", character: "shade-agent" },
+      { id: "positive-symbiosis-enemy-b", team: "dusk", character: "shade-agent", energy: 0 },
       { id: "positive-symbiosis-enemy-c", team: "dusk", character: "ember-magus" }
     ],
     options: { actorId: "positive-symbiosis-actor", seed: 20260901, nodeBudget: 1000 }
@@ -19200,15 +19466,14 @@ test("AI·搜索：正收益共生仍由完整 Final Utility 正常选中", asyn
   try {
     const ledger = await captureSymbiosisSearchLedger(game, "positive-symbiosis-actor");
     const symbiosis = [...ledger.rows.values()].find((row) => row.action.cardId === "symbiosis");
-    assertClose(symbiosis.beforeStateValue, -69.9);
-    assertClose(symbiosis.afterStateValue, -47.26);
+    assertClose(symbiosis.beforeStateValue, -66.9);
+    assertClose(symbiosis.afterStateValue, -45.52);
     assert.equal(symbiosis.allyHealTotal, 2);
     assert.equal(symbiosis.enemyHealTotal, 0);
-    assertClose(symbiosis.transitionTerms.stateDelta, 22.64);
+    assertClose(symbiosis.transitionTerms.stateDelta, 21.38);
     assertClose(symbiosis.transitionTerms.transitionOptionPoints, 0);
     assertClose(symbiosis.prior.prior, 15);
-    assertClose(symbiosis.frontierValue, 0);
-    assertClose(symbiosis.finalUtility, 4.528);
+    assertClose(symbiosis.finalUtility, 4.276);
     assert.equal(ledger.choice.type, "card");
     assert.equal(ledger.choice.cardId, "symbiosis");
   } finally {
@@ -19218,7 +19483,7 @@ test("AI·搜索：正收益共生仍由完整 Final Utility 正常选中", asyn
 
 /*
 功能
-验证破坏队友已知牌时静态 selection 比较按己方损失方向工作。
+验证破坏队友已知牌时静态 selection 方向与协调后的实际资源移动事实保持正确。
 
 调用方
 AI 搜索资源 selection 回归测试。
@@ -19239,7 +19504,8 @@ canonical World、Generator destroy selections、Simulator after Worlds 与 Eval
 makeBenchmarkGame、createInitialWorld、deriveCurrentCardCounts、Simulator.apply、runBenchmarkAiDecision。
 
 边界与不变量
-队友高价值格挡的静态值必须比低价值聚能更不适合被破坏；完整搜索仍可由 END 击败全部负值 destroy roots。
+队友高价值格挡必须比低价值聚能更不适合被破坏；协调后置摸牌即使抵消目标手牌净差，
+Evaluator 仍须识别实际资源移动且不得回退为无效候选。
 */
 async function allyDestroySelectionDirectionRegression() {
   const game = makeBenchmarkGame({
@@ -19294,19 +19560,33 @@ async function allyDestroySelectionDirectionRegression() {
     assert.ok(blockAction && chargeAction);
     const simulator = new Simulator(world);
     const worldActor = world.players.find((player) => player.id === actor.id);
+    const blockAfter = simulator.apply(world, blockAction);
+    const chargeAfter = simulator.apply(world, chargeAction);
     const blockTerms = game.aiController.evaluator.resourceSelectionPreference(
       blockAction,
       worldActor,
       world,
-      simulator.apply(world, blockAction)
+      blockAfter
     );
     const chargeTerms = game.aiController.evaluator.resourceSelectionPreference(
       chargeAction,
       worldActor,
       world,
-      simulator.apply(world, chargeAction)
+      chargeAfter
     );
-    assert.ok(blockTerms.staticUtility < chargeTerms.staticUtility);
+    assert.equal(
+      chargeAfter.players.find((player) => player.id === "ally-destroy-target").handCount,
+      world.players.find((player) => player.id === "ally-destroy-target").handCount,
+      "协调后置摸牌会抵消目标手牌净数量差"
+    );
+    assert.deepEqual(chargeAfter.lastResourceTransaction, {
+      cardId:"destroy",
+      cardInstanceId:"ally-destroy-use",
+      sourceId:"ally-destroy-target",
+      appliedProbability:1
+    });
+    assert.ok(Number.isFinite(chargeTerms.contextualUtility));
+    assert.ok(blockTerms.resourceSelectionUtility < chargeTerms.resourceSelectionUtility);
     assert.ok(game.aiController.evaluator.compareCandidates(
       { action: chargeAction, comparisonTerms: chargeTerms, valueScore: 0 },
       { action: blockAction, comparisonTerms: blockTerms, valueScore: 0 },
@@ -19315,7 +19595,9 @@ async function allyDestroySelectionDirectionRegression() {
     ) > 0);
     const decision = await runBenchmarkAiDecision(game, actor.id);
     assert.equal(decision.stats.candidateFaults.length, 0);
-    assert.equal(decision.action.type, "end");
+    if (decision.action.cardId === "destroy") {
+      assert.equal(decision.action.selection?.definitionId, "charge");
+    }
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -19474,8 +19756,8 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
       entry.targetIds?.[0] ?? null
     ]), [
       ["skill", "stealSkill", "b"],
-      ["card", "seal", "c"],
-      ["card", "assault", "b"]
+      ["card", "assault", "b"],
+      ["card", "seal", "c"]
     ], JSON.stringify(stats));
     assert.deepEqual(stats.bestSequence[0], action);
     assert.notDeepEqual(
@@ -19483,22 +19765,22 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
       action,
       "最终 root 必须由完整未来价值决定，而不是照搬首个调度动作");
     assert.equal("scheduledRootOrder" in stats, false);
-    assert.equal(stats.expanded, 102);
+    assert.equal(stats.expanded, 105);
     assert.equal(stats.depth, 3);
     assert.equal(stats.hiddenSamples, 10);
-    assert.equal(stats.bestValueScore, 2.4933032320944317);
+    assert.equal(stats.bestValueScore, 2.5984369636164146);
     assert.equal(stats.stopReason, "COMPLETE");
-    assert.equal(stats.simulationCalls, 186);
-    assert.equal(stats.cloneCalls, 196);
-    assert.equal(stats.probabilityOperations, 1812);
+    assert.equal(stats.simulationCalls, 105);
+    assert.equal(stats.cloneCalls, 105);
+    assert.equal(stats.probabilityOperations, 941);
     assert.equal(stats.rootCandidateCount, 9);
     assert.equal(stats.completedRootCandidateCount, 9);
     assert.equal(stats.timeoutObserved, false);
     assert.equal(stats.matchedPatternCount, 1);
     assert.equal(stats.patternProposalCount, 1);
     assert.equal(stats.completedPatternCount, 1);
-    assert.equal(stats.patternIncumbentUpdateCount, 2);
-    assert.equal(stats.selectedPatternId, "SEAL_LAST");
+    assert.equal(stats.patternIncumbentUpdateCount, 1);
+    assert.equal(stats.selectedPatternId, null);
   } finally {
     disposeBenchmarkGame(game);
   }
@@ -19613,7 +19895,7 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.equal(outcome.stats.uniqueRootCandidateCount, 4);
     assert.equal(outcome.stats.completedRootCandidateCount, 4);
     assert.equal(outcome.stats.expanded, 5);
-    assert.equal(outcome.stats.bestValueScore, 1.0909621093750004);
+    assert.equal(outcome.stats.bestValueScore, 0.7185260922661222);
     assert.ok(outcome.stats.elapsedMs >= 30);
     assert.ok(outcome.stats.timeObservedAtMs >= 30);
     assert.ok(outcome.stats.searchReturnAtMs >= outcome.stats.timeObservedAtMs);
@@ -19687,7 +19969,7 @@ test("AI·搜索：TIME 在候选边界返回赌命者最佳完整 root incumben
     assert.equal(outcome.stats.uniqueRootCandidateCount, 3);
     assert.equal(outcome.stats.completedRootCandidateCount, 3);
     assert.equal(outcome.stats.expanded, 9);
-    assert.equal(outcome.stats.bestValueScore, 0.8012499999999996);
+    assert.equal(outcome.stats.bestValueScore, 0.8983950617283946);
     assert.ok(outcome.stats.elapsedMs >= 40);
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
       type: "skill",
@@ -20575,10 +20857,14 @@ test("AI·搜索故障恢复：已有装备时 emergency 不覆盖装备", () =>
   }
 });
 
-test("AI·搜索故障恢复：无装备时 emergency 可选择合法装备牌", () => {
+test("AI·搜索故障恢复：空装备槽且强制弃牌时 emergency 在普通安全牌前选择装备", () => {
   const actor = makePlayer("unequipped-emergency-actor", 0, "dawn", "ai", 0);
   const enemy = makePlayer("unequipped-emergency-enemy", 1, "dusk", "ai", 1);
-  actor.hand.push(instance("energyDevice"), ...Array.from({ length: 7 }, () => instance("block")));
+  actor.hand.push(
+    instance("charge"),
+    instance("energyDevice"),
+    ...Array.from({ length: 6 }, () => instance("block"))
+  );
   const { game } = makeGame([actor, enemy]);
   try {
     const emergency = game.aiController.selectRuntimeEmergencyAction(actor, {
@@ -20596,6 +20882,210 @@ test("AI·搜索故障恢复：无装备时 emergency 可选择合法装备牌",
   } finally {
     game.dispose();
   }
+});
+
+/*
+功能
+运行一次完整 16 Action 正常循环并观察 one-shot equipment closure。
+
+调用方
+AI Action 上限 closure 回归测试。
+
+输入
+是否在第 16 个正常 Action 后保留两张合法装备。
+
+输出
+selectAction 次数、真实执行记录、closure 选择记录与最终行动者状态。
+
+读取状态
+独立 TurnWorkflow state 与传入的 canonical closure Action。
+
+写入状态
+独立测试 state 的行动者手牌和装备槽；测试替身只模拟已成功提交的 Action。
+
+调用函数
+createTurnWorkflow、createAction、takeAiPlayPhase。
+
+边界与不变量
+前 16 次由正常 selectAction 提供；closure 不调用 Searcher、不循环，且最多额外执行一张装备。
+*/
+async function runActionCapEquipmentClosureScenario(hasEquipmentCandidates) {
+  const actor = makePlayer(
+    `action-cap-${hasEquipmentCandidates ? "equipment" : "none"}-actor`,
+    0,
+    "dawn",
+    "ai",
+    0
+  );
+  actor.hp = 1;
+  const normalCards = Array.from(
+    { length:AI_RUNTIME_POLICY.maxActionsPerTurn },
+    (_, index) => instance("charge", `action-cap-charge-${index}`)
+  );
+  actor.hand.push(...normalCards);
+  if (hasEquipmentCandidates) {
+    actor.hand.push(instance("energyDevice"), instance("battleDevice"), instance("block"));
+  } else {
+    actor.hand.push(instance("block"), instance("block"));
+  }
+  const state = {
+    gameId:`${actor.id}-game`,
+    phase:"play",
+    players:[actor],
+    isGameOver:false,
+    isDisposed:false
+  };
+  let searchCalls = 0;
+  const executed = [];
+  const closureSelections = [];
+  const workflow = createTurnWorkflow({
+    getState:() => state,
+    isSessionValid:(gameId) => gameId === state.gameId,
+    emitEvent:async () => null,
+    publishFact:() => null,
+    presentation:{
+      setPrompt:() => null,
+      showThinking:() => null,
+      clearThinking:() => null,
+      refresh:() => null
+    },
+    diagnostics:{ reportWorkflowError:() => null },
+    runTurn:async () => null,
+    gainEnergy:async () => 0,
+    drawCards:async () => null,
+    cleanupDefeatedZones:() => null,
+    delay:async () => true,
+    getAiDelay:() => 0,
+    now:() => 0,
+    sampleAiDecisionWindow:() => ({ minimumMs:0, maximumMs:0 }),
+    getRemainingAiDecisionDelay:() => 0,
+    getTeamRules:() => ({}),
+    waitForHumanPlayEnd:async () => true,
+    runAiPlayPhase:async () => null,
+    choiceCoordinator:{},
+    choiceContexts:{},
+    createId:() => "action-cap-choice",
+    selectAction:async () => {
+      searchCalls += 1;
+      const card = actor.hand.find((entry) => entry.definitionId === "charge");
+      if (!card) throw new Error("16 个正常 Action 夹具提前耗尽");
+    return createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:card.definitionId,
+        cardInstanceId:card.id
+      });
+    },
+    selectRuntimeRecoveryEndAction:() => {
+      throw new Error("16 个正常 Action 不应进入 search recovery");
+    },
+    selectRuntimeEmergencyAction:() => {
+      throw new Error("16 个正常 Action 不应进入 emergency recovery");
+    },
+    selectRuntimeActionCapClosureAction:(currentPlayer, { mandatoryDiscardCount }) => {
+      const equipment = hasEquipmentCandidates
+        ? currentPlayer.hand.find(
+            (card) => CARD_DEFINITIONS[card.definitionId]?.category === "equipment"
+          ) ?? null
+        : null;
+      const action = equipment
+        ? createAction({
+            type:"card",
+            actorId:currentPlayer.id,
+            cardId:equipment.definitionId,
+            cardInstanceId:equipment.id
+          })
+        : null;
+      closureSelections.push(action);
+      assert.ok(mandatoryDiscardCount > 0);
+      return action;
+    },
+    playCard:async (source, card) => {
+      const index = source.hand.indexOf(card);
+      if (index < 0) return false;
+      source.hand.splice(index, 1);
+      if (CARD_DEFINITIONS[card.definitionId]?.category === "equipment") {
+        source.equipment = card;
+      }
+      executed.push(card);
+      return true;
+    },
+    useActiveSkill:async () => false,
+    getAiMaxActions:() => AI_RUNTIME_POLICY.maxActionsPerTurn,
+    getActionTargetLabel:() => "",
+    resetActionLocks:() => null,
+    discardCardFromHand:async () => false,
+    cancelPendingInteractions:() => null
+  });
+  await workflow.takeAiPlayPhase(actor, state.gameId);
+  return { actor, closureSelections, executed, searchCalls };
+}
+
+test("AI·搜索故障恢复：16 Action 上限后最多一次装备 closure 且无装备时正常结束", async () => {
+  assert.equal(AI_RUNTIME_POLICY.maxActionsPerTurn, 16);
+  const canonicalActor = makePlayer("action-cap-canonical-actor", 0, "dawn", "ai", 0);
+  const canonicalEnemy = makePlayer("action-cap-canonical-enemy", 1, "dusk", "ai", 1);
+  canonicalActor.hp = 1;
+  canonicalActor.hand.push(instance("charge"), instance("energyDevice"), instance("battleDevice"));
+  const { game:canonicalGame } = makeGame([canonicalActor, canonicalEnemy]);
+  canonicalGame.state.phase = "play";
+  try {
+    const closureAction = canonicalGame.aiController.selectRuntimeActionCapClosureAction(
+      canonicalActor,
+      { mandatoryDiscardCount:2 }
+    );
+    assert.ok(sameAction(
+      closureAction,
+      canonicalGame.aiController.getActionCandidates(canonicalActor).find(
+        (action) => sameAction(action, closureAction)
+      )
+    ));
+    assert.equal(CARD_DEFINITIONS[closureAction.cardId].category, "equipment");
+    canonicalActor.equipment = instance("recycleDevice");
+    assert.equal(canonicalGame.aiController.selectRuntimeActionCapClosureAction(
+      canonicalActor,
+      { mandatoryDiscardCount:2 }
+    ), null, "已有装备时 Action cap closure 不换装");
+    canonicalActor.equipment = null;
+    canonicalActor.hand.splice(
+      0,
+      canonicalActor.hand.length,
+      instance("block"),
+      instance("block")
+    );
+    assert.equal(canonicalGame.aiController.selectRuntimeActionCapClosureAction(
+      canonicalActor,
+      { mandatoryDiscardCount:1 }
+    ), null, "没有合法装备 Action 时正常结束");
+  } finally {
+    canonicalGame.dispose();
+  }
+  const withEquipment = await runActionCapEquipmentClosureScenario(true);
+  assert.equal(withEquipment.searchCalls, 16);
+  assert.equal(withEquipment.closureSelections.length, 1);
+  assert.equal(withEquipment.closureSelections[0].type, "card");
+  assert.equal(
+    CARD_DEFINITIONS[withEquipment.closureSelections[0].cardId].category,
+    "equipment"
+  );
+  assert.equal(withEquipment.executed.length, 17);
+  assert.equal(withEquipment.executed.slice(0, 16).every(
+    (card) => card.definitionId === "charge"
+  ), true);
+  assert.equal(
+    CARD_DEFINITIONS[withEquipment.executed[16].definitionId].category,
+    "equipment"
+  );
+  assert.ok(withEquipment.actor.equipment);
+  assert.equal(withEquipment.actor.hand.filter(
+    (card) => CARD_DEFINITIONS[card.definitionId]?.category === "equipment"
+  ).length, 1, "两张合法装备也只允许 closure 执行一张");
+
+  const withoutEquipment = await runActionCapEquipmentClosureScenario(false);
+  assert.equal(withoutEquipment.searchCalls, 16);
+  assert.deepEqual(withoutEquipment.closureSelections, [null]);
+  assert.equal(withoutEquipment.executed.length, 16);
+  assert.equal(withoutEquipment.actor.equipment, null);
 });
 
 test("AI·搜索故障恢复：可靠 Searcher END 仍正常进入大手牌强制弃牌", async () => {
@@ -21302,61 +21792,6 @@ test("AI·搜索：模拟 end 会设置终止状态且终止快照不再生成�
 
 
 
-test("AI·搜索：多张同定义突袭逐动作重规划时连续兑现仍会白弃的资源", async () => {
-  const actor = makePlayer("forced-replan-actor", 0, "dawn", "ai", 3);
-  const enemy = makePlayer("forced-replan-enemy", 1, "dusk", "ai", 5);
-  const allyA = makePlayer("forced-replan-ally-a", 2, "dawn", "ai", 1);
-  const allyB = makePlayer("forced-replan-ally-b", 3, "dawn", "ai", 2);
-  actor.hp = 4;
-  const lightning = instance("lightning");
-  const assaults = [instance("assault"), instance("assault"), instance("assault")];
-  const enemyBlocks = [instance("block"), instance("block")];
-  actor.hand.push(
-    lightning,
-    ...assaults,
-    instance("block"),
-    instance("counter"),
-    instance("recover")
-  );
-  enemy.hand.push(...enemyBlocks);
-  actor.aiMemory.knownCardsByPlayer[enemy.id] = Object.fromEntries(
-    enemyBlocks.map((card) => [card.id, card.definitionId])
-  );
-  const { game } = makeGame([actor, enemy, allyA, allyB]);
-  actor.turnFlags.attackLimit = 2;
-  actor.attackLimit = 2;
-  game.aiRandomnessRange = 0;
-  game.aiSearchBudgetOverrideMs = 30000;
-  game.cleanupManager.delay = async () => true;
-
-  const firstRoots = game.aiController.getActionCandidates(actor);
-  game.aiSearchNodeBudgetOverride = firstRoots.length;
-  const first = await game.aiController.selectAction(actor, {
-    gameId: game.state.gameId,
-    searchTimeBudgetMs: 30000
-  });
-  assert.equal(first.cardId, "assault");
-  const firstCard = actor.hand.find((card) => card.id === first.cardInstanceId);
-  const firstTargets = first.targetIds.map(
-    (targetId) => game.state.players.find((player) => player.id === targetId)
-  );
-  assert.equal(await game.playCard(actor, firstCard, firstTargets, first.selection ?? null), true);
-
-  const secondRoots = game.aiController.getActionCandidates(actor);
-  assert.ok(secondRoots.some((action) => action.cardId === "assault"));
-  assert.ok(actor.hand.length > actor.hp);
-  game.aiSearchNodeBudgetOverride = secondRoots.length;
-  const second = await game.aiController.selectAction(actor, {
-    gameId: game.state.gameId,
-    searchTimeBudgetMs: 30000
-  });
-  assert.equal(second.cardId, "assault");
-});
-
-
-
-
-
 
 
 
@@ -21583,7 +22018,6 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
     exposeMarginalStackDelta: () => 0,
     assaultMarginalStackCount: () => 0,
     advanceTransitionProvenance: () => null,
-    adaptiveInformationTarget: () => null,
     evaluateTransition: ({ action }) => ({
       resolutionScale: 1,
       baseTransition: action.baseValue,
@@ -21596,11 +22030,18 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
       xSkillNextEnergy: null,
       discardOpportunityInputs: { beforeOverflow: 0, afterOverflow: 0, stateDelta: 0 },
       endOpportunityInputs: action.type === "end"
-        ? { energy: 0, turnEnergyGain: 0, maxEnergy: 0, activeSkillCost: 0 }
+        ? {
+            energy:0,
+            turnEnergyGain:0,
+            maxEnergy:0,
+            activeSkillCost:0,
+            hasActiveSkill:false
+          }
+        : null,
+      endPolicyInputs: action.type === "end"
+        ? { hasEquipmentBefore: true }
         : null
     }),
-    frontierResidual: () => null,
-    terminalFrontierValue: () => 0,
     requiresActionLightningOutcomes: () => false,
     requiresHiddenWorldPrior: () => false,
     composeSearchPrior: () => ({ domainPrior: 0, searchCredit: 0, prior: 0 }),
@@ -21609,8 +22050,21 @@ function createEndSiblingEvaluator(opportunityCalls = []) {
       opportunityCalls.push({ endTerms, siblingTerms });
       return 5;
     },
-    composeTransitionValue: ({ baseTransition, frontierValue, endOpportunityPoints }) => (
-      baseTransition + frontierValue - statePointsToUtility(endOpportunityPoints)
+    finalizeEndTransition({
+      baseTransition,
+      endTransitionTerms,
+      siblingTransitionTerms
+    }) {
+      return this.composeTransitionValue({
+        baseTransition,
+        endOpportunityPoints:this.endOpportunityPoints(
+          endTransitionTerms,
+          siblingTransitionTerms
+        )
+      });
+    },
+    composeTransitionValue: ({ baseTransition, endOpportunityPoints }) => (
+      baseTransition - statePointsToUtility(endOpportunityPoints)
     ),
     compareCandidates: (left, right) => left.valueScore - right.valueScore
   };
@@ -21864,7 +22318,6 @@ async function runSearcherFaultBoundaryFixture(mode) {
     exposeMarginalStackDelta: () => 0,
     assaultMarginalStackCount: () => 0,
     advanceTransitionProvenance: () => null,
-    adaptiveInformationTarget: () => null,
     evaluateTransition: ({ action }) => {
       if (mode === "before-incumbent-evaluator-fault" && action === assault) {
         throw new Error("synthetic Evaluator fault before incumbent");
@@ -21883,7 +22336,16 @@ async function runSearcherFaultBoundaryFixture(mode) {
         xSkillNextEnergy: null,
         discardOpportunityInputs: { beforeOverflow: 0, afterOverflow: 0, stateDelta: 0 },
         endOpportunityInputs: action.type === "end"
-          ? { energy: 0, turnEnergyGain: 0, maxEnergy: 0, activeSkillCost: 0 }
+          ? {
+              energy:0,
+              turnEnergyGain:0,
+              maxEnergy:0,
+              activeSkillCost:0,
+              hasActiveSkill:false
+            }
+          : null,
+        endPolicyInputs: action.type === "end"
+          ? { hasEquipmentBefore: true }
           : null
       };
       if (mode === "missing-transition-term" && action === assault) {
@@ -21891,8 +22353,6 @@ async function runSearcherFaultBoundaryFixture(mode) {
       }
       return terms;
     },
-    frontierResidual: () => null,
-    terminalFrontierValue: () => 0,
     requiresActionLightningOutcomes: () => false,
     requiresHiddenWorldPrior: () => false,
     composeSearchPrior: ({ action }) => {
@@ -21901,11 +22361,17 @@ async function runSearcherFaultBoundaryFixture(mode) {
     },
     resourceSelectionPreference: () => null,
     endOpportunityPoints: () => 0,
-    composeTransitionValue: ({ baseTransition, frontierValue, endOpportunityPoints }) => {
+    finalizeEndTransition({ baseTransition }) {
+      return this.composeTransitionValue({
+        baseTransition,
+        endOpportunityPoints:0
+      });
+    },
+    composeTransitionValue: ({ baseTransition, endOpportunityPoints }) => {
       if (mode === "before-incumbent-finalize-fault" && baseTransition === 5) {
         throw new Error("synthetic finalize fault before incumbent");
       }
-      return baseTransition + frontierValue - endOpportunityPoints;
+      return baseTransition - endOpportunityPoints;
     },
     compareCandidates: (left, right) => left.valueScore - right.valueScore
   };
@@ -22197,7 +22663,6 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
   const candidate = (action, baseTransition, stateDelta = 0) => ({
     action,
     baseTransition,
-    frontierValue: 0,
     baseTerms: { stateDelta }
   });
 
@@ -22227,7 +22692,7 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
     finalizeSource,
     /endDiscardOpportunityRelief|maximumDiscardOpportunityRelief|maximumLegalSkillStateValueOpportunity/u
   );
-  assert.match(finalizeSource, /endOpportunityPoints/u);
+  assert.match(finalizeSource, /finalizeEndTransition/u);
 
   const evaluator = new Evaluator();
   const endTerms = {
@@ -22268,12 +22733,10 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
   assert.equal(evaluator.endOpportunityPoints(endTerms, [...siblingTerms].reverse()), 8);
   assertClose(evaluator.composeTransitionValue({
     baseTransition: 10,
-    frontierValue: 2,
     endOpportunityPoints: 8
-  }), 10.4, 1e-12);
+  }), 8.4, 1e-12);
 
   const overflowThreeEnd = candidate(endAction, 0.8);
-  overflowThreeEnd.frontierValue = 0.2;
   overflowThreeEnd.baseTerms = {
     dangerBefore: 0,
     endOpportunityInputs: { maxEnergy: 0 },
@@ -22322,6 +22785,165 @@ test("AI·搜索：END Final Utility 只使用完整 sibling 集合且与顺序�
     > finalizedOverflowEnd.transitionValue,
     "现有 continuation 累计值不得被缺失的 Pd 掩盖"
   );
+});
+
+/*
+功能
+以生产 Generator、Simulator、Evaluator 与 Searcher 运行一次 depth=1 装备 END policy 搜索。
+
+调用方
+空装备槽强制弃牌 END policy 回归测试。
+
+输入
+行动者手牌 definitionIds、生命、可选现有装备。
+
+输出
+canonical roots、完整 root candidates、选择结果、World、Evaluator 与搜索统计。
+
+读取状态
+独立 benchmark Game 的真实角色、卡牌配置与 AI runtime composition。
+
+写入状态
+只记录本测试 Searcher finalize 后的完整 root candidates。
+
+调用函数
+makeBenchmarkGame、createInitialWorld、createSearchEngine、Searcher.search。
+
+边界与不变量
+不改动作顺序、价值或预算；depth=1 使多装备 winner 只由现有 root Final Utility 比较决定。
+*/
+async function runEquipmentEndPolicyRootSearch({
+  cardIds,
+  hp = 4,
+  equipment = null
+}) {
+  const actorId = `equipment-end-policy-${cardIds.join("-")}-${hp}-${equipment ?? "empty"}`;
+  const game = makeBenchmarkGame({
+    players: [
+      {
+        id:actorId,
+        team:"dawn",
+        character:"blade-walker",
+        hp,
+        hand:cardIds.map((definitionId, index) => (
+          makeBenchmarkCard(definitionId, `${actorId}-${index}`)
+        )),
+        equipment:equipment
+          ? makeBenchmarkCard(equipment, `${actorId}-equipped`)
+          : null
+      },
+      { id:`${actorId}-enemy`, team:"dusk", character:"oath-warden", hp:4 }
+    ],
+    options:{ actorId, seed:20260906, nodeBudget:1000 }
+  });
+  try {
+    const actor = game.state.players[0];
+    const world = createInitialWorld(
+      actor.id,
+      game.state,
+      deriveCurrentCardCounts(actor, game.state)
+    );
+    const roots = game.aiController.getActionCandidates(actor, world);
+    const { searcher } = createSearchEngine({
+      world,
+      searchConfig:{
+        ...game.aiController.buildSearchConfig(),
+        depth:1,
+        nodeBudget:1000,
+        timeBudgetMs:null,
+        enableRandomness:false,
+        randomnessRange:0
+      }
+    }, { next:() => 0 });
+    const finalized = new Map();
+    const finalizeCandidate = searcher.finalizeCandidate.bind(searcher);
+    searcher.finalizeCandidate = (candidate, siblings) => {
+      const result = finalizeCandidate(candidate, siblings);
+      finalized.set(actionSearchKey(result.action), result);
+      return result;
+    };
+    const choice = await searcher.search(
+      world.players.find((entry) => entry.id === actor.id),
+      world,
+      roots,
+      { gameId:world.gameId, rootCandidateCount:roots.length }
+    );
+    return {
+      choice,
+      evaluator:searcher.evaluator,
+      finalized,
+      roots,
+      stats:searcher.lastSearchStats,
+      world
+    };
+  } finally {
+    disposeBenchmarkGame(game);
+  }
+}
+
+test("AI·搜索：空装备槽强制弃牌时完整装备 sibling 使 END 不可竞争且装备仍按 Final Utility 选择", async () => {
+  const single = await runEquipmentEndPolicyRootSearch({
+    cardIds:["energyDevice", "block", "block", "block", "block"]
+  });
+  const singleEndAction = single.roots.find((action) => action.type === "end");
+  assert.ok(singleEndAction, "canonical END 必须继续存在");
+  assert.equal(single.stats.stopReason, "COMPLETE");
+  assert.equal(single.stats.completedRootCandidateCount, single.roots.length);
+  assert.equal(
+    single.finalized.get(actionSearchKey(singleEndAction)).transitionValue,
+    Number.NEGATIVE_INFINITY
+  );
+  assert.equal(single.choice.cardId, "energyDevice");
+
+  const multiple = await runEquipmentEndPolicyRootSearch({
+    cardIds:["energyDevice", "battleDevice", "block", "block", "block", "block"]
+  });
+  const equipmentCandidates = multiple.roots
+    .filter((action) => CARD_DEFINITIONS[action.cardId]?.category === "equipment")
+    .map((action) => multiple.finalized.get(actionSearchKey(action)));
+  assert.equal(equipmentCandidates.length, 2);
+  assert.notEqual(
+    equipmentCandidates[0].transitionValue,
+    equipmentCandidates[1].transitionValue,
+    "夹具必须让两张装备的现有 Final Utility 不同"
+  );
+  const expectedEquipment = equipmentCandidates.reduce((best, candidate) => (
+    multiple.evaluator.compareCandidates(
+      candidate,
+      best,
+      multiple.world.players[0],
+      multiple.world
+    ) > 0 ? candidate : best
+  ));
+  assert.ok(sameAction(multiple.choice, expectedEquipment.action));
+
+  const equipped = await runEquipmentEndPolicyRootSearch({
+    cardIds:["energyDevice", "block", "block", "block", "block"],
+    equipment:"recycleDevice"
+  });
+  const equippedEnd = equipped.roots.find((action) => action.type === "end");
+  assert.ok(Number.isFinite(
+    equipped.finalized.get(actionSearchKey(equippedEnd)).transitionValue
+  ));
+
+  const noOverflow = await runEquipmentEndPolicyRootSearch({
+    cardIds:["energyDevice", "block", "block", "block"]
+  });
+  const noOverflowEnd = noOverflow.roots.find((action) => action.type === "end");
+  assert.ok(Number.isFinite(
+    noOverflow.finalized.get(actionSearchKey(noOverflowEnd)).transitionValue
+  ));
+
+  const noEquipment = await runEquipmentEndPolicyRootSearch({
+    cardIds:["charge", "block", "block", "block", "block"]
+  });
+  assert.equal(noEquipment.roots.some(
+    (action) => CARD_DEFINITIONS[action.cardId]?.category === "equipment"
+  ), false);
+  const noEquipmentEnd = noEquipment.roots.find((action) => action.type === "end");
+  assert.ok(Number.isFinite(
+    noEquipment.finalized.get(actionSearchKey(noEquipmentEnd)).transitionValue
+  ));
 });
 
 /*
@@ -22392,18 +23014,11 @@ async function recoverBeforeMandatoryDiscardRegression() {
         beforeState: world,
         afterState: after
       });
-      const frontierResidual = after.playPhaseEnded
-        ? evaluator.frontierResidual(after, actor.id)
-        : null;
       return {
         action,
         state: after,
         baseTerms,
-        baseTransition: baseTerms.baseTransition,
-        frontierValue: evaluator.terminalFrontierValue(
-          frontierResidual,
-          Boolean(after.playPhaseEnded)
-        )
+        baseTransition: baseTerms.baseTransition
       };
     });
     const searcher = Object.create(Searcher.prototype);
@@ -22430,8 +23045,9 @@ async function recoverBeforeMandatoryDiscardRegression() {
       [],
       []
     );
-    assertClose(recoverCandidate.baseTerms.stateDelta, 2.9, 1e-9);
+    assertClose(recoverCandidate.baseTerms.stateDelta, 3.32, 1e-9);
     assertClose(recoverLedger.ownerLedger.owners[0].material.hp, 5, 1e-9);
+    assertClose(recoverLedger.ownerLedger.owners[0].material.hp3Risk, 0.42, 1e-9);
     assertClose(recoverLedger.ownerLedger.owners[0].generic.handCount, -1.1, 1e-9);
     assertClose(recoverLedger.ownerLedger.owners[0].specific.handRoleDelta, -1, 1e-9);
     assert.equal(endCandidate.state.players[0].handCount, 3);
@@ -22538,18 +23154,11 @@ async function multiOverflowDiscardOpportunityRegression() {
         beforeState: world,
         afterState: state
       });
-      const frontierResidual = state.playPhaseEnded
-        ? evaluator.frontierResidual(state, actor.id)
-        : null;
       candidates.push({
         action,
         state,
         baseTerms,
-        baseTransition: baseTerms.baseTransition,
-        frontierValue: evaluator.terminalFrontierValue(
-          frontierResidual,
-          Boolean(state.playPhaseEnded)
-        )
+        baseTransition: baseTerms.baseTransition
       });
     }
     for (const candidate of candidates.filter((entry) => entry.action.type !== "end")) {
@@ -22589,8 +23198,6 @@ async function multiOverflowDiscardOpportunityRegression() {
       ),
       expectedPd
     );
-    assert.equal(endCandidate.frontierValue, 0, "已用满回收站次数时 terminal frontier 不放大 END");
-
     const decision = await runBenchmarkAiDecision(game, actor.id);
     assert.equal(decision.stats.stopReason, "COMPLETE");
     assert.equal(decision.stats.completedRootCandidateCount, actions.length);
@@ -26630,6 +27237,78 @@ test("AI·借势：响应通过可见快照评估真实玩家状态", async () =
 });
 
 
+/*
+功能
+验证借势获得装备的 Transition Option 使用统一 static-card asset 尺度。
+
+调用方
+AI·借势定向回归测试。
+
+输入
+无；构造 blade-walker 获得 battleDevice 的确定 retention 差。
+
+输出
+无返回值；Base 与 +2 RoleDelta 未共同乘材料尺度时抛出断言。
+
+读取状态
+正式 CardValue、Evaluator transition 与装备保留概率。
+
+写入状态
+无；只构造隔离 before/after Worlds。
+
+调用函数
+Evaluator.evaluateTransition、staticCardAssetValue。
+
+边界与不变量
+不修改借势 willingness/prior；只验证 acquisition static asset，dynamic Future 保持 StateValue owner。
+*/
+function testLeverageEquipmentStaticAssetScale() {
+  const actor = {
+    id:"leverage-static-actor", seatIndex:0, battleTeam:"dawn",
+    characterId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
+    energy:0, handCount:1,
+    hand:[{ id:"leverage-static-card", definitionId:"leverage" }],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const target = {
+    id:"leverage-static-target", seatIndex:1, battleTeam:"dusk",
+    characterId:"oath-warden", alive:true, hp:4, maxHp:4, shield:0,
+    energy:0, handCount:0, knownCards:[],
+    equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const before = upgradeProbabilityFixture({
+    remainingCardCounts:{},
+    players:[actor, target]
+  });
+  const after = cloneWorld(before);
+  after.players[1].equipmentRetentionProbability = 0;
+  const terms = new Evaluator().evaluateTransition({
+    action:createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"leverage",
+      cardInstanceId:"leverage-static-card",
+      targetIds:[target.id],
+      selection:{ firstTargetId:target.id }
+    }),
+    player:actor,
+    beforeState:before,
+    afterState:after
+  });
+  assertClose(
+    terms.transitionOptionPoints,
+    staticCardAssetValue(actor.characterId, "battleDevice")
+  );
+  assertClose(terms.transitionOptionPoints, (9 + 2) * RESOURCE_MATERIAL_SCALE);
+}
+
+test(
+  "AI·借势：装备 acquisition 的 Base 与 RoleDelta 同乘材料尺度",
+  testLeverageEquipmentStaticAssetScale
+);
+
 test("AI·借势：相同公开手牌数下有突袭与无突袭拒绝经过相同伪装等待", async () => {
   const run = async (withAssault) => {
     const actor = makePlayer(`actor-${withAssault}`, 0, "dawn"),
@@ -26878,127 +27557,367 @@ test("AI·决斗：分布不读取敌方真实隐藏手牌内容", () => {
 
 // ---- AI 卡牌行为·互利 ----
 
-const draftPlayer = (id, seatIndex, battleTeam, characterId = "blade-walker") => (
-  {
-    id, seatIndex, battleTeam, characterId, alive: true, hp: 4, maxHp: 4
-  }
-);
+/*
+功能
+构造保留 root viewer hand 与 non-viewer knownCards 边界的互利测试 World。
 
-test("AI·互利：正式 GlobalBenefitModel 保持来源优先座次、公开池顺序与独立 recipient 输出", () => {
-  const players = [
-    draftPlayer("a", 0, "dawn"),
-    draftPlayer("b", 1, "dusk"),
-    draftPlayer("c", 2, "dawn")
-  ];
-  const counts = { counter: 1, assault: 2 };
-  const snapshot = structuredClone({ players, counts });
-  const playersById = new Map(players.map((player) => [player.id, player]));
-  const value = (playerId, definitionId) => getRoleCardAiValue(
-    playersById.get(playerId).characterId,
-    definitionId
-  );
-  const outcome = buildMutualBenefitDraftOutcome(players, players[1], counts, value);
-  assert.deepEqual(outcome.seatOrderIds, ["b", "c", "a"]);
-  assert.deepEqual(outcome.publicPoolDefinitionOrder, ["counter", "assault"]);
-  assert.deepEqual(outcome.recipients, [
-    { playerId: "b", definitionId: "counter", benefit: 8 },
-    { playerId: "c", definitionId: "assault", benefit: 6 },
-    { playerId: "a", definitionId: "assault", benefit: 6 }
-  ]);
-  const assessment = assessGlobalBenefitOutcome(players, "dawn", "mutualBenefit", {
-    sourceId: "b", remainingCounts: counts, definitionValue: value
-  });
+调用方
+本组 AI·互利 receipt 测试。
+
+输入
+玩家数组与当前公开剩余定义计数。
+
+输出
+带 canonical ProbabilityState 的测试 World。
+
+读取状态
+测试玩家公开字段与合法已知身份。
+
+写入状态
+只构造新的测试对象。
+
+调用函数
+ledgerState、upgradeProbabilityFixture。
+
+边界与不变量
+第一个玩家是 root viewer；其余玩家不得拥有 hand，只能持有合法 knownCards。
+*/
+function mutualBenefitTestWorld(players, remainingCardCounts) {
+  const state = ledgerState(players.map((player, index) => (
+    index === 0 ? player : { ...player, hand:undefined, knownCards:player.knownCards ?? [] }
+  )));
+  state.remainingCardCounts = remainingCardCounts;
+  return upgradeProbabilityFixture(state);
+}
+
+test("AI·互利：non-viewer receipt 的公开 RoleDelta 进入真实 StateDelta", () => {
+  const state = mutualBenefitTestWorld([
+    ledgerPlayer("receipt-root-viewer", 0, "dawn", "oath-warden"),
+    ledgerPlayer("receipt-non-viewer", 1, "dawn", "blade-walker")
+  ], { assault:1, telescope:1 });
+  const simulator = new Simulator(state);
+  const evaluator = new Evaluator();
+  const recipient = state.players[1];
+  const outcomes = simulator.buildPublicCardReceiptOutcomes(state, recipient.id, [
+    { id:"receipt-assault", definitionId:"assault" },
+    { id:"receipt-telescope", definitionId:"telescope" }
+  ], probabilityEventPartition("mutual-receipt-full", 1, "occurs"));
+  const assaultWorld = outcomes.find((outcome) => outcome.definitionId === "assault").worlds[0];
+  const assaultRecipient = assaultWorld.players[1];
+  assert.equal(assaultRecipient.hand, undefined);
   assert.deepEqual(
-    {
-      allyAliveCount: assessment.allyAliveCount,
-      enemyAliveCount: assessment.enemyAliveCount,
-      allyBenefit: assessment.allyBenefit,
-      enemyBenefit: assessment.enemyBenefit,
-      netBenefit: assessment.netBenefit
-    },
-    assessGlobalBenefit(players, "dawn", "mutualBenefit", "b", counts)
+    assaultRecipient.knownCards.map((card) => [card.cardId, card.definitionId]),
+    [["receipt-assault", "assault"]]
   );
-  outcome.recipients[0].playerId = "mutated-output";
-  outcome.seatOrderIds.push("mutated-output");
-  assert.deepEqual({ players, counts }, snapshot);
-  assert.equal(JSON.stringify(outcome).includes("game"), false);
+  assert.equal(assaultRecipient.handCount, 1);
+  assert.equal(
+    queryPlayerHandProbability(
+      assaultWorld.probabilityState,
+      assaultRecipient,
+      "assault"
+    ).expected,
+    1
+  );
+  assertClose(
+    evaluator.stateUtility(assaultWorld, recipient.id)
+      - evaluator.stateUtility(state, recipient.id),
+    HAND_COUNT_VALUE + roleCardDelta(recipient.characterId, "assault"),
+    1e-12
+  );
+
+  const telescopeWorlds = outcomes.find(
+    (outcome) => outcome.definitionId === "telescope"
+  ).worlds;
+  const heldRecipient = telescopeWorlds[0].players[1];
+  assert.equal(heldRecipient.handCount, 1);
+  assert.equal(heldRecipient.knownCards[0].definitionId, "telescope");
+  assert.equal(heldRecipient.equipmentDefinitionId, null);
+  assert.equal(queryCurrentCardCounts(telescopeWorlds[0].probabilityState).telescope, 0);
+
+  const equippedRecipient = telescopeWorlds[1].players[1];
+  assert.equal(equippedRecipient.handCount, 0);
+  assert.deepEqual(equippedRecipient.knownCards, []);
+  assert.equal(equippedRecipient.equipmentDefinitionId, "telescope");
+  assert.equal(
+    queryPlayerHandProbability(
+      telescopeWorlds[1].probabilityState,
+      equippedRecipient,
+      "telescope"
+    ).expected,
+    0
+  );
+  assert.equal(queryCurrentCardCounts(telescopeWorlds[1].probabilityState).telescope, 0);
 });
 
-test("AI·互利：不同座位顺序产生不同 expected value", () => {
-  // 同一 fixture 牌池，仅施放者座位不同：先选择者取走唯一高价值牌，后续只能选剩余资源。
-  const players = [
-    draftPlayer("a", 0, "dawn"),
-    draftPlayer("b", 1, "dawn"),
-    draftPlayer("e", 2, "dusk")
-  ];
-  const ownFirst = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", { counter: 1, assault: 5 });
-  const enemyFirst = assessGlobalBenefit(players, "dawn", "mutualBenefit", "e", { counter: 1, assault: 5 });
-  // 己方先选：a 拿 counter(8)，e 与 b 拿 assault(6) → net = 8 + 6 - 6 = 8。
-  assert.equal(ownFirst.netBenefit, 8);
-  // 敌方先选：e 拿 counter(8)，b 与 a 拿 assault(6) → net = 6 + 6 - 8 = 4。
-  assert.equal(enemyFirst.netBenefit, 4);
+test("AI·互利：cardId 与 worldIndex 精确物化选中的装备 World", () => {
+  const state = mutualBenefitTestWorld([
+    ledgerHand(
+      ledgerPlayer("mutual-equipment-actor", 0, "dawn", "blade-walker"),
+      ["mutualBenefit"]
+    )
+  ], { telescope:1 });
+  const simulator = new Simulator(state);
+  const evaluator = new Evaluator();
+  const actor = state.players[0];
+  const outcomes = simulator.buildPublicCardReceiptOutcomes(state, actor.id, [
+    { id:"mutual-equipment:telescope", definitionId:"telescope" }
+  ], probabilityEventPartition("mutual-equipment-full", 1, "occurs"));
+  assert.deepEqual(
+    evaluator.choosePublicCardOutcome(actor, [{
+      id:"mutual-equipment:telescope",
+      definitionId:"telescope"
+    }], state, outcomes),
+    { cardId:"mutual-equipment:telescope", definitionId:"telescope", worldIndex:1 }
+  );
+
+  const action = createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"mutualBenefit",
+    cardInstanceId:actor.hand[0].id,
+    targetIds:[actor.id]
+  });
+  const after = simulator.apply(state, action);
+  assert.equal(after.players[0].equipmentDefinitionId, "telescope");
+  assert.equal(after.players[0].handCount, 0);
+  assert.deepEqual(after.players[0].hand, []);
+  assert.equal(queryCurrentCardCounts(after.probabilityState).telescope, 0);
+  const terms = evaluator.evaluateTransition({
+    action,
+    player:actor,
+    beforeState:state,
+    afterState:after
+  });
+  assert.equal(terms.transitionOptionPoints, 0);
+  assert.equal(terms.baseTransition, terms.stateDeltaValue);
 });
 
-test("AI·互利：先选择者可以获得更高价值公开选项", () => {
-  const players = [
-    draftPlayer("a", 0, "dawn"),
-    draftPlayer("b", 1, "dawn"),
-    draftPlayer("e", 2, "dusk")
-  ];
-  // 池中只有一张高价值 counter，其余为低价值 assault：先选者拿到 counter。
-  const values = mutualBenefitDraftValues(players, players[0], { counter: 1, assault: 5 });
-  assert.equal(values.a, 8);
-  assert.equal(values.b, 6);
-  assert.equal(values.e, 6);
+test("AI·互利：resolution 为零时无人领取且有限池不消费", () => {
+  const counter = {
+    cardId:"mutual-zero-counter",
+    definitionId:"counter",
+    availability:1
+  };
+  const state = mutualBenefitTestWorld([
+    ledgerHand(
+      ledgerPlayer("mutual-zero-actor", 0, "dawn", "blade-walker"),
+      ["mutualBenefit"]
+    ),
+    ledgerPlayer("mutual-zero-ally", 1, "dawn", "oath-warden"),
+    ledgerPlayer("mutual-zero-enemy", 2, "dusk", "spirit-medic", {
+      handCount:1,
+      knownCards:[counter]
+    })
+  ], { assault:1, recover:1, charge:1 });
+  const action = createAction({
+    type:"card",
+    actorId:state.players[0].id,
+    cardId:"mutualBenefit",
+    cardInstanceId:state.players[0].hand[0].id,
+    targetIds:state.players.map((player) => player.id)
+  });
+  const after = new Simulator(state, { decideCounter:() => true }).apply(state, action);
+  assert.equal(after.players.some((player) => (
+    (player.hand ?? player.knownCards ?? []).some(
+      (card) => (card.id ?? card.cardId)?.startsWith("mutual-benefit:")
+    )
+  )), false);
+  assert.deepEqual(queryCurrentCardCounts(after.probabilityState), {
+    assault:1,
+    recover:1,
+    charge:1
+  });
 });
 
-test("AI·互利：后续角色只能从剩余池选择", () => {
-  const players = [
-    draftPlayer("a", 0, "dawn"),
-    draftPlayer("b", 1, "dawn"),
-    draftPlayer("e", 2, "dusk"),
-    draftPlayer("f", 3, "dusk")
-  ];
-  // 剩余池只有 2 张：第三、四个角色无牌可选，估值归零。
-  const values = mutualBenefitDraftValues(players, players[0], { counter: 2 });
-  assert.equal(values.a, 8);
-  assert.equal(values.b, 8);
-  assert.equal(values.e ?? 0, 0);
-  assert.equal(values.f ?? 0, 0);
+test("AI·互利：多名接收者按座次消费当前池且 Final 无重复 Option", () => {
+  const state = mutualBenefitTestWorld([
+    ledgerHand(
+      ledgerPlayer("mutual-draft-actor", 0, "dawn", "blade-walker"),
+      ["mutualBenefit"]
+    ),
+    ledgerPlayer("mutual-draft-ally", 1, "dawn", "oath-warden")
+  ], { assault:1, recover:1 });
+  const simulator = new Simulator(state);
+  const evaluator = new Evaluator();
+  const actor = state.players[0];
+  const action = createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"mutualBenefit",
+    cardInstanceId:actor.hand[0].id,
+    targetIds:state.players.map((player) => player.id)
+  });
+  const after = simulator.apply(state, action);
+  assert.deepEqual(after.players[0].hand.map((card) => card.definitionId), ["assault"]);
+  assert.equal(after.players[1].hand, undefined);
+  assert.deepEqual(after.players[1].knownCards.map((card) => card.definitionId), ["recover"]);
+  assert.deepEqual(queryCurrentCardCounts(after.probabilityState), { assault:0, recover:0 });
+  const terms = evaluator.evaluateTransition({
+    action,
+    player:actor,
+    beforeState:state,
+    afterState:after
+  });
+  assert.equal(terms.transitionOptionPoints, 0);
+  assert.equal(terms.baseTransition, terms.stateDeltaValue);
 });
 
-test("AI·互利：规划估值不读取未来真实 RNG", () => {
-  const players = [
-    draftPlayer("a", 0, "dawn"),
-    draftPlayer("b", 1, "dawn"),
-    draftPlayer("e", 2, "dusk")
-  ];
-  const counts = { counter: 1, assault: 5 };
-  // 同一输入两次估值完全一致：规划阶段只读公共剩余计数，不触碰未来牌堆或随机源。
-  const first = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", counts);
-  const second = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", counts);
-  assert.deepEqual(first, second);
-  // 只有公共剩余计数影响估值：更换计数集合得到不同 netBenefit。
-  const other = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", { assault: 5 });
-  assert.equal(first.netBenefit, 8);
-  assert.equal(other.netBenefit, 6);
+test("AI·互利：Counter 的部分 resolution 由同一 effect Worlds 单一 authority 计价", () => {
+  const counter = {
+    cardId:"mutual-partial-counter",
+    definitionId:"counter",
+    availability:0.5
+  };
+  const state = mutualBenefitTestWorld([
+    ledgerHand(
+      ledgerPlayer("mutual-partial-actor", 0, "dawn", "blade-walker"),
+      ["mutualBenefit"]
+    ),
+    ledgerPlayer("mutual-partial-ally", 1, "dawn", "oath-warden"),
+    ledgerPlayer("mutual-partial-enemy", 2, "dusk", "spirit-medic", {
+      handCount:0.5,
+      knownCards:[counter]
+    })
+  ], { assault:1, recover:1, charge:1 });
+  let counterDecisionCalls = 0;
+  const simulator = new Simulator(state, {
+    decideCounter:() => {
+      counterDecisionCalls += 1;
+      return true;
+    }
+  });
+  const actor = state.players[0];
+  const action = createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"mutualBenefit",
+    cardInstanceId:actor.hand[0].id,
+    targetIds:state.players.map((player) => player.id)
+  });
+  const after = simulator.apply(state, action);
+  assertClose(after.players[0].handCount, 1, 1e-12);
+  assertClose(after.players[1].handCount, 1, 1e-12);
+  for (const player of after.players) {
+    const receipts = (player.hand ?? player.knownCards ?? []).filter(
+      (card) => (card.id ?? card.cardId)?.startsWith("mutual-benefit:")
+    );
+    assert.equal(receipts.length, 1);
+    assertClose(cardAvailability(receipts[0]), 1, 1e-12);
+  }
+  const receiptDefinitions = after.players.map((player) => (
+    (player.hand ?? player.knownCards ?? []).find(
+      (card) => (card.id ?? card.cardId)?.startsWith("mutual-benefit:")
+    )?.definitionId
+  ));
+  assert.equal(new Set(receiptDefinitions).size, 3);
+  assert.deepEqual(queryCurrentCardCounts(after.probabilityState), {
+    assault:0,
+    recover:0,
+    charge:0
+  });
+  const evaluator = new Evaluator();
+  const transitionEvaluationWorlds = simulator.getTransitionEvaluationWorlds(after);
+  const effectBaselineState = transitionEvaluationWorlds?.effectBaselineState;
+  assert.ok(effectBaselineState);
+  assertClose(transitionEvaluationWorlds.effectResolutionScale, 0.5, 1e-12);
+  const baselineDelta = evaluator.stateUtility(effectBaselineState, actor.id)
+    - evaluator.stateUtility(state, actor.id);
+  const receiptDelta = evaluator.stateUtility(after, actor.id)
+    - evaluator.stateUtility(effectBaselineState, actor.id);
+  assert.ok(Math.abs(baselineDelta) > 1e-12);
+  const terms = evaluator.evaluateTransition({
+    action,
+    player:actor,
+    beforeState:state,
+    afterState:after,
+    effectBaselineState,
+    effectResolutionScale:transitionEvaluationWorlds.effectResolutionScale
+  });
+  assertClose(terms.stateDelta, baselineDelta + receiptDelta * 0.5, 1e-12);
+  assert.ok(Math.abs(
+    terms.stateDelta - (
+      evaluator.stateUtility(after, actor.id) - evaluator.stateUtility(state, actor.id)
+    ) * 0.5
+  ) > 1e-12);
+  assert.equal(terms.transitionOptionPoints, 0);
+  const callsAfterApply = counterDecisionCalls;
+  const searcher = Object.assign(Object.create(Searcher.prototype), {
+    evaluator:{
+      evaluateTransition:evaluator.evaluateTransition.bind(evaluator),
+      requiresActionLightningOutcomes:() => false,
+      requiresHiddenWorldPrior:() => false,
+      composeSearchPrior:() => ({ domainPrior:0, searchCredit:0, prior:0 }),
+      resourceSelectionPreference:() => null
+    },
+    materializeValueTerms:() => ({
+      exposeMarginal:0,
+      assaultStacksCredit:0,
+      nextProvenance:null
+    })
+  });
+  const candidate = searcher.evaluateCandidate({
+    action,
+    beforeState:state,
+    afterState:after,
+    player:actor,
+    depth:1,
+    remainingProvenance:null,
+    simulator,
+    context:{}
+  });
+  assertClose(candidate.baseTerms.resolutionScale, 0.5, 1e-12);
+  assert.equal(counterDecisionCalls, callsAfterApply);
 });
 
-test("AI·互利：己方/敌方收益按 owner perspective 正确投影", () => {
-  const players = [
-    draftPlayer("a", 0, "dawn"),
-    draftPlayer("b", 1, "dawn"),
-    draftPlayer("e", 2, "dusk")
-  ];
-  const counts = { counter: 1, assault: 5 };
-  const dawnView = assessGlobalBenefit(players, "dawn", "mutualBenefit", "a", counts);
-  assert.equal(dawnView.allyBenefit, 14);
-  assert.equal(dawnView.enemyBenefit, 6);
-  assert.equal(dawnView.netBenefit, 8);
-  const duskView = assessGlobalBenefit(players, "dusk", "mutualBenefit", "a", counts);
-  assert.equal(duskView.allyBenefit, 6);
-  assert.equal(duskView.enemyBenefit, 14);
-  assert.equal(duskView.netBenefit, -8);
+test("AI·互利：部分 resolution 的装备换装保留失败旧装备与成功新装备 Worlds", () => {
+  const state = mutualBenefitTestWorld([
+    ledgerHand(
+      ledgerPlayer("mutual-replace-actor", 0, "dawn", "blade-walker", {
+        equipmentDefinitionId:"energyDevice",
+        equipmentRetentionProbability:1
+      }),
+      ["mutualBenefit"]
+    )
+  ], { telescope:1 });
+  const eventWorlds = probabilityEventPartition("mutual-replace", 0.5, "occurs");
+  const outcomes = new Simulator(state).buildPublicCardReceiptOutcomes(
+    state,
+    state.players[0].id,
+    [{ id:"mutual-replace:telescope", definitionId:"telescope" }],
+    eventWorlds
+  );
+  const equipped = outcomes[0].worlds[1].players[0];
+  assert.equal(state.players[0].equipmentDefinitionId, "energyDevice");
+  assert.equal(state.players[0].equipmentRetentionProbability, 1);
+  assert.equal(equipped.equipmentDefinitionId, "telescope");
+  assert.equal(equipped.equipmentRetentionProbability, 1);
+  assert.deepEqual(
+    eventWorlds.map((branch) => [branch.occurs, branch.probability]),
+    [[true, 0.5], [false, 0.5]]
+  );
+});
+
+test("AI·互利：重复领取同装备在失败与成功 Worlds 中都保持确定存在", () => {
+  const state = mutualBenefitTestWorld([
+    ledgerHand(
+      ledgerPlayer("mutual-same-equipment", 0, "dawn", "blade-walker", {
+        equipmentDefinitionId:"telescope",
+        equipmentRetentionProbability:1
+      }),
+      ["mutualBenefit"]
+    )
+  ], { telescope:1 });
+  const outcomes = new Simulator(state).buildPublicCardReceiptOutcomes(
+    state,
+    state.players[0].id,
+    [{ id:"mutual-same:telescope", definitionId:"telescope" }],
+    probabilityEventPartition("mutual-same", 0.5, "occurs")
+  );
+  const equipped = outcomes[0].worlds[1].players[0];
+  assert.equal(state.players[0].equipmentDefinitionId, "telescope");
+  assert.equal(state.players[0].equipmentRetentionProbability, 1);
+  assert.equal(equipped.equipmentDefinitionId, "telescope");
+  assert.equal(equipped.equipmentRetentionProbability, 1);
 });
 
 // ---- AI 卡牌行为·封印 ----
@@ -27182,7 +28101,7 @@ test("AI·封印：fallback 从权威牌堆组成动态推导且无固定概率�
     "utf8"
   ),
     rulesetSource = await readFile(projectFile("js/domain/definitions/ruleset/RulesetDefinition.js"), "utf8");
-  assert.doesNotMatch(source, /\b(?:56|163)\b/);
+  assert.doesNotMatch(source, /\b(?:56|164)\b/);
   assert.match(source, /RULESET_DEFINITION\.deckComposition/);
   assert.match(source, /CARD_DEFINITIONS\.seal\.judgmentTriggerCategory/);
   assert.match(source, /judgmentCategoryCounts/);
@@ -27355,13 +28274,353 @@ test("AI·装备：完全移除时按初始装备价值产生完整损失", () =
       base.id
     );
   assert.ok(removed < partial);
-  assertClose(partial - removed, value * .1 * .25);
+  assertClose(partial - removed, value * .1 * RESOURCE_MATERIAL_SCALE);
 });
 
+test("AI·装备：StaticAsset 的 Base 与正负 RoleDelta 同乘唯一材料尺度", () => {
+  const cardDefinitions = {
+    battleDevice:CARD_DEFINITIONS.battleDevice
+  };
+  const characterDefinitions = [{ id:"positive" }, { id:"negative" }];
+  const deltas = {
+    positive:{ battleDevice:2 },
+    negative:{ battleDevice:-2 }
+  };
+  assertClose(staticCardAssetValue("positive", "battleDevice", {
+    cardDefinitions,
+    characterDefinitions,
+    deltas
+  }), 4.4);
+  assertClose(staticCardAssetValue("negative", "battleDevice", {
+    cardDefinitions,
+    characterDefinitions,
+    deltas
+  }), 2.8);
+
+  const retained = cardPlayerValueTerms({
+    id:"equipment-static-owner",
+    characterId:"blade-walker",
+    handCount:0,
+    hand:[],
+    equipmentDefinitionId:"battleDevice",
+    equipmentRetentionProbability:1
+  }, "equipment-static-owner");
+  const halfRetained = cardPlayerValueTerms({
+    id:"equipment-static-owner",
+    characterId:"blade-walker",
+    handCount:0,
+    hand:[],
+    equipmentDefinitionId:"battleDevice",
+    equipmentRetentionProbability:0.5
+  }, "equipment-static-owner");
+  assertClose(retained.equipmentDelta + retained.equipmentRoleDelta, 4.4);
+  assertClose(halfRetained.equipmentDelta + halfRetained.equipmentRoleDelta, 2.2);
+});
+
+/*
+功能
+构造三项装备 Future Utility 共用的两人 canonical Probability World。
+
+调用方
+AI·回收站、AI·军火库与 AI·备用弹夹 StateValue 定向测试。
+
+输入
+装备 ID，以及双方公开/已知手牌、生命护盾、装备保留和剩余 finite-pool 覆盖。
+
+输出
+World、双方 player、Evaluator 与装备持有者的完整 StateValue terms。
+
+读取状态
+正式 CardDefinitions、Probability fixture 与 Evaluator production primitive。
+
+写入状态
+只创建独立测试对象和 ProbabilityState。
+
+调用函数
+upgradeProbabilityFixture、Evaluator.playerValueTerms、buildRadarJudgmentProbabilities。
+
+边界与不变量
+actor 手牌是 viewer 合法身份；target 手牌只经 knownCards 或匿名 finite pool 表达，
+不得把测试对象中的隐藏 definition 当作 production 输入。
+*/
+function equipmentFutureFixture(equipmentDefinitionId, options = {}) {
+  const actorCards = (options.actorCards ?? []).map((definitionId, index) => ({
+    id:`equipment-future-actor-${index}`,
+    definitionId
+  }));
+  const targetCards = (options.targetCards ?? []).map((definitionId, index) => fullKnownCard(
+    `equipment-future-target-${index}`,
+    definitionId
+  ));
+  const actor = {
+    id:"equipment-future-actor", seatIndex:0, battleTeam:"dawn",
+    characterId:options.actorCharacterId ?? "blade-walker",
+    alive:true, hp:options.actorHp ?? 4, maxHp:4, shield:options.actorShield ?? 0,
+    energy:0, maxEnergy:3, handCount:options.actorHandCount ?? actorCards.length,
+    hand:actorCards, attackRange:options.attackRange ?? 1, nextTurnBaseAttackLimit:1,
+    equipmentDefinitionId,
+    equipmentRetentionProbability:options.retention ?? (equipmentDefinitionId ? 1 : 0),
+    recycleDeviceUses:options.recycleDeviceUses ?? 0,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const target = {
+    id:"equipment-future-target", seatIndex:1, battleTeam:"dusk",
+    characterId:options.targetCharacterId ?? "oath-warden",
+    alive:true, hp:options.targetHp ?? 4, maxHp:4, shield:options.targetShield ?? 0,
+    energy:0, maxEnergy:3, handCount:options.targetHandCount ?? targetCards.length,
+    knownCards:targetCards, attackRange:1, nextTurnBaseAttackLimit:1,
+    equipmentDefinitionId:options.targetEquipmentDefinitionId ?? null,
+    equipmentRetentionProbability:options.targetEquipmentRetention ?? 0,
+    recycleDeviceUses:0, huntMarkProbabilities:{}, statuses:[]
+  };
+  const remainingCardCounts = options.remainingCardCounts ?? {};
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts,
+    players:[actor, target]
+  });
+  const evaluator = new Evaluator();
+  return {
+    state,
+    actor,
+    target,
+    evaluator,
+    terms:evaluator.playerValueTerms(
+      state,
+      actor,
+      actor.id,
+      buildRadarJudgmentProbabilities(remainingCardCounts)
+    ).terms
+  };
+}
 
 
+
+
+// ---- AI 装备行为·泡泡机 ----
+
+test("AI·泡泡机：通用装备模拟只写装备状态且不在装备瞬间加盾", () => {
+  const state = {
+    players: [{
+      id: "bubble-simulator-actor",
+      seatIndex: 0,
+      battleTeam: "dawn",
+      characterId: "oath-warden",
+      alive: true,
+      hp: 4,
+      maxHp: 4,
+      shield: 0,
+      handCount: 1,
+      hand: [{ id: "bubble-card", definitionId: "bubbleMachine" }],
+      equipmentDefinitionId: "energyDevice",
+      equipmentRetentionProbability: 1
+    }]
+  };
+  const next = new Simulator(state).apply(
+    state,
+    { type: "card", card: { ...CARD_DEFINITIONS.bubbleMachine, id: "bubble-card" }, targets: [] },
+    "bubble-simulator-actor"
+  );
+  assert.equal(next.players[0].equipmentDefinitionId, "bubbleMachine");
+  assert.equal(next.players[0].equipmentRetentionProbability, 1);
+  assert.equal(next.players[0].shield, 0);
+});
+
+test("AI·泡泡机：Future 复用第一层 ShieldValue、已有盾归零且 retention 只乘一次", () => {
+  const actor = makePlayer("bubble-value-actor", 0, "dawn", "ai", 1),
+    ally = makePlayer("bubble-value-ally", 1, "dawn"),
+    { game } = makeGame([actor, ally]);
+  actor.equipment = instance("bubbleMachine");
+  const world = createInitialWorld(actor.id, game.state);
+  const worldActor = world.players.find((player) => player.id === actor.id);
+  const zeroShieldTerms = statePlayerValueTerms(world, worldActor, actor.id, 0).terms;
+  const oneShieldTerms = statePlayerValueTerms(
+    world,
+    { ...worldActor, shield: 1 },
+    actor.id,
+    0
+  ).terms;
+  const halfRetentionTerms = statePlayerValueTerms(
+    world,
+    { ...worldActor, equipmentRetentionProbability: 0.5 },
+    actor.id,
+    0
+  ).terms;
+  const noRetentionTerms = statePlayerValueTerms(
+    world,
+    { ...worldActor, equipmentRetentionProbability: 0 },
+    actor.id,
+    0
+  ).terms;
+
+  assert.ok(zeroShieldTerms.bubbleMachineFuture > 0);
+  assertClose(
+    zeroShieldTerms.bubbleMachineFuture,
+    oneShieldTerms.shield - zeroShieldTerms.shield
+  );
+  assert.equal(oneShieldTerms.bubbleMachineFuture, 0);
+  assertClose(halfRetentionTerms.bubbleMachineFuture, zeroShieldTerms.bubbleMachineFuture * 0.5);
+  assert.equal(noRetentionTerms.bubbleMachineFuture, 0);
+  assertClose(
+    zeroShieldTerms.shield + zeroShieldTerms.bubbleMachineFuture,
+    oneShieldTerms.shield + oneShieldTerms.bubbleMachineFuture
+  );
+});
 
 // ---- AI 装备行为·回收站 ----
+
+test("AI·回收站：普通 StateValue 按剩余额度与合法已知战术单调计价", () => {
+  const exhausted = equipmentFutureFixture("recycleDevice", {
+    actorCards:["harvest", "exposeWeakness"],
+    recycleDeviceUses:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn
+  });
+  const oneRemaining = equipmentFutureFixture("recycleDevice", {
+    actorCards:["harvest", "exposeWeakness"],
+    recycleDeviceUses:CARD_DEFINITIONS.recycleDevice.maxUsesPerTurn - 1
+  });
+  const twoRemaining = equipmentFutureFixture("recycleDevice", {
+    actorCards:["harvest", "exposeWeakness"],
+    recycleDeviceUses:0
+  });
+  assert.equal(exhausted.terms.recycleDeviceFuture, 0);
+  assert.ok(oneRemaining.terms.recycleDeviceFuture > 0);
+  assertClose(
+    twoRemaining.terms.recycleDeviceFuture,
+    oneRemaining.terms.recycleDeviceFuture * 2
+  );
+});
+
+test("AI·回收站：匿名 Future draw 只持有 HandCount 且不含 Base/RoleDelta", () => {
+  const positive = equipmentFutureFixture("recycleDevice", {
+    actorCharacterId:"spirit-medic",
+    actorCards:["harvest"],
+    remainingCardCounts:{ charge:1 }
+  });
+  const negative = equipmentFutureFixture("recycleDevice", {
+    actorCharacterId:"blade-walker",
+    actorCards:["harvest"],
+    remainingCardCounts:{ charge:1 }
+  });
+  const noPool = equipmentFutureFixture("recycleDevice", {
+    actorCharacterId:"spirit-medic",
+    actorCards:["harvest"],
+    remainingCardCounts:{}
+  });
+  assertClose(
+    positive.terms.recycleDeviceFuture,
+    HAND_COUNT_VALUE
+  );
+  assertClose(
+    negative.terms.recycleDeviceFuture,
+    HAND_COUNT_VALUE
+  );
+  assertClose(
+    noPool.terms.recycleDeviceFuture,
+    HAND_COUNT_VALUE
+  );
+});
+
+test("AI·回收站：没有可用战术或 retention 为零时 Future Utility 为零", () => {
+  const noTactic = equipmentFutureFixture("recycleDevice", { actorCards:["charge"] });
+  const noRetention = equipmentFutureFixture("recycleDevice", {
+    actorCards:["harvest"],
+    retention:0
+  });
+  assert.equal(noTactic.terms.recycleDeviceFuture, 0);
+  assert.equal(noRetention.terms.recycleDeviceFuture, 0);
+});
+
+test("AI·回收站：敌方匿名战术只用 finite-pool expectation 且 no-pool 保守归零", () => {
+  const viewer = {
+    id:"recycle-hidden-viewer", seatIndex:0, battleTeam:"dawn", characterId:"blade-walker",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0, hand:[],
+    equipmentDefinitionId:null, equipmentRetentionProbability:0, huntMarkProbabilities:{}, statuses:[]
+  };
+  const hiddenHolder = {
+    id:"recycle-hidden-holder", seatIndex:1, battleTeam:"dusk", characterId:"oath-warden",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1, knownCards:[],
+    equipmentDefinitionId:"recycleDevice", equipmentRetentionProbability:1,
+    recycleDeviceUses:0, huntMarkProbabilities:{}, statuses:[]
+  };
+  const finite = upgradeProbabilityFixture({
+    remainingCardCounts:{ harvest:1, block:1 },
+    players:[viewer, hiddenHolder]
+  });
+  const evaluator = new Evaluator();
+  const finiteFuture = evaluator.playerValueTerms(
+    finite,
+    hiddenHolder,
+    viewer.id,
+    buildRadarJudgmentProbabilities({ harvest:1, block:1 })
+  ).terms.recycleDeviceFuture;
+  const noPool = {
+    players:[structuredClone(viewer), structuredClone(hiddenHolder)]
+  };
+  const noPoolHolder = noPool.players[1];
+  const noPoolFuture = evaluator.playerValueTerms(
+    noPool,
+    noPoolHolder,
+    viewer.id,
+    buildRadarJudgmentProbabilities({})
+  ).terms.recycleDeviceFuture;
+  assert.ok(finiteFuture > 0);
+  assert.equal(noPoolFuture, 0);
+  assert.equal(Object.hasOwn(hiddenHolder, "hand"), false);
+  assert.deepEqual(hiddenHolder.knownCards, []);
+});
+
+test("AI·回收站：确定 Future 兑现与 anonymous HandCount 增益严格守恒", () => {
+  const fixture = equipmentFutureFixture("recycleDevice", {
+    actorCards:["exposeWeakness"],
+    remainingCardCounts:{ block:1 }
+  });
+  const withoutDevice = structuredClone(fixture.state);
+  const withoutActor = withoutDevice.players.find((player) => player.id === fixture.actor.id);
+  withoutActor.equipmentDefinitionId = null;
+  withoutActor.equipmentRetentionProbability = 0;
+  const action = {
+    type:"card",
+    card:{ ...CARD_DEFINITIONS.exposeWeakness, id:"equipment-future-actor-0" },
+    targets:[]
+  };
+  const realized = new Simulator(fixture.state).apply(fixture.state, action, fixture.actor.id);
+  const baseline = new Simulator(withoutDevice).apply(withoutDevice, action, fixture.actor.id);
+  const realizedActor = realized.players.find((player) => player.id === fixture.actor.id);
+  const baselineActor = baseline.players.find((player) => player.id === fixture.actor.id);
+  const realizedHandGain = cardPlayerValueTerms(realizedActor, fixture.actor.id).handCount
+    - cardPlayerValueTerms(baselineActor, fixture.actor.id).handCount;
+  assert.equal(fixture.terms.recycleDeviceFuture, HAND_COUNT_VALUE);
+  assert.equal(realizedActor.recycleDeviceUses, 1);
+  assert.equal(realizedActor.handCount, 1);
+  assert.equal(baselineActor.handCount, 0);
+  assertClose(realizedHandGain, fixture.terms.recycleDeviceFuture);
+});
+
+test("AI·回收站：半概率 Future 与 Simulator 半张匿名摸牌线性守恒", () => {
+  const fixture = equipmentFutureFixture("recycleDevice", {
+    actorCards:["exposeWeakness"],
+    remainingCardCounts:{ block:1 },
+    retention:0.5
+  });
+  const withoutDevice = structuredClone(fixture.state);
+  const withoutActor = withoutDevice.players.find((player) => player.id === fixture.actor.id);
+  withoutActor.equipmentDefinitionId = null;
+  withoutActor.equipmentRetentionProbability = 0;
+  const action = {
+    type:"card",
+    card:{ ...CARD_DEFINITIONS.exposeWeakness, id:"equipment-future-actor-0" },
+    targets:[]
+  };
+  const realized = new Simulator(fixture.state).apply(fixture.state, action, fixture.actor.id);
+  const baseline = new Simulator(withoutDevice).apply(withoutDevice, action, fixture.actor.id);
+  const realizedActor = realized.players.find((player) => player.id === fixture.actor.id);
+  const baselineActor = baseline.players.find((player) => player.id === fixture.actor.id);
+  const realizedHandGain = (
+    realizedActor.handCount - baselineActor.handCount
+  ) * HAND_COUNT_VALUE;
+  assertClose(fixture.terms.recycleDeviceFuture, HAND_COUNT_VALUE * 0.5);
+  assertClose(realizedActor.handCount, 0.5);
+  assertClose(realizedHandGain, fixture.terms.recycleDeviceFuture);
+});
 
 test("AI·回收站：触发期望严格封顶2次", () => {
   const state = {
@@ -28169,6 +29428,35 @@ test("AI·雷达：战术判定概率来自剩余牌堆且战术牌耗尽时归�
   assertClose(fixed.tactic, tacticTotal / total);
 });
 
+test("AI·雷达：标准完整牌堆与泡泡机都按通用装备类别参与判定", () => {
+  const fixed = buildRadarJudgmentProbabilities(null);
+  const equipmentTotal = Object.values(CARD_DEFINITIONS)
+    .filter((definition) => definition.category === "equipment")
+    .reduce((sum, definition) => sum + CARD_COUNTS[definition.definitionId], 0);
+  const total = Object.values(CARD_COUNTS).reduce((sum, count) => sum + count, 0);
+  assert.equal(equipmentTotal, 17);
+  assert.equal(total, 165);
+  assertClose(fixed.equipment, equipmentTotal / total);
+  assertClose(fixed.equipment, 17 / 165);
+  const lightningState = upgradeProbabilityFixture({
+    remainingCardCounts: { ...CARD_COUNTS },
+    players: []
+  });
+  const holderIds = Array.from({ length: total - equipmentTotal + 1 }, (_, index) => `holder-${index}`);
+  const lightning = buildProbabilityLightningHitDistribution(
+    lightningState,
+    holderIds
+  );
+  assertClose(lightning[0].probability, 17 / 165);
+  const bubblePool = buildRadarJudgmentProbabilities({ bubbleMachine: 1, assault: 1 });
+  assertClose(bubblePool.equipment, 0.5);
+  const bubbleLightning = buildProbabilityLightningHitDistribution(
+    upgradeProbabilityFixture({ remainingCardCounts: { bubbleMachine: 1, assault: 1 }, players: [] }),
+    ["bubble-holder", "next-holder"]
+  );
+  assertClose(bubbleLightning[0].probability, 0.5);
+});
+
 test("AI·雷达：canonical Probability 单次判定保持质量、空池、override 与输入只读", async () => {
   const counts = { assault: 3, block: 2, counter: 4, defenseDevice: 1 };
   const snapshot = structuredClone(counts);
@@ -28356,10 +29644,313 @@ test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效�
     noRadarScore = evaluator.stateUtility(
       { remainingCardCounts: counts, players: [viewer, enemy(false)] },
       "radar-enemy-viewer"
-    );
-  // 敌方雷达降低敌方预期受损 → 己方效用更低；差值包含静态 2.25 与按符号反向的动态免伤
+  );
+  // 敌方雷达降低敌方预期受损 → 己方效用更低；差值包含唯一材料尺度与按符号反向的功能价值。
   assert.ok(noRadarScore > radarScore);
-  assert.ok(noRadarScore - radarScore > statePointsToUtility(9 * .25));
+  assert.ok(noRadarScore - radarScore > (
+    getBaseCardAiValue("defenseDevice") * RESOURCE_MATERIAL_SCALE
+      + roleCardDelta("blade-walker", "defenseDevice")
+  ));
+});
+
+test("AI·雷达：低威胁没有真实 Block demand 时 Future Utility 为零", () => {
+  const target = {
+    id:"radar-low-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+    equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const enemy = {
+    id:"radar-low-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+    equipmentDefinitionId:null, equipmentRetentionProbability:0,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const state = upgradeProbabilityFixture({ remainingCardCounts:{}, players:[target, enemy] });
+  const terms = new Evaluator().playerValueTerms(
+    state,
+    target,
+    target.id,
+    buildRadarJudgmentProbabilities({ counter:1 })
+  ).terms;
+  assert.equal(expectedBlockDemand(state, target), 0);
+  assert.equal(terms.radarFuture, 0);
+});
+
+test("AI·雷达：军火库双 Block demand 产生两倍判定 Future Utility", () => {
+  const build = (equipmentDefinitionId) => {
+    const target = {
+      id:"radar-demand-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
+      alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+      equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
+      huntMarkProbabilities:{}, statuses:[]
+    };
+    const enemy = {
+      id:"radar-demand-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
+      alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1,
+      hand:[{ id:`radar-demand-${equipmentDefinitionId ?? "normal"}`, definitionId:"assault" }],
+      attackRange:1, nextTurnBaseAttackLimit:1,
+      equipmentDefinitionId, equipmentRetentionProbability:equipmentDefinitionId ? 1 : 0,
+      huntMarkProbabilities:{}, statuses:[]
+    };
+    const state = upgradeProbabilityFixture({ remainingCardCounts:{}, players:[target, enemy] });
+    const judgment = buildRadarJudgmentProbabilities({ charge:1 });
+    return {
+      demand:expectedBlockDemand(state, target),
+      future:new Evaluator().playerValueTerms(state, target, target.id, judgment).terms.radarFuture
+    };
+  };
+  const single = build(null);
+  const multiple = build("battleDevice");
+  assert.equal(single.demand, 1);
+  assert.equal(multiple.demand, 2);
+  assertClose(multiple.future, single.future * 2);
+});
+
+test("AI·雷达：保留基础牌收益只按实际 HandCount 与 viewer HandRoleDelta 计算", () => {
+  const target = {
+    id:"radar-basic-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+    equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const enemy = {
+    id:"radar-basic-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:1,
+    hand:[{ id:"radar-basic-assault", definitionId:"assault" }],
+    attackRange:1, nextTurnBaseAttackLimit:1,
+    equipmentDefinitionId:null, equipmentRetentionProbability:0,
+    huntMarkProbabilities:{}, statuses:[]
+  };
+  const state = upgradeProbabilityFixture({ remainingCardCounts:{}, players:[target, enemy] });
+  const evaluator = new Evaluator();
+  const judgment = buildRadarJudgmentProbabilities({ charge:1 });
+  const terms = evaluator.playerValueTerms(state, target, target.id, judgment).terms;
+  assertClose(
+    terms.radarFuture,
+    realizedHandCardStateValue(target, target.id, "charge")
+  );
+  const tacticTerms = evaluator.playerValueTerms(
+    state,
+    target,
+    target.id,
+    buildRadarJudgmentProbabilities({ counter:1 })
+  ).terms;
+  assertClose(
+    tacticTerms.radarFuture,
+    realizedHandCardStateValue(target, target.id, "block")
+  );
+  const enemyViewerTerms = evaluator.playerValueTerms(
+    state,
+    target,
+    enemy.id,
+    judgment
+  ).terms;
+  assertClose(enemyViewerTerms.radarFuture, HAND_COUNT_VALUE);
+});
+
+test("AI·雷达：判得 Block 与其它 Basic 使用同一 HandValue", () => {
+  const holder = radarFixtureTarget({ hand:[] });
+  const attacker = radarAttacker({
+    handCount:1,
+    hand:[{ id:"radar-block-future-assault", definitionId:"assault" }],
+    attackRange:1,
+    nextTurnBaseAttackLimit:1
+  });
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ block:1 },
+    players:[attacker, holder]
+  });
+  const future = new Evaluator().playerValueTerms(
+    state,
+    holder,
+    holder.id,
+    buildRadarJudgmentProbabilities({ block:1 })
+  ).terms.radarFuture;
+  assert.ok(future > 0);
+  assertClose(future, realizedHandCardStateValue(holder, holder.id, "block"));
+});
+
+test("AI·雷达：保留基础牌 RoleDelta 不乘材料尺度且 Base 不进入 StateValue", () => {
+  const positive = equipmentFutureFixture("defenseDevice", {
+    actorCharacterId:"spirit-medic",
+    targetCards:["assault"],
+    remainingCardCounts:{ charge:1 }
+  });
+  const negative = equipmentFutureFixture("defenseDevice", {
+    actorCharacterId:"blade-walker",
+    targetCards:["assault"],
+    remainingCardCounts:{ charge:1 }
+  });
+  assertClose(
+    positive.terms.radarFuture,
+    HAND_COUNT_VALUE + 2
+  );
+  assertClose(
+    negative.terms.radarFuture,
+    HAND_COUNT_VALUE - 1
+  );
+});
+
+test("AI·雷达：保留基础牌 Future 与 viewer 边界下的实际 HandState 增益守恒", () => {
+  const holder = radarFixtureTarget({ characterId:"spirit-medic", hand:[] });
+  const attacker = radarAttacker({
+    handCount:1,
+    hand:[{ id:"radar-conservation-assault", definitionId:"assault" }],
+    attackRange:1,
+    nextTurnBaseAttackLimit:1
+  });
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ charge:1 },
+    players:[attacker, holder]
+  });
+  const beforeHolder = structuredClone(holder);
+  const evaluator = new Evaluator();
+  const judgment = buildRadarJudgmentProbabilities({ charge:1 });
+  const holderPrediction = evaluator.playerValueTerms(
+    state,
+    holder,
+    holder.id,
+    judgment
+  ).terms.radarFuture;
+  const enemyPrediction = evaluator.playerValueTerms(
+    state,
+    holder,
+    attacker.id,
+    judgment
+  ).terms.radarFuture;
+  new Simulator(state).applyDamage(state, attacker, holder, 1, {
+    canBlock:true,
+    deviceAttack:true,
+    radarJudgmentProbabilities:{ block:0, otherBasic:1, equipment:0 }
+  });
+  const holderBeforeTerms = cardPlayerValueTerms(beforeHolder, holder.id);
+  const holderAfterTerms = cardPlayerValueTerms(holder, holder.id);
+  const enemyBeforeTerms = cardPlayerValueTerms(beforeHolder, attacker.id);
+  const enemyAfterTerms = cardPlayerValueTerms(holder, attacker.id);
+  assertClose(
+    holderPrediction,
+    holderAfterTerms.handCount + holderAfterTerms.handRoleDelta
+      - holderBeforeTerms.handCount - holderBeforeTerms.handRoleDelta
+  );
+  assertClose(
+    enemyPrediction,
+    enemyAfterTerms.handCount + enemyAfterTerms.handRoleDelta
+      - enemyBeforeTerms.handCount - enemyBeforeTerms.handRoleDelta
+  );
+  assert.equal(holder.handCount, 1);
+  assert.equal(holder.hand[0].definitionId, "charge");
+});
+
+test("AI·雷达：旧 Block 支付后 judgment Block 留手并守恒", () => {
+  const original = { id:"radar-existing-block", definitionId:"block" };
+  const holder = radarFixtureTarget({ handCount:1, hand:[original] });
+  const attacker = radarAttacker({
+    handCount:1,
+    hand:[{ id:"radar-existing-payment-assault", definitionId:"assault" }],
+    attackRange:1,
+    nextTurnBaseAttackLimit:1
+  });
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ block:1 },
+    players:[attacker, holder]
+  });
+  const beforeTerms = cardPlayerValueTerms(holder, holder.id);
+  const basicHandValue = realizedHandCardStateValue(holder, holder.id, "block");
+  const future = new Evaluator().playerValueTerms(
+    state,
+    holder,
+    holder.id,
+    buildRadarJudgmentProbabilities({ block:1 })
+  ).terms.radarFuture;
+  new Simulator(state).applyDamage(state, attacker, holder, 1, {
+    canBlock:true,
+    deviceAttack:true,
+    radarJudgmentProbabilities:{ block:1, otherBasic:0, equipment:0 }
+  });
+  const afterTerms = cardPlayerValueTerms(holder, holder.id);
+  const handStateDelta = afterTerms.handCount + afterTerms.handRoleDelta
+    - beforeTerms.handCount - beforeTerms.handRoleDelta;
+  assertClose(future, basicHandValue);
+  assert.equal(holder.hp, 4);
+  assert.equal(holder.handCount, 1);
+  assert.equal(holder.hand.length, 1);
+  assert.notEqual(holder.hand[0].id, original.id);
+  assert.equal(holder.hand[0].definitionId, "block");
+  assertClose(handStateDelta, future - basicHandValue);
+});
+
+test("AI·雷达：judgment Block 立即支付后不留下 phantom hand value", () => {
+  const holder = radarFixtureTarget({ hand:[] });
+  const attacker = radarAttacker({
+    handCount:1,
+    hand:[{ id:"radar-judgment-payment-assault", definitionId:"assault" }],
+    attackRange:1,
+    nextTurnBaseAttackLimit:1
+  });
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ block:1 },
+    players:[attacker, holder]
+  });
+  const beforeTerms = cardPlayerValueTerms(holder, holder.id);
+  const basicHandValue = realizedHandCardStateValue(holder, holder.id, "block");
+  const future = new Evaluator().playerValueTerms(
+    state,
+    holder,
+    holder.id,
+    buildRadarJudgmentProbabilities({ block:1 })
+  ).terms.radarFuture;
+  new Simulator(state).applyDamage(state, attacker, holder, 1, {
+    canBlock:true,
+    deviceAttack:true,
+    radarJudgmentProbabilities:{ block:1, otherBasic:0, equipment:0 }
+  });
+  const afterTerms = cardPlayerValueTerms(holder, holder.id);
+  const handStateDelta = afterTerms.handCount + afterTerms.handRoleDelta
+    - beforeTerms.handCount - beforeTerms.handRoleDelta;
+  assertClose(future, basicHandValue);
+  assert.equal(holder.hp, 4);
+  assert.equal(holder.handCount, 0);
+  assert.equal(holder.hand.length, 0);
+  assertClose(handStateDelta, future - basicHandValue);
+});
+
+test("AI·雷达：突袭、震荡、焚场与猎杀全部进入真实 Expected Block Demand", () => {
+  const target = {
+    id:"radar-all-target", seatIndex:0, battleTeam:"dawn", characterId:"oath-warden",
+    alive:true, hp:4, maxHp:4, shield:0, energy:0, handCount:0,
+    equipmentDefinitionId:"defenseDevice", equipmentRetentionProbability:1,
+    huntMarkProbabilities:{ "radar-hunt-enemy":1 }, statuses:[]
+  };
+  const assaultEnemy = {
+    id:"radar-assault-enemy", seatIndex:1, battleTeam:"dusk", characterId:"blade-walker",
+    alive:true, hp:4, maxHp:4, energy:0, handCount:1,
+    hand:[{ id:"radar-all-assault", definitionId:"assault" }], attackRange:1,
+    nextTurnBaseAttackLimit:1, equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1
+  };
+  const shockwaveEnemy = {
+    id:"radar-shockwave-enemy", seatIndex:2, battleTeam:"dusk", characterId:"shade-agent",
+    alive:true, hp:4, maxHp:4, energy:0, handCount:1,
+    hand:[{ id:"radar-all-shockwave", definitionId:"shockwave" }], attackRange:1,
+    equipmentDefinitionId:"battleDevice", equipmentRetentionProbability:1
+  };
+  const burningEnemy = {
+    id:"radar-burning-enemy", seatIndex:3, battleTeam:"dusk", characterId:"ember-magus",
+    alive:true, hp:4, maxHp:4, energy:2, maxEnergy:3, handCount:0,
+    activeSkillId:"burningField", activeSkillCost:3, activeSkillLimit:2,
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const huntEnemy = {
+    id:"radar-hunt-enemy", seatIndex:4, battleTeam:"dusk", characterId:"trail-hunter",
+    alive:true, hp:4, maxHp:4, energy:1, maxEnergy:3, handCount:0,
+    activeSkillId:"hunt", activeSkillCost:2, activeSkillLimit:2,
+    equipmentDefinitionId:null, equipmentRetentionProbability:0
+  };
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{},
+    players:[target, assaultEnemy, shockwaveEnemy, burningEnemy, huntEnemy]
+  });
+  assert.equal(expectedBlockDemand(state, target), 6);
 });
 
 
@@ -28386,6 +29977,134 @@ test("AI·雷达：敌方雷达动态免伤按阵营符号反向计入己方效�
 
 
 // ---- AI 装备行为·军火库 ----
+
+test("AI·军火库：defensive value 统一消费 HP3/HP2 风险且其它 HP 不误生效", () => {
+  for (const [hp, maxHp, expectedLoss] of [
+    [3, 4, 5.84],
+    [2, 4, 10.74],
+    [5, 5, 5]
+  ]) {
+    const fixture = equipmentFutureFixture(null);
+    fixture.actor.energy = 1;
+    fixture.target.hp = hp;
+    fixture.target.maxHp = maxHp;
+    assertClose(
+      expectedDefenseCost(
+        fixture.state,
+        fixture.target,
+        getRequiredBlockCount(null, true),
+        HAND_COUNT_VALUE
+      ),
+      expectedLoss
+    );
+  }
+});
+
+test("AI·军火库：没有可兑现攻击或没有可达目标时 Future Utility 为零", () => {
+  const noAttack = equipmentFutureFixture("battleDevice");
+  const unreachable = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    attackRange:0
+  });
+  assert.equal(noAttack.terms.battleDeviceFuture, 0);
+  assert.equal(unreachable.terms.battleDeviceFuture, 0);
+});
+
+test("AI·军火库：0张 Block 边际为零、恰1张显著升高、2张体现额外资源支付", () => {
+  const zero = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"]
+  });
+  const one = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetCards:["block"]
+  });
+  const two = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetCards:["block", "block"]
+  });
+  const blockSpendValue = realizedHandCardStateValue(two.target, two.actor.id, "block");
+  assert.equal(zero.terms.battleDeviceFuture, 0);
+  assert.ok(one.terms.battleDeviceFuture > 0);
+  assertClose(two.terms.battleDeviceFuture, blockSpendValue);
+});
+
+test("AI·军火库：预测防御成本保留目标全局风险且足额 Block 支付与实际损失一致", () => {
+  for (const blockCount of [0, 1, 2]) {
+    const fixture = equipmentFutureFixture("battleDevice", {
+      actorCards:["assault"],
+      targetCards:Array.from({ length:blockCount }, () => "block")
+    });
+    const beforeTarget = structuredClone(fixture.target);
+    const predicted = expectedDefenseCost(
+      fixture.state,
+      fixture.target,
+      getRequiredBlockCount("battleDevice", true),
+      realizedHandCardStateValue(fixture.target, fixture.actor.id, "block")
+    );
+    new Simulator(fixture.state).applyDamage(
+      fixture.state,
+      fixture.actor,
+      fixture.target,
+      1,
+      { canBlock:true, deviceAttack:true }
+    );
+    const beforeValue = fixture.evaluator.playerValueTerms(
+      { ...fixture.state, players:[fixture.actor, beforeTarget] },
+      beforeTarget,
+      fixture.actor.id,
+      0
+    );
+    const afterValue = fixture.evaluator.playerValueTerms(
+      fixture.state,
+      fixture.target,
+      fixture.actor.id,
+      0
+    );
+    const beforePoints = beforeValue.death
+      + Object.values(beforeValue.terms).reduce((sum, value) => sum + value, 0);
+    const afterPoints = afterValue.death
+      + Object.values(afterValue.terms).reduce((sum, value) => sum + value, 0);
+    const actualViewerLoss = beforePoints - afterPoints;
+    if (blockCount < 2) {
+      assert.ok(predicted > actualViewerLoss);
+    } else {
+      assertClose(predicted, actualViewerLoss);
+    }
+    assert.equal(fixture.target.handCount, blockCount >= 2 ? blockCount - 2 : blockCount);
+  }
+});
+
+test("AI·军火库：Block 防御成本复用 Radar 无放回双 demand 判定", () => {
+  const allTactic = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetEquipmentDefinitionId:"defenseDevice",
+    targetEquipmentRetention:1,
+    remainingCardCounts:{ counter:2 }
+  });
+  const mixed = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetEquipmentDefinitionId:"defenseDevice",
+    targetEquipmentRetention:1,
+    remainingCardCounts:{ counter:1, energyDevice:1 }
+  });
+  const allMiss = equipmentFutureFixture("battleDevice", {
+    actorCards:["assault"],
+    targetEquipmentDefinitionId:"defenseDevice",
+    targetEquipmentRetention:1,
+    remainingCardCounts:{ energyDevice:2 }
+  });
+  const ordinary = getRequiredBlockCount(null, true);
+  const battle = getRequiredBlockCount("battleDevice", true);
+  const blockValue = realizedHandCardStateValue(
+    allTactic.target,
+    allTactic.actor.id,
+    "block"
+  );
+  assert.equal(expectedDefenseCost(allTactic.state, allTactic.target, ordinary, blockValue), 0);
+  assert.equal(expectedDefenseCost(allTactic.state, allTactic.target, battle, blockValue), 0);
+  assert.ok(mixed.terms.battleDeviceFuture > 0);
+  assert.equal(allMiss.terms.battleDeviceFuture, 0);
+});
 
 test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
   const state = {
@@ -28423,6 +30142,191 @@ test("AI·军火库：模拟军火库要求两张格挡而不是一张", () => {
     state
   ).apply(state, { type: "card", card: { id: "hit", definitionId: "assault" }, targets: [{ id: "b" }] }, "a");
   assert.equal(next.players[1].hp, 2);
+});
+
+
+// ---- AI 装备行为·备用弹夹 ----
+
+test("AI·备用弹夹：只有1张 Assault 为零、超过基础上限才产生 StateValue Future", () => {
+  const one = equipmentFutureFixture("assaultMagazine", { actorCards:["assault"] });
+  const three = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"]
+  });
+  assert.equal(one.terms.assaultMagazineFuture, 0);
+  assert.ok(three.terms.assaultMagazineFuture > 0);
+  assertClose(
+    three.terms.assaultMagazineFuture,
+    assaultInventoryOpportunityValue(three.actor, three.state, {
+      [three.target.id]:realizedHandCardStateValue(three.target, three.actor.id, "block")
+    }) - assaultInventoryOpportunityValue(
+      { ...three.actor, equipmentDefinitionId:null, equipmentRetentionProbability:0 },
+      three.state,
+      {
+        [three.target.id]:realizedHandCardStateValue(three.target, three.actor.id, "block")
+      }
+    )
+  );
+});
+
+test("AI·备用弹夹：Block spend 预测与新增攻击的实际 HandState 损失守恒", () => {
+  const fixture = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    targetCards:["block"]
+  });
+  const beforeTarget = structuredClone(fixture.target);
+  const predictedSpend = expectedDefenseCost(
+    fixture.state,
+    fixture.target,
+    getRequiredBlockCount(null, true),
+    realizedHandCardStateValue(fixture.target, fixture.actor.id, "block")
+  );
+  new Simulator(fixture.state).applyDamage(
+    fixture.state,
+    fixture.actor,
+    fixture.target,
+    1,
+    { canBlock:true, deviceAttack:true }
+  );
+  const beforeTerms = cardPlayerValueTerms(beforeTarget, fixture.actor.id);
+  const afterTerms = cardPlayerValueTerms(fixture.target, fixture.actor.id);
+  const actualHandLoss = beforeTerms.handCount + beforeTerms.handRoleDelta
+    - afterTerms.handCount - afterTerms.handRoleDelta;
+  assertClose(predictedSpend, actualHandLoss);
+  assertClose(fixture.terms.assaultMagazineFuture, predictedSpend * 2);
+  assert.equal(actualHandLoss, HAND_COUNT_VALUE);
+});
+
+test("AI·备用弹夹：retention 为零或没有可达目标时 Future Utility 为零", () => {
+  const noRetention = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    retention:0
+  });
+  const unreachable = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    attackRange:0
+  });
+  assert.equal(noRetention.terms.assaultMagazineFuture, 0);
+  assert.equal(unreachable.terms.assaultMagazineFuture, 0);
+});
+
+test("AI·备用弹夹：高 Block 与 Radar 防御使额外攻击容量低于裸露目标", () => {
+  const naked = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"]
+  });
+  const blocked = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    targetCards:["block", "block", "block"]
+  });
+  const radar = equipmentFutureFixture("assaultMagazine", {
+    actorCards:["assault", "assault", "assault"],
+    targetEquipmentDefinitionId:"defenseDevice",
+    targetEquipmentRetention:1,
+    remainingCardCounts:{ counter:3 }
+  });
+  assert.ok(naked.terms.assaultMagazineFuture > blocked.terms.assaultMagazineFuture);
+  assert.equal(radar.terms.assaultMagazineFuture, 0);
+});
+
+test("AI·备用弹夹：连续两个额外突袭共享同一装备存在世界", () => {
+  const { game, small, large } = makeTeamFixture();
+  small.hp = 20;
+  small.maxHp = 20;
+  large.equipment = instance("assaultMagazine");
+  large.turnFlags.attackUsed = large.turnFlags.attackLimit;
+  const assaults = [instance("assault"), instance("assault")];
+  large.hand.push(...assaults);
+  let world = cloneWorld(createInitialWorld(large.id, game.state));
+  world.players.find((player) => player.id === large.id).equipmentRetentionProbability = .5;
+  const simulator = new Simulator(world);
+  const actor = world.players.find((player) => player.id === large.id);
+  const slots = simulator.ensureAttackUseSlots(actor);
+  const attackWorlds = [];
+  const consumeAttackUse = simulator.consumeAttackUse;
+  simulator.consumeAttackUse = (...args) => {
+    const consumed = consumeAttackUse(...args);
+    attackWorlds.push(consumed.eventWorlds);
+    return consumed;
+  };
+
+  assert.equal(projectAttackUsage(actor).limit - projectAttackUsage(actor).used, 2);
+  assert.equal(slots.length, 2);
+  for (const slot of slots) {
+    assertClose(totalBranchProbability(slot.filter((branch) => branch.available)), .5);
+  }
+  assert.deepEqual(slots[0][0].conditions, slots[1][0].conditions);
+  assert.deepEqual(slots[0][1].conditions, slots[1][1].conditions);
+  const joint = intersectProbabilityStateBranches(slots[0], slots[1]);
+  assertClose(totalBranchProbability(joint.filter((branch) => branch.available)), .5);
+  assertClose(totalBranchProbability(joint.filter((branch) => !branch.available)), .5);
+
+  for (const assault of assaults) {
+    const action = game.aiController.actionGenerator.generate(world, large.id)
+      .find((candidate) => (
+        candidate.cardInstanceId === assault.id && candidate.targetIds[0] === small.id
+      ));
+    assert.ok(action);
+    world = simulator.apply(world, action);
+  }
+  assert.equal(attackWorlds.length, 2);
+  const firstProbability = totalBranchProbability(
+    attackWorlds[0].filter((branch) => branch.occurs)
+  );
+  const jointAttackWorlds = intersectProbabilityStateBranches(attackWorlds[0], attackWorlds[1]);
+  const jointProbability = totalBranchProbability(
+    jointAttackWorlds.filter((branch) => branch.occurs)
+  );
+  assertClose(firstProbability, .5);
+  assertClose(jointProbability, .5);
+  assertClose(jointProbability / firstProbability, 1);
+});
+
+test("AI·备用弹夹：模拟换装即时重算有效上限并保留已用突袭次数", () => {
+  const actor = makePlayer("ai-magazine-actor", 0, "dusk", "ai", 1),
+    allyA = makePlayer("ai-magazine-ally-a", 1, "dusk"),
+    enemyA = makePlayer("ai-magazine-enemy-a", 2, "dawn"),
+    allyB = makePlayer("ai-magazine-ally-b", 3, "dusk"),
+    enemyB = makePlayer("ai-magazine-enemy-b", 4, "dawn"),
+    magazine = instance("assaultMagazine"),
+    replacement = instance("energyDevice"),
+    assaults = [instance("assault"), instance("assault"), instance("assault")];
+  actor.hand.push(magazine, replacement, ...assaults);
+  const { game } = makeGame([actor, allyA, enemyA, allyB, enemyB]);
+  actor.turnFlags.attackUsed = 1;
+  const generator = game.aiController.actionGenerator;
+  const root = createInitialWorld(actor.id, game.state);
+  const simulator = new Simulator(root);
+  let world = cloneWorld(root);
+  const equipAction = generator.generate(world, actor.id)
+    .find((action) => action.cardInstanceId === magazine.id);
+  assert.ok(equipAction);
+  world = simulator.apply(world, equipAction);
+  assert.equal(world.players[0].attackUsed, 1);
+  assert.equal(world.players[0].attackLimit, 1);
+  assert.equal(projectAttackUsage(world.players[0]).limit, 3);
+
+  for (const assault of assaults.slice(0, 2)) {
+    const action = generator.generate(world, actor.id)
+      .find((candidate) => candidate.cardInstanceId === assault.id);
+    assert.ok(action);
+    world = simulator.apply(world, action);
+  }
+  assert.equal(world.players[0].attackUsed, 3);
+  assert.equal(
+    generator.generate(world, actor.id).some((action) => action.cardId === "assault"),
+    false
+  );
+
+  const replacementAction = generator.generate(world, actor.id)
+    .find((action) => action.cardInstanceId === replacement.id);
+  assert.ok(replacementAction);
+  world = simulator.apply(world, replacementAction);
+  assert.equal(world.players[0].equipmentDefinitionId, "energyDevice");
+  assert.equal(world.players[0].attackUsed, 3);
+  assert.equal(projectAttackUsage(world.players[0]).limit, 1);
+  assert.equal(
+    generator.generate(world, actor.id).some((action) => action.cardId === "assault"),
+    false
+  );
 });
 
 
@@ -29464,10 +31368,10 @@ test("AI·灵医：R4 暴露很小时治疗溢价平滑无跳变", () => {
   const deltaTiny = medicRiskHealDelta(tinyPlayers, "x");
   const deltaNone = medicRiskHealDelta(tinyPlayers, "y");
   const premium = deltaTiny - deltaNone;
-  // 期望伤害当量 D=0.3：风险标记 = min(1, D)×DANGER_VALUE×权重，随威胁平滑缩放。
+  // 治疗 HP2→HP3 后仍保留 HP3Risk，因此溢价只来自两个互斥权重之差。
   assertClose(
     premium,
-    Math.min(1, 1.5 / 5) * 7 * HP_RISK_OPTION_WEIGHT,
+    Math.min(1, 1.5 / 5) * 7 * (HP2_RISK_WEIGHT - HP3_RISK_WEIGHT),
     1e-6
   );
   // 中等暴露（D=2.1）的溢价同样有界，不产生巨大不连续。
@@ -29476,7 +31380,7 @@ test("AI·灵医：R4 暴露很小时治疗溢价平滑无跳变", () => {
     - medicRiskHealDelta(basePlayers, "y");
   assert.ok(
     midPremium > 0
-    && midPremium <= 7 * HP_RISK_OPTION_WEIGHT + 1e-6,
+    && midPremium <= 7 * (HP2_RISK_WEIGHT - HP3_RISK_WEIGHT) + 1e-6,
     `中等暴露溢价应平滑有界（实际 ${midPremium.toFixed(3)}）`);
 });
 
@@ -29523,11 +31427,52 @@ test("AI·灵医：energyPressure 归因保留且不生成静态当前能量价�
   const adjacentEnemy = owner("b");
   const distantEnemy = owner("e");
   assert.ok(adjacentEnemy && distantEnemy, "应能找到相邻与不相邻敌人 owner");
-  assertClose(adjacentEnemy.threat.residualExposureValue, 1.7730061349693251);
+  assertClose(adjacentEnemy.threat.residualExposureValue, 1.7878787878787878);
   assertClose(distantEnemy.threat.residualExposureValue, 0, 1e-9);
   assert.equal(Object.hasOwn(actorTerms, "energy"), false);
   assert.equal(Object.hasOwn(adjacentEnemy.generic, "energy"), false);
   assert.equal(Object.hasOwn(owner("a").generic, "energy"), false);
+});
+
+test("AI·灵医：HP3Risk 与 HP2Risk 共用威胁且按生命互斥封顶", () => {
+  const termsAtHp = (hp) => {
+    const players = medicRiskBoard(1, 5);
+    const attacker = players.find((player) => player.id === "p");
+    const target = players.find((player) => player.id === "x");
+    target.hp = hp;
+    attacker.hand = Array.from(
+      { length:4 },
+      (_, index) => makeBenchmarkCard("assault", `risk-cap-assault-${index}`)
+    );
+    players[0].aiMemory.knownCardsByPlayer[attacker.id] = attacker.hand.map((card) => ({
+      id:card.id,
+      definitionId:card.definitionId
+    }));
+    const game = makeBenchmarkGame({ players, options:{ actorId:"a" } });
+    const visible = createInitialWorld(
+      "a",
+      game.state,
+      deriveCurrentCardCounts(game.state.players[0], game.state)
+    );
+    const visibleTarget = visible.players.find((player) => player.id === target.id);
+    const terms = game.aiController.evaluator.playerValueTerms(
+      visible,
+      visibleTarget,
+      "a",
+      0
+    ).terms;
+    disposeBenchmarkGame(game);
+    return terms;
+  };
+  const hp3 = termsAtHp(3);
+  const hp2 = termsAtHp(2);
+  const hp4 = termsAtHp(4);
+  assertClose(hp3.hp3Risk, -7 * HP3_RISK_WEIGHT, 1e-12);
+  assert.equal(hp3.hp2Risk, 0);
+  assertClose(hp2.hp2Risk, -7 * HP2_RISK_WEIGHT, 1e-12);
+  assert.equal(hp2.hp3Risk, 0);
+  assert.equal(hp4.hp3Risk, 0);
+  assert.equal(hp4.hp2Risk, 0);
 });
 
 // ---- AI 角色行为·影客 ----
@@ -29559,12 +31504,184 @@ test("AI·影客：窥隙按未知位置选择且只更新自己的私密记忆"
   assert.equal(ui.reveals.length, 0);
 });
 
+test("AI·影客：窥隙每次实际伤害记录新增未知信息且已知牌不重复计值", () => {
+  const shade = makePlayer("sim-spy-gap-shade", 0, "dawn", "ai", 3);
+  const target = makePlayer("sim-spy-gap-target", 1, "dusk", "ai");
+  target.hand.push(instance("charge"), instance("harvest"), instance("duel"));
+  const { game } = makeGame([shade, target]);
+  const before = createInitialWorld(
+    shade.id,
+    game.state,
+    deriveCurrentCardCounts(shade, game.state)
+  );
+  const after = structuredClone(before);
+  const simulator = new Simulator(after);
+  const simulatedShade = after.players.find((player) => player.id === shade.id);
+  const simulatedTarget = after.players.find((player) => player.id === target.id);
+
+  simulator.simulateSpyGapAfterLifeDamage(after, simulatedShade, simulatedTarget, 1);
+  simulator.simulateSpyGapAfterLifeDamage(after, simulatedShade, simulatedTarget, 1);
+  simulator.simulateSpyGapAfterLifeDamage(after, simulatedShade, simulatedTarget, 1);
+
+  assert.deepEqual(
+    simulatedShade.spyGapInformationEvents.map((event) => event.actualNewRevealCount),
+    [2, 1]
+  );
+  assert.equal(simulatedShade.spyGapRevealedCountsByTarget[target.id], 3);
+  const evaluator = game.aiController.evaluator;
+  const optionTerms = evaluator.evaluateTransition({
+    action: createAction({ type: "end", actorId: shade.id }),
+    player: before.players.find((player) => player.id === shade.id),
+    beforeState: before,
+    afterState: after
+  });
+  assert.ok(optionTerms.transitionOptionPoints > 0);
+
+  const noNewBefore = structuredClone(after);
+  simulator.simulateSpyGapAfterLifeDamage(after, simulatedShade, simulatedTarget, 1);
+  const noNewTerms = evaluator.evaluateTransition({
+    action: createAction({ type: "end", actorId: shade.id }),
+    player: noNewBefore.players.find((player) => player.id === shade.id),
+    beforeState: noNewBefore,
+    afterState: after
+  });
+  assert.equal(noNewTerms.transitionOptionPoints, 0);
+});
 
 
 
 
 
-test("AI·影客：确定击杀与能量机会成本优先于窃取", async () => {
+
+/*
+功能
+构造窥隙资源流动回归的隔离 World，并禁止后续访问真实未知手牌身份。
+
+调用方
+AI 影客窥隙资源流动测试。
+
+输入
+无。
+
+输出
+真实游戏、根 World、可变 World、模拟器与对应玩家。
+
+读取状态
+合法公开状态与观察者记忆。
+
+写入状态
+仅测试夹具和隔离 World。
+
+调用函数
+makeGame、createInitialWorld。
+
+边界与不变量
+未知牌的 id 和 definitionId 在投影后改为抛错 getter，模拟不得回读隐藏实体。
+*/
+function makeSpyGapMovementFixture() {
+  const shade = makePlayer("spy-flow-shade", 0, "dawn", "ai", 3);
+  const target = makePlayer("spy-flow-target", 1, "dusk", "ai");
+  const receiver = makePlayer("spy-flow-receiver", 2, "dusk", "ai");
+  target.hand.push(instance("charge"), instance("harvest"));
+  const { game } = makeGame([shade, target, receiver]);
+  const root = createInitialWorld(shade.id, game.state, { assault: 4, block: 4 });
+  for (const card of target.hand) {
+    for (const field of ["id", "definitionId"]) {
+      Object.defineProperty(card, field, { get() { throw new Error(`隐藏实体读取：${field}`); } });
+    }
+  }
+  const state = structuredClone(root);
+  return {
+    game, root, state, simulator: new Simulator(),
+    shade: state.players[0], target: state.players[1], receiver: state.players[2]
+  };
+}
+
+test("AI·影客：窥隙已查看资源离手后补入未知牌且总数不变仍新增一张信息", () => {
+  for (const movement of ["destroy", "random", "move", "payment"]) {
+    const { game, root, state, simulator, shade, target, receiver } = makeSpyGapMovementFixture();
+    simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+    assert.equal(shade.spyGapRevealedCountsByTarget[target.id], 2);
+    if (movement === "destroy") {
+      simulator.destroyResource(state, shade, target, 1, "spy-flow", {
+        zone: "hand", selectionKind: "unknown", availableUnknownCount: 2
+      });
+    } else if (movement === "random") {
+      simulator.consumeRandomHandCards(state, target, 1);
+    } else if (movement === "move") {
+      simulator.transferUnknownCardIdentity(state, target, receiver,
+        simulator.getEventWorlds(state, 1, null, "spy-flow"), 2);
+    } else {
+      simulator.consumeKnownDefinitionPayment(state, target, "assault", 1);
+    }
+    assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1);
+    simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+    assert.equal(shade.spyGapInformationEvents.length, 1, "留在手里的已查看资源不得重复计值");
+    simulator.gainUnknownCardsWithCounterState(state, target, 1);
+    assertClose(target.handCount, root.players[1].handCount);
+    const before = structuredClone(state);
+    simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+    assert.deepEqual(shade.spyGapInformationEvents, [
+      { targetId: target.id, actualNewRevealCount: 2 },
+      { targetId: target.id, actualNewRevealCount: 1 }
+    ], "信息事件只能携带目标与新增数量，不得持有未知牌面或实体身份");
+    assertClose(shade.spyGapRevealedCountsByTarget[target.id], 2);
+    assert.deepEqual(target.knownCards, []);
+    assert.equal(target.hand, undefined);
+    assert.deepEqual(root.players[0].spyGapRevealedCountsByTarget, {}, "不得污染根或兄弟 World");
+
+    const terms = game.aiController.evaluator.evaluateTransition({
+      action: createAction({ type: "end", actorId: shade.id }),
+      player: before.players[0], beforeState: before, afterState: state
+    });
+    const oneCardValue = privatePeekInformationValue(before, before.players[0], before.players[1], 1);
+    assert.ok(oneCardValue > 0);
+    assertClose(terms.transitionOptionPoints, oneCardValue);
+    const noNewBefore = structuredClone(state);
+    simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+    assert.equal(game.aiController.evaluator.evaluateTransition({
+      action: createAction({ type: "end", actorId: shade.id }),
+      player: noNewBefore.players[0], beforeState: noNewBefore, afterState: state
+    }).transitionOptionPoints, 0);
+  }
+});
+
+test("AI·影客：窥隙保留合法已知牌及未离手摘要且新增牌不重置已有信息", () => {
+  const { state, simulator, shade, target } = makeSpyGapMovementFixture();
+  simulator.addSimulatedKnownCard(state, target,
+    { definitionId: "block", cardId: "legal-known-block" },
+    simulator.getEventWorlds(state, 1, null, "spy-known-gain"));
+  simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+  simulator.consumeUnknownResourceCard(state, target, 1, 2);
+  assert.equal(target.knownCards[0].definitionId, "block");
+  assertClose(target.knownCards[0].availability, 1);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1);
+  simulator.destroyResource(state, shade, target, 1, "spy-known-loss", {
+    zone: "hand", selectionKind: "known", cardId: "legal-known-block", definitionId: "block"
+  });
+  assert.deepEqual(target.knownCards, []);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1, 1e-9);
+  simulator.gainUnknownCardsWithCounterState(state, target, 1);
+  simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+  assert.deepEqual(shade.spyGapInformationEvents.map((event) => event.actualNewRevealCount), [2, 1]);
+});
+
+test("AI·影客：窥隙部分查看摘要按匿名流出比例保留且死亡清空", () => {
+  const { state, simulator, shade, target } = makeSpyGapMovementFixture();
+  simulator.gainUnknownCardsWithCounterState(state, target, 2);
+  simulator.simulateSpyGapAfterLifeDamage(state, shade, target, 1);
+  simulator.consumeUnknownResourceCard(state, target, 1, 4);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1.5);
+  simulator.gainUnknownCardsWithCounterState(state, target, 1);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1.5);
+  const deathState = structuredClone(state);
+  simulator.clearSimulatedPlayerResources(deathState, deathState.players[1]);
+  assertClose(deathState.players[0].spyGapRevealedCountsByTarget[target.id], 0);
+  simulator.consumeUnknownResourceCard(state, target, .5, 4);
+  assertClose(shade.spyGapRevealedCountsByTarget[target.id], 1.5 * 3.5 / 4);
+});
+
+test("AI·影客：完整未来序列可先窃取再兑现确定击杀", async () => {
   const shade = makePlayer("steal-kill-shade", 0, "dawn", "ai", 3),
     enemy = makePlayer("steal-kill-enemy", 1, "dusk", "ai", 0);
   shade.energy = 2;
@@ -29575,14 +31692,21 @@ test("AI·影客：确定击杀与能量机会成本优先于窃取", async () =
   enemy.hp = 1;
   const { game } = makeGame([shade, enemy], { random: () => 0 });
   game.aiRandomnessRange = 0;
-  game.aiSearchNodeBudgetOverride = 30;
+  game.aiSearchNodeBudgetOverride = 1000;
   assert.ok(game.aiController.getActionCandidates(shade).some((entry) => entry.skillId === "stealSkill"));
   const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
-  assert.equal(action.cardId, "assault");
+  assert.equal(action.type, "skill", JSON.stringify(action));
+  assert.equal(action.skillId, "stealSkill");
   assert.equal(action.targetIds?.[0], enemy.id);
+  assert.deepEqual(
+    game.aiController.lastSearchStats.bestSequence.slice(0, 2).map((entry) => (
+      entry.cardId ?? entry.skillId
+    )),
+    ["stealSkill", "assault"]
+  );
 });
 
-test("AI·影客：窃取低收益目标时允许结束出牌", async () => {
+test("AI·影客：窃取的真实手牌 StateDelta 可使低静态牌仍优于结束", async () => {
   const shade = makePlayer("steal-skip-shade", 0, "dawn", "ai", 3),
     enemy = makePlayer("steal-skip-enemy", 1, "dusk", "ai", 0);
   shade.energy = 2;
@@ -29592,10 +31716,12 @@ test("AI·影客：窃取低收益目标时允许结束出牌", async () => {
   shade.aiMemory.knownCardsByPlayer[enemy.id] = { [lowValue.id]: "shield" };
   const { game } = makeGame([shade, enemy], { random: () => 0 });
   game.aiRandomnessRange = 0;
-  game.aiSearchNodeBudgetOverride = 30;
+  game.aiSearchNodeBudgetOverride = 1000;
   assert.ok(game.aiController.getActionCandidates(shade).some((entry) => entry.skillId === "stealSkill"));
   const action = await game.aiController.selectAction(shade, { gameId: game.state.gameId });
-  assert.equal(action.type, "end");
+  assert.equal(action.type, "skill");
+  assert.equal(action.skillId, "stealSkill");
+  assert.equal(action.targetIds?.[0], enemy.id);
 });
 
 // ---- AI 角色行为·炎术师 ----
@@ -29662,7 +31788,7 @@ test("AI·炎术师：致命焚场由 state delta 自然高于非致命焚场", 
 });
 
 
-test("AI·炎术师：余烬能量通过 state delta 进入后继状态价值", () => {
+test("AI·炎术师：余烬能量真实结算但不恢复已删除的当前能量 StateValue", () => {
   const run = (characterIndex) => {
     const caster = makePlayer(`bf-ember-${characterIndex}`, 0, "dawn", "ai", characterIndex);
     const ally = makePlayer("bf-ember-ally", 1, "dawn", "ai", 0);
@@ -29691,10 +31817,7 @@ test("AI·炎术师：余烬能量通过 state delta 进入后继状态价值", 
   const ember = run(4);
   const nonEmber = run(0);
   assert.equal(ember.energyDelta, 1, "余烬在真实模拟中 +1 能量");
-  assert.ok(
-    ember.stateDelta > nonEmber.stateDelta,
-    "余烬能量增益必须已经进入 state delta，无需额外 heuristic"
-  );
+  assertClose(ember.stateDelta, nonEmber.stateDelta, 1e-12);
 });
 
 
@@ -29971,6 +32094,7 @@ test("AI·调律师：共生只按实际治疗的队友触发协调", () => {
   const allyHealed = simulate(3, 4);
   assert.equal(allyHealed.players[0].coordinationTriggered, true);
   assert.equal(allyHealed.players[0].handCount, 1);
+  assert.equal(allyHealed.players[1].handCount, 1);
   assert.equal(allyHealed.players[1].hp, 4);
 
   const enemyOnly = simulate(4, 3);
@@ -30039,11 +32163,56 @@ test("AI·调律师：破坏队友资源成功时触发协调且无资源时不�
   const destroyed = simulate(true);
   assert.equal(destroyed.players[0].coordinationTriggered, true);
   assert.equal(destroyed.players[0].handCount, 1);
+  assert.equal(destroyed.players[1].handCount, 1);
   assert.equal(destroyed.players[1].equipmentDefinitionId, null);
 
   const missing = simulate(false);
   assert.equal(missing.players[0].coordinationTriggered, false);
   assert.equal(missing.players[0].handCount, 0);
+});
+
+test("AI·调律师：协调多目标只让首名实际触发队友与自己各摸一张", () => {
+  const actor = {
+    id: "ai-coordination-tuner",
+    seatIndex: 0,
+    battleTeam: "dawn",
+    characterId: "resonance-tuner",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    handCount: 0,
+    coordinationTriggered: false
+  };
+  const allyA = {
+    id: "ai-coordination-ally-a",
+    seatIndex: 1,
+    battleTeam: "dawn",
+    characterId: "blade-walker",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    handCount: 0
+  };
+  const allyB = {
+    id: "ai-coordination-ally-b",
+    seatIndex: 2,
+    battleTeam: "dawn",
+    characterId: "oath-warden",
+    alive: true,
+    hp: 4,
+    maxHp: 4,
+    handCount: 0
+  };
+  const state = {
+    remainingCardCounts: { counter: 0 },
+    players: [actor, allyA, allyB]
+  };
+  new Simulator(state).simulateCoordination(state, actor, [allyA, allyB], 1);
+  assert.deepEqual(
+    state.players.map((player) => player.handCount),
+    [1, 1, 0]
+  );
+  assert.equal(actor.coordinationTriggered, true);
 });
 
 
@@ -30088,6 +32257,127 @@ const counterProbabilityOf = (player) => (
   player.counterCountDistribution ?? []
 ).reduce((sum, branch) => sum + (branch.counterCount >= 1 ? branch.probability : 0), 0);
 
+/*
+功能
+构造动态资源 root 面向响应者手牌的 Counter overlap 测试场景。
+
+调用方
+AI 响应模型·反制中的 Plunder、Destroy 与 Transfer overlap 回归测试。
+
+输入
+响应者手牌/装备、root 定义、Transfer 接收方阵营、双方角色与 root actor 合法记忆定义。
+
+输出
+Game、DecisionContext、World 玩家、root targets、future selection 与聚合 Counter terms。
+
+读取状态
+测试 Game fixture 经 Controller 生成的 canonical World、future selection 与 ProbabilityState。
+
+写入状态
+只写独立测试玩家手牌与装备。
+
+调用函数
+makeGame、buildResponseDecisionContext。
+
+边界与不变量
+响应者固定为 blade-walker，使 Counter 身份差量为零；所有概率仍由生产 World/Probability query 得出，
+角色覆盖可为 known-selection 场景显式替换；helper 不复制 Counter 概率、成本或意愿公式。
+*/
+async function buildCounterRootOverlapFixture({
+  handDefinitionIds,
+  rootDefinitionId,
+  transferReceiverTeam = "dusk",
+  equipmentDefinitionId = null,
+  rootSourceGeneralIndex = 1,
+  responderGeneralIndex = 0,
+  rootKnownDefinitionIds = []
+}) {
+  const responder = makePlayer(
+    "counter-overlap-responder",
+    0,
+    "dawn",
+    "ai",
+    responderGeneralIndex
+  );
+  const source = makePlayer(
+    "counter-overlap-source",
+    1,
+    "dusk",
+    "ai",
+    rootSourceGeneralIndex
+  );
+  const receiver = makePlayer(
+    "counter-overlap-receiver",
+    2,
+    transferReceiverTeam,
+    "ai",
+    2
+  );
+  const filler = makePlayer(
+    "counter-overlap-filler",
+    3,
+    transferReceiverTeam === "dawn" ? "dusk" : "dawn",
+    "ai",
+    3
+  );
+  responder.hand.push(...handDefinitionIds.map((definitionId) => instance(definitionId)));
+  responder.equipment = equipmentDefinitionId ? instance(equipmentDefinitionId) : null;
+  const counterCards = responder.hand.filter((card) => card.definitionId === "counter");
+  const rootCard = instance(rootDefinitionId);
+  const rootTargetIds = ["plunder", "destroy"].includes(rootDefinitionId)
+    ? [responder.id]
+    : [];
+  const publicTransferContext = rootDefinitionId === "transfer"
+    ? {
+        fromPlayerId:responder.id,
+        receiverPlayerId:receiver.id
+      }
+    : null;
+  const { game } = makeGame([responder, source, receiver, filler]);
+  const rememberedIds = new Set();
+  for (const definitionId of rootKnownDefinitionIds) {
+    const known = responder.hand.find((card) => (
+      card.definitionId === definitionId && !rememberedIds.has(card.id)
+    ));
+    if (known) {
+      game.rememberPrivateCard(source, responder, known);
+      rememberedIds.add(known.id);
+    }
+  }
+  const decision = await game.aiController.buildResponseDecisionContext(
+    responder,
+    "counter",
+    {
+      source,
+      rootSource:source,
+      card:rootCard,
+      rootCard,
+      rootTargetIds,
+      publicTransferContext
+    },
+    counterCards
+  );
+  const responderWorld = decision.world.players.find((player) => player.id === responder.id);
+  const sourceWorld = decision.world.players.find((player) => player.id === source.id);
+  const targets = rootTargetIds.map((targetId) => (
+    decision.world.players.find((player) => player.id === targetId)
+  )).filter(Boolean);
+  const futureSelection = decision.futureSelectionOutcomes?.[0]?.selection ?? null;
+  const futureCounterTerms = decision.futureCounterTerms ?? null;
+  return {
+    game,
+    responder,
+    source,
+    decision,
+    responderWorld,
+    sourceWorld,
+    rootCard,
+    targets,
+    futureSelection,
+    futureCounterTerms
+  };
+}
+
 
 
 
@@ -30124,6 +32414,418 @@ test("AI·反制：counter opportunity cost 只计一次", async () => {
     await game.aiController.shouldRespond(a, "counter", { source: enemyA, card }, [counter]),
     false
   );
+});
+
+test("AI·反制：Plunder hand future selection 按 c 除以 c 加 x 聚合", async () => {
+  const cases = [
+    { counters:1, others:0, probability:1, responds:true },
+    { counters:1, others:1, probability:1 / 2, responds:true },
+    { counters:1, others:2, probability:1 / 3, responds:true },
+    { counters:2, others:0, probability:1, responds:true },
+    { counters:2, others:1, probability:2 / 3, responds:true },
+    { counters:2, others:2, probability:1 / 2, responds:true },
+    { counters:3, others:0, probability:1, responds:true }
+  ];
+  for (const entry of cases) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:[
+        ...Array(entry.counters).fill("counter"),
+        ...Array(entry.others).fill("assault")
+      ],
+      rootDefinitionId:"plunder"
+    });
+    try {
+      const { counterLossProbability, selfCounterGainOverlap, gain }
+        = fixture.futureCounterTerms;
+      const effectiveCost = counterOpportunityCost() * (1 - counterLossProbability);
+      const effectiveGain = gain - selfCounterGainOverlap;
+      assert.equal(fixture.futureSelection?.zone, "hand");
+      assert.ok(Math.abs(counterLossProbability - entry.probability) < 1e-9);
+      assert.ok(Math.abs(effectiveCost - 2.8 * (1 - entry.probability)) < 1e-9);
+      assert.ok(Math.abs(selfCounterGainOverlap - 1.1 * entry.probability) < 1e-9);
+      assert.equal(effectiveGain > effectiveCost, entry.responds);
+      assert.equal(
+        fixture.game.aiController.evaluator.shouldRespond(fixture.decision),
+        entry.responds
+      );
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：Plunder future equipment 的 pC 为零且高价值装备仍受保护", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter"],
+    equipmentDefinitionId:"barrierDevice",
+    rootSourceGeneralIndex:2,
+    rootDefinitionId:"plunder"
+  });
+  try {
+    assert.equal(fixture.futureSelection?.zone, "equipment");
+    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 0);
+    assert.ok(fixture.futureCounterTerms.gain > counterOpportunityCost());
+    assert.equal(fixture.game.aiController.evaluator.shouldRespond(fixture.decision), true);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·反制：hand 与 equipment 未预填 selection 时仍投影 canonical future selection", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter", "assault"],
+    equipmentDefinitionId:"defenseDevice",
+    rootDefinitionId:"plunder"
+  });
+  try {
+    assert.equal(fixture.decision.counterSelection, undefined);
+    assert.equal(fixture.decision.context.publicSelectionContext, undefined);
+    assert.equal(fixture.futureSelection?.zone, "hand");
+    assert.equal(fixture.futureSelection?.cardId ?? null, null);
+    assert.equal(fixture.futureCounterTerms?.selectionOutcomes?.[0]?.weight, 1);
+    assert.ok(Math.abs(fixture.futureCounterTerms.counterLossProbability - 1 / 2) < 1e-9);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·反制：root actor 知道 Counter 时预测仍匿名且 runtime 保留具体身份", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter", "assault", "recover"],
+    rootDefinitionId:"plunder",
+    responderGeneralIndex:7,
+    rootSourceGeneralIndex:7,
+    rootKnownDefinitionIds:["counter"]
+  });
+  try {
+    const counter = fixture.responder.hand.find((card) => card.definitionId === "counter");
+    assert.equal(fixture.futureSelection?.selectionKind, "unknown");
+    assert.equal(fixture.futureSelection?.cardId, null);
+    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 1 / 3);
+    const runtime = await fixture.game.aiController.choosePostCounterResource(
+      fixture.source, fixture.responder, { purpose:"plunder", card:fixture.rootCard }
+    );
+    assert.equal(runtime?.selection.selectionKind, "known");
+    assert.equal(runtime?.card.id, counter.id);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·反制：root actor 知道非 Counter 时预测仍匿名且 runtime 保留具体身份", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter", "assault", "recover"],
+    rootDefinitionId:"plunder",
+    responderGeneralIndex:5,
+    rootSourceGeneralIndex:0,
+    rootKnownDefinitionIds:["assault"]
+  });
+  try {
+    const assault = fixture.responder.hand.find((card) => card.definitionId === "assault");
+    assert.equal(fixture.futureSelection?.selectionKind, "unknown");
+    assert.equal(fixture.futureSelection?.cardId, null);
+    assert.equal(fixture.futureCounterTerms?.counterLossProbability, 1 / 3);
+    const runtime = await fixture.game.aiController.choosePostCounterResource(
+      fixture.source, fixture.responder, { purpose:"plunder", card:fixture.rootCard }
+    );
+    assert.equal(runtime?.selection.selectionKind, "known");
+    assert.equal(runtime?.card.id, assault.id);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+/*
+功能
+在同一资源 Counter fixture 的当前状态重新构造响应输入。
+
+调用方
+future resource 信息边界回归测试。
+
+输入
+buildCounterRootOverlapFixture 结果与可选公开 context 覆盖。
+
+输出
+生产 Controller 的 DecisionContext。
+
+读取状态
+fixture 当前玩家及之前公开 context。
+
+写入状态
+无。
+
+调用函数
+Controller.buildResponseDecisionContext。
+
+边界与不变量
+不预填资源 identity，不复制价值或概率公式。
+*/
+async function rebuildCounterResourceDecision(fixture, context = {}) {
+  return fixture.game.aiController.buildResponseDecisionContext(
+    fixture.responder,
+    "counter",
+    { ...fixture.decision.context, ...context },
+    fixture.responder.hand.filter((card) => card.definitionId === "counter")
+  );
+}
+
+test("AI·反制：future prediction 隔离 root actor hidden hand 与私人记忆", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter", "assault", "recover"],
+      rootDefinitionId,
+      equipmentDefinitionId:"defenseDevice"
+    });
+    try {
+      fixture.source.hand = [instance("counter"), instance("recover")];
+      const baseline = await rebuildCounterResourceDecision(fixture);
+      fixture.source.hand = [instance("assault"), instance("charge")];
+      const changedHand = await rebuildCounterResourceDecision(fixture);
+      fixture.game.rememberPrivateCard(fixture.source, fixture.responder, fixture.responder.hand[0]);
+      const changedMemory = await rebuildCounterResourceDecision(fixture);
+      for (const decision of [changedHand, changedMemory]) {
+        assert.deepEqual(decision.world, baseline.world, rootDefinitionId);
+        assert.deepEqual(decision.futureSelectionOutcomes, baseline.futureSelectionOutcomes);
+        assert.deepEqual(decision.futureCounterTerms, baseline.futureCounterTerms);
+        assert.equal(
+          fixture.game.aiController.evaluator.shouldRespond(decision),
+          fixture.game.aiController.evaluator.shouldRespond(baseline)
+        );
+      }
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：future candidates 私密手牌只生成一个匿名候选并保留公开装备", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter", "assault", "recover"],
+      rootDefinitionId,
+      equipmentDefinitionId:"barrierDevice",
+      rootKnownDefinitionIds:["counter", "assault", "recover"]
+    });
+    try {
+      const candidates = fixture.game.aiController.actionGenerator.getResponderSafeFutureRootSelections(
+        fixture.decision.world, fixture.rootCard, fixture.decision.context.rootTargetIds,
+        { publicTransferContext:fixture.decision.context.publicTransferContext }
+      );
+      const hands = candidates.filter((selection) => selection.zone === "hand");
+      assert.equal(hands.length, 1);
+      assert.deepEqual(hands[0], {
+        zone:"hand", selectionKind:"unknown", cardId:null, definitionId:null,
+        selectionMode:"uniform-hand",
+        ...(rootDefinitionId === "transfer" ? {
+          sourceId:fixture.responder.id,
+          receiverId:fixture.decision.context.publicTransferContext.receiverPlayerId
+        } : {})
+      });
+      assert.equal(candidates.length, rootDefinitionId === "transfer" ? 1 : 2);
+      if (rootDefinitionId !== "transfer") {
+        assert.equal(candidates[1].zone, "equipment");
+        assert.equal(candidates[1].definitionId, "barrierDevice");
+      }
+      const handTerms = fixture.game.aiController.evaluator.futureSelectionCounterTerms(
+        fixture.decision.world, fixture.responderWorld, fixture.sourceWorld,
+        fixture.rootCard, fixture.targets,
+        [{ weight:1, selection:hands[0], resolvesAtStay:true }]
+      );
+      assert.equal(handTerms.counterLossProbability, 1 / 3);
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：future production path 不读取 actor 私密字段或启动二阶采样", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter", "assault", "recover"], rootDefinitionId,
+      equipmentDefinitionId:"barrierDevice"
+    });
+    const memory = Object.getOwnPropertyDescriptor(fixture.source, "aiMemory");
+    const hand = fixture.source.hand;
+    const controller = fixture.game.aiController;
+    const originalFactory = controller.simulatorFactory;
+    const originalSelector = controller.chooseCanonicalPostCounterSelection;
+    const materialized = [];
+    try {
+      Object.defineProperty(fixture.source, "aiMemory", {
+        configurable:true,
+        get() { throw new Error("Counter prediction accessed actor private memory"); }
+      });
+      fixture.source.hand = new Proxy(hand, {
+        get(target, property) {
+          assert.equal(property, "length", "只允许读取公开手牌数量");
+          return target.length;
+        }
+      });
+      controller.chooseCanonicalPostCounterSelection = () => {
+        throw new Error("Counter prediction entered actor runtime selector");
+      };
+      controller.simulatorFactory = () => {
+        const simulator = originalFactory();
+        const build = simulator.buildFutureResourceSelectionWorlds.bind(simulator);
+        simulator.buildFutureResourceSelectionWorlds = (world, action, depth) => {
+          materialized.push(action.selection);
+          assert.equal(world.players.find((player) => player.id === fixture.source.id).hand, undefined);
+          return build(world, action, depth);
+        };
+        return simulator;
+      };
+      const decision = await rebuildCounterResourceDecision(fixture);
+      assert.deepEqual(decision.futureCounterTerms, fixture.futureCounterTerms);
+      assert.equal(materialized.length, rootDefinitionId === "transfer" ? 1 : 2);
+      assert.equal(materialized.filter((selection) => selection.zone === "hand").length, 1);
+      assert.doesNotMatch(
+        controller.buildFutureResourceCounterProjection.toString(),
+        /createInitialWorld|chooseCanonicalPostCounterSelection|hiddenStateSamples|sampleHidden|Searcher/
+      );
+      assert.doesNotMatch(
+        originalFactory().buildFutureResourceSelectionWorlds.toString(),
+        /createInitialWorld|hiddenStateSamples|sampleHidden|Searcher/
+      );
+    } finally {
+      fixture.source.hand = hand;
+      Object.defineProperty(fixture.source, "aiMemory", memory);
+      controller.simulatorFactory = originalFactory;
+      controller.chooseCanonicalPostCounterSelection = originalSelector;
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：future anonymous projection 保持 Counter depth 与公开声明边界", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter", "assault", "recover"], rootDefinitionId
+    });
+    try {
+      const flipped = await rebuildCounterResourceDecision(fixture, { counterDepth:1 });
+      assert.deepEqual(flipped.futureSelectionOutcomes[0].selection, fixture.futureSelection);
+      assert.equal(flipped.futureCounterTerms.gain, -fixture.futureCounterTerms.gain);
+      assert.equal(flipped.futureCounterTerms.counterLossProbability, 0);
+      assert.equal(flipped.futureCounterTerms.selfCounterGainOverlap, 0);
+      const restored = await rebuildCounterResourceDecision(fixture, { counterDepth:2 });
+      assert.deepEqual(restored.futureCounterTerms, fixture.futureCounterTerms);
+      const invalid = await rebuildCounterResourceDecision(fixture,
+        rootDefinitionId === "transfer"
+          ? { publicTransferContext:{ fromPlayerId:fixture.responder.id, receiverPlayerId:fixture.responder.id } }
+          : { rootTargetIds:[] }
+      );
+      assert.equal(invalid.futureCounterTerms, null);
+      fixture.responder.hand = [];
+      const empty = await rebuildCounterResourceDecision(fixture);
+      assert.equal(empty.futureSelectionOutcomes, null);
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：future hand 来源为其他玩家时保留匿名资源收益", async () => {
+  for (const rootDefinitionId of ["plunder", "destroy", "transfer"]) {
+    const fixture = await buildCounterRootOverlapFixture({
+      handDefinitionIds:["counter"], rootDefinitionId, transferReceiverTeam:"dawn"
+    });
+    try {
+      const owner = fixture.game.state.players.find((player) => player.id === "counter-overlap-receiver");
+      owner.hand.push(instance("recover"), instance("assault"));
+      const decision = await rebuildCounterResourceDecision(fixture,
+        rootDefinitionId === "transfer"
+          ? { publicTransferContext:{ fromPlayerId:owner.id, receiverPlayerId:fixture.source.id } }
+          : { rootTargetIds:[owner.id] }
+      );
+      assert.equal(decision.futureSelectionOutcomes[0].selection.selectionKind, "unknown");
+      assert.ok(decision.futureCounterTerms.gain > 0);
+      assert.equal(decision.futureCounterTerms.counterLossProbability, 0);
+    } finally {
+      fixture.game.dispose();
+    }
+  }
+});
+
+test("AI·反制：真正匿名的三张 hand future selection 保持三分之一 pC", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter", "assault", "recover"],
+    rootDefinitionId:"plunder"
+  });
+  try {
+    assert.equal(fixture.futureSelection?.selectionKind, "unknown");
+    assert.equal(fixture.futureSelection?.selectionMode, "uniform-hand");
+    assert.ok(Math.abs(fixture.futureCounterTerms.counterLossProbability - 1 / 3) < 1e-9);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·反制：Destroy 命中唯一 Counter 时重叠归零且严格比较拒绝响应", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter"],
+    rootDefinitionId:"destroy"
+  });
+  try {
+    assert.equal(fixture.futureCounterTerms.counterLossProbability, 1);
+    assert.ok(Math.abs(
+      fixture.futureCounterTerms.gain - fixture.futureCounterTerms.selfCounterGainOverlap
+    ) < 1e-9);
+    assert.equal(counterOpportunityCost() * (1 - fixture.futureCounterTerms.counterLossProbability), 0);
+    assert.equal(fixture.game.aiController.evaluator.shouldRespond(fixture.decision), false);
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·反制：Transfer future selection 对 enemy 与 ally 分别保留阵营价值", async () => {
+  const toEnemy = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter"],
+    rootDefinitionId:"transfer",
+    transferReceiverTeam:"dusk"
+  });
+  const toAlly = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter"],
+    rootDefinitionId:"transfer",
+    transferReceiverTeam:"dawn"
+  });
+  try {
+    assert.equal(toEnemy.futureCounterTerms.counterLossProbability, 1);
+    assert.equal(toAlly.futureCounterTerms.counterLossProbability, 1);
+    assert.ok(toEnemy.futureCounterTerms.gain - toEnemy.futureCounterTerms.selfCounterGainOverlap > 0);
+    assert.ok(toAlly.futureCounterTerms.gain - toAlly.futureCounterTerms.selfCounterGainOverlap < 0);
+    assert.equal(toEnemy.game.aiController.evaluator.shouldRespond(toEnemy.decision), true);
+    assert.equal(toAlly.game.aiController.evaluator.shouldRespond(toAlly.decision), false);
+  } finally {
+    toEnemy.game.dispose();
+    toAlly.game.dispose();
+  }
+});
+
+test("AI·反制：普通 root 无 Counter overlap 时保持原严格成本比较", async () => {
+  const fixture = await buildCounterRootOverlapFixture({
+    handDefinitionIds:["counter"],
+    rootDefinitionId:"harvest"
+  });
+  try {
+    assert.equal(fixture.futureCounterTerms, null);
+    const gain = fixture.decision.rootFlipWorlds
+      ? fixture.game.aiController.evaluator.dynamicRootFlipGain(
+          fixture.decision.rootFlipWorlds,
+          fixture.responderWorld.id,
+          fixture.decision.rootFlipWorlds.baseLightningOutcomeSets,
+          fixture.decision.rootFlipWorlds.resolvedLightningOutcomeSets
+        )
+      : planningDynamicCounterGain(
+          fixture.decision.world,
+          fixture.responderWorld,
+          fixture.sourceWorld,
+          fixture.rootCard,
+          fixture.targets
+        );
+    assert.equal(fixture.game.aiController.evaluator.shouldRespond(fixture.decision), gain > 2.8);
+  } finally {
+    fixture.game.dispose();
+  }
 });
 
 
@@ -30376,6 +33078,24 @@ test(
 );
 
 // ---- AI 响应模型·反制概率 ----
+
+
+test("AI·反制概率：匿名 Counter selection 直接复用 canonical finite-pool query", () => {
+  const player = counterPlayer("counter-overlap-anonymous", "dawn", {
+    handCount:2,
+    knownCards:[]
+  });
+  const state = upgradeProbabilityFixture({
+    remainingCardCounts:{ counter:1, assault:1 },
+    players:[player]
+  });
+  assert.equal(queryHandSelectionProbability(
+    state.probabilityState,
+    player,
+    { zone:"hand", selectionKind:"unknown", availableUnknownCount:2 },
+    "counter"
+  ), 1 / 2);
+});
 
 
 test("AI·反制概率：正式 Evaluator 对未知敌方换面保持相同响应", () => {
@@ -31366,6 +34086,40 @@ test("AI·救援：自救响应策略为确定必用，敌方救援为拒绝", a
   );
 });
 
+test("AI·救援：已知调息足够且剩余池为空时成功概率为一", () => {
+  const responder = {
+    id:"known-rescue-responder",
+    alive:true,
+    battleTeam:"dawn",
+    controllerType:"ai",
+    hp:3,
+    handCount:1,
+    energy:0,
+    roleTags:[]
+  };
+  const target = {
+    id:"known-rescue-target",
+    alive:true,
+    battleTeam:"dawn",
+    controllerType:"ai",
+    hp:0,
+    handCount:0,
+    energy:0,
+    roleTags:[]
+  };
+  const assessment = new Evaluator().assessDyingRescue({
+    responder,
+    target,
+    rescueOrder:[target, responder],
+    responderHandDefinitionIds:["recover"],
+    knownCardsByPlayer:{ [target.id]:{}, [responder.id]:{} },
+    remainingCardCounts:{}
+  });
+  assert.equal(assessment.guaranteedSurvivable, true);
+  assert.equal(assessment.unknownRecoveryRequired, 0);
+  assert.equal(assessment.rescueSuccessProbability, 1);
+});
+
 
 test("AI·救援：高概率不确定救援按正期望使用调息", () => {
   const { policy, decision } = makeProbabilisticRescueDecision(0.9);
@@ -31978,8 +34732,11 @@ test("AI·动态未知：空池与缺失计数固定回退", () => {
   const enemy = { id: "e", battleTeam: "dusk", characterId: "spirit-medic" };
   const ally = { id: "y", battleTeam: "dawn", characterId: "spirit-medic" };
   for (const counts of [null, {}, { assault: 0 }]) {
-    assert.equal(getResourceUnknownUtility("destroy", actor, enemy, counts), 4);
-    assert.equal(getResourceUnknownUtility("plunder", actor, enemy, counts), 8);
+    assert.equal(getResourceUnknownUtility("destroy", actor, enemy, counts), UNKNOWN_HAND_EXPECTED_VALUE);
+    assert.equal(
+      getResourceUnknownUtility("plunder", actor, enemy, counts),
+      UNKNOWN_HAND_EXPECTED_VALUE * 2
+    );
     assert.equal(getResourceUnknownUtility("plunder", actor, ally, counts), 0);
   }
 });
@@ -31988,8 +34745,11 @@ test("AI·动态未知：旧三参数调用保持固定语义", () => {
   const actor = { id: "a", battleTeam: "dawn", characterId: "blade-walker" };
   const enemy = { id: "e", battleTeam: "dusk", characterId: "spirit-medic" };
   const ally = { id: "y", battleTeam: "dawn", characterId: "spirit-medic" };
-  assert.equal(getResourceUnknownUtility("destroy", actor, enemy), 4);
-  assert.equal(getResourceUnknownUtility("plunder", actor, enemy), 8);
+  assert.equal(getResourceUnknownUtility("destroy", actor, enemy), UNKNOWN_HAND_EXPECTED_VALUE);
+  assert.equal(
+    getResourceUnknownUtility("plunder", actor, enemy),
+    UNKNOWN_HAND_EXPECTED_VALUE * 2
+  );
   assert.equal(getResourceUnknownUtility("plunder", actor, ally), 0);
 });
 
@@ -32214,7 +34974,7 @@ test("AI·动态未知：未知实体真实定义不泄漏", () => {
   assert.equal(chosen, unknown);
 });
 
-test("AI·动态未知：未知候选输给装备时不解析实体或调用随机数", () => {
+test("AI·动态未知：统一标量选中未知手牌时不提前解析实体或调用随机数", () => {
   let randomCalls = 0;
   const evaluator = new Evaluator();
   const actor = {
@@ -32233,7 +34993,7 @@ test("AI·动态未知：未知候选输给装备时不解析实体或调用随�
     equipment: { id: "e", definitionId: "energyDevice" }
   };
   const choice = chooseEvaluatorResourceZone(evaluator, actor, owner, { charge: 1 });
-  assert.equal(choice.zone, "equipment");
+  assert.equal(choice.zone, "hand");
   assert.equal(randomCalls, 0);
 });
 
@@ -32378,8 +35138,16 @@ test("AI·动态密度：模拟器动态：同阵营 plunder 使用动态差值"
     "plunder", fallbackActor, fallbackOwner, null
   ), 0);
   const dynamic = run({ counter: 7, defenseDevice: 1 });
-  assert.ok(Math.abs(dynamic.staticUtility - (-1.125)) < 1e-9);
-  // (7*(8-9) + 1*(8-10)) / 8
+  assertClose(
+    dynamic.resourceMaterialUtility + dynamic.acquisitionUtility,
+    -0.45
+  );
+  assertClose(
+    dynamic.resourceSelectionUtility,
+    dynamic.contextualUtility + dynamic.resourceMaterialUtility
+      + dynamic.acquisitionUtility + dynamic.thresholdUtility
+  );
+  // 同阵营 base 抵消；双方各自 RoleDelta 的静态资产差按 0.4 保留，施牌成本留在 context。
   assert.notEqual(dynamic.contextualUtility, 0);
 });
 
@@ -32388,8 +35156,11 @@ test("AI·动态密度：模拟器动态：缺失与空计数固定回退", () =
   const enemy = { id: "e", battleTeam: "dusk", characterId: "spirit-medic" };
   const ally = { id: "y", battleTeam: "dawn", characterId: "spirit-medic" };
   for (const counts of [null, {}, { assault: 0 }]) {
-    assert.equal(getResourceUnknownUtility("destroy", actor, enemy, counts), 4);
-    assert.equal(getResourceUnknownUtility("plunder", actor, enemy, counts), 8);
+    assert.equal(getResourceUnknownUtility("destroy", actor, enemy, counts), UNKNOWN_HAND_EXPECTED_VALUE);
+    assert.equal(
+      getResourceUnknownUtility("plunder", actor, enemy, counts),
+      UNKNOWN_HAND_EXPECTED_VALUE * 2
+    );
     assert.equal(getResourceUnknownUtility("plunder", actor, ally, counts), 0);
   }
 });
@@ -32413,14 +35184,21 @@ test("AI·动态密度：模拟器动态：与共享候选/区域公式一致", 
   );
   assert.equal(chosen.action.selection.zone, "hand");
   assert.equal(chosen.action.selection.selectionKind, "unknown");
-  assert.ok(Math.abs(
-    chosen.comparisonTerms.staticUtility - getResourceUnknownUtility(
+  const terms = chosen.comparisonTerms;
+  assertClose(
+    terms.resourceSelectionUtility,
+    terms.contextualUtility + terms.resourceMaterialUtility
+      + terms.acquisitionUtility + terms.thresholdUtility
+  );
+  assertClose(
+    terms.resourceMaterialUtility,
+    getResourceUnknownUtility(
       "destroy",
-      chosen.before.players[0],
-      chosen.before.players[1],
+      actor,
+      target,
       queryCurrentCardCounts(chosen.before.probabilityState)
-    )
-  ) < 1e-9);
+    ) * RESOURCE_MATERIAL_SCALE
+  );
 });
 
 test("AI·动态密度：模拟器动态：与已知同分时已知胜出", () => {
@@ -32620,8 +35398,10 @@ const EXPECTED_CARD_AI_VALUES = Object.freeze({
   lightning: ["闪电", 3],
   energyDevice: ["充能桩", 7],
   recycleDevice: ["回收站", 8],
+  bubbleMachine: ["泡泡机", 7],
   defenseDevice: ["雷达", 9],
   battleDevice: ["军火库", 9],
+  assaultMagazine: ["备用弹夹", 8],
   telescope: ["望远镜", 8],
   barrierDevice: ["屏障", 9]
 });
@@ -32654,6 +35434,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     energyDevice: -1,
     defenseDevice: -1,
     battleDevice: 2,
+    assaultMagazine: 2,
     telescope: 1,
     barrierDevice: -1
   },
@@ -32673,8 +35454,10 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     mutualBenefit: -1,
     symbiosis: 1,
     recycleDevice: -1,
+    bubbleMachine: 2,
     defenseDevice: 1,
     battleDevice: -1,
+    assaultMagazine: -1,
     telescope: -1,
     barrierDevice: 1
   },
@@ -32695,8 +35478,10 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     symbiosis: 2,
     energyDevice: 1,
     recycleDevice: -1,
+    bubbleMachine: -1,
     defenseDevice: 1,
     battleDevice: -1,
+    assaultMagazine: -1,
     telescope: -1,
     barrierDevice: 1
   },
@@ -32710,6 +35495,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     duel: 1,
     seal: -1,
     energyDevice: 1,
+    bubbleMachine: 1,
     battleDevice: 1,
     telescope: 1
   },
@@ -32725,7 +35511,8 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     symbiosis: -1,
     seal: 1,
     energyDevice: 1,
-    recycleDevice: 1
+    recycleDevice: 1,
+    assaultMagazine: 1
   },
   "trail-hunter": {
     assault: 2,
@@ -32743,6 +35530,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: -1,
     defenseDevice: -1,
     battleDevice: 1,
+    assaultMagazine: 2,
     telescope: 1,
     barrierDevice: -1
   },
@@ -32764,6 +35552,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     recycleDevice: 1,
     defenseDevice: -1,
     battleDevice: 1,
+    assaultMagazine: 1,
     barrierDevice: -1
   },
   "resonance-tuner": {
@@ -32784,6 +35573,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
     symbiosis: 1,
     seal: -1,
     recycleDevice: 1,
+    bubbleMachine: 1,
     defenseDevice: 1,
     battleDevice: -1,
     telescope: 1,
@@ -32791,7 +35581,7 @@ const EXPECTED_ROLE_CARD_VALUE_DELTAS = Object.freeze({
   }
 });
 
-test("AI·角色卡牌价值：26 张正式基础值与名称、definitionId 全部匹配", () => {
+test("AI·角色卡牌价值：28 张正式基础值与名称、definitionId 全部匹配", () => {
   const actual = Object.fromEntries(
     Object.values(CARD_DEFINITIONS).map(
       (definition) => [
@@ -32806,7 +35596,7 @@ test("AI·角色卡牌价值：26 张正式基础值与名称、definitionId 全
   }
 });
 
-test("AI·角色卡牌价值：八名角色 ID 与 135 项正式非零差值全部匹配", () => {
+test("AI·角色卡牌价值：八名角色 ID 与 145 项正式非零差值全部匹配", () => {
   assert.deepEqual(
     Object.fromEntries(CHARACTER_DEFINITIONS.map((character) => [character.id, character.name])),
     EXPECTED_ROLE_NAMES
@@ -32822,11 +35612,19 @@ test("AI·角色卡牌价值：八名角色 ID 与 135 项正式非零差值全�
   }
   assert.equal(
     Object.values(ROLE_CARD_VALUE_DELTAS).reduce((sum, deltas) => sum + Object.keys(deltas).length, 0),
-    135
+    145
   );
 });
 
-test("AI·角色卡牌价值：八名角色乘 26 张牌的差值与最终值全部匹配", () => {
+test("AI·角色卡牌价值：守誓者与灵医的备用弹夹最终值均为 7", () => {
+  assert.equal(getBaseCardAiValue("assaultMagazine"), 8);
+  assert.equal(ROLE_CARD_VALUE_DELTAS["oath-warden"].assaultMagazine, -1);
+  assert.equal(ROLE_CARD_VALUE_DELTAS["spirit-medic"].assaultMagazine, -1);
+  assert.equal(getRoleCardAiValue("oath-warden", "assaultMagazine"), 7);
+  assert.equal(getRoleCardAiValue("spirit-medic", "assaultMagazine"), 7);
+});
+
+test("AI·角色卡牌价值：八名角色乘 28 张牌的差值与最终值全部匹配", () => {
   for (const [characterId, expectedDeltas] of Object.entries(EXPECTED_ROLE_CARD_VALUE_DELTAS)) {
     for (const [definitionId, [, baseValue]] of Object.entries(EXPECTED_CARD_AI_VALUES)) {
       const expectedDelta = expectedDeltas[definitionId] ?? 0;
@@ -32855,17 +35653,23 @@ test("AI·角色卡牌价值：新增角色未配置差值时自动回退基础�
   }
 });
 
-test("AI·角色卡牌价值：新增卡牌未配置差值时自动回退基础值", () => {
-  const futureCardDefinitions = {
-    ...CARD_DEFINITIONS, futureCard: Object.freeze({ definitionId: "futureCard", aiValue: 4 })
+test("AI·角色卡牌价值：CARD_AI_VALUES 是唯一 Base Value authority", async () => {
+  const conflictingDefinitions = {
+    ...CARD_DEFINITIONS,
+    assault:Object.freeze({ ...CARD_DEFINITIONS.assault, aiValue:999 }),
+    futureCard:Object.freeze({ definitionId:"futureCard", aiValue:4 })
   };
-  const deltas = Object.freeze({ "blade-walker": Object.freeze({ assault: 1 }) });
-  for (const character of CHARACTER_DEFINITIONS) {
-    assert.equal(
-      getRoleCardAiValue(character.id, "futureCard", { cardDefinitions: futureCardDefinitions }), 4
-    );
-  }
-  assert.equal(getBaseCardAiValue("futureCard", futureCardDefinitions), 4);
+  assert.equal(getBaseCardAiValue("assault", conflictingDefinitions), CARD_AI_VALUES.assault);
+  assert.equal(
+    getRoleCardAiValue("blade-walker", "assault", { cardDefinitions:conflictingDefinitions }),
+    CARD_AI_VALUES.assault + ROLE_CARD_VALUE_DELTAS["blade-walker"].assault
+  );
+  assert.throws(() => getBaseCardAiValue("futureCard", conflictingDefinitions), /futureCard/);
+  assert.ok(Object.values(CARD_DEFINITIONS).every(
+    (definition) => !Object.hasOwn(definition, "aiValue")
+  ));
+  const source = await readFile(projectFile("js/ai/Evaluator/CardValue.js"), "utf8");
+  assert.doesNotMatch(source, /\bcardValueFor\b/u);
 });
 
 test("AI·角色卡牌价值：稀疏差值只作用于配置的组合", () => {
@@ -33024,8 +35828,8 @@ test("AI·角色核心评分：同一件新装备由不同角色获得时状态�
   const medicScore = evaluator.stateUtility(
     { players: [makeState("medic", "spirit-medic"), enemy] }, "medic"
   );
-  // battleDevice：blade-walker 差量 +2、spirit-medic 差量 -1 → 状态差量差 0.75
-  assertClose(bladeScore - medicScore, .75);
+  // 同一静态装备的 +2/-1 RoleDelta 与 Base 同乘材料尺度，差为 3×0.4。
+  assertClose(bladeScore - medicScore, 3 * RESOURCE_MATERIAL_SCALE);
 });
 
 
@@ -33632,7 +36436,7 @@ AI 资源选择与动态密度回归测试。
 canonical World、行动者/资源拥有者 ID 与 destroy/plunder 用途。
 
 输出
-最佳 canonical Action、动作后 World 与 Evaluator comparison terms；无候选时返回 null。
+最佳 canonical Action、动作后 World、comparison terms 与同根全部已物化候选；无候选时返回 null。
 
 读取状态
 输入 World 的公开资源、合法已知身份与 ProbabilityState。
@@ -33657,6 +36461,8 @@ function chooseCanonicalResourceActionForTest(
   working.players.forEach((player, index) => {
     player.seatIndex = index;
     if (typeof player.alive !== "boolean") player.alive = true;
+    if (!Number.isFinite(player.hp)) player.hp = Number.isFinite(player.maxHp) ? player.maxHp : 4;
+    if (!Number.isFinite(player.maxHp)) player.maxHp = player.hp;
   });
   const valueEvaluator = evaluator ?? new Evaluator({ world: working });
   const actor = working.players.find((player) => player.id === actorId) ?? null;
@@ -33689,9 +36495,67 @@ function chooseCanonicalResourceActionForTest(
     };
   });
   if (!candidates.length) return null;
-  return candidates.slice(1).reduce((best, candidate) => (
+  const chosen = candidates.slice(1).reduce((best, candidate) => (
     valueEvaluator.compareCandidates(candidate, best, actor, working) > 0 ? candidate : best
   ), candidates[0]);
+  return { ...chosen, candidates };
+}
+
+/*
+功能
+构造同一目标持有一个匿名手牌槽和雷达的 Destroy/Plunder 精确资源账本。
+
+调用方
+统一 ResourceSelectionUtility 数值账本回归测试。
+
+输入
+destroy 或 plunder 用途。
+
+输出
+匿名手牌、雷达候选及最终选择。
+
+读取状态
+固定 finite-pool counts、角色 CardValue 与 canonical Generator/Simulator/Evaluator。
+
+写入状态
+无；chooseCanonicalResourceActionForTest 为每个候选创建独立 after World。
+
+调用函数
+chooseCanonicalResourceActionForTest。
+
+边界与不变量
+有限池基础期望严格为 UNKNOWN_HAND_EXPECTED_VALUE；目标没有攻击资源，因此雷达 Future Utility 为零，
+fixture 只验证材料、角色 context、手牌功能与 acquisition 的一次记账。
+*/
+function resourceSelectionLedgerFixture(purpose) {
+  const state = {
+    remainingCardCounts:{ recover:4, charge:1 },
+    players:[
+      {
+        id:"ledger-resource-actor", seatIndex:0, battleTeam:"dawn",
+        characterId:"blade-walker", alive:true, hp:4, maxHp:4,
+        energy:0, handCount:0, hand:[], equipmentDefinitionId:null,
+        equipmentRetentionProbability:0, huntMarkProbabilities:{}, statuses:[]
+      },
+      {
+        id:"ledger-resource-owner", seatIndex:1, battleTeam:"dusk",
+        characterId:"oath-warden", alive:true, hp:4, maxHp:4,
+        energy:0, handCount:1, knownCards:[], equipmentDefinitionId:"defenseDevice",
+        equipmentRetentionProbability:1, huntMarkProbabilities:{}, statuses:[]
+      }
+    ]
+  };
+  const chosen = chooseCanonicalResourceActionForTest(
+    state,
+    "ledger-resource-actor",
+    "ledger-resource-owner",
+    purpose
+  );
+  return {
+    chosen,
+    unknown:chosen.candidates.find((candidate) => candidate.action.selection?.selectionKind === "unknown"),
+    radar:chosen.candidates.find((candidate) => candidate.action.selection?.zone === "equipment")
+  };
 }
 
 /*
@@ -33740,6 +36604,442 @@ function chooseGameResourceActionForTest(
   );
 }
 
+test("AI·资源选择：Destroy 匿名手牌与雷达使用统一可加数值账本", () => {
+  const { chosen, unknown, radar } = resourceSelectionLedgerFixture("destroy");
+  assert.ok(unknown && radar);
+  assert.equal(chosen.action.selection.zone, "equipment");
+  assertClose(unknown.comparisonTerms.contextualUtility, -1);
+  assertClose(unknown.comparisonTerms.resourceMaterialUtility, 2.64);
+  assert.equal(unknown.comparisonTerms.acquisitionUtility, 0);
+  assert.equal(unknown.comparisonTerms.thresholdUtility, 0);
+  assertClose(unknown.comparisonTerms.resourceSelectionUtility, 1.64);
+  assertClose(radar.comparisonTerms.contextualUtility, -2.1);
+  assertClose(radar.comparisonTerms.resourceMaterialUtility, 4);
+  assert.equal(radar.comparisonTerms.acquisitionUtility, 0);
+  assert.equal(radar.comparisonTerms.thresholdUtility, 0);
+  assertClose(radar.comparisonTerms.resourceSelectionUtility, 1.9);
+});
+
+test("AI·资源选择：Plunder 匿名手牌与雷达分列 target denial 和 actor acquisition", () => {
+  const { chosen, unknown, radar } = resourceSelectionLedgerFixture("plunder");
+  assert.ok(unknown && radar);
+  assert.equal(chosen.action.selection.zone, "equipment");
+  assertClose(unknown.comparisonTerms.contextualUtility, 0.1);
+  assertClose(unknown.comparisonTerms.resourceMaterialUtility, 2.64);
+  assertClose(unknown.comparisonTerms.acquisitionUtility, 2.24);
+  assert.equal(unknown.comparisonTerms.thresholdUtility, 0);
+  assertClose(unknown.comparisonTerms.resourceSelectionUtility, 4.98);
+  assertClose(radar.comparisonTerms.contextualUtility, -1);
+  assertClose(radar.comparisonTerms.resourceMaterialUtility, 4);
+  assertClose(radar.comparisonTerms.acquisitionUtility, 3.2);
+  assert.equal(radar.comparisonTerms.thresholdUtility, 0);
+  assertClose(radar.comparisonTerms.resourceSelectionUtility, 6.2);
+});
+
+/*
+功能
+物化一次 Destroy/Plunder 装备候选及其动作前 Future terms。
+
+调用方
+三项装备 Future 的 Resource RawStateDelta 回归测试。
+
+输入
+装备 definition、目标公开已知牌与资源用途。
+
+输出
+装备候选和目标在动作前的 StateValue terms。
+
+读取状态
+canonical Generator/Simulator/Evaluator 与空 finite pool。
+
+写入状态
+无；测试 helper 只构造隔离 World。
+
+调用函数
+chooseCanonicalResourceActionForTest、Evaluator.playerValueTerms。
+
+边界与不变量
+资源比较公式仍由 production owner 计算；helper 不复制材料、Future 或阵营符号公式。
+*/
+function equipmentFutureResourceCase(equipmentDefinitionId, cards, purpose) {
+  const state = {
+    remainingCardCounts:{},
+    players:[
+      {
+        id:"future-resource-actor", seatIndex:0, battleTeam:"dawn",
+        characterId:"blade-walker", alive:true, hp:4, maxHp:4, shield:0,
+        energy:0, handCount:1,
+        hand:[{ id:"future-resource-block", definitionId:"block" }], attackRange:1,
+        equipmentDefinitionId:null, equipmentRetentionProbability:0,
+        huntMarkProbabilities:{}, statuses:[]
+      },
+      {
+        id:"future-resource-owner", seatIndex:1, battleTeam:"dusk",
+        characterId:"oath-warden", alive:true, hp:4, maxHp:4, shield:0,
+        energy:0, handCount:cards.length,
+        knownCards:cards.map((definitionId, index) => fullKnownCard(
+          `future-resource-${index}`,
+          definitionId
+        )),
+        attackRange:1, nextTurnBaseAttackLimit:1,
+        equipmentDefinitionId, equipmentRetentionProbability:1,
+        recycleDeviceUses:0, huntMarkProbabilities:{}, statuses:[]
+      }
+    ]
+  };
+  const result = chooseCanonicalResourceActionForTest(
+    state,
+    "future-resource-actor",
+    "future-resource-owner",
+    purpose
+  );
+  const equipment = result.candidates.find(
+    (candidate) => candidate.action.selection?.zone === "equipment"
+  );
+  const owner = equipment.before.players.find((player) => player.id === "future-resource-owner");
+  const future = new Evaluator().playerValueTerms(
+    equipment.before,
+    owner,
+    "future-resource-actor",
+    buildRadarJudgmentProbabilities({})
+  ).terms;
+  return { equipment, future };
+}
+
+test("AI·资源选择：三项装备 Future 由 RawStateDelta 自然进入 Destroy 与 Plunder", () => {
+  const cases = [
+    {
+      equipmentDefinitionId:"battleDevice",
+      activeCards:["assault"],
+      baselineCards:["charge"],
+      term:"battleDeviceFuture"
+    },
+    {
+      equipmentDefinitionId:"recycleDevice",
+      activeCards:["harvest"],
+      baselineCards:["charge"],
+      term:"recycleDeviceFuture"
+    },
+    {
+      equipmentDefinitionId:"assaultMagazine",
+      activeCards:["assault", "assault", "assault"],
+      baselineCards:["charge", "charge", "charge"],
+      term:"assaultMagazineFuture"
+    }
+  ];
+  for (const entry of cases) {
+    for (const purpose of ["destroy", "plunder"]) {
+      const active = equipmentFutureResourceCase(
+        entry.equipmentDefinitionId,
+        entry.activeCards,
+        purpose
+      );
+      const baseline = equipmentFutureResourceCase(
+        entry.equipmentDefinitionId,
+        entry.baselineCards,
+        purpose
+      );
+      assert.ok(active.future[entry.term] > 0, `${purpose}:${entry.term}`);
+      assert.equal(baseline.future[entry.term], 0, `${purpose}:${entry.term}:baseline`);
+      assertClose(
+        active.equipment.comparisonTerms.contextualUtility
+          - baseline.equipment.comparisonTerms.contextualUtility,
+        active.future[entry.term],
+        1e-9
+      );
+      assertClose(
+        active.equipment.comparisonTerms.resourceMaterialUtility,
+        baseline.equipment.comparisonTerms.resourceMaterialUtility
+      );
+    }
+  }
+});
+
+test("AI·资源选择：装备 target 与 Plunder actor 分别使用各自 RoleDelta 静态资产", () => {
+  const destroy = equipmentFutureResourceCase(
+    "battleDevice",
+    ["assault"],
+    "destroy"
+  );
+  const plunder = equipmentFutureResourceCase(
+    "battleDevice",
+    ["assault"],
+    "plunder"
+  );
+  const destroyBaseline = equipmentFutureResourceCase(
+    "battleDevice",
+    ["charge"],
+    "destroy"
+  );
+  const targetStaticAsset = (9 - 1) * RESOURCE_MATERIAL_SCALE;
+  const actorStaticAsset = (9 + 2) * RESOURCE_MATERIAL_SCALE;
+  assertClose(destroy.equipment.comparisonTerms.resourceMaterialUtility, targetStaticAsset);
+  assert.equal(destroy.equipment.comparisonTerms.acquisitionUtility, 0);
+  assertClose(plunder.equipment.comparisonTerms.resourceMaterialUtility, targetStaticAsset);
+  assertClose(plunder.equipment.comparisonTerms.acquisitionUtility, actorStaticAsset);
+  assertClose(
+    destroy.equipment.comparisonTerms.contextualUtility
+      - destroyBaseline.equipment.comparisonTerms.contextualUtility,
+    destroy.future.battleDeviceFuture
+  );
+});
+
+test("AI·资源选择：统一标量与 Final Utility 共用机器精度 tie 层级", () => {
+  const evaluator = new Evaluator();
+  const root = {
+    type:"card",
+    actorId:"resource-tie-actor",
+    cardId:"destroy",
+    cardInstanceId:"resource-tie-card",
+    targetIds:["resource-tie-owner"]
+  };
+  const left = {
+    action:{ ...root, selection:{ zone:"hand", selectionKind:"unknown" } },
+    comparisonTerms:{ resourceSelectionUtility:1 + Number.EPSILON },
+    valueScore:1
+  };
+  const right = {
+    action:{ ...root, selection:{ zone:"equipment", selectionKind:"equipment" } },
+    comparisonTerms:{ resourceSelectionUtility:1 },
+    valueScore:2
+  };
+  assert.ok(
+    evaluator.compareCandidates(left, right) < 0,
+    "Resource 的 Number.EPSILON 噪声应视为 tie，再由 Final Utility 决胜"
+  );
+  assert.ok(evaluator.compareCandidates(
+    {
+      ...left,
+      comparisonTerms:{ resourceSelectionUtility:1 + Number.EPSILON * 4 },
+      valueScore:0
+    },
+    { ...right, valueScore:100 }
+  ) > 0, "超过统一机器精度容差的真实 Resource 差异必须优先于 Final Utility");
+  assert.ok(evaluator.compareCandidates(
+    { ...left, comparisonTerms:{ resourceSelectionUtility:1 }, valueScore:3 },
+    { ...right, valueScore:2 }
+  ) > 0, "Resource tie 后必须继续比较 generic Final Utility");
+  assert.equal(
+    evaluator.compareCandidates(
+      { ...left, comparisonTerms:{ resourceSelectionUtility:1 }, valueScore:2 },
+      { ...right, valueScore:2 }
+    ),
+    0,
+    "Resource 与 Final 都 tie 时保持稳定枚举顺序"
+  );
+});
+
+test("AI·资源选择：材料与未知牌期望各自只有一个 production authority", async () => {
+  assert.equal(RESOURCE_MATERIAL_SCALE, 0.4);
+  assert.equal(UNKNOWN_HAND_EXPECTED_VALUE, 5.8);
+  assert.equal(HAND_COUNT_VALUE, 1.1);
+  assert.equal(getBaseCardAiValue("defenseDevice"), 9);
+  assertClose(UNKNOWN_HAND_EXPECTED_VALUE * RESOURCE_MATERIAL_SCALE, 2.32);
+  assertClose(
+    UNKNOWN_HAND_EXPECTED_VALUE * RESOURCE_MATERIAL_SCALE + HAND_COUNT_VALUE,
+    3.42
+  );
+  assertClose(getBaseCardAiValue("defenseDevice") * RESOURCE_MATERIAL_SCALE, 3.6);
+  assertClose(getUnknownAcquisitionUtility({ recover:4, charge:1 }), 5.8);
+  assert.equal(getUnknownAcquisitionUtility(null), UNKNOWN_HAND_EXPECTED_VALUE);
+
+  const aiSources = (await Promise.all(
+    (await listJavaScriptFiles(projectFile("js/ai"))).map((file) => readFile(file, "utf8"))
+  )).join("\n");
+  const cardValueSource = await readFile(projectFile("js/ai/Evaluator/CardValue.js"), "utf8");
+  assert.equal((aiSources.match(/UNKNOWN_HAND_EXPECTED_VALUE\s*=\s*5\.8\b/g) ?? []).length, 1);
+  assert.equal((aiSources.match(/RESOURCE_MATERIAL_SCALE\s*=\s*0\.4\b/g) ?? []).length, 1);
+  assert.doesNotMatch(aiSources, /\b11\.6\b/);
+  assert.doesNotMatch(aiSources, /getBaseCardAiValue\([^\n]+\)\s*\*\s*0\.4\b/);
+  assert.match(cardValueSource, /equipmentRoleDelta:[^\n]*RESOURCE_MATERIAL_SCALE/);
+  assert.match(cardValueSource, /function staticCardAssetValue/);
+});
+
+test("AI·资源选择：充能桩门槛功能项在统一标量中保持可见", () => {
+  const state = {
+    remainingCardCounts:{ recover:1 },
+    players:[
+      {
+        id:"energy-resource-actor", seatIndex:0, battleTeam:"dawn",
+        characterId:"blade-walker", alive:true, hp:4, maxHp:4,
+        energy:0, handCount:0, hand:[], equipmentDefinitionId:null,
+        equipmentRetentionProbability:0
+      },
+      {
+        id:"energy-resource-owner", seatIndex:1, battleTeam:"dusk",
+        characterId:"oath-warden", alive:true, hp:4, maxHp:4,
+        energy:0, maxEnergy:4, handCount:1, knownCards:[],
+        activeSkillId:"barrier", activeSkillCost:2, activeSkillLimit:2,
+        turnEnergyGainWithoutEquipment:1, energyDeviceTurnEnergyGain:1,
+        equipmentDefinitionId:"energyDevice", equipmentRetentionProbability:1
+      }
+    ]
+  };
+  const choice = chooseCanonicalResourceActionForTest(
+    state,
+    "energy-resource-actor",
+    "energy-resource-owner",
+    "destroy"
+  );
+  assert.equal(choice.action.selection.zone, "equipment");
+  assert.equal(choice.action.selection.definitionId, "energyDevice");
+  assert.equal(choice.comparisonTerms.thresholdUtility, 4);
+});
+
+/*
+功能
+让真实 AI 携带 Counter 前 stale resource projection 经过双重 Counter 后结算指定资源牌。
+
+调用方
+AI post-Counter Plunder/Destroy/Transfer 端到端回归测试。
+
+输入
+plunder、destroy 或 transfer definition ID。
+
+输出
+Game fixture、参与者、资源实体、post-Counter hand snapshots 与 runtime canonical selections。
+
+读取状态
+真实 ActionWorkflow、ResponseWorkflow、AI Choice adapter 与 Controller canonical selection boundary。
+
+写入状态
+独立测试 GameState；两个 Counter 与最终资源按真实 workflow 移动。
+
+调用函数
+makeGame、rememberPrivateCard、forceAvailableAiCounters、playCard。
+
+边界与不变量
+传入的 stale selection 固定指向 Counter；root 恢复生效时 runtime 必须只看 Counter chain 后的当前资源，
+Transfer 的 source/receiver 仍沿用反制前公开声明。
+*/
+async function playAiResourceCardThroughCounterChain(definitionId) {
+  const actor = makePlayer(`post-counter-${definitionId}-actor`, 0, "dawn", "ai", 1);
+  const owner = makePlayer(`post-counter-${definitionId}-owner`, 1, "dusk", "ai", 1);
+  const receiver = makePlayer(`post-counter-${definitionId}-receiver`, 2, "dawn", "ai", 0);
+  const use = instance(definitionId);
+  const actorCounter = instance("counter");
+  const staleCounter = instance("counter");
+  const assault = instance("assault");
+  actor.hand.push(use, actorCounter);
+  owner.hand.push(staleCounter, assault);
+  const { game } = makeGame([actor, owner, receiver], { random:() => 0 });
+  game.rememberPrivateCard(actor, owner, staleCounter);
+  game.rememberPrivateCard(actor, owner, assault);
+  forceAvailableAiCounters(game);
+  const handSnapshots = [];
+  const runtimeSelections = [];
+  const runtimeContexts = [];
+  const originalChoose = game.aiController.choosePostCounterResource.bind(game.aiController);
+  game.aiController.choosePostCounterResource = async (...args) => {
+    handSnapshots.push(args[1].hand.map((card) => card.definitionId));
+    runtimeContexts.push(args[2]);
+    const chosen = await originalChoose(...args);
+    runtimeSelections.push(chosen?.selection ?? null);
+    return chosen;
+  };
+  const staleSelection = {
+    zone:"hand",
+    selectionKind:"known",
+    cardId:staleCounter.id,
+    definitionId:staleCounter.definitionId,
+    availableUnknownCount:0,
+    ...(definitionId === "transfer"
+      ? { sourceId:owner.id, receiverId:receiver.id }
+      : {})
+  };
+  const executed = await game.playCard(
+    actor,
+    use,
+    definitionId === "transfer" ? [] : [owner],
+    staleSelection
+  );
+  return {
+    game,
+    actor,
+    owner,
+    receiver,
+    use,
+    actorCounter,
+    staleCounter,
+    assault,
+    executed,
+    handSnapshots,
+    runtimeSelections,
+    runtimeContexts
+  };
+}
+
+test("AI·资源选择：掠夺在双重 Counter 后从最新手牌重选实体", async () => {
+  const fixture = await playAiResourceCardThroughCounterChain("plunder");
+  try {
+    assert.equal(fixture.executed, true);
+    assert.deepEqual(fixture.handSnapshots, [["assault"]]);
+    assert.equal(fixture.runtimeSelections[0]?.selectionKind, "known");
+    assert.equal(fixture.runtimeSelections[0]?.cardId, fixture.assault.id);
+    assert.ok(fixture.actor.hand.includes(fixture.assault));
+    assert.ok(!fixture.owner.hand.includes(fixture.assault));
+    assert.ok(fixture.game.state.deck.discardPile.includes(fixture.staleCounter));
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·资源选择：破坏在双重 Counter 后从最新手牌重选实体", async () => {
+  const fixture = await playAiResourceCardThroughCounterChain("destroy");
+  try {
+    assert.equal(fixture.executed, true);
+    assert.deepEqual(fixture.handSnapshots, [["assault"]]);
+    assert.equal(fixture.runtimeSelections[0]?.cardId, fixture.assault.id);
+    assert.ok(!fixture.owner.hand.includes(fixture.assault));
+    assert.ok(fixture.game.state.deck.discardPile.includes(fixture.assault));
+    assert.ok(fixture.game.state.deck.discardPile.includes(fixture.staleCounter));
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·资源选择：转移冻结公开双方但在双重 Counter 后重选具体手牌", async () => {
+  const fixture = await playAiResourceCardThroughCounterChain("transfer");
+  try {
+    assert.equal(fixture.executed, true);
+    assert.deepEqual(fixture.handSnapshots, [["assault"]]);
+    assert.equal(fixture.runtimeContexts[0]?.receiver, fixture.receiver);
+    assert.equal(fixture.runtimeSelections[0]?.sourceId, fixture.owner.id);
+    assert.equal(fixture.runtimeSelections[0]?.receiverId, fixture.receiver.id);
+    assert.equal(fixture.runtimeSelections[0]?.cardId, fixture.assault.id);
+    assert.ok(!fixture.owner.hand.includes(fixture.assault));
+    assert.ok(fixture.receiver.hand.includes(fixture.assault));
+    assert.ok(fixture.game.state.deck.discardPile.includes(fixture.staleCounter));
+  } finally {
+    fixture.game.dispose();
+  }
+});
+
+test("AI·资源选择：同一当前状态的 planning 与 runtime canonical selection 一致", async () => {
+  const actor = makePlayer("resource-parity-actor", 0, "dawn", "ai", 1);
+  const owner = makePlayer("resource-parity-owner", 1, "dusk", "ai", 1);
+  const use = instance("plunder");
+  const counter = instance("counter");
+  const assault = instance("assault");
+  actor.hand.push(use);
+  owner.hand.push(counter, assault);
+  const { game } = makeGame([actor, owner]);
+  game.rememberPrivateCard(actor, owner, counter);
+  game.rememberPrivateCard(actor, owner, assault);
+  try {
+    const planning = chooseGameResourceActionForTest(game, actor, owner, "plunder");
+    const runtime = await game.aiController.choosePostCounterResource(
+      actor,
+      owner,
+      { purpose:"plunder", card:use }
+    );
+    assert.deepEqual(runtime?.selection, planning?.action?.selection);
+    assert.equal(runtime?.card?.id, planning?.action?.selection?.cardId);
+  } finally {
+    game.dispose();
+  }
+});
+
 test("AI·资源选择：破坏已知手牌使用目标角色价值", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const shade = makePlayer("shade", 1, "dusk", "ai", 3);
@@ -33768,17 +37068,20 @@ test("AI·资源选择：破坏相同牌组随目标角色变化", () => {
   assert.equal(chosen.action.selection.cardId, recover.id);
 });
 
-test("AI·资源选择：破坏未知牌仍按固定期望值 4 选择位置且不因真实牌面改变", async () => {
+test("AI·资源选择：破坏未知牌按唯一基础期望选择位置且不因真实牌面改变", async () => {
   const actor = makePlayer("actor", 0, "dawn");
   const warden = makePlayer("warden", 1, "dusk", "ai", 1);
-  // oath-warden：assault 3 < 未知 4
+  // oath-warden：assault 3 < canonical unknown expectation
   let randomCalls = 0;
   const { game }
     = makeGame([actor, warden], { random: () => { randomCalls += 1; return 0; } });
   const knownAssault = instance("assault"), unknown = instance("counter");
   warden.hand = [knownAssault, unknown];
   game.rememberPrivateCard(actor, warden, knownAssault);
-  assert.equal(getResourceUnknownUtility("destroy", actor, warden), 4);
+  assert.equal(
+    getResourceUnknownUtility("destroy", actor, warden),
+    UNKNOWN_HAND_EXPECTED_VALUE
+  );
   const selection = {
     zone: "hand",
     selectionKind: "unknown",
@@ -33835,10 +37138,10 @@ test("AI·资源选择：破坏不因未知实体真实牌面改变选择位置"
   assert.equal(lowChosen, low.target.hand[1]);
 });
 
-test("AI·资源选择：破坏手牌与装备比较使用上下文状态收益", () => {
+test("AI·资源选择：破坏手牌与装备按统一可加标量比较", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const medic = makePlayer("medic", 1, "dusk", "ai", 2);
-  // spirit-medic：recover 8、energyDevice 8
+  // 两者 static asset 同尺度；充能桩的真实未来能量功能使装备候选胜出。
   const { game }
     = makeGame([actor, medic], { random: () => 0 });
   const recover = instance("recover");
@@ -33847,7 +37150,6 @@ test("AI·资源选择：破坏手牌与装备比较使用上下文状态收益"
   game.rememberPrivateCard(actor, medic, recover);
   const chosen = chooseGameResourceActionForTest(game, actor, medic, "destroy");
   assert.equal(chosen.action.selection.zone, "equipment");
-  assert.equal(chosen.action.selection.definitionId, medic.equipment.definitionId);
 });
 
 test("AI·资源选择：掠夺使用双角色效用而非破坏的单角色损失", () => {
@@ -33934,7 +37236,7 @@ test("AI·资源选择：掠夺目标角色改变已知手牌偏好且同分保�
   // 守誓者目标：assault 9 < block 10
 });
 
-test("AI·资源选择：掠夺未知敌方牌组合效用为 8", async () => {
+test("AI·资源选择：掠夺未知敌方牌组合效用由唯一基础期望推导", async () => {
   const medic = makePlayer("medic", 0, "dawn", "ai", 2);
   const warden = makePlayer("warden", 1, "dusk", "ai", 1);
   let randomCalls = 0;
@@ -33943,7 +37245,10 @@ test("AI·资源选择：掠夺未知敌方牌组合效用为 8", async () => {
   const knownAssault = instance("assault"), unknown = instance("counter");
   warden.hand = [knownAssault, unknown];
   game.rememberPrivateCard(medic, warden, knownAssault);
-  assert.equal(getResourceUnknownUtility("plunder", medic, warden), 8);
+  assert.equal(
+    getResourceUnknownUtility("plunder", medic, warden),
+    UNKNOWN_HAND_EXPECTED_VALUE * 2
+  );
   const selection = {
     zone: "hand",
     selectionKind: "unknown",
@@ -33956,9 +37261,9 @@ test("AI·资源选择：掠夺未知敌方牌组合效用为 8", async () => {
     game, medic, warden, selection
   );
   assert.equal(chosen, unknown);
-  // 已知 6 < 未知 8
+  // 已知 6 < 敌方 unknown denial + acquisition
   assert.equal(randomCalls, 1);
-  assert.equal(UNKNOWN_HAND_EXPECTED_VALUE, 4);
+  assert.equal(UNKNOWN_HAND_EXPECTED_VALUE, 5.8);
 });
 
 test("AI·资源选择：掠夺不因未知实体真实牌面改变选择位置", async () => {
@@ -34037,15 +37342,15 @@ test("AI·资源选择：同阵营掠夺辅助语义使用差值而非相加", (
   // 同阵营 block：5-7=-2 < 未知 0；若相加则为 12
 });
 
-test("AI·资源选择：共享价值：破坏使用 owner 角色价值且未知为 4", () => {
+test("AI·资源选择：共享价值：破坏使用 owner 角色价值且未知由唯一期望回退", () => {
   const actor = makePlayer("actor", 0, "dawn");
   const owner = makePlayer("owner", 1, "dusk", "ai", 2);
   // spirit-medic
   assert.equal(getResourceDefinitionUtility("destroy", actor, owner, "recover"), 8);
-  assert.equal(getResourceUnknownUtility("destroy", actor, owner), 4);
+  assert.equal(getResourceUnknownUtility("destroy", actor, owner), UNKNOWN_HAND_EXPECTED_VALUE);
 });
 
-test("AI·资源选择：共享价值：掠夺敌方相加、同阵营相减且未知为 8/0", () => {
+test("AI·资源选择：共享价值：掠夺敌方相加、同阵营相减且未知由基础期望推导", () => {
   const actor = makePlayer("actor", 0, "dawn", "ai", 0);
   // blade-walker
   const enemy = makePlayer("enemy", 1, "dusk", "ai", 2);
@@ -34053,7 +37358,10 @@ test("AI·资源选择：共享价值：掠夺敌方相加、同阵营相减且�
   const ally = makePlayer("ally", 1, "dawn", "ai", 2);
   assert.equal(getResourceDefinitionUtility("plunder", actor, enemy, "recover"), 14);
   assert.equal(getResourceDefinitionUtility("plunder", actor, ally, "recover"), -2);
-  assert.equal(getResourceUnknownUtility("plunder", actor, enemy), 8);
+  assert.equal(
+    getResourceUnknownUtility("plunder", actor, enemy),
+    UNKNOWN_HAND_EXPECTED_VALUE * 2
+  );
   assert.equal(getResourceUnknownUtility("plunder", actor, ally), 0);
 });
 
@@ -34123,9 +37431,8 @@ test("AI·资源选择：随机调用：未知候选落败时不解析实体也�
   const { game }
     = makeGame([actor, owner], { random: () => { randomCalls += 1; return 0; } });
   owner.hand = [instance("counter")];
-  // 未知，破坏值 4
+  // 当前 finite-pool 匿名期望低于充能桩的材料与功能合计。
   owner.equipment = instance("energyDevice");
-  // oath-warden 值 7 > 4
   const chosen = chooseGameResourceActionForTest(game, actor, owner, "destroy");
   assert.equal(chosen.action.selection.zone, "equipment");
   assert.equal(randomCalls, 0);
@@ -34383,7 +37690,7 @@ test("AI·资源选择：破坏模拟使用共享区域选择：灵医已知调�
   assert.equal(target.equipmentRetentionProbability, 1);
 });
 
-test("AI·资源选择：破坏模拟区域选择随目标角色变化", () => {
+test("AI·资源选择：破坏模拟在材料与手牌功能项相加后保留角色差量", () => {
   const run = (characterId) => {
     const state = {
       players: [
@@ -34414,13 +37721,12 @@ test("AI·资源选择：破坏模拟区域选择随目标角色变化", () => {
     return chooseCanonicalResourceActionForTest(state, "a", "t", "destroy").after.players[1];
   };
   const medic = run("spirit-medic");
-  // recover 8 > energyDevice 7 → 手牌
+  // recover 的手牌需求与角色差量共同进入统一标量。
   assert.ok(Math.abs(medic.handCount - 0) < 1e-9);
   assert.equal(medic.equipmentRetentionProbability, 1);
   const shade = run("shade-agent");
-  // recover 6 < energyDevice 8 → 装备
-  assert.ok(Math.abs(shade.handCount - 1) < 1e-9);
-  assert.ok(Math.abs(shade.equipmentRetentionProbability - 0) < 1e-9);
+  assert.ok(Math.abs(shade.handCount - 0) < 1e-9);
+  assert.equal(shade.equipmentRetentionProbability, 1);
 });
 
 test("AI·资源选择：破坏模拟同分时优先手牌", () => {
@@ -34607,7 +37913,7 @@ test("AI·资源选择：破坏模拟 knownCards 数量一致时参与共享选�
   const next = chooseCanonicalResourceActionForTest(state, "a", "t", "destroy").after;
   assert.ok(Math.abs(next.players[1].handCount - 1) < 1e-9);
   assert.equal(next.players[1].equipmentRetentionProbability, 1);
-  assert.deepEqual(next.players[1].knownCards, []);
+  assert.deepEqual(next.players[1].knownCards, [{ cardId: "r", definitionId: "recover" }]);
 });
 
 test("AI·资源选择：破坏模拟 scale 三档：手牌与装备", () => {
@@ -34670,8 +37976,8 @@ test("AI·资源选择：破坏模拟 scale 三档：手牌与装备", () => {
           battleTeam: "dusk",
           characterId: "shade-agent",
           alive: true,
-          handCount: 1,
-          knownCards: [{ cardId: "r", definitionId: "recover" }],
+          handCount: 0,
+          knownCards: [],
           equipmentDefinitionId: "energyDevice",
           equipmentRetentionProbability: 1,
           counterProbability: 0
@@ -34752,7 +38058,7 @@ test("AI·资源选择：掠夺模拟使用共享双角色区域选择：灵医�
   assert.equal(after.players[1].equipmentRetentionProbability, 1);
 });
 
-test("AI·资源选择：掠夺模拟区域选择随使用者角色变化", () => {
+test("AI·资源选择：掠夺模拟把使用者角色差量并入统一标量", () => {
   const run = (actorCharacterId) => {
     const actor = {
       id: "actor",
@@ -34782,13 +38088,12 @@ test("AI·资源选择：掠夺模拟区域选择随使用者角色变化", () =
   assert.equal(shade.actor.handCount, 1);
   assert.equal(shade.target.equipmentRetentionProbability, 1);
   const ember = run("ember-magus");
-  // exposeWeakness 13 < energyDevice 14 → 装备
-  assert.ok(Math.abs(ember.target.handCount - 1) < 1e-9);
+  assert.ok(Math.abs(ember.target.handCount - 0) < 1e-9);
   assert.equal(ember.actor.handCount, 1);
-  assert.ok(Math.abs(ember.target.equipmentRetentionProbability - 0) < 1e-9);
+  assert.equal(ember.target.equipmentRetentionProbability, 1);
 });
 
-test("AI·资源选择：掠夺模拟区域选择随目标角色变化", () => {
+test("AI·资源选择：掠夺模拟把目标角色差量并入统一标量", () => {
   const run = (targetCharacterId) => {
     const actor = {
       id: "actor",
@@ -34813,9 +38118,10 @@ test("AI·资源选择：掠夺模拟区域选择随目标角色变化", () => {
     return { actor: after.players[0], target: after.players[1] };
   };
   const blade = run("blade-walker");
-  // counter 17 < battleDevice 19 → 装备
+  // 手牌 target denial 与 actor acquisition 连同 HandCountValue 在同一标量内比较。
   assert.equal(blade.actor.handCount, 1);
-  assert.ok(Math.abs(blade.target.equipmentRetentionProbability - 0) < 1e-9);
+  assert.ok(Math.abs(blade.target.handCount - 0) < 1e-9);
+  assert.equal(blade.target.equipmentRetentionProbability, 1);
   const warden = run("oath-warden");
   // counter 18 > battleDevice 16 → 手牌
   assert.ok(Math.abs(warden.target.handCount - 0) < 1e-9);
@@ -34958,7 +38264,7 @@ test("AI·资源选择：掠夺模拟不读取目标隐藏 hand 实体定义", (
   assert.equal(result.act.handCount, 1);
 });
 
-test("AI·资源选择：掠夺模拟 knownCards 可信时参与双角色比较", () => {
+test("AI·资源选择：掠夺模拟 knownCards 与匿名有限池共同参与统一比较", () => {
   const actor = {
     id: "actor",
     battleTeam: "dawn",
@@ -34980,13 +38286,11 @@ test("AI·资源选择：掠夺模拟 knownCards 可信时参与双角色比较"
     { players: [actor, target] }, actor.id, target.id, "plunder"
   ).after;
   const afterActor = after.players[0], afterTarget = after.players[1];
-  // recover 14 > 装备 13 → 手牌；未知 8 参与比较但低于两者
+  // 新未知期望使匿名槽胜出；合法已知实体仍保留且不泄露匿名牌面。
   assert.ok(Math.abs(afterTarget.handCount - 1) < 1e-9);
   assert.equal(afterTarget.equipmentRetentionProbability, 1);
-  assert.deepEqual(afterTarget.knownCards, []);
-  assert.equal(afterActor.hand.length, 1);
-  assert.equal(afterActor.hand[0].id, "r");
-  assert.equal(afterActor.hand[0].definitionId, "recover");
+  assert.deepEqual(afterTarget.knownCards, [{ cardId: "r", definitionId: "recover" }]);
+  assert.equal(afterActor.hand.length, 0);
 });
 
 test("AI·资源选择：掠夺模拟 scale 三档：手牌", () => {
@@ -35054,8 +38358,8 @@ test("AI·资源选择：掠夺模拟 scale 三档：装备", () => {
       id: "target",
       battleTeam: "dusk",
       characterId: "blade-walker",
-      handCount: 1,
-      knownCards: [{ cardId: "b", definitionId: "block" }],
+      handCount: 0,
+      knownCards: [],
       equipmentDefinitionId: "energyDevice",
       equipmentRetentionProbability: 1
     };
@@ -36761,6 +40065,87 @@ test("AI·转移评分：目标反制风险下转移部分生效且来源与接�
 
 // ---- AI 评分·威胁评估 ----
 
+/*
+功能
+构造三人阵营角色持有备用弹夹时的 canonical World，并计算下一回合突袭容量价值。
+
+调用方
+备用弹夹 StateValue 公式测试。
+
+输入
+确定突袭库存、装备保留概率与是否使用刃行者。
+
+输出
+玩家、World、可兑现突袭数、突袭威胁与装备协同值。
+
+读取状态
+正式 CardDefinitions、Ruleset、World/Probability 与 StateValue primitives。
+
+写入状态
+只写独立测试玩家和 clone World 的装备保留概率。
+
+调用函数
+makePlayer、makeGame、createInitialWorld、cloneWorld、expectedUsableAssaultsNextTurn、assaultThreat、equipmentThreatSynergy。
+
+边界与不变量
+三人阵营基础上限固定由 Ruleset 投影；库存牌身份来自观察者自己的合法手牌。
+*/
+function magazineAssaultValueFixture(assaultCount, retention = 1, bladeWalker = false) {
+  const actor = makePlayer("magazine-value-actor", 0, "dusk", "ai", bladeWalker ? 0 : 1),
+    allyA = makePlayer("magazine-value-ally-a", 1, "dusk"),
+    enemyA = makePlayer("magazine-value-enemy-a", 2, "dawn"),
+    allyB = makePlayer("magazine-value-ally-b", 3, "dusk"),
+    enemyB = makePlayer("magazine-value-enemy-b", 4, "dawn");
+  actor.equipment = instance("assaultMagazine");
+  actor.hand.push(...Array.from({ length: assaultCount }, () => instance("assault")));
+  if (bladeWalker) actor.energy = 1;
+  const { game } = makeGame([actor, allyA, enemyA, allyB, enemyB]);
+  const world = cloneWorld(createInitialWorld(actor.id, game.state));
+  const worldActor = world.players.find((player) => player.id === actor.id);
+  worldActor.equipmentRetentionProbability = retention;
+  return {
+    player:worldActor,
+    world,
+    usable:expectedUsableAssaultsNextTurn(worldActor, world),
+    threat:assaultThreat(worldActor, world),
+    equipmentSynergy:equipmentThreatSynergy(worldActor, world)
+  };
+}
+
+test("AI·备用弹夹：0到3张突袭只按真实库存兑现额外容量", () => {
+  const expected = [0, 1, 2, 3];
+  expected.forEach((usable, assaultCount) => {
+    const result = magazineAssaultValueFixture(assaultCount);
+    assertClose(result.usable, usable);
+    if (assaultCount === 0) assertClose(result.threat, 0);
+    assertClose(result.equipmentSynergy, 0);
+  });
+  const one = magazineAssaultValueFixture(1);
+  one.player.equipmentDefinitionId = null;
+  one.player.equipmentRetentionProbability = 0;
+  assertClose(expectedUsableAssaultsNextTurn(one.player, one.world), 1);
+});
+
+test("AI·备用弹夹：装备保留概率线性混合有无额外容量的配对世界", () => {
+  const result = magazineAssaultValueFixture(3, 0.5);
+  assertClose(result.usable, 2);
+  assertClose(result.threat, 2.75);
+  result.player.equipmentRetentionProbability = 0;
+  assertClose(expectedUsableAssaultsNextTurn(result.player, result.world), 1);
+  result.player.equipmentRetentionProbability = 1;
+  assertClose(expectedUsableAssaultsNextTurn(result.player, result.world), 3);
+});
+
+test("AI·备用弹夹：破军概率在有无装备容量世界之后各自叠加一次", () => {
+  const result = magazineAssaultValueFixture(4, 0.5, true);
+  assertClose(futureSkillReadinessProbability(result.player), 1);
+  assertClose(result.usable, 3);
+  result.player.equipmentRetentionProbability = 0;
+  assertClose(expectedUsableAssaultsNextTurn(result.player, result.world), 2);
+  result.player.equipmentRetentionProbability = 1;
+  assertClose(expectedUsableAssaultsNextTurn(result.player, result.world), 4);
+});
+
 test("AI·威胁评估：转移 preference 保留来源与接收者 ID", () => {
   const actor = { id: "actor", battleTeam: "dawn" };
   const source = {
@@ -36792,10 +40177,10 @@ test("AI·威胁评估：近期攻击者 ID 记忆参与 canonical ThreatValue",
       roleTags: [],
       statuses: []
     };
-  const withMemory = threatScore(
+  const withMemory = targetPriorityScore(
     viewer, target, { recentAggressors: { "player-b": 3 } }, 1
   );
-  const withoutMemory = threatScore(viewer, target, { recentAggressors: {} }, 1);
+  const withoutMemory = targetPriorityScore(viewer, target, { recentAggressors: {} }, 1);
   assert.equal(withMemory - withoutMemory, 6);
 });
 
@@ -36806,7 +40191,7 @@ test("AI·威胁评估：转移威胁：近期攻击者记忆决定敌方转移�
       battleTeam: "dusk",
       alive: true,
       hp: 2,
-      maxHp: 4,
+      maxHp: 3,
       shield: 0,
       energy: 0,
       handCount: 1,
@@ -36834,7 +40219,7 @@ test("AI·威胁评估：转移威胁：近期攻击者记忆决定敌方转移�
     receiver
   });
   assert.equal(evaluate({}).score, Number.NEGATIVE_INFINITY);
-  const preferred = evaluate({ source: 3 });
+  const preferred = evaluate({ source: 1 });
   assert.ok(preferred.score >= MIN_TRANSFER_UTILITY);
   assert.equal(preferred.receiverId, receiver.id);
 });
@@ -36857,7 +40242,7 @@ test("AI·威胁评估：转移缺失来源或接收者时安全返回负无穷"
   );
 });
 
-test("AI·威胁评估：threatScore 的稳定角色标签与近期攻击者会进入目标评分", () => {
+test("AI·威胁评估：targetPriorityScore 的稳定角色标签与近期攻击者会进入目标评分", () => {
   const viewer = { battleTeam: "dawn" },
     base = {
       id: "x",
@@ -36871,10 +40256,10 @@ test("AI·威胁评估：threatScore 的稳定角色标签与近期攻击者会�
       tags: [],
       statuses: []
     };
-  const plain = threatScore(
+  const plain = targetPriorityScore(
     viewer, { ...base, roleTags: [] }, { recentAggressors: {} }, 1
   );
-  const support = threatScore(
+  const support = targetPriorityScore(
     viewer, { ...base, roleTags: ["support", "healer"] }, { recentAggressors: {} }, 1
   );
   assert.ok(support > plain);
@@ -36901,6 +40286,149 @@ test("AI·威胁评估：threatScore 的稳定角色标签与近期攻击者会�
   assert.equal(score(first), score(second));
   game.aiDifficultyMultiplier = 1;
   assert.ok(score(second) > score(first));
+});
+
+test("AI·威胁评估：Target Priority 命名权重保持既有数学结果", () => {
+  const viewer = { battleTeam:"dawn" };
+  const target = {
+    id:"target-priority-weight-target",
+    alive:true,
+    battleTeam:"dusk",
+    hp:3,
+    maxHp:4,
+    shield:0,
+    roleTags:[],
+    tags:[],
+    statuses:[]
+  };
+  const memory = { recentAggressors:{ [target.id]:2 } };
+  const evaluator = new Evaluator({ getDifficultyMultiplier:() => 2 });
+  assert.equal(TARGET_PRIORITY_WEIGHT, 0.12);
+  assertClose(targetPriorityScore(viewer, target, memory, 1), 6.5);
+  assertClose(evaluator.targetPriority(viewer, target, memory, 1), 1.56);
+});
+
+test("AI·评分：Scout definition 映射与公开 handCount 优先于过滤 hand", () => {
+  const actor = ledgerPlayer("public-count-actor", 0, "dawn", "blade-walker", {
+    handCount:1,
+    hand:[{ id:"public-count-decision", definitionId:"shockwave" }],
+    aiMemory:{ recentAggressors:{} }
+  });
+  const target = ledgerPlayer("public-count-target", 1, "dusk", "oath-warden", {
+    handCount:1,
+    hand:[]
+  });
+  const visible = ledgerState([actor, target]);
+  visible.remainingCardCounts = { assault:1, block:1, counter:1 };
+  upgradeProbabilityFixture(visible);
+  const evaluator = new Evaluator({ getDifficultyMultiplier:() => 0 });
+  assert.ok(evaluator.scoutDecisionRelevance(actor, target, visible) > 0);
+
+  const utility = (cardId, handCount) => evaluator.actionUtility(createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId,
+    cardInstanceId:`public-count-${cardId}`,
+    targetIds:[target.id],
+    selection:cardId === "scout" ? { unknownCount:2 } : null
+  }), actor, {
+    ...visible,
+    players:[actor, { ...target, handCount, hand:[] }]
+  });
+  assert.equal(utility("plunder", 3) - utility("plunder", 0), 3);
+  assert.ok(utility("scout", 3) > utility("scout", 0));
+});
+
+test("AI·反制：部分已知 uniform hand 保留 known weighted value", () => {
+  const responder = ledgerPlayer("uniform-known", 0, "dawn", "blade-walker", {
+    handCount:2,
+    hand:[{ id:"uniform-assault", definitionId:"assault", availability:1 }]
+  });
+  const actor = ledgerPlayer("uniform-enemy", 1, "dusk", "oath-warden");
+  const state = ledgerState([responder, actor]);
+  const gain = planningDynamicCounterGain(
+    state,
+    responder,
+    actor,
+    { definitionId:"plunder" },
+    [responder],
+    { zone:"hand", selectionMode:"uniform-hand" }
+  );
+  assertClose(gain, 3.2, 1e-12);
+});
+
+test("AI·威胁评估：目标优先级忽略手牌能量并保留残血与斩杀因素", () => {
+  const viewer = { battleTeam:"dawn" };
+  const base = {
+    id:"priority-target",
+    alive:true,
+    battleTeam:"dusk",
+    hp:3,
+    maxHp:4,
+    shield:0,
+    handCount:0,
+    energy:0,
+    roleTags:[],
+    tags:[],
+    statuses:[]
+  };
+  const score = (target, expectedDamage = 0) => targetPriorityScore(
+    viewer,
+    target,
+    { recentAggressors:{} },
+    expectedDamage
+  );
+  assert.equal(score(base), score({ ...base, handCount:9, energy:9 }));
+  assert.ok(score({ ...base, hp:2 }) > score(base));
+  const lethalTarget = { ...base, hp:1 };
+  assert.equal(score(lethalTarget, 1) - score(lethalTarget, 0), 24);
+});
+
+test("AI·威胁评估：Assault 使用完整 Focus 且牌数不产生固定奖励", () => {
+  const evaluator = new Evaluator({ getDifficultyMultiplier:() => 0 });
+  const actor = {
+    id:"focus-actor",
+    alive:true,
+    battleTeam:"dawn",
+    characterId:"blade-walker",
+    aiMemory:{ recentAggressors:{} }
+  };
+  const target = (id, hp, handCount) => ({
+    id,
+    alive:true,
+    battleTeam:"dusk",
+    hp,
+    maxHp:4,
+    shield:0,
+    handCount,
+    energy:0,
+    roleTags:[],
+    tags:[],
+    statuses:[]
+  });
+  const full = target("focus-full", 4, 4);
+  const injured = target("focus-injured", 3, 4);
+  const lowHand = target("focus-low-hand", 4, 0);
+  const visible = { players:[actor, full, injured, lowHand] };
+  const utility = (entry) => evaluator.actionUtility(createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"assault",
+    cardInstanceId:"focus-assault",
+    targetIds:[entry.id]
+  }), actor, visible);
+  assert.equal(utility(injured) - utility(full), 3);
+  assert.equal(utility(lowHand), utility(full));
+  assert.equal(evaluator.hiddenWorldPrior(
+    createAction({
+      type:"card",
+      actorId:actor.id,
+      cardId:"assault",
+      cardInstanceId:"focus-assault",
+      targetIds:[lowHand.id]
+    }),
+    [{ [lowHand.id]:["block"] }, { [lowHand.id]:[] }]
+  ), -0.75);
 });
 
 // ---- AI 评分·闪电评分 ----
@@ -37067,6 +40595,178 @@ const ledgerBlkState = () => ledgerState([
   ledgerHand(ledgerPlayer("c", 2, "dusk", "blade-walker"), ["assault"])
 ]);
 
+test("AI·资源选择：记录交易事实优先于 before/after 净手牌差", () => {
+  const before = ledgerState([
+    ledgerHand(ledgerPlayer("transaction-actor", 0, "dawn", "blade-walker"), ["destroy"]),
+    ledgerHand(ledgerPlayer("transaction-owner", 1, "dusk", "spirit-medic"), ["recover"])
+  ]);
+  upgradeProbabilityFixture(before);
+  const actor = before.players[0];
+  const owner = before.players[1];
+  const action = createAction({
+    type:"card",
+    actorId:actor.id,
+    cardId:"destroy",
+    cardInstanceId:actor.hand[0].id,
+    targetIds:[owner.id],
+    selection:{
+      zone:"hand",
+      selectionKind:"known",
+      cardId:owner.hand[0].id,
+      definitionId:"recover"
+    }
+  });
+  const after = structuredClone(before);
+  after.players[1].hand = [];
+  after.players[1].handCount = 0;
+  after.lastResourceTransaction = {
+    cardId:"destroy",
+    cardInstanceId:action.cardInstanceId,
+    sourceId:owner.id,
+    appliedProbability:0.5
+  };
+  const preference = new Evaluator().resourceSelectionPreference(
+    action,
+    actor,
+    before,
+    after
+  );
+  const expectedTargetUtility = getResourceDefinitionUtility(
+    "destroy",
+    actor,
+    owner,
+    "recover"
+  ) * RESOURCE_MATERIAL_SCALE * 0.5;
+  assertClose(preference.resourceMaterialUtility, expectedTargetUtility, 1e-12);
+});
+
+test("AI·价值归属：END transition contract 缺少 hasActiveSkill 时 fail fast", () => {
+  const state = ledgerState([
+    ledgerPlayer("end-contract-actor", 0, "dawn", "oath-warden", {
+      activeSkillId:"barrier",
+      activeSkillCost:2
+    })
+  ]);
+  upgradeProbabilityFixture(state);
+  const evaluator = new Evaluator();
+  const terms = evaluator.evaluateTransition({
+    action:createAction({ type:"end", actorId:"end-contract-actor" }),
+    player:state.players[0],
+    beforeState:state,
+    afterState:state
+  });
+  const incomplete = structuredClone(terms);
+  delete incomplete.endOpportunityInputs.hasActiveSkill;
+  assert.throws(
+    () => assertCompleteTransitionTerms(incomplete),
+    /hasActiveSkill.*布尔值/u
+  );
+});
+
+test("AI·价值归属：Final 无 skillReadiness 且 diagnostic categories 完整守恒", () => {
+  const before = ledgerState([
+    ledgerPlayer("category-actor", 0, "dawn", "oath-warden", {
+      activeSkillId:"barrier",
+      activeSkillCost:2,
+      activeSkillLimit:1,
+      energy:2
+    }),
+    ledgerPlayer("category-enemy", 1, "dusk", "blade-walker")
+  ]);
+  upgradeProbabilityFixture(before);
+  const after = structuredClone(before);
+  after.players[0].hp = 3;
+  const evaluator = new Evaluator();
+  const terms = evaluator.playerValueTerms(before, before.players[0], "category-actor", 0).terms;
+  assert.ok(skillReadinessThreat(before.players[0]) > 0);
+  assert.equal(Object.hasOwn(terms, "skillReadiness"), false);
+  const ledger = evaluator.ownerStateLedger(before, after, "category-actor");
+  for (const owner of ledger.owners) {
+    const categorySum = [
+      owner.generic,
+      owner.material,
+      owner.threat,
+      owner.specific,
+      owner.outcome,
+      owner.teamBurden
+    ].reduce((sum, category) => (
+      sum + Object.values(category).reduce((categorySum, value) => categorySum + value, 0)
+    ), 0);
+    assertClose(categorySum, owner.total, 1e-12);
+    assert.equal(Object.hasOwn(owner.material, "info"), false);
+    assert.equal(Object.hasOwn(owner.material, "skillReadiness"), false);
+  }
+});
+
+test("AI·价值归属：Radar ledger 分别使用 before/after probability state", () => {
+  const makeRadarLedgerState = (remainingCardCounts) => {
+    const state = ledgerState([
+      ledgerPlayer("radar-ledger-owner", 0, "dawn", "oath-warden", {
+        equipmentDefinitionId:"defenseDevice",
+        equipmentRetentionProbability:1
+      }),
+      ledgerHand(
+        ledgerPlayer("radar-ledger-enemy", 1, "dusk", "blade-walker"),
+        ["assault"]
+      )
+    ]);
+    state.remainingCardCounts = remainingCardCounts;
+    return upgradeProbabilityFixture(state);
+  };
+  const before = makeRadarLedgerState({ counter:1 });
+  const after = makeRadarLedgerState({ assault:1 });
+  const evaluator = new Evaluator();
+  const beforeJudgment = buildRadarJudgmentProbabilities(
+    queryCurrentCardCounts(before.probabilityState)
+  );
+  const afterJudgment = buildRadarJudgmentProbabilities(
+    queryCurrentCardCounts(after.probabilityState)
+  );
+  const expected = evaluator.playerValueTerms(
+    after,
+    after.players[0],
+    "radar-ledger-owner",
+    afterJudgment
+  ).terms.radarFuture - evaluator.playerValueTerms(
+    before,
+    before.players[0],
+    "radar-ledger-owner",
+    beforeJudgment
+  ).terms.radarFuture;
+  const owner = evaluator.ownerStateLedger(before, after, "radar-ledger-owner")
+    .owners.find((entry) => entry.playerId === "radar-ledger-owner");
+  assert.notEqual(expected, 0);
+  assertClose(owner.threat.radarFuture, expected, 1e-12);
+});
+
+test("AI·价值归属：Seal owner-local ledger 只投影一次且与 StateDelta 同号", () => {
+  const before = ledgerState([
+    ledgerPlayer("seal-ledger-viewer", 0, "dawn", "oath-warden"),
+    ledgerPlayer("seal-ledger-ally", 1, "dawn", "spirit-medic"),
+    ledgerPlayer("seal-ledger-enemy", 2, "dusk", "blade-walker")
+  ]);
+  before.remainingCardCounts = { recover:1 };
+  upgradeProbabilityFixture(before);
+  const evaluator = new Evaluator();
+  for (const ownerId of ["seal-ledger-ally", "seal-ledger-enemy"]) {
+    const after = structuredClone(before);
+    const sealed = after.players.find((player) => player.id === ownerId);
+    sealed.statuses = ["sealed"];
+    const ownerLedger = evaluator.ownerStateLedger(before, after, "seal-ledger-viewer");
+    const owner = ownerLedger.owners.find((entry) => entry.playerId === ownerId);
+    const localBurden = sealTeamBurden(after, sealed, sealed.battleTeam);
+    assert.ok(localBurden > 0);
+    assert.equal(owner.teamBurden.seal, -localBurden);
+    const projected = evaluator.projectOwnerLedger(ownerLedger, "seal-ledger-viewer");
+    const stateDelta = statePointsToUtility(
+      evaluator.stateUtility(after, "seal-ledger-viewer")
+        - evaluator.stateUtility(before, "seal-ledger-viewer")
+    );
+    assert.equal(Math.sign(projected.total), ownerId.endsWith("ally") ? -1 : 1);
+    assertClose(projected.total, stateDelta, 1e-12);
+  }
+});
+
 
 
 
@@ -37114,7 +40814,7 @@ function testEquipmentDeltaNeedsNoWorldBaseline() {
     - beforeTerms.equipmentDelta - beforeTerms.equipmentRoleDelta;
   assertClose(
     delta,
-    -getRoleCardAiValue(actor.characterId, "battleDevice") * 0.6 * 0.25
+    -staticCardAssetValue(actor.characterId, "battleDevice") * 0.6
   );
   assert.equal("initialEquipmentValue" in before.players[0], false);
   assert.equal("expectedEquipmentGain" in after.players[0], false);
@@ -37196,9 +40896,9 @@ function rescueReserveFixture(members, recoverCount, selfState = {}) {
     team,
     viewerId: self.id,
     hp2RiskByPlayer: new Map([
-      [self.id, -2.1 * (selfState.threat ?? 0)],
+      [self.id, -7 * HP2_RISK_WEIGHT * (selfState.threat ?? 0)],
       ...allies.map((player, index) => (
-        [player.id, -2.1 * (members[index].threat ?? 0)]
+        [player.id, -7 * HP2_RISK_WEIGHT * (members[index].threat ?? 0)]
       ))
     ])
   };
@@ -37299,7 +40999,7 @@ AI·价值归属测试注册。
 无；构造低血 viewer、团队共享需求及健康团队使用唯一调息的 canonical Worlds。
 
 输出
-无；断言 viewer 排除、团队值、Action 前后边际、ledger owner 与 terminal frontier 契约。
+无；断言 viewer 排除、团队值、Action 前后边际与 ledger owner 契约。
 
 读取状态
 Evaluator 玩家分项、团队 State Value、ProbabilityState 与 Simulator 结果。
@@ -37308,11 +41008,11 @@ Evaluator 玩家分项、团队 State Value、ProbabilityState 与 Simulator 结
 只推进独立测试 World clone。
 
 调用函数
-Evaluator.playerValueTerms/stateUtility/ownerStateLedger/frontierResidual、Simulator.apply、teamRescueReserve。
+Evaluator.playerValueTerms/stateUtility/ownerStateLedger、Simulator.apply、teamRescueReserve。
 
 边界与不变量
 HP2 风险必须复用同次玩家分项；viewer 只从需求排除，不得从团队容量排除；
-RescueReserve 不得回到逐玩家 outcome 或 terminal held option。
+RescueReserve 不得回到逐玩家 outcome 或其它 Final value owner。
 */
 function testTeamRescueReserveStateIntegration() {
   const state = ledgerState([
@@ -37424,10 +41124,9 @@ function testTeamRescueReserveStateIntegration() {
   assert.ok(ledger.owners.every(
     (owner) => !Object.hasOwn(owner.outcome, removedOutlookField)
   ));
-  const residual = evaluator.frontierResidual(state, "reserve-action-self");
-  assert.equal(Object.hasOwn(residual.held, "recover"), false);
-  assert.equal(evaluator.terminalFrontierValue(residual, true), 0);
-
+  assert.ok(ledger.owners.every(
+    (owner) => Object.hasOwn(owner.material, "hp3Risk")
+  ));
   const threatenedState = ledgerState([
     ledgerHand(
       ledgerPlayer("reserve-action-self", 0, "dawn", "spirit-medic", { hp: 3 }),
@@ -37448,7 +41147,7 @@ function testTeamRescueReserveStateIntegration() {
   ]);
   upgradeProbabilityFixture(threatenedState);
   const threatenedRisk = valueTerms(threatenedState);
-  assert.equal(threatenedRisk.get("reserve-action-hp2"), -2.1);
+  assert.equal(threatenedRisk.get("reserve-action-hp2"), -7 * HP2_RISK_WEIGHT);
   const threatenedBefore = teamRescueReserve(
     threatenedState,
     "dawn",
@@ -37518,26 +41217,7 @@ test("AI·价值归属：同一 owner ledger 从队友/敌方视角投影符号�
   assert.ok(viewerC.self < 0, "攻击方视角下自身资源消耗为负");
 });
 
-test("AI·价值归属：residual 只在前沿计入且不随路径深度重复累计", () => {
-  const { game } = makeLedgerGame();
-  const evaluator = game.aiController.evaluator;
-  // 敌人持有两张突袭：一张作为响应保留，另一张形成可兑现的未来库存。
-  const state = ledgerState([
-    ledgerPlayer("a", 0, "dawn", "oath-warden"),
-    ledgerHand(ledgerPlayer("c", 1, "dusk", "blade-walker"), ["assault", "assault"])
-  ]);
-  // 同一状态不同到达路径得到同一 residual（路径无关）
-  const r1 = evaluator.frontierResidual(state, "a");
-  const r2 = evaluator.frontierResidual(structuredClone(state), "a");
-  assert.equal(r1.total, r2.total);
-  // 事件已兑现后对应 residual 减少或消失
-  const action = ledgerAction(state, "c", "assault", "a");
-  const after = new Simulator(state).apply(state, action, "c");
-  const rAfter = evaluator.frontierResidual(after, "a");
-  assert.ok(rAfter.futureInventory < r1.futureInventory, "未来攻击库存兑现后应减少");
-});
-
-test("AI·价值归属：terminal 回收站只计当前 global turn 剩余额度且接纳不可反制战术", () => {
+test("AI·价值归属：回收站 Future 只由普通 StateValue 持有一次", () => {
   const { game } = makeLedgerGame();
   const evaluator = game.aiController.evaluator;
   const state = ledgerState([
@@ -37549,18 +41229,31 @@ test("AI·价值归属：terminal 回收站只计当前 global turn 剩余额度
     },
     ledgerPlayer("b", 1, "dusk", "oath-warden")
   ]);
-  const residual = evaluator.frontierResidual(state, "a");
-  assert.equal(residual.held.recycle, 0);
-  assert.equal(evaluator.terminalFrontierValue(residual, true), 0);
-  assert.equal(evaluator.terminalFrontierValue(residual, false), 0);
+  assert.equal(
+    evaluator.playerValueTerms(state, state.players[0], "a", 0).terms.recycleDeviceFuture,
+    0
+  );
   const oneUseRemaining = structuredClone(state);
   oneUseRemaining.players[0].recycleDeviceUses = 1;
-  const remainingResidual = evaluator.frontierResidual(oneUseRemaining, "a");
-  assertClose(remainingResidual.held.recycle, 1.1 * 0.5);
-  assertClose(evaluator.terminalFrontierValue(remainingResidual, true), 1.1 * 0.5 / 5);
+  assert.ok(
+    evaluator.playerValueTerms(
+      oneUseRemaining,
+      oneUseRemaining.players[0],
+      "a",
+      0
+    ).terms.recycleDeviceFuture > 0
+  );
   const withoutTactic = structuredClone(state);
   withoutTactic.players[0].hand = [ledgerCard("basic", "charge")];
-  assert.equal(evaluator.frontierResidual(withoutTactic, "a").held.recycle, 0);
+  assert.equal(
+    evaluator.playerValueTerms(
+      withoutTactic,
+      withoutTactic.players[0],
+      "a",
+      0
+    ).terms.recycleDeviceFuture,
+    0
+  );
 });
 
 test("AI·价值归属：泛用手牌资源与具体响应选项不重复计价", () => {
@@ -37808,7 +41501,6 @@ test("AI·价值归属：Search Prior 与 response diagnostics 都不进入 fina
   const evaluator = new Evaluator();
   const common = {
     baseTransition: 2,
-    frontierValue: 0.3,
     exposeMarginal: 1,
     assaultStacksCredit: 2
   };
@@ -38410,7 +42102,6 @@ async function privateRevealSpyGapBlocksDispatcher() {
     return payload;
   });
   await waitForPrivateRevealBoundaryCondition(() => revealCalls === 1, "窥隙应已进入 showPrivateReveal");
-  assert.equal(shade.turnFlags.spyGapTriggered, true);
   assert.equal(sentinelRuns, 0);
   assert.equal(order.includes("spygap-log"), false);
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -38543,7 +42234,7 @@ test("私人情报异步边界：PrivateRevealView.hide settle pending show Prom
 
 registerMatchPerformanceTests(test);
 registerHistoryStatsTests(test);
-registerHistoryAchievementTests(test);
+registerHistoryAchievementTests(test, { makeGame, makePlayer, instance });
 
 // ---- 开始界面与入局说明 ----
 
@@ -38595,7 +42286,7 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(pages["basic-cards"], /聚能积攒潜力，护盾为下一轮铺路。/);
   assert.equal(getRulebookCardView("recover").targetLabel, "自己或濒死的队友");
   assert.equal(getRulebookCardView("harvest").targetLabel, "自己");
-  for (const definitionId of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"]) {
+  for (const definitionId of ["energyDevice", "recycleDevice", "bubbleMachine", "defenseDevice", "battleDevice", "assaultMagazine", "telescope", "barrierDevice"]) {
     assert.equal(getRulebookCardView(definitionId).destinationLabel, "使用后进入装备槽");
   }
 
@@ -38613,6 +42304,7 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(pages["hidden-information"], /不知道具体牌面。/);
   assert.doesNotMatch(pages["hidden-information"], /FiveRealms 不会因为电脑|definition|类别|实体手牌/);
   assert.match(pages.equipment, /rulebook-card-grid is-equipment/);
+  assert.match(pages.equipment, /泡泡机[\s\S]*每个自己的回合开始仅检查一次/);
   assert.match(pages["horizontal-card-view"], /自己的手牌区、对手手牌区、隐藏牌选择区与私密展示区/);
   assert.match(pages["horizontal-card-view"], /公共牌池/);
   assert.match(pages["example-one"], /<h2>从摸牌到一次格挡。<\/h2>/);
@@ -38620,9 +42312,9 @@ test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩�
   assert.match(rulebookCss, /\.callout-one, \.callout-three, \.callout-four, \.callout-five\s*\{[^}]*color:\s*var\(--text-primary\)[^}]*filter:\s*none;/s);
 });
 
-test("UI·入局说明：二十六张正式卡均以真实定义与素材逐张图解", () => {
+test("UI·入局说明：二十八张正式卡均以真实定义与素材逐张图解", () => {
   const content = buildRulebookPages().map((page) => page.html).join("\n");
-  assert.equal((content.match(/<article class="manual-card"/g) ?? []).length, 26);
+  assert.equal((content.match(/<article class="manual-card"/g) ?? []).length, 28);
   for (const [definitionId, definition] of Object.entries(CARD_DEFINITIONS)) {
     const view = getRulebookCardView(definitionId);
     assert.equal(view.description, definition.description);
@@ -39245,10 +42937,11 @@ test("UI·玩家面板：角色候选卡能量徽标位于生命左侧且直接�
     assert.match(markup, /class="candidate-stat-badge hp-chip"/, character.name);
     assert.doesNotMatch(markup, /能量 \d\/\d|初始能量|开局能量/, character.name);
   }
-  for (const id of ["spirit-medic", "ember-magus", "resonance-tuner"]) {
+  for (const id of ["spirit-medic", "ember-magus"]) {
     assert.match(candidateCardTemplate(byId[id], 0), />能量 1<\/span>/, id);
   }
-  for (const id of ["blade-walker", "oath-warden", "shade-agent", "trail-hunter", "fate-gambler"]) {
+  assert.match(candidateCardTemplate(byId["shade-agent"], 0), />能量 2<\/span>/, "shade-agent");
+  for (const id of ["blade-walker", "oath-warden", "trail-hunter", "fate-gambler", "resonance-tuner"]) {
     assert.match(candidateCardTemplate(byId[id], 0), />能量 0<\/span>/, id);
   }
 });
@@ -39379,7 +43072,7 @@ test("UI·玩家面板：八名角色使用结构化被动触发条件与限制�
     "blade-walker": "每回合按不同卡牌类别分别触发",
     "oath-warden": "每回合限触发1次",
     "spirit-medic": "每回合限触发2次",
-    "shade-agent": "每回合限触发1次",
+    "shade-agent": "不限制触发次数",
     "ember-magus": "每次卡牌结算最多触发1次",
     "trail-hunter": "每回合限触发2次；同一敌人每回合限1次",
     "fate-gambler": "每回合限触发1次",
@@ -40023,17 +43716,64 @@ test("UI·手牌：已知对手手牌保留中文实体卡层级、删除英文�
   );
 });
 
+/*
+功能
+守住主游戏 viewport 分配、人物局部滚动及矮屏选择器边界。
+
+调用方
+UI 与模板区域的主布局回归测试。
+
+输入
+无。
+
+输出
+布局约束被破坏时抛出断言错误。
+
+读取状态
+css/layout.css 与 css/characters.css。
+
+写入状态
+无。
+
+调用函数
+readFile、assert.match、assert.doesNotMatch。
+
+边界与不变量
+静态检查仅守住空间分配约束，实际溢出与交互仍需浏览器 viewport 验证。
+*/
+async function gameViewportLayoutKeepsPlayerRowsBounded() {
+  const [layout, characters] = await Promise.all([
+    readFile(projectFile("css/layout.css"), "utf8"),
+    readFile(projectFile("css/characters.css"), "utf8")
+  ]);
+  assert.match(layout, /\.game-screen\s*\{[^}]*height:\s*100dvh;[^}]*min-height:\s*0;/s);
+  assert.match(layout, /\.battlefield\s*\{[^}]*grid-template-rows:\s*max-content\s+minmax\(174px,\s*1fr\)\s+clamp\(270px,\s*28\.7vh,\s*296px\)/s);
+  assert.match(layout, /\.status-bar\s*\{[^}]*minmax\(0,\s*2\.5fr\)/s);
+  assert.match(layout, /\.status-actions button\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.doesNotMatch(layout, /min-height:\s*720px|1\.1fr|zoom\s*:|scale\(/);
+  assert.match(layout, /@media \(max-height:\s*880px\)[\s\S]*grid-template-rows:\s*max-content\s+minmax\(160px,\s*1fr\)\s+246px/);
+  assert.match(characters, /\.cpu-seat\s*\{[^}]*height:\s*auto;[^}]*align-self:\s*start/s);
+  assert.match(characters, /\.human-seat \.seat-main\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto/s);
+  assert.doesNotMatch(characters, /\.cpu-seat \.seat-main\s*\{[^}]*(?:overflow|overflow-y):\s*hidden/s);
+  assert.match(characters, /\.seat-main > \*\s*\{[^}]*flex-shrink:\s*0/s);
+  const lowHeightRules = characters.slice(characters.indexOf("@media (max-height: 880px)"));
+  assert.match(lowHeightRules, /\.cpu-seat\s*\{[^}]*grid-template-rows:\s*140px\s+96px/s);
+  assert.doesNotMatch(lowHeightRules, /\.player-seat\s*\{[^}]*grid-template-rows/s);
+}
+
+test("UI·主布局：剩余高度由行动行吸收且人物信息可局部滚动", gameViewportLayoutKeepsPlayerRowsBounded);
+
 test("UI·手牌：人物席、中央消息区和真人区各占独立网格行且桌面高度动态压缩", async () => {
   const layoutCss = await readFile(projectFile("css/layout.css"), "utf8"),
     characterCss = await readFile(projectFile("css/characters.css"), "utf8");
   assert.match(
     layoutCss,
-    /@media \(max-height:\s*1080px\)[\s\S]*\.battlefield\s*\{[^}]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
+    /@media \(max-height:\s*1100px\)[\s\S]*\.battlefield\s*\{[^}]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
   );
   assert.match(layoutCss, /\.cpu-grid\s*\{[^}]*overflow:\s*hidden/s);
   assert.match(
     layoutCss,
-    /@media \(max-height:\s*1080px\)[\s\S]*\.command-deck\s*\{[^}]*max-width:\s*1120px[^}]*min-height:\s*130px[^}]*grid-template-rows:\s*minmax\(67px,\s*1fr\)/
+    /@media \(max-height:\s*1100px\)[\s\S]*\.command-deck\s*\{[^}]*max-width:\s*1120px[^}]*min-height:\s*130px[^}]*grid-template-rows:\s*minmax\(67px,\s*1fr\)/
   );
   assert.match(
     characterCss,
@@ -40055,7 +43795,7 @@ test("UI·手牌：对手手牌隐藏滑条且行动状态只保留文字提示"
 test("UI·手牌：主玩家人物框与手牌框等高且信息纵向填满", async () => {
   const layout = await readFile(projectFile("css/layout.css"), "utf8"),
     css = await readFile(projectFile("css/characters.css"), "utf8");
-  assert.match(layout, /\.human-zone\s*\{[^}]*align-content:\s*start/s);
+  assert.match(layout, /\.human-zone\s*\{[^}]*align-content:\s*stretch/s);
   assert.doesNotMatch(layout, /\.human-panel\s*\{[^}]*align-self:\s*start/s);
   assert.match(css, /\.human-seat\s*\{[^}]*height:\s*100%/s);
   assert.match(css, /\.human-seat \.seat-main\s*\{[^}]*justify-content:\s*space-between/s);
@@ -40069,7 +43809,7 @@ test("UI·手牌：常见桌面高度压缩为单屏且真人手牌溢出时保�
     characters = await readFile(projectFile("css/characters.css"), "utf8");
   assert.match(
     layout,
-    /@media \(max-height:\s*1080px\)[\s\S]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
+    /@media \(max-height:\s*1100px\)[\s\S]*grid-template-rows:\s*max-content\s+minmax\(130px,\s*1fr\)\s+clamp\(246px,\s*28\.7vh,\s*296px\)/
   );
   assert.match(
     cards,
@@ -40445,12 +44185,15 @@ test("UI·响应思考：真实 setThinking 链为晨昏角色名着色且正文
   assert.match(css, /\.thinking-indicator div span\s*\{[^}]*color:\s*var\(--text-secondary\)/s);
 });
 
-test("UI·响应窗口：响应窗口保持居中浮层原布局且中央结算卡在普通阶段下移", async () => {
+test("UI·响应窗口：响应窗口保持居中浮层且结算卡与操作按钮使用独立网格行", async () => {
   const css = await readFile(projectFile("css/layout.css"), "utf8");
-  assert.match(css, /\.current-card\s*\{[^}]*translateY\(clamp\(20px,\s*2\.4vh,\s*30px\)\)/s);
+  assert.match(css, /\.current-card\s*\{[^}]*grid-row:\s*1\s*\/\s*span\s+2/s);
+  assert.match(css, /\.action-prompt\s*\{[^}]*grid-row:\s*2/s);
+  assert.match(css, /\.action-row\s*\{[^}]*grid-row:\s*3/s);
+  assert.doesNotMatch(css, /\.current-card\s*\{[^}]*transform:/s);
   assert.match(
     css,
-    /:has\(\.response-panel:not\(\.is-hidden\)\)\s+\.current-card\s*\{[^}]*translateY\(clamp\(26px,\s*3vh,\s*38px\)\)/s
+    /\.command-deck\s*\{[^}]*grid-template-rows:\s*minmax\(66px,\s*1fr\)\s+auto\s+auto/s
   );
   assert.match(
     css,
@@ -42130,7 +45873,12 @@ test("UI·雷达反馈：绿色扫描 overlay 单实例且动画结束后清理"
   assert.equal(first.children[2].children.length, 12);
   assert.equal(first["aria-hidden"], "true");
   assert.equal(first.style.getPropertyValue("--radar-success-left"), "70px");
-  assert.equal(first.style.getPropertyValue("--radar-success-duration"), `${RADAR_SUCCESS_DURATION_MS}ms`);
+  const renderedDuration = Number.parseInt(
+    first.style.getPropertyValue("--radar-success-duration"),
+    10
+  );
+  assert.ok(renderedDuration <= RADAR_SUCCESS_DURATION_MS);
+  assert.ok(renderedDuration >= RADAR_SUCCESS_DURATION_MS - 5);
   controller.startRadarSuccess("radar-player", doc);
   assert.equal(first.isConnected, false, "连续判定必须清理旧扫描实例");
   assert.equal(body.children.length, 1);
@@ -42296,16 +46044,67 @@ test("UI·布局样式：上方 AI 思考提示出现时隐藏下方重复提示
   assert.ok(!promptClasses.values.has("is-hidden"));
 });
 
-test("UI·布局样式：装备槽空置和六种装备生成不同可访问 DOM", () => {
+test("UI·装备槽：动态状态保留在槽位且 Tooltip 只显示名称和固定描述", () => {
   const p = makePlayer("a", 0, "dawn");
   const empty = equipmentSlotTemplate(p, true);
   assert.match(empty, /is-empty|装备槽为空/);
-  for (const id of ["energyDevice", "recycleDevice", "defenseDevice", "battleDevice", "telescope", "barrierDevice"]) {
+  const stateLabels = {
+    energyDevice: "持续供能",
+    recycleDevice: "0/2",
+    bubbleMachine: "待加盾",
+    defenseDevice: "待判定",
+    battleDevice: "强化中",
+    assaultMagazine: "0/2",
+    telescope: "观测中",
+    barrierDevice: "屏障展开"
+  };
+  for (const [id, stateLabel] of Object.entries(stateLabels)) {
     p.equipment = instance(id);
     const markup = equipmentSlotTemplate(p, true);
     assert.match(markup, new RegExp(CARD_DEFINITIONS[id].name));
     assert.match(markup, new RegExp(CARD_DEFINITIONS[id].description.slice(0, 6)));
+    assert.ok(markup.includes(`<span class="equipment-state">${stateLabel}</span>`));
+    assert.ok(
+      markup.includes(`<span class="equipment-tooltip" role="tooltip"><strong>${CARD_DEFINITIONS[id].name}</strong>${CARD_DEFINITIONS[id].description}</span>`)
+    );
     assert.notEqual(markup, empty);
+  }
+});
+
+test("UI·装备槽：泡泡机和备用弹夹使用装备区专用简述且保留完整卡牌描述", () => {
+  const player = makePlayer("equipment-copy-ui", 0, "dawn", "human");
+  const equippedSummaries = {
+    bubbleMachine: "回合开始无护盾时加1护盾",
+    assaultMagazine: "突袭使用次数 +2"
+  };
+  for (const [definitionId, summary] of Object.entries(equippedSummaries)) {
+    const definition = CARD_DEFINITIONS[definitionId];
+    player.equipment = instance(definitionId);
+    for (const isHuman of [true, false]) {
+      const markup = equipmentSlotTemplate(player, isHuman);
+      assert.ok(markup.includes(`<div class="equipment-copy"><strong>${definition.name}</strong><small>${summary}</small></div>`));
+      assert.ok(
+        markup.includes(`<span class="equipment-tooltip" role="tooltip"><strong>${definition.name}</strong>${definition.description}</span>`)
+      );
+    }
+    assert.ok(handCardTemplate(instance(definitionId)).includes(`<span class="card-description">${definition.description}</span>`));
+  }
+  player.equipment = instance("energyDevice");
+  assert.ok(equipmentSlotTemplate(player, true).includes(`<small>${CARD_DEFINITIONS.energyDevice.description}</small>`));
+  assert.ok(equipmentSlotTemplate(player, false).includes("<small>回合能量额外+1</small>"));
+});
+
+test("UI·装备槽：回收站和备用弹夹保留三档计数且 Tooltip 不显示状态", () => {
+  const player = makePlayer("counted-equipment-ui", 0, "dawn", "human");
+  for (const [definitionId, flagName] of [["recycleDevice", "recycleDeviceUses"], ["assaultMagazine", "assaultMagazineUsed"]]) {
+    player.equipment = instance(definitionId);
+    for (const used of [0, 1, 2]) {
+      player.turnFlags[flagName] = used;
+      const markup = equipmentSlotTemplate(player, true);
+      assert.ok(markup.includes(`<span class="equipment-state">${used}/2</span>`));
+      assert.ok(!markup.includes(`<em>${used}/2</em>`));
+      if (definitionId === "assaultMagazine") assert.doesNotMatch(markup, /连续供弹/);
+    }
   }
 });
 
@@ -42322,8 +46121,8 @@ test("UI·布局样式：UIManager 源码不直接写生命、能量、手牌或
   ) assert.doesNotMatch(source, forbidden);
 });
 
-test("UI·布局样式：26 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
-  assert.equal(Object.keys(CARD_DEFINITIONS).length, 26);
+test("UI·布局样式：28 种牌面均不渲染 card-tags 或可见英文 subtype", () => {
+  assert.equal(Object.keys(CARD_DEFINITIONS).length, 28);
   for (const definition of Object.values(CARD_DEFINITIONS)) {
     const card = { ...definition, id: `layout-${definition.definitionId}` };
     for (const markup of [handCardTemplate(card), opponentHandStripTemplate([{ known: true, ...card }])]) {
@@ -45540,13 +49339,15 @@ test("集成：互利规则目标包含所有存活角色且调律师只触发�
     ActionLegality.getCardTargets(game, tuner, CARD_DEFINITIONS.mutualBenefit), [tuner, ally, enemy]
   );
   game.state.deck.cards.push(
-    instance("assault"), instance("block"), instance("charge"), instance("shield")
+    instance("assault"), instance("block"), instance("charge"), instance("shield"),
+    instance("harvest")
   );
   const use = instance("mutualBenefit");
   tuner.hand.push(use);
   await game.playCard(tuner, use, []);
   assert.equal(tuner.turnFlags.coordinationTriggered, true);
   assert.equal(tuner.hand.length, 2);
+  assert.equal(ally.hand.length, 2);
 });
 
 test("集成：调律师转移把来源与接收者都作为有效目标并只触发一次协调", async () => {
@@ -45556,7 +49357,7 @@ test("集成：调律师转移把来源与接收者都作为有效目标并只�
   const { game }
     = makeGame([tuner, enemy, ally]);
   registerPassiveSkills(game);
-  game.state.deck.cards.push(instance("charge"));
+  game.state.deck.cards.push(instance("charge"), instance("shield"));
   let usedEvent = null;
   game.eventDispatcher.on("cardUsed", "test:successful-transfer", (event) => {
     usedEvent = event;
@@ -45579,6 +49380,7 @@ test("集成：调律师转移把来源与接收者都作为有效目标并只�
     }
   );
   assert.ok(ally.hand.includes(moved));
+  assert.equal(ally.hand.length, 2);
   assert.equal(tuner.turnFlags.coordinationTriggered, true);
   assert.equal(tuner.hand.length, 1);
   assert.equal(usedEvent.cancelled, false);

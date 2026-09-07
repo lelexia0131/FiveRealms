@@ -18,7 +18,8 @@ Domain TeamRules 与 RuleStateView。
 不得复制阵营补偿数值或持有 composition root。
 */
 import {
-  getAttackLimitFromRules, getDrawCountFromRules, getInitialHandCountFromRules,
+  getAttackLimitFromRules, getDrawCountFromRules, getEffectiveAttackLimit,
+  getInitialHandCountFromRules,
   getMaxEnergyFromRules, getRecoverLimitFromRules, getTeamRules, getTeamSize,
   getTurnEnergyBreakdownFromRules, getTurnEnergyGainFromRules, isSmallTeam
 } from "../../domain/rules/team/TeamRules.js";
@@ -79,7 +80,7 @@ export function createTeamRuleQueries(getState) {
   const ruleState = () => ({ players:createRuleStateView(getState()).players() });
   /*
   功能
-  把 Player entity 归一化为 TeamRules 所需公开事实。
+把 Player entity 归一化为 TeamRules 所需公开阵营、装备与当前非装备突袭上限事实。
 
   调用方
   rulesFor、回合能量查询。
@@ -91,7 +92,7 @@ export function createTeamRuleQueries(getState) {
   原字符串/空值，或 battleTeam 与 equipmentDefinitionId 投影。
 
   读取状态
-  player.battleTeam 与当前装备定义 ID。
+  player.battleTeam、当前装备定义 ID 与 turnFlags.attackLimit。
 
   写入状态
   无。
@@ -100,11 +101,12 @@ export function createTeamRuleQueries(getState) {
   无。
 
   边界与不变量
-  不暴露手牌或 mutable equipment entity。
+  不暴露手牌或 mutable equipment entity；attackLimit 仍不包含装备加成。
   */
   const playerFact = (player) => !player || typeof player === "string" ? player : ({
     battleTeam:player.battleTeam,
-    equipmentDefinitionId:player.equipmentDefinitionId ?? player.equipment?.definitionId ?? null
+    equipmentDefinitionId:player.equipmentDefinitionId ?? player.equipment?.definitionId ?? null,
+    attackLimit:player.turnFlags?.attackLimit ?? player.attackLimit
   });
   /*
   功能
@@ -138,7 +140,15 @@ export function createTeamRuleQueries(getState) {
     getRules:rulesFor,
     getInitialHandCount:(player) => getInitialHandCountFromRules(rulesFor(player)),
     getDrawCount:(player) => getDrawCountFromRules(rulesFor(player)),
-    getAttackLimit:(player) => getAttackLimitFromRules(rulesFor(player)),
+    getAttackLimit:(player) => {
+      const fact = playerFact(player);
+      return getEffectiveAttackLimit(
+        Number.isFinite(Number(fact?.attackLimit))
+          ? Number(fact.attackLimit)
+          : getAttackLimitFromRules(rulesFor(player)),
+        fact?.equipmentDefinitionId ?? null
+      );
+    },
     getRecoverLimit:(player) => getRecoverLimitFromRules(rulesFor(player)),
     getMaxEnergy:(player) => getMaxEnergyFromRules(rulesFor(player)),
     getTurnEnergyGain:(player) => getTurnEnergyGainFromRules(

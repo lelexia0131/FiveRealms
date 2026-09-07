@@ -26,6 +26,7 @@ import {
   getTransferReceiverIds,
   getTransferSourceIds
 } from "../../domain/rules/card/CardRules.js";
+import { canTriggerRecycleDevice } from "../../domain/rules/card/RecycleDeviceRules.js";
 import {
   canUseSkillBase,
   getSkillCost,
@@ -35,7 +36,6 @@ import { CARD_DEFINITIONS } from "../../domain/definitions/cards/CardDefinitions
 import { ACTIVE_SKILL_DEFINITIONS } from "../../domain/definitions/skills/SkillDefinitions.js";
 import {
   projectAttackUsage,
-  projectRulePlayer,
   projectRulePlayers,
   projectTransferRulePlayers
 } from "../Event/Fact.js";
@@ -52,59 +52,39 @@ import { actionSearchKey, createAction } from "./Action.js";
 
 /*
 功能
-从响应者合法可见的单一身份或匿名容量构造 root 反事实 selection。
+把未来一次手牌资源选择投影为当前观察者可合法表示的 canonical selection。
 
 调用方
-Generator.createRootResolutionAction 的 Transfer/Plunder/Destroy runtime binding。
+Controller 的 post-Counter future-selection projection。
 
 输入
 canonical World player。
 
 输出
-known 或 unknown hand selection；无玩家时返回 null。
+单个 uniform-hand anonymous selection；无玩家或空手牌时返回 null。
 
 读取状态
-viewer 自己的 hand、合法 knownCards、公开 handCount 与 canonical availability。
+公开 handCount。
 
 写入状态
 无。
 
 调用函数
-cardAvailability。
+无。
 
 边界与不变量
-只有唯一可推导身份才返回 known；其余一律保持 anonymous，不读取未知实体定义。
+Counter prediction 不建模对手知道哪些私密牌；即使只有一张手牌也不暴露 identity。
 */
-function inferPublicHandSelection(player) {
+export function projectFutureHandSelection(player) {
   if (!player) return null;
-  const knownById = new Map();
-  for (const entry of [
-    ...(Array.isArray(player.hand) ? player.hand : []),
-    ...(Array.isArray(player.knownCards) ? player.knownCards : [])
-  ]) {
-    const cardId = entry?.id ?? entry?.cardId ?? null;
-    if (cardId && entry.definitionId && cardAvailability(entry) > PROBABILITY_EPSILON) {
-      knownById.set(cardId, { cardId, definitionId:entry.definitionId });
-    }
-  }
-  const known = [...knownById.values()];
   const handCount = Math.max(0, Number(player.handCount) || 0);
-  if (known.length === 1 && handCount <= 1) {
-    return {
-      zone:"hand",
-      selectionKind:"known",
-      cardId:known[0].cardId,
-      definitionId:known[0].definitionId,
-      availableUnknownCount:0
-    };
-  }
+  if (handCount <= PROBABILITY_EPSILON) return null;
   return {
     zone:"hand",
     selectionKind:"unknown",
     cardId:null,
     definitionId:null,
-    knownCardIds:known.map((entry) => entry.cardId),
-    availableUnknownCount:Math.max(0, handCount - known.length)
+    selectionMode:"uniform-hand"
   };
 }
 
@@ -149,19 +129,125 @@ export function deduplicateSearchEquivalentActions(actions) {
 export class Generator {
   /*
   功能
-  把已经通过真实规则入口的 root 战术投影为响应反事实直接消费的 canonical Action。
+  枚举资源类 root 在 Counter chain 后可产生的全部合法 canonical selection。
+
+  调用方
+  Controller 的 runtime future-selection orchestration。
+
+  输入
+  root actor 视角 World、root 卡牌、公开目标 ID 与 Transfer 公开来源/接收者声明。
+
+  输出
+  Plunder/Destroy 的合法 hand/equipment selections，或 Transfer 固定来源/接收者下的合法 hand selections。
+
+  读取状态
+  World 当前资源、合法记忆、Probability anonymous slots 与公开 Transfer declaration。
+
+  写入状态
+  无。
+
+  调用函数
+  getResourceSelections、getHandSelections。
+
+  边界与不变量
+  只枚举合法候选，不比较价值；Transfer 的来源与接收者来自反制前公开声明，
+  zone 与 card identity 只作为 Counter 后的未来候选产生。
+  */
+  getFutureRootSelections(state, rootCard, rootTargetIds, options = {}) {
+    const definitionId = rootCard?.definitionId ?? null;
+    if (["plunder", "destroy"].includes(definitionId)) {
+      const ownerId = rootTargetIds?.[0] ?? null;
+      const owner = state?.players?.find((player) => player.id === ownerId && player.alive) ?? null;
+      return owner ? this.getResourceSelections(state, owner) : [];
+    }
+    if (definitionId === "transfer") {
+      const context = options.publicTransferContext ?? null;
+      const source = state?.players?.find(
+        (player) => player.id === context?.fromPlayerId && player.alive
+      ) ?? null;
+      const receiver = state?.players?.find(
+        (player) => player.id === context?.receiverPlayerId && player.alive
+      ) ?? null;
+      if (!source || !receiver || source.id === receiver.id) return [];
+      return this.getHandSelections(state, source).map((selection) => ({
+        ...selection,
+        sourceId:source.id,
+        receiverId:receiver.id,
+        zone:"hand"
+      }));
+    }
+    return [];
+  }
+
+  /*
+  功能
+  从响应者合法 World 枚举匿名手牌与公开装备的 future resource candidates。
+
+  调用方
+  Controller.buildFutureResourceCounterProjection。
+
+  输入
+  响应者视角 World、root 卡牌、目标 ID 与 Transfer 公开声明。
+
+  输出
+  canonical selections；无合法资源或公开目标失效时返回空数组。
+
+  读取状态
+  公开手牌数量、装备与 Transfer 来源/接收者。
+
+  写入状态
+  无。
+
+  调用函数
+  projectFutureHandSelection。
+
+  边界与不变量
+  不接收 actor 私人 World 或具体手牌选择；三个卡牌共享匿名化，真实 runtime 枚举不受影响。
+  */
+  getResponderSafeFutureRootSelections(state, rootCard, rootTargetIds, options = {}) {
+    const definitionId = rootCard?.definitionId ?? null;
+    if (!["plunder", "destroy", "transfer"].includes(definitionId)) return [];
+    const sourceId = definitionId === "transfer"
+      ? options.publicTransferContext?.fromPlayerId ?? null
+      : rootTargetIds?.[0] ?? null;
+    const source = state?.players?.find((player) => player.id === sourceId && player.alive) ?? null;
+    if (!source) return [];
+    const handSelection = projectFutureHandSelection(source);
+    if (definitionId === "transfer") {
+      const receiverId = options.publicTransferContext?.receiverPlayerId ?? null;
+      if (!handSelection || receiverId === source.id
+        || !state.players.some((player) => player.id === receiverId && player.alive)) return [];
+      return [{ ...handSelection, sourceId:source.id, receiverId }];
+    }
+    const selections = handSelection ? [handSelection] : [];
+    if (source.equipmentDefinitionId
+      && Number(source.equipmentRetentionProbability ?? 1) > PROBABILITY_EPSILON) {
+      selections.push({
+        zone:"equipment",
+        selectionKind:"equipment",
+        cardId:null,
+        definitionId:source.equipmentDefinitionId,
+        availableUnknownCount:0
+      });
+    }
+    return selections;
+  }
+
+  /*
+  功能
+  把已经通过真实规则入口的 root 战术与显式 future selection 投影为 canonical Action。
 
   调用方
   Controller 真实响应边界的 dynamic root flip 查询。
 
   输入
-  当前 World、root 卡牌公开身份、来源 ID、原始目标 ID 与公开选择上下文。
+  当前 World、root 卡牌公开身份、来源 ID、原始目标 ID 与显式 future selection。
 
   输出
-  target 与 selection 完整的 card Action；输入无效时返回 null。
+  target 与 selection 完整的 card Action；资源类 root 缺少 future selection 或输入无效时返回 null。
 
   读取状态
-  World 当前存活玩家、root 卡牌公开定义与公开选择上下文。
+  World 当前存活玩家、root 卡牌公开定义与 future selection。
 
   写入状态
   无。
@@ -171,7 +257,8 @@ export class Generator {
 
   边界与不变量
   该 root 已由真实 ActionWorkflow 完成合法性校验且卡牌成本已经沉没；这里只创建一次
-  配对反事实所需的同一动作语义，不重新枚举 legality，也不读取转移的隐藏牌身份；
+  配对反事实所需的同一动作语义，不重新枚举 legality；Plunder/Destroy/Transfer 只接受
+  Counter 后投影得到的 future selection，不读取或沿用 Counter 前的 zone/cardId；
   Counter 响应支付本身不是可独立重放的 root effect。
   */
   createRootResolutionAction(state, rootCard, rootSourceId, rootTargetIds, options = {}) {
@@ -183,45 +270,11 @@ export class Generator {
     ));
     let selection = options.selection ?? null;
     if (rootCard.definitionId === "transfer") {
-      const planned = selection;
-      if (planned?.sourceId && planned?.receiverId) {
-        selection = {
-          sourceId:planned.sourceId,
-          receiverId:planned.receiverId,
-          zone:planned.zone ?? "hand",
-          selectionKind:planned.selectionKind ?? null,
-          cardId:planned.cardId ?? null,
-          definitionId:planned.definitionId ?? null
-        };
-      } else {
-        const context = options.publicTransferContext ?? null;
-        if (!context?.fromPlayerId || !context?.receiverPlayerId) return null;
-        const source = state.players.find((player) => player.id === context.fromPlayerId) ?? null;
-        const handSelection = inferPublicHandSelection(source);
-        if (!handSelection) return null;
-        selection = {
-          ...handSelection,
-          sourceId:context.fromPlayerId,
-          receiverId:context.receiverPlayerId,
-          zone:context.zone ?? "hand"
-        };
-      }
+      selection = options.futureSelection ?? null;
+      if (!selection?.sourceId || !selection?.receiverId || selection.zone !== "hand") return null;
     } else if (["plunder", "destroy"].includes(rootCard.definitionId)) {
-      const context = options.publicSelectionContext ?? null;
-      const ownerId = context?.ownerPlayerId ?? targetIds[0] ?? null;
-      const owner = state.players.find((player) => player.id === ownerId) ?? null;
-      if (!selection && context?.zone === "equipment" && owner?.equipmentDefinitionId) {
-        selection = {
-          zone:"equipment",
-          selectionKind:"equipment",
-          cardId:null,
-          definitionId:owner.equipmentDefinitionId,
-          availableUnknownCount:0
-        };
-      } else if (!selection && context?.zone === "hand") {
-        selection = inferPublicHandSelection(owner);
-      }
-      if (!selection) return null;
+      selection = options.futureSelection ?? null;
+      if (!selection?.zone || !["hand", "equipment"].includes(selection.zone)) return null;
     } else if (rootCard.definitionId === "leverage") {
       selection = {
         firstTargetId:targetIds[0] ?? null,
@@ -885,12 +938,13 @@ export class Generator {
   无；只在全部字段确定后调用一次 createAction。
 
   调用函数
-  isActionConditionPossible、isSelectionPossible 与 createAction。
+  canTriggerRecycleDevice、isActionConditionPossible、isSelectionPossible 与 createAction。
 
   边界与不变量
   Generator 只判断 possible/impossible，不计算联合概率、次数槽或执行世界；
   非调律师不得生成破坏队友手牌的 Action，敌方手牌、队友装备与调律师例外保持可生成；
   所有 AI 不得生成己方来源向敌方接收者转移手牌的 Action，其它 Domain 合法方向保持可生成；
+  共生仅在己方无人可治疗、敌方有人可治疗且无可触发回收站收益时排除；
   返回后 Searcher/Simulator 不得补 target、selection 或重新创建另一种 Action。
   */
   createCompleteAction(
@@ -905,6 +959,21 @@ export class Generator {
   ) {
     const targetIds = targets.map((target) => target.id);
     const target = targets[0] ?? null;
+    // AI 不搜索只会治疗敌方且没有回收站收益的共生分支。
+    if (definition.definitionId === "symbiosis") {
+      const hasInjuredAlly = state.players.some((player) => player.alive
+        && player.battleTeam === actor.battleTeam && player.hp < player.maxHp);
+      const hasInjuredEnemy = state.players.some((player) => player.alive
+        && player.battleTeam !== actor.battleTeam && player.hp < player.maxHp);
+      const canTriggerRecycle = Number(actor.equipmentRetentionProbability ?? 1)
+        > PROBABILITY_EPSILON && canTriggerRecycleDevice({
+          ownerAlive:actor.alive,
+          equipmentDefinitionId:actor.equipmentDefinitionId,
+          cardCategory:definition.category,
+          useCount:actor.recycleDeviceUses
+        });
+      if (!hasInjuredAlly && hasInjuredEnemy && !canTriggerRecycle) return null;
+    }
     // 调律师可能通过协调从队友资源损失中获益；其余 AI 不搜索破坏队友手牌的分支。
     if (definition.definitionId === "destroy"
       && actor.characterId !== "resonance-tuner"

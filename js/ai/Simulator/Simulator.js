@@ -39,7 +39,6 @@ import {
 } from "../../domain/rules/status/StatusRules.js";
 import {
   PROBABILITY_EPSILON,
-  availableBranchesFromState,
   buildLightningHitDistribution,
   buildRadarJudgmentSequenceProbabilities,
   cardAvailability,
@@ -50,7 +49,6 @@ import {
   getAvailabilityStateBranches,
   getRangeConditionBranches,
   independentUnionProbability,
-  mutateProbability,
   intersectProbabilityStateBranchesCooperatively,
   mergeProbabilityStateBranchesCooperatively,
   probabilityEventPartition,
@@ -93,7 +91,7 @@ class SimulatorCore {
   只读传入的运行选项。
 
   写入状态
-  搜索预算、只读 willingness capabilities、概率摘要缓存与 root 递归守卫。
+  搜索预算、只读 willingness capabilities、概率摘要缓存、transition 配对 World 缓存与 root 递归守卫。
 
   调用函数
   无。
@@ -110,7 +108,7 @@ class SimulatorCore {
       "decideBlock",
       "decideGuardianAid",
       "decideDyingRescue",
-      "choosePublicCardId"
+      "choosePublicCardOutcome"
     ];
     for (const name of decisionCapabilities) {
       if (typeof options[name] !== "function") {
@@ -126,8 +124,39 @@ class SimulatorCore {
       this.resolveDiscardCandidates(player, cards, 1, context)[0] ?? null
     );
     this.lightningOutcomeCache = new WeakMap();
+    this.transitionEvaluationWorlds = new WeakMap();
     // root 结算模拟守卫：目标级 root 的 apply 群伤循环会再次请求 counterDecision，避免递归。
     this._simulatingRootResolution = false;
+  }
+
+  /*
+  功能
+  返回一次 transition 已由 Simulator 准备的 value comparison Worlds。
+
+  调用方
+  Searcher.evaluateCandidate：把完整 baseline/resolved Worlds 交给 Evaluator。
+
+  输入
+  Simulator.apply 返回的 resolved World。
+
+  输出
+  Scout/互利返回可空的 `{ effectBaselineState, effectResolutionScale }`；普通 transition 返回 null。
+
+  读取状态
+  transitionEvaluationWorlds 的本实例 WeakMap。
+
+  写入状态
+  无。
+
+  调用函数
+  WeakMap.get。
+
+  边界与不变量
+  只返回同一次 apply 产生的完整 Worlds 与实际 effect Worlds 的发生质量；
+  不在 canonical World 保存 action metadata、branch arrays 或第二套状态。
+  */
+  getTransitionEvaluationWorlds(afterState) {
+    return this.transitionEvaluationWorlds.get(afterState) ?? null;
   }
 
   /*
@@ -588,7 +617,9 @@ class SimulatorCore {
   当前 response World、canonical root Action 与 counter depth。
 
   输出
-  非战术或全体受益牌返回 null；否则返回 `{ baseWorld, resolvedWorld, resolvesAtStay }`。
+  非战术、共生或尚未揭晓的均匀手牌选择返回 null；
+  互利返回按真实 receipt StateDelta 物化的配对 Worlds；
+  否则返回 `{ baseWorld, resolvedWorld, resolvesAtStay }`。
 
   读取状态
   固定卡牌定义、root 来源/目标、响应容量与当前 counter depth。
@@ -600,14 +631,18 @@ class SimulatorCore {
   clone、conditionProbability、apply。
 
   边界与不变量
-  两侧除 root 是否生效外必须完全配对；目标级群体战术继续清零目标反制容量，
+  两侧除 root 是否生效外必须完全配对；未揭晓的多手牌选择不能伪装成单一 resolved World，
+  互利 receipt 必须在 resolved World 中按座次逐一选牌并消费当前池；
+  目标级群体战术继续清零目标反制容量，
   root apply 期间不得递归请求同一动态反制。
   */
   buildRootFlipWorlds(state, rootAction, counterDepth) {
     const definition = CARD_DEFINITIONS[rootAction?.cardId] ?? null;
-    if (!rootAction?.cardId || definition?.category !== "tactic" || definition.globalBenefit === true) {
+    if (!rootAction?.cardId || definition?.category !== "tactic"
+      || (definition.globalBenefit === true && rootAction.cardId !== "mutualBenefit")) {
       return null;
     }
+    if (rootAction.selection?.selectionMode === "uniform-hand") return null;
     const actor = state.players.find((player) => player.id === rootAction.actorId);
     if (!actor?.alive) {
       return { baseWorld:state, resolvedWorld:state, resolvesAtStay:(counterDepth % 2) === 0 };
@@ -654,6 +689,52 @@ class SimulatorCore {
     } finally {
       this._simulatingRootResolution = previousSimulating;
     }
+  }
+
+  /*
+  功能
+  为响应者预测 future resource choice 准备有界期望资源 World。
+
+  调用方
+  Controller.buildFutureResourceCounterProjection。
+
+  输入
+  响应者合法 World、匿名手牌或公开装备 Action 与 Counter depth。
+
+  输出
+  只用于候选比较的 base/resolved Worlds；公开装备复用真实 root 镜像。
+
+  读取状态
+  响应者合法身份、公开资源与其当前 ProbabilityState。
+
+  写入状态
+  一个局部 clone 的资源数量、身份 availability 与 ProbabilityState。
+
+  调用函数
+  buildRootFlipWorlds、clone、consumeRandomHandCards、gainUnknownCardsWithCounterState。
+
+  边界与不变量
+  hand 是随机失牌与匿名得牌的期望投影，不表示 actor 知道或选中任何私密身份。
+  接收方按当前有限池近似获得匿名牌，不重建所得牌的条件身份；此 World 只供 selection
+  comparator 使用，Counter G/pC/overlap 仍由原 World 的 uniform-hand 查询提供。
+  不采样 opponent World、不启动 Searcher，也不执行递归对手策略。
+  */
+  buildFutureResourceSelectionWorlds(state, action, counterDepth) {
+    if (action?.selection?.selectionMode !== "uniform-hand") {
+      return this.buildRootFlipWorlds(state, action, counterDepth);
+    }
+    const resolvedWorld = this.clone(state);
+    const sourceId = action.cardId === "transfer"
+      ? action.selection.sourceId : action.targetIds[0];
+    const source = resolvedWorld.players.find((player) => player.id === sourceId && player.alive);
+    if (!source) return null;
+    const receiverId = action.cardId === "transfer"
+      ? action.selection.receiverId : (action.cardId === "plunder" ? action.actorId : null);
+    const receiver = resolvedWorld.players.find((player) => player.id === receiverId && player.alive);
+    if (receiverId && !receiver) return null;
+    const removed = this.consumeRandomHandCards(resolvedWorld, source, 1);
+    if (receiver) this.gainUnknownCardsWithCounterState(resolvedWorld, receiver, removed);
+    return { baseWorld:state, resolvedWorld, resolvesAtStay:(counterDepth % 2) === 0 };
   }
 
   /*
@@ -769,7 +850,7 @@ class SimulatorCore {
   只写一次完整 World clone。
 
   调用函数
-  clone、mutateProbability。
+  clone、mutateHandProbability。
 
   边界与不变量
   不回读真实未知手牌；viewer 手牌保持原样；确定 known 占位按原顺序保留。
@@ -784,7 +865,7 @@ class SimulatorCore {
         cardAvailability(entry) >= 1 - PROBABILITY_EPSILON
       )).length;
       for (const definitionId of definitions.slice(certainKnownCount)) {
-        mutateProbability(specialized.probabilityState, {
+        this.mutateHandProbability(specialized, {
           type:"REMOVE",
           sourceBucketId:player.id,
           definitionId
@@ -1022,6 +1103,46 @@ class SimulatorCore {
 
   /*
   功能
+  把完整事件分区条件化为事件已经发生的局部 Worlds。
+
+  调用方
+  buildPublicCardReceiptOutcomes：在互利成功分支内物化完整领取结果。
+
+  输入
+  含 occurs 状态、概率与条件键的当前事件 Worlds。
+
+  输出
+  保留原条件键且总质量归一为一的成功分支；事件不可能发生时返回空数组。
+
+  读取状态
+  只读调用栈内的事件分支。
+
+  写入状态
+  无。
+
+  调用函数
+  mergeProbabilityWork、totalBranchProbability。
+
+  边界与不变量
+  只在当前 transition 调用栈内条件化；失败 World 仍由 before World 表达，
+  不得把分支写回 canonical World 或为每名接收者重新创建 Bernoulli 事件。
+  */
+  conditionOnOccurredEvent(eventWorlds) {
+    const occurred = this.mergeProbabilityWork(
+      (eventWorlds ?? []).filter((branch) => branch?.occurs),
+      "Simulator.conditionOnOccurredEvent"
+    );
+    const mass = totalBranchProbability(occurred);
+    if (mass <= PROBABILITY_EPSILON) return [];
+    return occurred.map((branch) => ({
+      ...branch,
+      probability:branch.probability / mass,
+      occurs:true
+    }));
+  }
+
+  /*
+  功能
   按动作类型把单个抽象动作分派给已组合的 Simulation 组件并推进独立世界。
 
   调用方
@@ -1049,6 +1170,7 @@ class SimulatorCore {
   */
   apply(state, action, controls = {}) {
     const next = this.clone(state);
+    next.lastResourceTransaction = null;
     if (next.playPhaseEnded) return next;
     const actor = next.players.find((player) => player.id === action.actorId);
     if (action.type === "end") {
@@ -1118,6 +1240,10 @@ class SimulatorCore {
     }
     // card-scope 的取消概率与容量消费必须使用同一份 responder 评估；两者之间没有
     // 状态变化，因此重复计算 counterDecision 只会增加开销，不会提供新信息。
+    const mutualBenefitRootWorlds = card.definitionId === "mutualBenefit"
+      && !controls.ignoreCounter
+      ? this.buildRootFlipWorlds(state, action, 0)
+      : null;
     const cardScopeCounterEvaluation = card.category === "tactic"
       && card.counterable !== false && !controls.ignoreCounter
       && card.counterScope !== "target"
@@ -1126,7 +1252,8 @@ class SimulatorCore {
         actor,
         card,
         targets,
-        action.selection ?? null
+        action.selection ?? null,
+        mutualBenefitRootWorlds
       )
       : null;
     let effectEventWorlds = cardEventWorlds;
@@ -1724,9 +1851,9 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       ).distribution.map((branch, index) => ({
         probability:branch.probability,
         conditions:{ ...branch.conditions, [preJudgmentKey]:`v${index}` },
-        blockCount:branch.blockCount
+        blockCount:branch.count
       }));
-      const judgmentBlockCards = [];
+      const judgmentBlockEntries = [];
       for (let slot = 0; slot < maximumRequirement; slot += 1) {
         for (const definitionId of RADAR_BASIC_DEFINITION_IDS) {
           if (baseWorlds.length >= 32) this.checkpointSearchWork();
@@ -1751,7 +1878,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
             );
             if (definitionId === "block") {
               const judgedBlock = target.hand.find((card) => card.id === simulatedId) ?? null;
-              if (judgedBlock) judgmentBlockCards.push(judgedBlock);
+              if (judgedBlock) judgmentBlockEntries.push({ card:judgedBlock, slot });
             }
           } else {
             this.addSimulatedKnownCard(
@@ -1762,14 +1889,14 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
             );
             if (definitionId === "block") {
               const judgedBlock = target.knownCards.find((entry) => entry.cardId === simulatedId) ?? null;
-              if (judgedBlock) judgmentBlockCards.push(judgedBlock);
+              if (judgedBlock) judgmentBlockEntries.push({ card:judgedBlock, slot });
             }
           }
         }
       }
       const response = this.consumeBlockResponseWorlds(state, target, baseWorlds, {
         preJudgmentBlockState,
-        judgmentBlockCards,
+        judgmentBlockEntries,
         incomingDamage:amount
       });
       attackOutcomeWorlds = response.outcomeWorlds;
@@ -1942,7 +2069,8 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       state,
       attacker,
       target,
-      damageResult.lifeDamageChance
+      damageResult.lifeDamageChance,
+      damageResult.lifeDamageBranches
     );
     return damageResult.actualDamage;
   }
@@ -2257,10 +2385,10 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
   为公开牌选择构造每张候选的领取状态，以及装备候选可选的真实换装状态。
 
   调用方
-  Controller.choosePublicCard。
+  Controller.choosePublicCard 与 applyMutualBenefitReceipts。
 
   输入
-  领取前 World、接收者 ID 与公开实体牌数组。
+  领取前 World、接收者 ID、公开实体牌数组与可选 canonical 领取事件 Worlds。
 
   输出
   每张牌对应 cardId、definitionId 与独立领取/换装 Worlds 的数组。
@@ -2272,43 +2400,50 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
   只写独立 World clones 的手牌、装备和资源概率摘要。
 
   调用函数
-  clone、getEventWorlds、addSimulatedCardToHand、consumeChosenHandCard、setSimulatedEquipment、syncActiveSkillCosts。
+  clone、getEventWorlds、Resource.receivePublicCard、syncActiveSkillCosts。
 
   边界与不变量
-  真实公开池实体不变；普通牌只构造领取状态；装备同时保留“留在手牌”和“替换装备槽”两种合法资源状态，
-  不触发出牌阶段被动、响应或第二套价值公式。
+  真实公开池实体不变；同一 canonical 事件的成功条件 Worlds 驱动普通牌与装备两类结果；
+  失败状态由输入 World 保留，不能用新装备身份加标量 retention 覆盖；
+  装备结果直接进入装备槽，不经过临时 hand mutation；不触发出牌阶段被动、响应或第二套价值公式。
   */
-  buildPublicCardReceiptOutcomes(state, recipientId, cards) {
+  buildPublicCardReceiptOutcomes(state, recipientId, cards, suppliedAcquisitionWorlds = null) {
     const outcomes = [];
+    const sharedAcquisitionWorlds = Array.isArray(suppliedAcquisitionWorlds)
+      ? this.conditionOnOccurredEvent(suppliedAcquisitionWorlds)
+      : null;
+    if (Array.isArray(suppliedAcquisitionWorlds) && !sharedAcquisitionWorlds.length) return outcomes;
     for (const card of cards ?? []) {
       const definition = CARD_DEFINITIONS[card?.definitionId];
       if (!card?.id || !definition) continue;
       const received = this.clone(state);
       const recipient = received.players.find((player) => player.id === recipientId);
-      if (!recipient?.alive || !Array.isArray(recipient.hand)) continue;
+      if (!recipient?.alive) continue;
       const acquisitionWorlds = this.getEventWorlds(
         received,
         1,
-        null,
+        sharedAcquisitionWorlds,
         `public-card-receipt:${card.id}`
       );
-      this.addSimulatedCardToHand(
-        received,
-        recipient,
-        { id:card.id, definitionId:card.definitionId },
-        acquisitionWorlds
-      );
+      this.receivePublicCard(received, recipient, {
+        cardId:card.id,
+        definitionId:card.definitionId
+      }, acquisitionWorlds, {
+        consumeFromDrawPool:Array.isArray(suppliedAcquisitionWorlds)
+      });
       const worlds = [received];
       if (definition.category === "equipment") {
-        const equipped = this.clone(received);
+        const equipped = this.clone(state);
         const equippedRecipient = equipped.players.find(
           (player) => player.id === recipientId
         );
-        this.consumeChosenHandCard(equipped, equippedRecipient, 1, {
-          label:`public-card-equip:${card.id}`,
-          selectedCardIds:[card.id]
+        this.receivePublicCard(equipped, equippedRecipient, {
+          cardId:card.id,
+          definitionId:card.definitionId
+        }, acquisitionWorlds, {
+          equip:true,
+          consumeFromDrawPool:Array.isArray(suppliedAcquisitionWorlds)
         });
-        this.setSimulatedEquipment(equippedRecipient, card.definitionId, 1);
         if (card.definitionId === "recycleDevice") equippedRecipient.recycleDeviceUses = 0;
         this.syncActiveSkillCosts(equipped);
         worlds.push(equipped);
@@ -2316,6 +2451,65 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       outcomes.push({ cardId:card.id, definitionId:card.definitionId, worlds });
     }
     return outcomes;
+  }
+
+  /*
+  功能
+  按真实座次让互利接收者依次选择当前 StateDelta 最大的公开剩余牌并物化领取。
+
+  调用方
+  applyCardEffect 的 mutualBenefit 分支。
+
+  输入
+  可变 World、来源玩家与本次卡牌 canonical 生效 Worlds。
+
+  输出
+  实际完成领取的接收者 ID 数组。
+
+  读取状态
+  当前公开有限池、存活座次、接收者手牌/装备状态与注入的 Evaluator 选择能力。
+
+  写入状态
+  当前 World 替换为每轮 Evaluator 选中的完整 receipt World。
+
+  调用函数
+  seatOrderFrom、buildPublicCardReceiptOutcomes、choosePublicCardOutcome。
+
+  边界与不变量
+  每名接收者只按同一生效 Worlds 消费当前池一张牌；后续接收者必须读取已消费后的池；
+  领取状态已完整进入 after World，因此不得再添加 Mutual Benefit receipt Option value。
+  */
+  applyMutualBenefitReceipts(state, source, effectEventWorlds) {
+    const recipients = this.seatOrderFrom(state, source, true);
+    const appliedRecipients = [];
+    const availableCounts = { ...queryCurrentCardCounts(state.probabilityState) };
+    for (const recipient of recipients) {
+      const cards = Object.entries(availableCounts)
+        .filter(([, count]) => Number(count) > PROBABILITY_EPSILON)
+        .map(([definitionId]) => ({
+          id:`mutual-benefit:${recipient.id}:${definitionId}`,
+          definitionId
+        }));
+      if (!cards.length) break;
+      const outcomes = this.buildPublicCardReceiptOutcomes(
+        state,
+        recipient.id,
+        cards,
+        effectEventWorlds
+      );
+      const selected = this.choosePublicCardOutcome(recipient, cards, state, outcomes);
+      const selectedOutcome = outcomes.find((outcome) => outcome.cardId === selected?.cardId);
+      const selectedWorld = selectedOutcome?.worlds?.[selected?.worldIndex] ?? null;
+      if (!selectedWorld) break;
+      for (const key of Object.keys(state)) delete state[key];
+      Object.assign(state, selectedWorld);
+      availableCounts[selected.definitionId] = Math.max(
+        0,
+        Number(availableCounts[selected.definitionId]) - 1
+      );
+      appliedRecipients.push(recipient.id);
+    }
+    return appliedRecipients;
   }
 
   /*
@@ -2338,7 +2532,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
   仅构造并丢弃独立 World clones；不写真实 GameState 或输入 World。
 
   调用函数
-  buildPublicCardReceiptOutcomes、choosePublicCardId。
+  buildPublicCardReceiptOutcomes、choosePublicCardOutcome。
 
   边界与不变量
   Simulator 不读取或实现价值公式；Evaluator 不构造 World；Controller 不遍历、模拟或比较候选。
@@ -2346,7 +2540,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
   resolvePublicCardChoice(state, recipientId, cards) {
     const recipient = state?.players?.find((player) => player.id === recipientId) ?? null;
     const outcomes = this.buildPublicCardReceiptOutcomes(state, recipientId, cards);
-    return this.choosePublicCardId(recipient, cards, state, outcomes);
+    return this.choosePublicCardOutcome(recipient, cards, state, outcomes)?.cardId ?? null;
   }
 };
 
@@ -2468,6 +2662,42 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
 
   /*
   功能
+  记录一项卡牌资源移动在当前模拟 transition 中实际发生的概率。
+
+  调用方
+  applyCardEffect 的破坏、掠夺与转移分支。
+
+  输入
+  动作后的 World、canonical Action、资源来源与实际应用概率。
+
+  输出
+  无返回值；正概率事实追加到行动者的 transition ledger。
+
+  读取状态
+  Action identity 与资源来源 ID。
+
+  写入状态
+  state.lastResourceTransaction。
+
+  调用函数
+  clampProbability。
+
+  边界与不变量
+  只记录 Simulator 已成功推进的资源事实；后续摸牌不得通过手牌净差掩盖这次移动。
+  */
+  recordResourceTransaction(state, action, source, appliedProbability) {
+    const probability = clampProbability(appliedProbability);
+    if (!state || !source || probability <= PROBABILITY_EPSILON) return;
+    state.lastResourceTransaction = {
+      cardId: action?.cardId ?? null,
+      cardInstanceId: action?.cardInstanceId ?? null,
+      sourceId: source.id,
+      appliedProbability: probability
+    };
+  }
+
+  /*
+  功能
   执行一张已完成动作支付、commit trigger 与 card-scope 响应门控的卡牌效果。
 
   调用方
@@ -2505,6 +2735,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
     const cardDamageContext = { cardDamage:true, emberTriggeredProbabilities:{} };
     let coordinationProbability = 0;
     let coordinationTargets = [];
+    let effectBaselineState = null;
 
     switch (card.definitionId) {
       case "recover":
@@ -2593,7 +2824,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
             .filter((entry) => entry.definitionId === "assault")
             .reduce((sum, entry) => sum + cardAvailability(entry), 0);
           const anonymousSpent = Math.max(0, spent - (knownBefore - knownAfter));
-          if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(next.probabilityState, {
+          if (anonymousSpent > PROBABILITY_EPSILON) this.mutateHandProbability(next, {
             type:"REMOVE",
             sourceBucketId:player.id,
             definitionId:"assault",
@@ -2654,7 +2885,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
           .filter((entry) => entry.definitionId === "assault")
           .reduce((sum, entry) => sum + cardAvailability(entry), 0);
         const anonymousSpent = Math.max(0, assaultSpent - (knownBefore - knownAfter));
-        if (anonymousSpent > PROBABILITY_EPSILON) mutateProbability(next.probabilityState, {
+        if (anonymousSpent > PROBABILITY_EPSILON) this.mutateHandProbability(next, {
           type:"REMOVE",
           sourceBucketId:first.id,
           definitionId:"assault",
@@ -2685,6 +2916,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
             )
           : 0;
         if (plundered > PROBABILITY_EPSILON) {
+          this.recordResourceTransaction(next, abstractAction, target, plundered);
           coordinationProbability = plundered;
           coordinationTargets = [target];
         }
@@ -2711,6 +2943,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
                   : this.availableUnknownCountFor(source, excludedTransferCard));
           coordinationProbability = transferred;
           coordinationTargets = [source, receiver];
+          this.recordResourceTransaction(next, abstractAction, source, transferred);
         }
         break;
       }
@@ -2732,6 +2965,7 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
             )
           : 0;
         if (destroyed > PROBABILITY_EPSILON) {
+          this.recordResourceTransaction(next, abstractAction, target, destroyed);
           coordinationProbability = destroyed;
           coordinationTargets = [target];
         }
@@ -2739,14 +2973,13 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
       }
       case "duel": if (target) this.applyDuel(next, actor, target, scale, cardDamageContext); break;
       case "mutualBenefit": {
-        coordinationTargets = next.players.filter((player) => player.alive);
-        coordinationProbability = scale;
-        const perRecipientDrawCount = CARD_DEFINITIONS.mutualBenefit.perRecipientDrawCount;
-        for (const player of coordinationTargets) {
-          this.gainUnknownCardsWithCounterState(
-            next, player, perRecipientDrawCount, effectEventWorlds, "mutual-benefit-draw"
-          );
-        }
+        effectBaselineState = this.clone(next);
+        const recipientIds = this.applyMutualBenefitReceipts(next, actor, effectEventWorlds);
+        actor = next.players.find((player) => player.id === abstractAction.actorId);
+        coordinationTargets = recipientIds.map((recipientId) => (
+          next.players.find((player) => player.id === recipientId)
+        )).filter(Boolean);
+        coordinationProbability = recipientIds.length ? 1 : 0;
         break;
       }
       case "symbiosis": {
@@ -2772,6 +3005,24 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
       this.simulateCategoryUse(next, actor, category, cardEventWorlds);
     }
     this.syncActiveSkillCosts(next);
+    if (effectBaselineState) {
+      const baselineActor = effectBaselineState.players.find(
+        (player) => player.id === abstractAction.actorId
+      );
+      this.simulateGamble(effectBaselineState, baselineActor, card, executionProbability);
+      if (hasPassiveSkill(baselineActor, "momentum")
+        && baselineActor.alive && card.definitionId !== "assault") {
+        const category = card.category ?? CARD_DEFINITIONS[card.definitionId]?.category;
+        this.simulateCategoryUse(effectBaselineState, baselineActor, category, cardEventWorlds);
+      }
+      this.syncActiveSkillCosts(effectBaselineState);
+    }
+    if (["scout", "mutualBenefit"].includes(card.definitionId)) {
+      this.transitionEvaluationWorlds.set(next, {
+        effectBaselineState,
+        effectResolutionScale:scale
+      });
+    }
 
     return next;
   }
@@ -2952,13 +3203,13 @@ const withActionTransition = (Base) => class ActionTransition extends Base {
       [target, targetAnonymousSpent]
     ]) {
       const whole = Math.floor(spent);
-      if (whole > 0) mutateProbability(state.probabilityState, {
+      if (whole > 0) this.mutateHandProbability(state, {
         type:"REMOVE",
         sourceBucketId:player.id,
         definitionId:"assault",
         count:whole
       });
-      if (spent - whole > PROBABILITY_EPSILON) mutateProbability(state.probabilityState, {
+      if (spent - whole > PROBABILITY_EPSILON) this.mutateHandProbability(state, {
         type:"REMOVE",
         sourceBucketId:player.id,
         definitionId:"assault",
@@ -3523,7 +3774,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   /*
   功能
-  按协同生效世界为有效目标结算团队资源增益。
+  按协调生效世界为调律师与唯一触发队友结算资源增益。
 
   调用方
   Simulator、Damage 与 Simulator：在有效目标世界结算协同收益。
@@ -3532,24 +3783,25 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   World、来源、有效目标列表与结算概率。
 
   输出
-  无返回值；团队目标资源与协同触发摘要已更新。
+  本次新增触发概率；双方手牌资源与协调触发摘要已更新。
 
   读取状态
   来源/目标阵营、存活状态与 coordinationTriggeredProbability。
 
   写入状态
-  目标手牌/响应摘要、能量或协同触发字段。
+  调律师和唯一触发队友的手牌/响应摘要，以及协调触发字段。
 
   调用函数
   gainUnknownCardsWithCounterState、changeEnergy。
 
   边界与不变量
-  只作用于调用方确认的有效目标；同一触发质量不得对同一目标重复发放。
+  按 effectiveTargets 顺序只选择第一名合法队友；同一触发质量给双方各一张且每回合只结算一次。
   */
   simulateCoordination(state, actor, effectiveTargets, resolutionProbability) {
     if (!hasPassiveSkill(actor, "coordination")) return 0;
-    if (!(effectiveTargets ?? []).some((target) => target?.alive && target.id !== actor.id
-      && target.battleTeam === actor.battleTeam)) return 0;
+    const teammate = (effectiveTargets ?? []).find((target) => target?.alive
+      && target.id !== actor.id && target.battleTeam === actor.battleTeam);
+    if (!teammate) return 0;
     const oldProbability = clampProbability(actor.coordinationTriggeredProbability
       ?? (actor.coordinationTriggered ? 1 : 0));
     const newProbability = independentUnionProbability(oldProbability, resolutionProbability);
@@ -3560,6 +3812,9 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
       const coordinationWorlds = this.getEventWorlds(state, triggerProbability, null, "coordination-draw");
       this.gainUnknownCardsWithCounterState(
         state, actor, triggerProbability, coordinationWorlds, "coordination-draw"
+      );
+      this.gainUnknownCardsWithCounterState(
+        state, teammate, triggerProbability, coordinationWorlds, "coordination-teammate-draw"
       );
     }
     return triggerProbability;
@@ -3743,49 +3998,70 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
 
   /*
   功能
-  根据生命伤害概率结算影客窥隙：推进一次性额度并把新观察身份写入后续可消费状态。
+  根据每次生命伤害结算影客窥隙，并记录本次实际新增未知信息。
 
   调用方
   Damage.applyDamage：在生命伤害与濒死结果落地后触发。
 
   输入
-  World、伤害来源、受伤目标与生命伤害概率。
+  World、伤害来源、受伤目标、生命伤害概率与同一伤害条件世界。
 
   输出
-  无返回值；满足触发条件时推进窥隙额度与目标私密信息。
+  无返回值；满足触发条件时追加本次窥隙信息事件并推进目标已查看数量摘要。
 
   读取状态
-  来源 characterId/既有触发概率、目标阵营/生命/手牌与剩余牌先验。
+  来源 characterId、目标阵营/生命/手牌、已有合法知识与本模拟路径已查看数量。
 
   写入状态
-  spyGapTriggeredProbability、spyGapTriggered、lastSpyGapTargetId，以及委托记录的目标已知牌与摘要。
+  spyGapInformationEvents 与 spyGapRevealedCountsByTarget。
 
   调用函数
   recordSimulatedPrivatePeek。
 
   边界与不变量
-  只有本回合尚未触发的边际生命伤害世界会揭示新牌；空手、队友、已死亡或已触发时不会产生信息价值。
+  每次实际生命伤害都可触发；空手、队友、已死亡或已无未知牌时不产生新增信息，
+  同一模拟路径仍在目标手中的已查看数量不得再次计值；匿名离手时由 Resource 按当前容量衰减摘要。
   */
-  simulateSpyGapAfterLifeDamage(state, source, target, lifeDamageProbability) {
+  simulateSpyGapAfterLifeDamage(
+    state,
+    source,
+    target,
+    lifeDamageProbability,
+    lifeDamageBranches = null
+  ) {
     const chance = clampProbability(lifeDamageProbability);
     if (!chance || !source?.alive || !target?.alive || target.hp <= 0
       || target.battleTeam === source.battleTeam || (target.handCount ?? 0) <= 0
       || !hasPassiveSkill(source, "spyGap")) return;
-    const oldTriggeredProbability = clampProbability(source.spyGapTriggeredProbability
-      ?? (source.spyGapTriggered ? 1 : 0));
-    const triggerProbability = (1 - oldTriggeredProbability) * chance;
-    source.spyGapTriggeredProbability = independentUnionProbability(oldTriggeredProbability, chance);
-    source.spyGapTriggered = source.spyGapTriggeredProbability >= 1 - Number.EPSILON;
-    if (triggerProbability <= PROBABILITY_EPSILON) return;
-    source.lastSpyGapTargetId = target.id;
-    const triggerWorlds = probabilityEventPartition(
+    const alreadyRevealed = Math.max(
+      0,
+      Number(source.spyGapRevealedCountsByTarget?.[target.id]) || 0
+    );
+    const knownOccupancy = (target.knownCards ?? []).reduce(
+      (sum, entry) => sum + cardAvailability(entry),
+      0
+    );
+    const maxRevealCount = Math.min(
+      PASSIVE_SKILL_DEFINITIONS.spyGap.maxRevealCount,
+      Math.max(0, (Number(target.handCount) || 0) - knownOccupancy - alreadyRevealed)
+    );
+    if (maxRevealCount <= PROBABILITY_EPSILON) return;
+    const triggerWorlds = lifeDamageBranches ?? probabilityEventPartition(
       this.currentProbabilityEventKey(state, `spy-gap:${source.id}:${target.id}`),
-      triggerProbability,
+      chance,
       "occurs"
     );
-    this.recordSimulatedPrivatePeek(
-      state, source, target, PASSIVE_SKILL_DEFINITIONS.spyGap.maxRevealCount, triggerWorlds
+    const actualNewRevealCount = this.recordSimulatedPrivatePeek(
+      state, source, target, maxRevealCount, triggerWorlds
     );
+    if (actualNewRevealCount <= PROBABILITY_EPSILON) return;
+    source.spyGapRevealedCountsByTarget ??= {};
+    source.spyGapRevealedCountsByTarget[target.id] = alreadyRevealed + actualNewRevealCount;
+    source.spyGapInformationEvents ??= [];
+    source.spyGapInformationEvents.push({
+      targetId: target.id,
+      actualNewRevealCount
+    });
   }
 
 

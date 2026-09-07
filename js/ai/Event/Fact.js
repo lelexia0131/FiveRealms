@@ -23,6 +23,7 @@ import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefi
 import { assertCanonicalSeatRoster } from "../../domain/state/queries/SeatRosterContract.js";
 import { hasStatus } from "../../domain/rules/status/StatusRules.js";
 import { createAttackUsage } from "../../domain/rules/turn/TurnRules.js";
+import { getEffectiveAttackLimit } from "../../domain/rules/team/TeamRules.js";
 
 const CARD_COUNTS = RULESET_DEFINITION.deckComposition;
 const CHARACTER_ROLE_TAGS = Object.freeze({
@@ -315,22 +316,42 @@ Generator root/deep legality 与 Simulator queries。
 Domain canonical attack usage。
 
 读取状态
-确定 attackUsed/attackLimit。
+确定 attackUsed、非装备 attackLimit、备用弹夹条件消耗次数、当前装备与其存在概率。
 
 写入状态
 无。
 
 调用函数
-createAttackUsage。
+getEffectiveAttackLimit、createAttackUsage。
 
 边界与不变量
-只投影事实，不复制攻击合法性公式。
+装备规则值由 Domain TeamRules 合成；AI World 的备用弹夹次数按装备存在条件世界计数，
+因此生成合法动作时需把其概率质量从期望 attackUsed 中还原为条件次数。
 */
 export function projectAttackUsage(player) {
   const turnFlags = player?.turnFlags;
+  const attackUsed = Math.max(0, Number(turnFlags?.attackUsed ?? player?.attackUsed) || 0);
+  const limitWithoutEquipment = Math.max(
+    0,
+    Number(turnFlags?.attackLimit ?? player?.attackLimit) || 0
+  );
+  const equipmentDefinitionId = player?.equipment?.definitionId
+    ?? player?.equipmentDefinitionId
+    ?? null;
+  const equipmentProbability = Math.max(
+    0,
+    Math.min(1, Number(player?.equipmentRetentionProbability ?? 1) || 0)
+  );
+  const assaultMagazineUsed = equipmentDefinitionId === "assaultMagazine"
+    ? Math.max(0, Number(turnFlags?.assaultMagazineUsed ?? player?.assaultMagazineUsed) || 0)
+    : 0;
+  const nonEquipmentUsed = Math.max(
+    0,
+    attackUsed - assaultMagazineUsed * equipmentProbability
+  );
   return createAttackUsage(
-    turnFlags?.attackUsed ?? player?.attackUsed ?? 0,
-    turnFlags?.attackLimit ?? player?.attackLimit ?? 0
+    nonEquipmentUsed + assaultMagazineUsed,
+    getEffectiveAttackLimit(limitWithoutEquipment, equipmentDefinitionId)
   );
 }
 
@@ -501,6 +522,7 @@ function projectFactPlayer(viewerId, player) {
     attackRange:player.attackRange,
     attackUsed:player.turnFlags.attackUsed,
     attackLimit:player.turnFlags.attackLimit,
+    assaultMagazineUsed:player.turnFlags.assaultMagazineUsed ?? 0,
     recoverUsed:player.turnFlags.recoverUsed,
     recoverLimit:player.turnFlags.recoverLimit,
     momentum:player.turnFlags.momentum ?? 0,

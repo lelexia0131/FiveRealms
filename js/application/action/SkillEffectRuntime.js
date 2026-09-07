@@ -222,19 +222,19 @@ stealSkill 的 direct callers。
 按 signature 传入的 runtime facts。
 
 输出
-按 signature 返回。
+无返回值；成功窃取时把真实来源与数量写入 execution-local ledger。
 
 读取状态
 runtime/card/skill facts。
 
 写入状态
-source.energy；牌移动经 zone collaborator。
+source.energy；牌移动经 zone collaborator；成功事实写入 context.cardSteals。
 
 调用函数
 paySkillEnergy、randomChoice 与 zone/presentation collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+不重复 Domain rule 决定；只有移动成功才记录一张，事实由 Action commit 后发布。
 */
     async stealSkill(skill, source, targets, context) {
       const state = runtime.getState();
@@ -249,7 +249,10 @@ paySkillEnergy、randomChoice 与 zone/presentation collaborator。
         ? await runtime.moveEquipmentToHand(target, source, chosen.card, "窃取")
         : await runtime.moveCardBetweenHands(target, source, chosen.card, "窃取");
       if (!runtime.isSessionValid(gameId)) return;
-      if (stolen) runtime.presentation.log(`${source.name}发动「窃取」，从${target.name}处获得${runtime.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
+      if (stolen) {
+        context.cardSteals.push(Object.freeze({ target, actualAmount: 1 }));
+        runtime.presentation.log(`${source.name}发动「窃取」，从${target.name}处获得${runtime.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
+      }
     },
 /*
 功能
@@ -292,19 +295,19 @@ paySkillEnergy、getEnemies、damage 与 presentation collaborator。
     },
 /*
 功能
-执行 hunt 技能效果 sequencing。
+执行猎杀的支付、移印、伤害与格挡后摸牌。
 
 调用方
-hunt 的 direct callers。
+execute 按 hunt 技能 ID 分发。
 
 输入
-按 signature 传入的 runtime facts。
+技能定义、使用者、唯一猎印目标与含 resolutionId/payment 的本次执行上下文。
 
 输出
-按 signature 返回。
+Promise<void>，等待伤害及合法格挡奖励完成。
 
 读取状态
-runtime/card/skill facts。
+本局 session、source.alive、猎印目标与技能规则。
 
 写入状态
 source.energy、target.huntMark；伤害与摸牌经 collaborator。
@@ -313,7 +316,7 @@ source.energy、target.huntMark；伤害与摸牌经 collaborator。
 paySkillEnergy、removeStatus、damage、drawCards 与 presentation collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+伤害量由 Domain 决定，伤害事实由 Combat 发布；透传本次技能 resolutionId，使伤害与完成通知可去重关联。
 */
     async hunt(skill, source, targets, context) {
       const state = runtime.getState();
@@ -323,35 +326,36 @@ paySkillEnergy、removeStatus、damage、drawCards 与 presentation collaborator
       runtime.presentation.log(`${source.name}对${target.name}发动「猎杀」。`, "important");
       paySkillEnergy(source, decision.energyCost, context.payment);
       removeStatus(state, target, "huntMark");
-      const damageContext = { skill: "hunt", actionName: "猎杀", canBlock: true, damageType: "skill" };
+      const damageContext = { skill: "hunt", actionName: "猎杀", canBlock: true, damageType: "skill",
+        resolutionId: context.resolutionId };
       await runtime.damage(source, target, decision.damageAmount, damageContext);
       if (!runtime.isSessionValid(gameId)) return;
       if (damageContext.blockedByCard && source.alive) await runtime.drawCards(source, decision.blockedRewardDraw, "猎杀被格挡");
     },
 /*
 功能
-执行 allIn 技能效果 sequencing。
+执行孤注支付、摸牌和状态转换，并返回本次是否真正进入状态。
 
 调用方
-allIn 的 direct callers。
+execute 按 allIn 技能 ID 分发。
 
 输入
-按 signature 传入的 runtime facts。
+技能定义、使用者与本次 execution-local 上下文；不使用目标数组。
 
 输出
-按 signature 返回。
+Promise<void>，context.enteredAllIn 记录本次从无到有的状态转换。
 
 读取状态
-runtime/card/skill facts。
+source 原有孤注状态、能量、session 与 Domain 技能规则。
 
 写入状态
-source.energy/statuses；摸牌经 drawCards collaborator。
+source.energy/statuses；摸牌经 drawCards collaborator；context.enteredAllIn 只在本次执行内写入。
 
 调用函数
 paySkillEnergy、drawCards、setStatus 与 presentation collaborator。
 
 边界与不变量
-不重复 Domain rule 决定。
+概率与数值由 Domain 决定；原先持有孤注时继续保持不得算作进入，统计随 Action 提交才发布。
 */
     async allIn(skill, source, _targets, context) {
       const state = runtime.getState();
@@ -363,6 +367,7 @@ paySkillEnergy、drawCards、setStatus 与 presentation collaborator。
       if (!runtime.isSessionValid(gameId)) return;
       const entered = runtime.random() < decision.enterChance;
       if (entered) setStatus(state, source, "allIn", { assaultBonus: decision.assaultDamageBonus });
+      context.enteredAllIn = !hadAllInBefore && entered;
       if (hadAllInBefore) {
         runtime.presentation.log(`${source.name}消耗${decision.energyCost}点能量发动「孤注」，${drawn ? `摸${drawn}张牌` : "未摸到牌"}，原有「孤注」状态保持不变。`, "important");
       } else {
@@ -416,13 +421,13 @@ paySkillEnergy、drawCards 与 presentation collaborator。
   skill、source、targets 与 context。
 
   输出
-  Promise<{ actualEnergyPaid, cardGrants }>，返回本次 execution 的真实支付量与实际给牌事实。
+  Promise<{ actualEnergyPaid, cardGrants, cardSteals, enteredAllIn }>，返回本次 execution 的真实支付、资源与孤注进入事实。
 
   读取状态
   skill.id、runtime state 与 execution-local payment ledger。
 
   写入状态
-  经 EFFECTS 写入真实技能效果；payment 与 cardGrants ledger 只在本次调用内可写。
+  经 EFFECTS 写入真实技能效果；payment、cardGrants、cardSteals 与 enteredAllIn 只在本次调用内可写。
 
   调用函数
   EFFECTS。
@@ -433,11 +438,19 @@ paySkillEnergy、drawCards 与 presentation collaborator。
   async function execute(skill, source, targets, context = {}) {
     const resolver = EFFECTS[skill.id];
     if (!resolver) throw new Error(`未注册主动技能效果：${skill.id}`);
-    const executionContext = { ...context, payment: { actualAmount: 0 }, cardGrants: [] };
+    const executionContext = {
+      ...context,
+      payment: { actualAmount: 0 },
+      cardGrants: [],
+      cardSteals: [],
+      enteredAllIn: false
+    };
     await resolver(skill, source, targets, executionContext);
     return Object.freeze({
       actualEnergyPaid: executionContext.payment.actualAmount,
-      cardGrants: Object.freeze([...executionContext.cardGrants])
+      cardGrants: Object.freeze([...executionContext.cardGrants]),
+      cardSteals: Object.freeze([...executionContext.cardSteals]),
+      enteredAllIn: executionContext.enteredAllIn
     });
   }
 

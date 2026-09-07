@@ -70,7 +70,6 @@ function createDerivedPlayersById(state) {
       energyDeviceTurnEnergyGain:energyDeviceBreakdown.equipmentBonus,
       nextTurnBaseAttackLimit:getAttackLimitFromRules(teamRules),
       guardianAidUsed:Boolean(player.turnFlags.guardianAidUsed),
-      spyGapTriggered:Boolean(player.turnFlags.spyGapTriggered),
       activeSkillCost:getSkillCost(activeSkill, player, state.players)
     })];
   }));
@@ -137,7 +136,9 @@ function createWorldPlayer(factPlayer, knownCards, viewerId, derivedPlayer) {
     energyDeviceTurnEnergyGain:derivedPlayer.energyDeviceTurnEnergyGain,
     nextTurnBaseAttackLimit:derivedPlayer.nextTurnBaseAttackLimit,
     guardianAidUsed:Boolean(derivedPlayer.guardianAidUsed),
-    spyGapTriggered:Boolean(derivedPlayer.spyGapTriggered),
+    spyGapInformationEvents:[],
+    // 只累计仍占据目标匿名手牌容量的已查看期望数量；资源离手由 Resource 同步衰减。
+    spyGapRevealedCountsByTarget:{},
     activeSkillCost:derivedPlayer.activeSkillCost,
     hand:factPlayer.id === viewerId ? factPlayer.hand.map(createWorldCard) : undefined,
     knownCards:factPlayer.id === viewerId ? undefined : knownCards.map(createWorldCard),
@@ -178,6 +179,7 @@ function createWorld(fact, probabilityState, derivedPlayersById = {}) {
     currentRound:fact.currentRound,
     phase:fact.phase,
     playPhaseEnded:false,
+    lastResourceTransaction:null,
     probabilityState,
     deckCount:fact.deckCount,
     discardCount:fact.discardCount,

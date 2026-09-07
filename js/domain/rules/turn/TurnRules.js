@@ -47,6 +47,7 @@ export function createTurnUsageState(teamRules = null) {
   return {
     attackUsed: 0,
     attackLimit: teamRules?.attackLimitPerTurn ?? 1,
+    assaultMagazineUsed: 0,
     recoverUsed: 0,
     recoverLimit: teamRules ? teamRules.recoverLimitPerTurn : null,
     categoriesUsed: new Set(),
@@ -58,7 +59,6 @@ export function createTurnUsageState(teamRules = null) {
     coordinationTriggered: false,
     gambleTriggered: false,
     rejuvenationTriggerCount: 0,
-    spyGapTriggered: false,
     spyGapPendingTargetIds: new Set(),
     trackingTargetIds: new Set(),
     skipActionPhase: false
@@ -99,7 +99,6 @@ export function createGlobalTurnReactiveState() {
     coordinationTriggered: false,
     gambleTriggered: false,
     rejuvenationTriggerCount: 0,
-    spyGapTriggered: false,
     spyGapPendingTargetIds: new Set(),
     trackingTargetIds: new Set()
   };

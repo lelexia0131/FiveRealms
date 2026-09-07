@@ -213,6 +213,7 @@ export function createCardRuntime(dependencies) {
     return runtime.resolveCardEffect(source, card, targets, {
       resolutionId,
       selection,
+      forcedAssault:plan.forcedAssault,
       privateTransferIntent: postCounterIntent.privateTransferIntent,
       privateCardSelectionIntent: postCounterIntent.privateCardSelectionIntent,
       privateLeverageIntent: plan.preparedLeverage
