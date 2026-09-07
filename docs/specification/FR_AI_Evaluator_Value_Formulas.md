@@ -976,7 +976,7 @@ $$
 当前主动突袭有效上限为：
 
 $$
-\boxed{L_{effective}=L_{team}+L_{equipment}+L_{temporary}}
+L_{effective}=L_{team}+L_{equipment}+L_{temporary}
 $$
 
 备用弹夹装备在装备槽时：
@@ -1002,19 +1002,19 @@ $$
 先定义没有备用弹夹时的兑现函数：
 
 $$
-\boxed{g(A,L,p)=\min(A,L)+p\cdot\min(1,\max(0,A-L))}
+g(A,L,p)=\min(A,L)+p\cdot\min(1,\max(0,A-L))
 $$
 
 备用弹夹保留分支的兑现量为：
 
 $$
-\boxed{U(A)=(1-r)g(A,L,p)+r\,g(A,L+2,p)}
+U(A)=(1-r)g(A,L,p)+r\,g(A,L+2,p)
 $$
 
 若突袭库存为概率分布：
 
 $$
-\boxed{E[U]=\sum_aP(A=a)\left[(1-r)g(a,L,p)+r\,g(a,L+2,p)\right]}
+E[U]=\sum_aP(A=a)\left[(1-r)g(a,L,p)+r\,g(a,L+2,p)\right]
 $$
 
 等价地，可写为：
