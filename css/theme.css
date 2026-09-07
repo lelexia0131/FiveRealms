@@ -40,6 +40,13 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-button, [tabindex="0"] { outline: none; }
-button:focus-visible, [tabindex="0"]:focus-visible, summary:focus-visible { box-shadow: var(--focus-ring); }
-::selection { color: #fff; background: var(--dawn); }
+button,
+[tabindex="0"] {
+  outline: none;
+}
+
+button:focus-visible,
+[tabindex="0"]:focus-visible,
+summary:focus-visible {
+  box-shadow: var(--focus-ring);
+}
