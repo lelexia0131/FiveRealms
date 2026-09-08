@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "node ./tests/run.mjs",
+    "test:all": "node ./tests/run.mjs --suite=all",
     "test:balance": "node ./tests/balance.mjs",
+    "test:worker": "node ./tests/run.mjs --suite=worker",
     "check:code-quality": "node ./tools/check-code-quality.mjs",
     "test:supervisor": "node ./.agents/skills/claude-supervisor/scripts/supervisor.test.mjs && node ./.agents/skills/claude-supervisor/scripts/policy.test.mjs"
   }

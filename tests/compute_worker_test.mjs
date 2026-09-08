@@ -3,8 +3,19 @@ import { Worker } from "node:worker_threads";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { ComputeWorkerPool } from "../js/adapters/ai/worker/ComputeWorkerPool.js";
-import { createSearchEngine, executeSearchRequest } from "../js/ai/Controller.js";
+import {
+  SEARCH_RESULT_STATUS,
+  createSearchEngine,
+  executeDecisionRequest,
+  executeSearchRequest
+} from "../js/ai/Controller.js";
+import { deriveCurrentCardCounts } from "../js/ai/Event/Fact.js";
 import { Rng } from "../js/ai/Searcher/Rng.js";
+import { createInitialWorld } from "../js/ai/Simulator/World.js";
+import { CARD_DEFINITIONS } from "../js/domain/definitions/cards/CardDefinitions.js";
+import { setCurrentRound as transitionSetCurrentRound, setMatchPhase as transitionSetMatchPhase } from "../js/domain/state/transitions/MatchStateTransitions.js";
+import { setAlive as transitionSetAlive } from "../js/domain/state/transitions/PlayerStateTransitions.js";
+import { changeShield as transitionChangeShield } from "../js/domain/state/transitions/ResourceTransitions.js";
 import { makeComputeSearchRequest } from "./search_compute_fixture.mjs";
 
 /*
@@ -162,7 +173,7 @@ function controlledTransport() {
 tests/run.mjs。
 
 输入
-test 注册函数。
+默认 test、慢速 slowTest 注册函数，以及 run.mjs 已有的共享 fixture。
 
 输出
 无。
@@ -171,15 +182,15 @@ test 注册函数。
 固定基线与正式 Search 模块。
 
 写入状态
-测试注册表与独立 Worker。
+默认与慢速测试注册表、独立 Worker 和隔离 Game fixture。
 
 调用函数
-createSearchEngine、executeSearchRequest、ComputeWorkerPool。
+createSearchEngine、executeSearchRequest、ComputeWorkerPool、registerSlowWorkerTests。
 
 边界与不变量
-不运行 Balance，不输出大段 JSON；所有 Worker 必须清理。
+不运行 Balance，不输出大段 JSON；slowTest 只改变入口分层，所有 Worker 和 timer 必须清理。
 */
-export function registerComputeWorkerTests(test) {
+export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
   test("AI·Compute Worker：隐藏样本准备跨过 deadline 时不 admission 或派发", async () => {
     const request = makeComputeSearchRequest();
     request.searchConfig = { ...request.searchConfig, nodeBudget:null };
@@ -279,7 +290,7 @@ export function registerComputeWorkerTests(test) {
     }
   });
 
-  test("AI·Compute Worker：pure compute 抽取与封板基线逐候选等价", async () => {
+  slowTest("AI·Compute Worker：pure compute 抽取与封板基线逐候选等价", async () => {
     const baseline = JSON.parse(await readFile(new URL("./search-compute-baseline.json", import.meta.url), "utf8"));
     const request = makeComputeSearchRequest();
     const rng = Rng.restore(request.rng);
@@ -298,7 +309,7 @@ export function registerComputeWorkerTests(test) {
     });
   });
 
-  test("AI·Compute Worker：真实 poolSize 1/2/4 NODE、coverage、World 与 RNG 一致", async () => {
+  slowTest("AI·Compute Worker：真实 poolSize 1/2/4 NODE、coverage、World 与 RNG 一致", async () => {
     const request = makeComputeSearchRequest();
     for (const nodeBudget of [1, 8, 9, 23, 1000]) {
       request.searchConfig = { ...request.searchConfig, nodeBudget };
@@ -429,7 +440,7 @@ export function registerComputeWorkerTests(test) {
     }
   });
 
-  test("AI·Compute Worker：真实 Worker compute ERROR 通过现有 Search fault contract 传播", async () => {
+  slowTest("AI·Compute Worker：真实 Worker compute ERROR 通过现有 Search fault contract 传播", async () => {
     const request = makeComputeSearchRequest();
     const pool = makeThreadPool(2);
     const runBatch = pool.runBatch.bind(pool);
@@ -559,4 +570,685 @@ export function registerComputeWorkerTests(test) {
     assert.equal(pool.workers.length, 0);
     assert.equal(pool.batch, null);
   });
+
+  registerSlowWorkerTests(slowTest, gameFixtures);
+}
+
+/*
+功能
+注册真实 Worker、完整搜索压力与事件循环响应性的慢速专项回归。
+
+调用方
+registerComputeWorkerTests。
+
+输入
+slowTest 注册函数与 tests/run.mjs 已有的共享 fixture。
+
+输出
+无。
+
+读取状态
+固定 Worker/Search 基线、正式角色与卡牌定义。
+
+写入状态
+慢速测试注册表、隔离 Game、Worker 和 timer 生命周期。
+
+调用函数
+Node Worker、SearchWorkerClient、WorkerSearchRuntime、Controller 与 benchmark helpers。
+
+边界与不变量
+只做测试分层，不削弱断言、预算、RNG 或真实跨线程语义；所有 Worker、Game 与 timer 必须清理。
+*/
+function registerSlowWorkerTests(slowTest, gameFixtures) {
+  const {
+    CARD_COUNTS,
+    buildLocalResponseDecisionContext,
+    disposeBenchmarkGame,
+    instance,
+    makeBenchmarkCard,
+    makeBenchmarkGame,
+    makeGame,
+    makePlayer,
+    projectFile,
+    runBenchmarkAiDecision
+  } = gameFixtures;
+
+  slowTest("AI·搜索压力：守誓者大手牌在真实 900ms 预算返回完整 non-END", async () => {
+    const game = makeBenchmarkGame({
+      players: [
+        {
+          id: "stress-oath",
+          team: "dawn",
+          character: "oath-warden",
+          hp: 2,
+          energy: 3,
+          hand: [
+            "assault", "recover", "shield", "shockwave", "provoke",
+            "destroy", "plunder", "counter", "block"
+          ].map((definitionId, index) => makeBenchmarkCard(
+            definitionId,
+            `stress-oath-${index}`
+          ))
+        },
+        {
+          id: "stress-oath-enemy-a",
+          team: "dusk",
+          character: "fate-gambler",
+          hp: 1,
+          hand: [makeBenchmarkCard("block"), makeBenchmarkCard("counter")],
+          equipment: makeBenchmarkCard("defenseDevice")
+        },
+        {
+          id: "stress-oath-ally",
+          team: "dawn",
+          character: "spirit-medic",
+          hp: 2,
+          hand: [makeBenchmarkCard("recover"), makeBenchmarkCard("counter")]
+        },
+        {
+          id: "stress-oath-enemy-b",
+          team: "dusk",
+          character: "blade-walker",
+          hand: [makeBenchmarkCard("block"), makeBenchmarkCard("counter")]
+        },
+        {
+          id: "stress-oath-enemy-c",
+          team: "dusk",
+          character: "ember-magus",
+          hand: [makeBenchmarkCard("block"), makeBenchmarkCard("counter")]
+        }
+      ],
+      options: { actorId: "stress-oath", seed: 2901 }
+    });
+    game.aiSearchTimeBudgetOverride = 900;
+    try {
+      const decision = await runBenchmarkAiDecision(game, "stress-oath");
+      assert.ok(decision.legalActions.length >= 10, "大手牌必须形成高 root coverage");
+      assert.ok(decision.action);
+      assert.notEqual(decision.action.type, "end");
+      assert.equal(decision.stats.stopReason, "TIME");
+      assert.ok(decision.stats.elapsedMs >= 900);
+      assert.ok(decision.stats.completedRootCandidateCount > 0);
+      assert.ok(decision.stats.probabilityOperations > 0);
+      assert.ok(decision.stats.responseBranches > 0);
+      assert.equal(game.aiController.lastSearchResult.status, SEARCH_RESULT_STATUS.ACCEPTED);
+      assert.equal(game.aiController.lastWorkerOutcome.workerError, null);
+    } finally {
+      disposeBenchmarkGame(game);
+    }
+  });
+
+  slowTest("AI·搜索压力：赌命者大手牌节点不足完整 ROOT 时不返回 partial winner", async () => {
+    const game = makeBenchmarkGame({
+      players: [
+        {
+          id: "stress-gambler",
+          team: "dawn",
+          character: "fate-gambler",
+          energy: 3,
+          hand: [
+            "assault", "assault", "assault", "shockwave", "provoke",
+            "harvest", "counter", "block", "recover"
+          ].map((definitionId, index) => makeBenchmarkCard(
+            definitionId,
+            `stress-gambler-${index}`
+          ))
+        },
+        {
+          id: "stress-gambler-enemy",
+          team: "dusk",
+          character: "oath-warden",
+          hp: 1,
+          hand: [makeBenchmarkCard("block"), makeBenchmarkCard("counter")]
+        },
+        { id: "stress-gambler-ally", team: "dawn", character: "spirit-medic" },
+        { id: "stress-gambler-enemy-b", team: "dusk", character: "blade-walker" },
+        { id: "stress-gambler-enemy-c", team: "dusk", character: "ember-magus" }
+      ],
+      options: { actorId: "stress-gambler", seed: 2902, nodeBudget: 4 }
+    });
+    try {
+      const decision = await runBenchmarkAiDecision(game, "stress-gambler");
+      assert.ok(decision.legalActions.length >= 6, "大手牌必须形成多个 canonical roots");
+      assert.equal(decision.action, null);
+      assert.equal(decision.stats.stopReason, "NODE");
+      assert.ok(decision.stats.completedRootCandidateCount > 0);
+      assert.ok(
+        decision.stats.completedRootCandidateCount < decision.stats.uniqueRootCandidateCount
+      );
+      assert.deepEqual(decision.stats.bestSequence, []);
+      assert.equal(
+        game.aiController.lastSearchResult.status,
+        SEARCH_RESULT_STATUS.SEARCH_BUDGET_EXHAUSTED
+      );
+    } finally {
+      disposeBenchmarkGame(game);
+    }
+  });
+
+
+  /*
+  功能
+  构造可跨线程复现的资源与 Lightning 固定局面。
+
+  调用方
+  AI Worker 决策回归。
+
+  输入
+  资源卡定义与是否具有资源持有者的合法已知手牌。
+
+  输出
+  独立 Game、角色、公开声明和固定实体 ID。
+
+  读取状态
+  正式角色、卡牌定义。
+
+  写入状态
+  仅测试 fixture 与 AI 专用 seed。
+
+  调用函数
+  makePlayer、makeGame、Rng、rememberPrivateCard。
+
+  边界与不变量
+  迁移前基线来自 HEAD 62b9a8c；手牌、装备、Lightning、seed 与候选顺序不得为通过测试而调整。
+  */
+  function makeWorkerDecisionFixture(definitionId, known = false) {
+    const players = ["dawn", "dusk", "dawn", "dusk", "dawn"].map((team, index) => (
+      makePlayer(`worker-decision-${index}`, index, team, "ai", index)
+    ));
+    const [actor, owner, receiver] = players;
+    for (const [index, player] of players.entries()) {
+      player.hand = ["counter", "assault", "recover", "block", "charge"].map((id, cardIndex) => ({
+        ...CARD_DEFINITIONS[id], id: `fixture-${index}-${cardIndex}`
+      }));
+      player.equipment = { ...CARD_DEFINITIONS[index % 2 ? "defenseDevice" : "barrierDevice"], id: `equipment-${index}` };
+
+    }
+    owner.statuses.lightning = { stacks: 1 };
+
+    const { game } = makeGame(players);
+    game.aiController.searchRng = new Rng(731);
+    const rootCard = { ...CARD_DEFINITIONS[definitionId], id: `root-${definitionId}` };
+    if (known) for (const card of owner.hand.slice(0, 3)) game.rememberPrivateCard(actor, owner, card);
+    const context = {
+      source: actor, rootSource: actor, card: rootCard, rootCard,
+      rootTargetIds: definitionId === "transfer" ? [] : [owner.id],
+      publicTransferContext: definitionId === "transfer"
+        ? { fromPlayerId: owner.id, receiverPlayerId: receiver.id } : null
+    };
+    return { game, actor, owner, receiver, rootCard, context };
+  }
+
+  /*
+  功能
+  以真实 Node Worker thread 承载浏览器 Worker 的正式协议，检查跨线程结构化克隆和事件循环。
+
+  调用方
+  AI·Worker 决策专项回归。
+
+  输入
+  无。
+
+  输出
+  可按浏览器 Worker 接口构造的测试类；每个实例仅有一条计算线程。
+
+  读取状态
+  正式 SearchWorkerMessageHandler 与测试计数 instrumentation。
+
+  写入状态
+  测试线程生命周期和最近消息；不修改生产 transport。
+
+  调用函数
+  node:worker_threads.Worker。
+
+  边界与不变量
+  只模拟 API 接线，计算实际位于另一线程；不得用同线程 protocol double 证明 Renderer 响应性。
+  */
+  async function nodeDecisionWorkerClass() {
+    const { Worker } = await import("node:worker_threads");
+    return class {
+      constructor() {
+        this.thread = new Worker(new URL("./worker_decision_thread.mjs", import.meta.url));
+      }
+      addEventListener(type, listener) {
+        if (type === "message") this.thread.on("message", data => listener({ data }));
+        else this.thread.on(type, listener);
+      }
+      postMessage(message) { this.thread.postMessage(message); }
+      terminate() { this.thread.terminate(); }
+    };
+  }
+
+  slowTest("AI·Worker 决策：真实线程与迁移前资源选择/RNG/World 数量相同且主线程继续运行", async () => {
+    const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js");
+    const reference = JSON.parse(await readFile(projectFile("tests/worker-decision-baseline.json"), "utf8"));
+    const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+    const WorkerClass = await nodeDecisionWorkerClass();
+    Object.defineProperty(globalThis, "Worker", { configurable: true, value: WorkerClass });
+    const client = createSearchWorkerClient("searchWorker.js");
+    try {
+      for (const baseline of reference) {
+        const { definitionId, known } = baseline;
+        const fixture = makeWorkerDecisionFixture(definitionId, known);
+        const { game, actor, owner, receiver, rootCard, context } = fixture;
+        game.searchExecutor.dispose();
+        const messages = [];
+        game.aiController.searchExecutor = {
+          async search(request) {
+            const captured = structuredClone(request);
+            const outcome = await client.search(request);
+            messages.push({ request: captured, outcome });
+            return outcome;
+          },
+          getLastTransportDiagnostics: () => client.getLastTransportDiagnostics()
+        };
+        // 如果 Renderer 边界仍调用了旧重型能力，本测试必须立即失败。
+        game.aiController.simulatorFactory = () => { throw new Error("Renderer performed Simulator work"); };
+        game.aiController.evaluator.shouldRespond = () => { throw new Error("Renderer evaluated response"); };
+        let ticks = 0, maxGapMs = 0, lastTick = performance.now();
+        const timer = setInterval(() => {
+          const now = performance.now();
+          maxGapMs = Math.max(maxGapMs, now - lastTick);
+          lastTick = now;
+          ticks += 1;
+        }, 5);
+        try {
+          const selected = await game.aiController.choosePostCounterResource(actor, owner, {
+            purpose: definitionId, receiver, card: rootCard
+          });
+          const response = await game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]);
+          clearInterval(timer);
+          assert.ok(ticks > 0, "Worker 计算期间主线程 timer 必须推进");
+          assert.equal(messages.length, 2, "每个完整决策只发送一次请求");
+          assert.deepEqual(selected.selection, baseline.selection);
+          assert.equal(selected.card.id, baseline.cardId);
+          assert.ok(owner.hand.includes(selected.card) || owner.equipment === selected.card);
+          assert.equal(response, baseline.response);
+          assert.deepEqual(messages[0].outcome.testCounts, baseline.resourceCounts);
+          assert.deepEqual(messages[1].outcome.testCounts, baseline.responseCounts);
+          assert.deepEqual(game.aiController.searchRng.snapshot(), baseline.rngAfter);
+          for (const { request, outcome } of messages) {
+            assert.deepEqual(await executeDecisionRequest(structuredClone(request)), outcome.decision);
+            const world = request.input.world ?? request.input.decision.world;
+            for (const player of world.players) {
+              if (player.id !== request.actorId) assert.equal(player.hand, undefined);
+              assert.equal(player.aiMemory, undefined);
+            }
+            assert.equal(outcome.rootWorlds, undefined);
+          }
+        } finally { clearInterval(timer); game.dispose(); }
+      }
+      const { game, actor, owner, receiver, rootCard } = makeWorkerDecisionFixture("transfer", true);
+      game.searchExecutor.dispose();
+      const controller = game.aiController;
+      controller.searchExecutor = client;
+      try {
+        const pool = [rootCard, { ...CARD_DEFINITIONS.recover, id: "public-recover" }];
+        const world = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
+        const expectedId = controller.simulatorFactory().resolvePublicCardChoice(world, actor.id, pool);
+        const decision = await buildLocalResponseDecisionContext(controller, owner, "dyingRescue", { target: receiver }, []);
+        const expectedRescue = controller.evaluator.assessDyingRescue({
+          responder: decision.responder, target: decision.context.target, rescueOrder: decision.rescueOrder,
+          responderHandDefinitionIds: decision.responderHandDefinitionIds,
+          knownCardsByPlayer: decision.knownCardsByPlayer, recoverDensity: decision.recoverDensity,
+          remainingCardCounts: decision.remainingCardCounts
+        });
+        controller.simulatorFactory = () => { throw new Error("Renderer projected public receipt"); };
+        controller.evaluator.assessDyingRescue = () => { throw new Error("Renderer evaluated rescue"); };
+        const selected = await controller.choosePublicCard(actor, pool);
+        assert.equal(selected.id, expectedId);
+        assert.ok(pool.includes(selected));
+        assert.deepEqual(await controller.assessDyingRescue(owner, receiver), expectedRescue);
+      } finally { game.dispose(); }
+      assert.equal(client.getLifecycleDiagnostics().activeSearchCount, 0);
+      assert.equal(client.getLifecycleDiagnostics().activeWorkerCount, 1);
+    } finally {
+      client.dispose();
+      if (previousWorker) Object.defineProperty(globalThis, "Worker", previousWorker);
+      else delete globalThis.Worker;
+    }
+  });
+
+  slowTest("AI·Worker 决策：session/version/角色/公开声明失效不绑定、不推进 RNG", async () => {
+    for (const change of ["session", "version", "actor", "owner", "receiver", "phase", "round"]) {
+      const fixture = makeWorkerDecisionFixture("transfer");
+      const { game, actor, owner, receiver, rootCard } = fixture;
+      let release, sent;
+      game.aiController.searchExecutor = {
+        search(request) { sent = request; return new Promise(resolve => { release = resolve; }); }
+      };
+      const rngBefore = game.aiController.searchRng.snapshot();
+      const handIds = game.state.players.map(player => player.hand.map(card => card.id));
+      const pending = game.aiController.choosePostCounterResource(actor, owner, { purpose: "transfer", receiver, card: rootCard });
+      if (change === "session") game.state.gameId = "replacement-session";
+      if (change === "version") transitionChangeShield(game.state, owner, 1);
+      if (change === "actor") transitionSetAlive(game.state, actor, false);
+      if (change === "owner") transitionSetAlive(game.state, owner, false);
+      if (change === "receiver") transitionSetAlive(game.state, receiver, false);
+      if (change === "phase") transitionSetMatchPhase(game.state, "discard");
+      if (change === "round") transitionSetCurrentRound(game.state, game.state.currentRound + 1);
+      release({ requestId: sent.requestId, gameId: sent.gameId, kind: sent.kind, decision: { zone: "hand", selectionKind: "unknown", knownCardIds: [] } });
+      assert.equal(await pending, null, change);
+      assert.equal(game.aiController.lastAuxiliaryDecisionDiagnostics.status, "STALE", change);
+      assert.deepEqual(game.aiController.searchRng.snapshot(), rngBefore, change);
+      assert.deepEqual(game.state.players.map(player => player.hand.map(card => card.id)), handIds, change);
+      game.dispose();
+    }
+  });
+
+  slowTest("AI·Worker 决策：异常传播且错误结果不得降级为 PASS 或 END", async () => {
+    const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+    const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js");
+    const { game, owner, context } = makeWorkerDecisionFixture("plunder");
+    let captured;
+    game.aiController.searchExecutor = { async search(request) { captured = request; throw new Error("decision computation failed"); } };
+    await assert.rejects(game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]), /decision computation failed/);
+    const invalid = structuredClone(captured);
+    invalid.input.decision.world.players = null;
+    await assert.rejects(runSearchRequest(invalid));
+    const messages = [];
+    const handler = createSearchWorkerMessageHandler({ postMessage: message => messages.push(message) });
+    await handler.handleMessage({ type: invalid.kind, requestId: invalid.requestId, request: invalid });
+    assert.equal(messages.filter(message => message.type === "RESULT").length, 0);
+    assert.equal(messages.filter(message => message.type === "ERROR").length, 1);
+    game.aiController.searchExecutor = { async search(request) { return { kind: request.kind, requestId: "wrong", gameId: request.gameId, decision: true }; } };
+    await assert.rejects(game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]), /identity\/shape mismatch/);
+    game.aiController.searchExecutor = { async search(request) { return { kind: request.kind, requestId: request.requestId, gameId: request.gameId, decision: "true" }; } };
+    await assert.rejects(game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]), /identity\/shape mismatch/);
+    game.dispose();
+  });
+
+  slowTest("AI·Worker 决策：所有 kind 共用取消与销毁且完整决策没有搜索截止时间", async () => {
+    const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js");
+    const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+    const workers = [];
+    class HeldWorker {
+      constructor() { this.listeners = new Map(); this.messages = []; this.terminated = false; workers.push(this); }
+      addEventListener(type, listener) { this.listeners.set(type, listener); }
+      postMessage(message) { this.messages.push(message); }
+      terminate() { this.terminated = true; }
+      emit(message) { this.listeners.get("message")({ data: message }); }
+    }
+    Object.defineProperty(globalThis, "Worker", { configurable: true, value: HeldWorker });
+    const { game, actor, owner, receiver, rootCard, context } = makeWorkerDecisionFixture("transfer");
+    game.searchExecutor.dispose();
+    const client = createSearchWorkerClient("searchWorker.js", {
+      setTimeout: () => { throw new Error("完整决策不得创建 watchdog/deadline"); }
+    });
+    game.aiController.searchExecutor = client;
+    try {
+      const calls = [
+        () => game.aiController.choosePostCounterResource(actor, owner, { purpose: "transfer", receiver, card: rootCard }),
+        () => game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]),
+        () => game.aiController.assessDyingRescue(owner, receiver),
+        () => game.aiController.choosePublicCard(actor, [rootCard])
+      ];
+      for (const call of calls) {
+        const pending = call();
+        const occupied = workers.at(-1);
+        const message = occupied.messages[0];
+        assert.ok(message.request.kind);
+        assert.equal(message.request.searchConfig, undefined);
+        client.cancel(message.requestId);
+        assert.equal(await pending, null);
+        assert.equal(occupied.terminated, true);
+        assert.equal(client.getLifecycleDiagnostics().activeSearchCount, 0);
+        assert.equal(client.getLifecycleDiagnostics().activeWorkerCount, 1);
+        const next = call();
+        const current = workers.at(-1);
+        const currentMessage = current.messages[0];
+        let settled = false;
+        next.then(() => { settled = true; });
+        occupied.emit({ type: "RESULT", requestId: message.requestId, outcome: { kind: message.type, requestId: message.requestId, gameId: message.request.gameId, decision: true } });
+        await Promise.resolve();
+        assert.equal(settled, false, "旧实例结果不能结算当前 request");
+        client.cancel(currentMessage.requestId);
+        assert.equal(await next, null);
+      }
+      const pending = calls[1]();
+      client.dispose();
+      assert.equal(await pending, null);
+      assert.equal(client.getLifecycleDiagnostics().activeWorkerCount, 0);
+      assert.equal(client.getLifecycleDiagnostics().activeSearchCount, 0);
+    } finally {
+      client.dispose(); game.dispose();
+      if (previousWorker) Object.defineProperty(globalThis, "Worker", previousWorker);
+      else delete globalThis.Worker;
+    }
+  });
+
+  slowTest("AI·Worker 决策：拒绝改变 Transfer 公开方向或伪造已知牌身份", async () => {
+    const { game, actor, owner, receiver, rootCard } = makeWorkerDecisionFixture("transfer");
+    try {
+      const before = game.aiController.searchRng.snapshot();
+      for (const decision of [
+        { sourceId: owner.id, receiverId: actor.id, zone: "hand", selectionKind: "unknown", knownCardIds: [] },
+        { sourceId: owner.id, receiverId: receiver.id, zone: "hand", selectionKind: "known", cardId: owner.hand[0].id, definitionId: "counter" }
+      ]) {
+        game.aiController.searchExecutor = { async search(request) { return { kind: request.kind, requestId: request.requestId, gameId: request.gameId, decision }; } };
+        await assert.rejects(game.aiController.choosePostCounterResource(actor, owner, {
+          purpose: "transfer", receiver, card: rootCard
+        }), /invalid canonical resource selection/);
+        assert.deepEqual(game.aiController.searchRng.snapshot(), before);
+      }
+    } finally { game.dispose(); }
+  });
+
+  slowTest("AI·Worker 决策：过期响应不得支付 Counter 或继续旧反制链", async () => {
+    for (const change of ["version", "dispose"]) {
+      const { game, actor, owner, rootCard } = makeWorkerDecisionFixture("plunder");
+      let release, notify;
+      const sent = new Promise(resolve => { notify = resolve; });
+      let requestCount = 0;
+      game.aiController.searchExecutor = {
+        search(request) {
+          requestCount += 1;
+          notify(request);
+          return new Promise(resolve => { release = resolve; });
+        }
+      };
+      const before = owner.hand.map(card => card.id);
+      const pending = game.responseWorkflow.askForCounter(actor, rootCard, [owner], { responders: [owner] });
+      const request = await sent;
+      if (change === "dispose") game.dispose();
+      else transitionChangeShield(game.state, owner, 1);
+      release({ requestId: request.requestId, gameId: request.gameId, kind: request.kind, decision: true });
+      const result = await pending;
+      assert.equal(result.status, "cancelled", change);
+      assert.deepEqual(owner.hand.map(card => card.id), before, change);
+      assert.equal(game.state.pendingResponses.length, 0);
+      assert.equal(requestCount, 1, "过期响应不得进入下一层反制或请求");
+      game.dispose();
+    }
+  });
+
+
+  /*
+  功能
+  验证 Worker-safe search runtime 通过 periodic macrotask yield 保持 main thread/heartbeat 可运行。
+
+  调用方
+  当前测试。
+
+  输入
+  无。
+
+  输出
+  无返回值，断言失败时抛错。
+
+  读取状态
+  SearchRequest/WorkerSearchRuntime。
+
+  写入状态
+  测试 interval 计数器。
+
+  调用函数
+  runSearchRequest、setInterval、clearInterval。
+
+  边界与不变量
+  不依赖 wall-clock 精确值；只证明搜索期间事件循环可运行。
+  */
+  async function frArch14MainThreadResponsiveness() {
+    const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+    const { createSearchRequest } = await import("../js/ai/Controller.js");
+    const actor = makePlayer("heart-actor", 0, "dawn", "ai", 0);
+    const enemy = makePlayer("heart-enemy", 1, "dusk", "ai", 1);
+    for (let index = 0; index < CARD_COUNTS.exposeWeakness; index += 1) {
+      actor.hand.push(instance("exposeWeakness"));
+    }
+    const { game } = makeGame([actor, enemy]);
+    game.aiSearchNodeBudgetOverride = 100;
+    const roots = game.aiController.getActionCandidates(actor);
+    const request = createSearchRequest({
+      requestId: "heartbeat-1",
+      gameId: game.state.gameId,
+      stateVersion: game.state.stateVersion,
+      actorId: actor.id,
+      phase: game.state.phase,
+      currentRound: game.state.currentRound,
+      world: createInitialWorld(actor.id, game.state, { assault: 1, charge: 1 }),
+      searchConfig: {
+        ...game.aiController.buildSearchConfig(),
+        yieldEvery: 1
+      },
+      rng: game.aiController.searchRng.snapshot(),
+      rootActions: roots
+    });
+    let heartbeats = 0;
+    const timer = setInterval(() => { heartbeats += 1; }, 0);
+    try {
+      const outcome = await runSearchRequest(request, {
+        yieldControl: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return true;
+        }
+      });
+      assert.ok(heartbeats > 0, "搜索期间 main thread/heartbeat 必须获得运行机会");
+      assert.equal(outcome.workerError, null);
+    } finally {
+      clearInterval(timer);
+      game.dispose();
+    }
+  }
+
+  slowTest("AI·Worker 响应性：Worker-safe search yield 保持 main-thread heartbeat", frArch14MainThreadResponsiveness);
+
+  /*
+  功能
+  通过真实 AIController.selectAction 与 SearchWorkerClient 协议边界验证 decision 期间 heartbeat 和 search 生命周期。
+
+  调用方
+  AI Worker production-path responsiveness regression。
+
+  输入
+  无。
+
+  输出
+  无返回值，断言失败时抛错。
+
+  读取状态
+  AIController、SearchWorkerClient lifecycle 与 WorkerSearchRuntime outcome。
+
+  写入状态
+  临时 global Worker protocol double、独立测试 Game 与 heartbeat timer。
+
+  调用函数
+  createSearchWorkerMessageHandler、makeGame、AIController.selectAction、setInterval、clearInterval。
+
+  边界与不变量
+  测试必须经过实际 SearchWorkerClient.search；不使用脆弱的固定 heartbeat gap 上限，只证明 decision 生命周期持续让出事件循环且 terminal 后无 active/orphan search。
+  */
+  async function frArch14ControllerWorkerClientHeartbeat() {
+    const { createSearchWorkerMessageHandler } = await import(
+      "../js/adapters/ai/worker/searchWorker.js"
+    );
+    const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+    class ProtocolWorker {
+      constructor() {
+        this.listeners = new Map();
+        this.terminated = false;
+        this.handler = createSearchWorkerMessageHandler({
+          candidateExecutor: null,
+          postMessage: (data) => {
+            setTimeout(() => {
+              if (!this.terminated) this.emit("message", structuredClone(data));
+            }, 0);
+          }
+        });
+      }
+      addEventListener(type, listener) {
+        if (!this.listeners.has(type)) this.listeners.set(type, []);
+        this.listeners.get(type).push(listener);
+      }
+      postMessage(message) {
+        if (this.terminated) throw new Error("Worker terminated");
+        setTimeout(() => {
+          if (!this.terminated) this.handler.handleMessage(structuredClone(message));
+        }, 0);
+      }
+      terminate() { this.terminated = true; this.handler.dispose(); }
+      emit(type, data) {
+        const event = type === "message" ? { data } : data ?? {};
+        for (const listener of this.listeners.get(type) ?? []) listener(event);
+      }
+    }
+    Object.defineProperty(globalThis, "Worker", {
+      configurable: true,
+      writable: true,
+      value: ProtocolWorker
+    });
+    let game = null;
+    let timer = null;
+    try {
+      const actor = makePlayer("client-heart-actor", 0, "dawn", "ai", 0);
+      const enemy = makePlayer("client-heart-enemy", 1, "dusk", "ai", 1);
+      for (let index = 0; index < CARD_COUNTS.exposeWeakness; index += 1) {
+        actor.hand.push(instance("exposeWeakness"));
+      }
+      ({ game } = makeGame([actor, enemy]));
+      game.aiSearchNodeBudgetOverride = 100;
+      const buildSearchConfig = game.aiController.buildSearchConfig.bind(game.aiController);
+      game.aiController.buildSearchConfig = (options) => ({
+        ...buildSearchConfig(options),
+        yieldEvery: 1
+      });
+      const executor = game.aiController.searchExecutor;
+      assert.equal(executor.transport, "dedicated-worker");
+      const heartbeatTimes = [];
+      timer = setInterval(() => {
+        heartbeatTimes.push(globalThis.performance?.now?.() ?? Date.now());
+      }, 0);
+      const selected = await game.aiController.selectAction(actor, {
+        gameId: game.state.gameId
+      });
+      clearInterval(timer);
+      const gaps = heartbeatTimes.slice(1).map((time, index) => time - heartbeatTimes[index]);
+      const maxHeartbeatGap = gaps.length ? Math.max(...gaps) : 0;
+      const lifecycle = executor.getLifecycleDiagnostics();
+      const decision = game.aiController.lastDecisionDiagnostics;
+      assert.ok(heartbeatTimes.length > 0,
+        "AIController.selectAction → SearchWorkerClient 期间 heartbeat 必须获得执行机会");
+      assert.ok(maxHeartbeatGap >= 0);
+      assert.equal(lifecycle.searchStarted, 1);
+      assert.equal(lifecycle.activeSearchCount, 0);
+      assert.equal(lifecycle.activeWorkerCount, 1);
+      assert.equal(lifecycle.orphanSearchCount, 0);
+      assert.equal(lifecycle.searchCompleted + lifecycle.searchTimedOut, 1);
+      assert.ok(decision.preWorkerMs >= 0);
+      assert.ok(decision.postMessageMs >= 0);
+      assert.ok(decision.workerSearchMs >= 0);
+      assert.ok(decision.postWorkerMs >= 0);
+      game.dispose();
+      assert.equal(executor.getLifecycleDiagnostics().activeWorkerCount, 0);
+      game = null;
+    } finally {
+      if (timer !== null) clearInterval(timer);
+      game?.dispose();
+      if (previousWorker) Object.defineProperty(globalThis, "Worker", previousWorker);
+      else delete globalThis.Worker;
+    }
+  }
+
+  slowTest("AI·Worker 响应性：真实 selectAction → SearchWorkerClient heartbeat 与 terminal lifecycle", frArch14ControllerWorkerClientHeartbeat);
+
 }
