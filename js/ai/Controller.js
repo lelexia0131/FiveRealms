@@ -611,6 +611,371 @@ export async function executeSearchRequest(request, runtimeControl = {}) {
   };
 }
 
+/*
+功能
+从合法 World 完整物化资源候选并由同一 Evaluator 选择 canonical selection。
+
+调用方
+executeDecisionRequest 与定向等价性测试。
+
+输入
+行动者合法 World、公开 root 声明、Counter depth 与本地 runtime。
+
+输出
+canonical selection；无候选或取消时为 null。
+
+读取状态
+World、Generator 与 Evaluator。
+
+写入状态
+只写本次模拟克隆；不消耗 RNG。
+
+调用函数
+Generator、Simulator.buildRootFlipWorlds/buildLightningOutcomeSets、Evaluator.chooseFutureResourceSelectionOutcome。
+
+边界与不变量
+枚举顺序、World 数量和比较规则保持不变；不读取真实 GameState。
+*/
+async function computePostCounterSelection({
+  world:selectionWorld,
+  rootCard,
+  rootSourceId,
+  rootTargetIds,
+  counterDepth = 0,
+  publicTransferContext = null,
+  cooperativeYield = false
+}, runtime) {
+  const selectionActor = selectionWorld.players.find(
+    (player) => player.id === rootSourceId
+  ) ?? null;
+  const selections = runtime.actionGenerator.getFutureRootSelections(
+    selectionWorld,
+    rootCard,
+    rootTargetIds,
+    { publicTransferContext }
+  );
+  if (!selectionActor || !selections.length) return null;
+  const simulator = runtime.simulatorFactory();
+  const actorOutcomes = [];
+  for (const selection of selections) {
+    const action = runtime.actionGenerator.createRootResolutionAction(
+      selectionWorld,
+      rootCard,
+      rootSourceId,
+      rootTargetIds,
+      { futureSelection:selection }
+    );
+    if (!action) continue;
+    const rootWorlds = simulator.buildRootFlipWorlds(selectionWorld, action, counterDepth);
+    if (!rootWorlds) continue;
+    if (cooperativeYield && !(await runtime.yieldControl(selectionWorld.gameId))) return null;
+    actorOutcomes.push({
+      action,
+      rootWorlds:{
+        ...rootWorlds,
+        baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(rootWorlds.baseWorld),
+        resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
+          rootWorlds.resolvedWorld
+        )
+      }
+    });
+  }
+  return runtime.evaluator.chooseFutureResourceSelectionOutcome(
+    selectionWorld,
+    selectionActor,
+    actorOutcomes
+  )?.action?.selection ?? null;
+}
+
+/*
+功能
+在响应者合法视角完整投影未来资源选择和 Counter terms。
+
+调用方
+materializeResponseDecision。
+
+输入
+响应者 World、root 公开上下文与本地 runtime。
+
+输出
+futureSelectionOutcomes/futureCounterTerms；取消为 null。
+
+读取状态
+仅响应者合法 World 与公开或匿名候选。
+
+写入状态
+只写本次 World 克隆与 cooperative 调度。
+
+调用函数
+Generator、Simulator.buildFutureResourceSelectionWorlds/buildLightningOutcomeSets、Evaluator。
+
+边界与不变量
+不读取 actor 私人 World；匿名 hand 预测与真实资源选择保持各自既有信息边界。
+*/
+export async function buildFutureResourceCounterProjection({
+  responseWorld,
+  responder,
+  rootCard,
+  rootSourceId,
+  rootTargetIds,
+  counterDepth,
+  publicTransferContext
+}, runtime) {
+  const empty = Object.freeze({
+    futureSelectionOutcomes:null,
+    futureCounterTerms:null
+  });
+  const sourceView = responseWorld.players.find(
+    (player) => player.id === rootSourceId && player.alive
+  ) ?? null;
+  if (!sourceView) return empty;
+  const selections = runtime.actionGenerator.getResponderSafeFutureRootSelections(
+    responseWorld,
+    rootCard,
+    rootTargetIds,
+    { publicTransferContext }
+  );
+  const simulator = runtime.simulatorFactory();
+  const outcomes = [];
+  for (const selection of selections) {
+    const action = runtime.actionGenerator.createRootResolutionAction(
+      responseWorld, rootCard, rootSourceId, rootTargetIds, { futureSelection:selection }
+    );
+    if (!action) continue;
+    const worlds = simulator.buildFutureResourceSelectionWorlds(responseWorld, action, counterDepth);
+    if (!worlds) continue;
+    if (!(await runtime.yieldControl(responseWorld.gameId))) return null;
+    outcomes.push({
+      action,
+      rootWorlds:{
+        ...worlds,
+        baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.baseWorld),
+        resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
+          worlds.resolvedWorld
+        )
+      }
+    });
+  }
+  const selected = runtime.evaluator.chooseFutureResourceSelectionOutcome(
+    responseWorld, sourceView, outcomes
+  );
+  if (!selected) return empty;
+  const futureSelectionOutcomes = Object.freeze([Object.freeze({
+    weight:1,
+    selection:selected.action.selection,
+    rootWorlds:selected.action.selection.zone === "hand" ? null : selected.rootWorlds,
+    resolvesAtStay:(counterDepth % 2) === 0
+  })]);
+  const responderView = responseWorld.players.find(
+    (player) => player.id === responder.id
+  ) ?? null;
+  const targetViews = rootTargetIds.map((targetId) => (
+    responseWorld.players.find((player) => player.id === targetId)
+  )).filter(Boolean);
+  const futureCounterTerms = runtime.evaluator.futureSelectionCounterTerms(
+    responseWorld,
+    responderView,
+    sourceView,
+    rootCard,
+    targetViews,
+    futureSelectionOutcomes
+  );
+  return Object.freeze({ futureSelectionOutcomes, futureCounterTerms });
+}
+
+/*
+功能
+在 Worker 本地按响应类型完整物化 DecisionContext 的反事实和 Lightning outcomes。
+
+调用方
+executeDecisionRequest 与定向等价性测试。
+
+输入
+已过滤的 response input 与同一语义 runtime。
+
+输出
+Evaluator 可直接消费的完整 DecisionContext；取消为 null。
+
+读取状态
+仅输入 World、公开 context 与本地 Evaluator/Simulator。
+
+写入状态
+本次克隆与 decision 的派生字段；不写真实状态。
+
+调用函数
+buildFutureResourceCounterProjection、Simulator、Evaluator、yieldControl。
+
+边界与不变量
+保持原分支、构造顺序和比较输入；不把大型中间 Worlds 运输回 Renderer。
+*/
+export async function materializeResponseDecision(input, runtime) {
+  const { decision, rootCard } = input;
+  const { world, responder:responderView, players, remainingCardCounts } = decision;
+  const responder = responderView;
+  const type = decision.responseType;
+  const publicContext = decision.context;
+  if (!(await runtime.yieldControl(world.gameId))) return null;
+  if (type === "leverageAssault") {
+    const target = publicContext.target ?? responderView;
+    decision.leverageMetrics = runtime.evaluator.leverageResponseMetrics(
+      target,
+      remainingCardCounts
+    );
+  } else if (type === "skill" && publicContext.target) {
+    const simulator = runtime.simulatorFactory();
+    const worlds = simulator.buildGuardianAidWorlds(
+        world,
+        responder.id,
+        publicContext.target.id,
+        publicContext.source?.id ?? null,
+        Math.max(0, Number(publicContext.amount) || 0)
+      );
+    if (!(await runtime.yieldControl(world.gameId))) return null;
+    const stayLightningOutcomeSets = simulator.buildLightningOutcomeSets(worlds.stayWorld);
+    if (!(await runtime.yieldControl(world.gameId))) return null;
+    decision.guardianAidWorlds = {
+      stayWorld:worlds.stayWorld,
+      aidWorld:worlds.aidWorld,
+      stayLightningOutcomeSets,
+      aidLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.aidWorld)
+    };
+  } else if (type === "counter" && publicContext.statusCounterContext) {
+    const holder = players.find((player) => (
+      player.id === publicContext.statusCounterContext.holderId && player.alive
+    ));
+    if (holder && holder.battleTeam === responderView.battleTeam
+      && hasFactStatus(holder, publicContext.statusCounterContext.statusId)) {
+      if (publicContext.statusCounterContext.statusId === "sealed") {
+        decision.sealCounterTerms = runtime.evaluator.sealCounterTerms(
+          holder,
+          world,
+          remainingCardCounts
+        );
+      } else if (publicContext.statusCounterContext.statusId === "lightning") {
+        const simulator = runtime.simulatorFactory();
+        const receiverId = simulator.nextLightningReceiverId(players, holder);
+        const receiver = players.find((player) => player.id === receiverId) ?? null;
+        const transferred = receiver
+          ? simulator.buildTransferredLightningWorld(world, holder, receiver)
+          : null;
+        if (!(await runtime.yieldControl(world.gameId))) return null;
+        const stayOutcomeSet = simulator.buildLightningOutcomeWorlds(world, holder);
+        if (!(await runtime.yieldControl(world.gameId))) return null;
+        decision.lightningCounterWorlds = {
+          stayOutcomeSet,
+          transferredWorld:transferred?.world ?? null,
+          transferredOutcomeSet:transferred
+            ? simulator.buildLightningOutcomeWorlds(transferred.world, transferred.holder, 1)
+            : null
+        };
+      }
+    }
+  } else if (type === "counter") {
+    const rootSourceId = publicContext.rootSourceId
+      ?? publicContext.rootSource?.id
+      ?? publicContext.source?.id
+      ?? null;
+    const rootTargetIds = Array.isArray(publicContext.rootTargetIds)
+      ? publicContext.rootTargetIds
+      : [];
+    if (["plunder", "destroy", "transfer"].includes(rootCard?.definitionId)) {
+      const projection = await buildFutureResourceCounterProjection({
+        responseWorld:world,
+        responder:responderView,
+        rootCard,
+        rootSourceId,
+        rootTargetIds,
+        counterDepth:publicContext.counterDepth ?? 0,
+        publicTransferContext:publicContext.publicTransferContext
+      }, runtime);
+      if (!projection) return null;
+      decision.futureSelectionOutcomes = projection.futureSelectionOutcomes;
+      decision.futureCounterTerms = projection.futureCounterTerms;
+    } else {
+      const rootAction = input.rootAction;
+      if (!rootAction) return decision;
+      const simulator = runtime.simulatorFactory();
+      const worlds = simulator.buildRootFlipWorlds(
+        world,
+        rootAction,
+        publicContext.counterDepth ?? 0
+      );
+      if (!(await runtime.yieldControl(world.gameId))) return null;
+      if (worlds) {
+        const baseLightningOutcomeSets = simulator.buildLightningOutcomeSets(worlds.baseWorld);
+        if (!(await runtime.yieldControl(world.gameId))) return null;
+        decision.rootFlipWorlds = {
+          ...worlds,
+          baseLightningOutcomeSets,
+          resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.resolvedWorld)
+        };
+      }
+    }
+  }
+  return decision;
+}
+
+/*
+功能
+构造共享语义图并执行一个完整的纯 AI 决策。
+
+调用方
+WorkerSearchRuntime、headless transport 与定向等价性测试。
+
+输入
+data-only decision request 与 Worker runtime control。
+
+输出
+最终 bool、selection、cardId 或救援 assessment；真实错误抛出。
+
+读取状态
+合法输入 World、固定决策配置。
+
+写入状态
+只写本次本地 runtime/投影；不消费搜索或真实 RNG。
+
+调用函数
+createRuntimeComposition、computePostCounterSelection、materializeResponseDecision、Evaluator。
+
+边界与不变量
+不执行真实 Action；没有超时降级或裁剪；结果不含中间反事实 Worlds。
+*/
+export async function executeDecisionRequest(request, runtimeControl = {}) {
+  const { input, actorId, kind, decisionConfig } = request;
+  const world = input.world ?? input.decision.world;
+  const composition = createRuntimeComposition({
+    world,
+    getDifficultyMultiplier:() => decisionConfig.difficultyMultiplier,
+    forceAiRescueHuman:decisionConfig.forceAiRescueHuman
+  });
+  const runtime = {
+    ...composition,
+    actionGenerator:new Generator(),
+    yieldControl:runtimeControl.yieldControl ?? (async () => true)
+  };
+  if (kind === "POST_COUNTER_RESOURCE") {
+    return computePostCounterSelection({ ...input, cooperativeYield:true }, runtime);
+  }
+  if (kind === "PUBLIC_CARD") {
+    return runtime.simulatorFactory().resolvePublicCardChoice(world, actorId, input.cards);
+  }
+  if (kind !== "RESPONSE_DECISION" && kind !== "RESCUE_ASSESSMENT") {
+    throw new Error(`Unknown AI decision kind: ${kind}`);
+  }
+  const decision = await materializeResponseDecision(input, runtime);
+  if (!decision) return null;
+  if (kind === "RESPONSE_DECISION") return composition.evaluator.shouldRespond(decision);
+  return composition.evaluator.assessDyingRescue({
+    responder:decision.responder,
+    target:decision.context.target,
+    rescueOrder:decision.rescueOrder,
+    responderHandDefinitionIds:decision.responderHandDefinitionIds,
+    knownCardsByPlayer:decision.knownCardsByPlayer,
+    recoverDensity:decision.recoverDensity,
+    remainingCardCounts:decision.remainingCardCounts
+  });
+}
+
 export class Controller {
   /*
   功能
@@ -698,6 +1063,91 @@ export class Controller {
     });
     this.evaluator = runtimeComposition.evaluator;
     this.simulatorFactory = runtimeComposition.simulatorFactory;
+  }
+
+  /*
+  功能
+  复用现有单 Worker transport 执行完整纯决策，并在当前状态验收结果。
+
+  调用方
+  Controller 资源、响应、救援与公开牌选择入口。
+
+  输入
+  request kind、当前角色、已过滤 input 与 preparation 起点。
+
+  输出
+  data-only decision；取消/过期为 null，真实 Worker 异常抛出。
+
+  读取状态
+  当前 session、gameId、stateVersion、phase、round、轮到的角色与参与者身份。
+
+  写入状态
+  lastAuxiliaryDecisionDiagnostics 与请求生命周期；不写 GameState 或 RNG。
+
+  调用函数
+  searchExecutor.search、isSessionValid、decisionNow。
+
+  边界与不变量
+  沿用同一 requestId/transport/dispose/cancel authority；异步等待耗时不得记作主线程同步阻塞。
+  */
+  async requestDecision(kind, actor, input, startedAt = decisionNow()) {
+    const state = this.getState();
+    if (!actor?.alive || !state.players.includes(actor) || !this.isSessionValid(state.gameId)) return null;
+    const participants = [...state.players];
+    // 完整响应/资源决策原本没有截止时间；不可套用 Search 的失联 watchdog，
+    // 否则没有 SearchBudget 检查点的合法长计算会被误杀。退出仍由同一 transport 终止 Worker。
+    const request = {
+      kind, requestId:this.createId(), gameId:state.gameId,
+      stateVersion:state.stateVersion, phase:state.phase, currentRound:state.currentRound,
+      currentActorId:state.players[state.currentPlayerIndex]?.id ?? null,
+      actorId:actor.id, input,
+      decisionConfig:{
+        difficultyMultiplier:this.getDifficultyMultiplier(),
+        forceAiRescueHuman:this.forceAiRescueHuman
+      }
+    };
+    const sentAt = decisionNow();
+    const diagnostics = {
+      kind, requestId:request.requestId, preparationMs:sentAt - startedAt,
+      postMessageMs:null, workerComputeMs:null, waitMs:null, acceptanceMs:null, status:"PENDING"
+    };
+    this.lastAuxiliaryDecisionDiagnostics = diagnostics;
+    let outcome;
+    try {
+      outcome = await this.searchExecutor.search(request);
+    } catch (error) {
+      diagnostics.status = error?.name === "AbortError" ? "CANCELLED" : "ERROR";
+      if (error?.name === "AbortError") return null;
+      throw error;
+    } finally {
+      diagnostics.waitMs = decisionNow() - sentAt;
+      const transport = this.searchExecutor.getLastTransportDiagnostics?.();
+      if (transport?.requestId === request.requestId) diagnostics.postMessageMs = transport.postMessageMs;
+    }
+    const receivedAt = decisionNow();
+    diagnostics.workerComputeMs = outcome?.stats?.workerComputeMs ?? null;
+    const latest = this.getState();
+    if (!this.isSessionValid(request.gameId) || latest.gameId !== request.gameId
+      || latest.stateVersion !== request.stateVersion || latest.phase !== request.phase
+      || latest.currentRound !== request.currentRound
+      || (latest.players[latest.currentPlayerIndex]?.id ?? null) !== request.currentActorId
+      || !actor.alive || !latest.players.includes(actor)
+      || participants.length !== latest.players.length
+      || participants.some((player, index) => player !== latest.players[index])) {
+      diagnostics.status = "STALE";
+      diagnostics.acceptanceMs = decisionNow() - receivedAt;
+      return null;
+    }
+    if (!outcome || outcome.requestId !== request.requestId || outcome.gameId !== request.gameId
+      || outcome.kind !== kind || !Object.hasOwn(outcome, "decision")
+      || (kind === "RESPONSE_DECISION" && outcome.decision !== null
+        && typeof outcome.decision !== "boolean")) {
+      diagnostics.status = "ERROR";
+      throw new Error("AI Worker decision outcome identity/shape mismatch");
+    }
+    diagnostics.status = outcome.cancelled ? "CANCELLED" : "ACCEPTED";
+    diagnostics.acceptanceMs = decisionNow() - receivedAt;
+    return outcome.cancelled ? null : outcome.decision;
   }
 
   /*
@@ -1657,137 +2107,95 @@ export class Controller {
 
   /*
   功能
-  从公开牌池选择对当前角色真实状态边际最高的牌。
+  把公开牌池 receipt World 比较交给同一 Worker，再绑定当前牌池实体。
 
   调用方
   PublicCardPoolWorkflow。
 
   输入
-  当前 Player 与公开实体牌数组。
+  当前 Player 与公开候选卡牌。
 
   输出
-  被选实体牌；空牌池时为 null。
+  Promise<Card|null>；无候选或过期返回 null。
 
   读取状态
-  当前 GameState、接收者公开状态、装备槽与公开候选实体。
+  合法 World 与当前公开牌池。
 
   写入状态
-  无。
+  请求诊断；不写 GameState 或 RNG。
 
   调用函数
-  createInitialWorld、Simulator.resolvePublicCardChoice。
+  createInitialWorld、requestDecision。
 
   边界与不变量
-  Controller 只组装 canonical before World 并请求 resolved choice；Simulator 唯一构造候选状态，Evaluator 唯一比较价值；
-  门面不改变同分时的原始顺序，也不写真实 GameState。
+  保留候选顺序与完整领取/换装比较；Worker 只返回 cardId。
   */
-  choosePublicCard(player, cards) {
+  async choosePublicCard(player, cards) {
     const startedAt = decisionNow();
     const state = this.getState();
+    const stateVersion = state.stateVersion;
+    const gameId = state.gameId;
     const world = createInitialWorld(
       player.id,
       state,
       deriveCurrentCardCounts(player, state)
     );
-    const cardId = this.simulatorFactory().resolvePublicCardChoice(
+    const cardId = await this.requestDecision("PUBLIC_CARD", player, {
       world,
-      player.id,
-      cards
-    );
-    const card = cards.find((candidate) => candidate.id === cardId) ?? null;
-    this.recordMainThreadOperation(
-      "Evaluator.choosePublicCardOutcome",
-      startedAt,
-      { candidateCount:Array.isArray(cards) ? cards.length : "unavailable" }
-    );
-    return card;
+      cards:cards.map((card) => ({ id:card.id, definitionId:card.definitionId }))
+    }, startedAt);
+    if (!this.isSessionValid(gameId) || this.getState().stateVersion !== stateVersion) return null;
+    return cards.find((card) => card.id === cardId) ?? null;
   }
 
   /*
   功能
-  在给定真实时点的 root actor World 中选择唯一 canonical post-Counter 资源语义。
+  把 Counter 后资源重选发送到现有 AI Worker。
 
   调用方
   choosePostCounterResource。
 
   输入
-  当前 GameState、root card/source/targets、Transfer 公开声明、Counter depth 与是否 cooperative yield。
+  当前 GameState 与公开 root/source/targets/Transfer 声明。
 
   输出
-  Evaluator 选中的 canonical selection；无合法候选或会话失效时返回 null。
+  Promise<canonical selection>；过期或取消为 null。
 
   读取状态
-  root actor 合法视角 World、Generator selection candidates、Simulator root Worlds 与 Evaluator comparison。
+  行动者合法记忆与当前真实状态。
 
   写入状态
-  cooperative 模式只推进 yield；所有 World 都是独立投影或 clone，不写 GameState。
+  本次请求诊断；不写 GameState 或 RNG。
 
   调用函数
-  createInitialWorld、Generator future-selection methods、Simulator.buildRootFlipWorlds、
-  Evaluator.chooseFutureResourceSelectionOutcome、yieldControl。
+  createInitialWorld、deriveCurrentCardCounts、requestDecision、Generator.getFutureRootSelections。
 
   边界与不变量
-  Generator 只枚举，Simulator 只物化，Evaluator 是 selection value/comparison 的唯一 owner；
-  Counter 前的 private selection 不得作为输入，Transfer 只沿用公开 source/receiver。
+  只发送行动者合法 World；Worker 内完整计算，Renderer 仅按规范候选重绑结果，不执行 projection。
   */
   async chooseCanonicalPostCounterSelection({
-    state,
-    rootCard,
-    rootSourceId,
-    rootTargetIds,
-    counterDepth = 0,
-    publicTransferContext = null,
-    cooperativeYield = false
+    state, rootCard, rootSourceId, rootTargetIds,
+    counterDepth = 0, publicTransferContext = null
   }) {
-    const rootSource = state?.players?.find(
-      (player) => player.id === rootSourceId && player.alive
-    ) ?? null;
-    if (!rootSource) return null;
-    const selectionWorld = createInitialWorld(
-      rootSource.id,
-      state,
-      deriveCurrentCardCounts(rootSource, state)
-    );
-    const selectionActor = selectionWorld.players.find(
-      (player) => player.id === rootSource.id
-    ) ?? null;
-    const selections = this.actionGenerator.getFutureRootSelections(
-      selectionWorld,
-      rootCard,
-      rootTargetIds,
-      { publicTransferContext }
-    );
-    if (!selectionActor || !selections.length) return null;
-    const simulator = this.simulatorFactory();
-    const actorOutcomes = [];
-    for (const selection of selections) {
-      const action = this.actionGenerator.createRootResolutionAction(
-        selectionWorld,
-        rootCard,
-        rootSourceId,
-        rootTargetIds,
-        { futureSelection:selection }
-      );
-      if (!action) continue;
-      const rootWorlds = simulator.buildRootFlipWorlds(selectionWorld, action, counterDepth);
-      if (!rootWorlds) continue;
-      if (cooperativeYield && !(await this.yieldControl(state.gameId))) return null;
-      actorOutcomes.push({
-        action,
-        rootWorlds:{
-          ...rootWorlds,
-          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(rootWorlds.baseWorld),
-          resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
-            rootWorlds.resolvedWorld
-          )
-        }
-      });
+    const actor = state.players.find((player) => player.id === rootSourceId && player.alive);
+    if (!actor) return null;
+    const startedAt = decisionNow();
+    const world = createInitialWorld(actor.id, state, deriveCurrentCardCounts(actor, state));
+    const selection = await this.requestDecision("POST_COUNTER_RESOURCE", actor, {
+      world, rootCard:{ id:rootCard.id, definitionId:rootCard.definitionId },
+      rootSourceId, rootTargetIds:[...rootTargetIds], counterDepth, publicTransferContext
+    }, startedAt);
+    if (!selection) return null;
+    // 版本验收后只重绑 Generator 的规范资源语义，不重跑 Simulator/Evaluator。
+    // 返回的是 Main 的 canonical selection；Worker 不能改变公开 Transfer 方向或 known/unknown 身份。
+    const canonical = this.actionGenerator.getFutureRootSelections(
+      world, rootCard, rootTargetIds, { publicTransferContext }
+    ).find((candidate) => JSON.stringify(candidate) === JSON.stringify(selection));
+    if (!canonical) {
+      this.lastAuxiliaryDecisionDiagnostics.status = "ERROR";
+      throw new Error("AI Worker returned invalid canonical resource selection");
     }
-    return this.evaluator.chooseFutureResourceSelectionOutcome(
-      selectionWorld,
-      selectionActor,
-      actorOutcomes
-    )?.action?.selection ?? null;
+    return canonical;
   }
 
   /*
@@ -1819,6 +2227,7 @@ export class Controller {
   async choosePostCounterResource(actor, owner, context = null) {
     const state = this.getState();
     const gameId = state.gameId;
+    const stateVersion = state.stateVersion;
     const purpose = context?.purpose ?? null;
     const receiver = context?.receiver ?? null;
     if (!["plunder", "destroy", "transfer"].includes(purpose)
@@ -1847,7 +2256,9 @@ export class Controller {
     const currentOwner = latestState.players.find(
       (player) => player.id === owner.id && player.alive
     ) ?? null;
-    if (!selection || !this.isSessionValid(gameId) || !actor.alive || !currentOwner) return null;
+    if (!selection || !this.isSessionValid(gameId) || latestState.stateVersion !== stateVersion
+      || !actor.alive || !latestState.players.includes(actor) || !currentOwner
+      || (purpose === "transfer" && (!receiver.alive || !latestState.players.includes(receiver)))) return null;
     if (selection.zone === "equipment") {
       const card = currentOwner.equipment;
       return card && card.definitionId === selection.definitionId
@@ -1869,135 +2280,35 @@ export class Controller {
       : null;
   }
 
-  /*
-  功能
-  投影资源类 root 在 Counter chain 后的 canonical selection，并准备响应者价值 terms。
-
-  调用方
-  buildResponseDecisionContext 的普通 Counter 分支。
-
-  输入
-  响应者视角 World/player、root card/source/targets、Counter depth 与 Transfer 公开声明。
-
-  输出
-  `{ futureSelectionOutcomes, futureCounterTerms }`；没有合法未来选择时两个字段均为空。
-
-  读取状态
-  仅响应者合法 World、Generator 匿名/公开 candidates 与预物化期望 Worlds。
-
-  写入状态
-  只推进 cooperative yield；所有 World 都是独立投影或 clone，不写 GameState。
-
-  调用函数
-  Generator.getResponderSafeFutureRootSelections/createRootResolutionAction、
-  Simulator.buildFutureResourceSelectionWorlds、Evaluator.chooseFutureResourceSelectionOutcome、
-  Evaluator.futureSelectionCounterTerms、yieldControl。
-
-  边界与不变量
-  只在响应者信息内估计 actor 收益，不能读取 raw GameState 或 actor 私人 World；
-  private hand 只有一个匿名候选，确定策略只返回 weight=1，runtime 可以选择不同具体牌。
-  */
-  async buildFutureResourceCounterProjection({
-    responseWorld,
-    responder,
-    rootCard,
-    rootSourceId,
-    rootTargetIds,
-    counterDepth,
-    publicTransferContext
-  }) {
-    const empty = Object.freeze({
-      futureSelectionOutcomes:null,
-      futureCounterTerms:null
-    });
-    const sourceView = responseWorld.players.find(
-      (player) => player.id === rootSourceId && player.alive
-    ) ?? null;
-    if (!sourceView) return empty;
-    const selections = this.actionGenerator.getResponderSafeFutureRootSelections(
-      responseWorld,
-      rootCard,
-      rootTargetIds,
-      { publicTransferContext }
-    );
-    const simulator = this.simulatorFactory();
-    const outcomes = [];
-    for (const selection of selections) {
-      const action = this.actionGenerator.createRootResolutionAction(
-        responseWorld, rootCard, rootSourceId, rootTargetIds, { futureSelection:selection }
-      );
-      if (!action) continue;
-      const worlds = simulator.buildFutureResourceSelectionWorlds(responseWorld, action, counterDepth);
-      if (!worlds) continue;
-      if (!(await this.yieldControl(responseWorld.gameId))) return null;
-      outcomes.push({
-        action,
-        rootWorlds:{
-          ...worlds,
-          baseLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.baseWorld),
-          resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(
-            worlds.resolvedWorld
-          )
-        }
-      });
-    }
-    const selected = this.evaluator.chooseFutureResourceSelectionOutcome(
-      responseWorld, sourceView, outcomes
-    );
-    if (!selected) return empty;
-    const futureSelectionOutcomes = Object.freeze([Object.freeze({
-      weight:1,
-      selection:selected.action.selection,
-      rootWorlds:selected.action.selection.zone === "hand" ? null : selected.rootWorlds,
-      resolvesAtStay:(counterDepth % 2) === 0
-    })]);
-    const responderView = responseWorld.players.find(
-      (player) => player.id === responder.id
-    ) ?? null;
-    const targetViews = rootTargetIds.map((targetId) => (
-      responseWorld.players.find((player) => player.id === targetId)
-    )).filter(Boolean);
-    const futureCounterTerms = this.evaluator.futureSelectionCounterTerms(
-      responseWorld,
-      responderView,
-      sourceView,
-      rootCard,
-      targetViews,
-      futureSelectionOutcomes
-    );
-    return Object.freeze({ futureSelectionOutcomes, futureCounterTerms });
-  }
 
   /*
   功能
-  把真实响应参数转换成 Evaluator 使用的 plain DecisionContext。
+  把真实响应参数投影为不含重型反事实的合法 Worker 输入。
 
   调用方
-  shouldRespond、assessDyingRescue 与响应专项查询。
+  shouldRespond、assessDyingRescue 与定向测试。
 
   输入
-  响应者、响应类型、真实公开上下文和合法响应卡数组。
+  响应者、响应类型、公开上下文和合法响应卡。
 
   输出
-  Promise<不含 Game/Simulator 引用且只暴露合法信息的 DecisionContext>；会话失效时为 null。
+  仅含 canonical World、公开 context、合法计数与 rescue order 的普通数据。
 
   读取状态
-  当前 GameState、Fact、Team Rules、Dying order 与显式 Value/Domain query。
+  当前 GameState、Fact、队伍规则和救援顺序。
 
   写入状态
-  只有被调用的未知位置/状态查询可能写 query 私有缓存；cooperative yield 不写真实状态。
+  无。
 
   调用函数
-  createInitialWorld、yieldControl、Simulator paired-world construction 与 Evaluator data/value helpers。
+  createInitialWorld、deriveCurrentCardCounts、getDyingRescueOrder。
 
   边界与不变量
-  Controller 只负责 runtime entity/context binding；所有价值比较由同一 Evaluator 完成，所需 Worlds/标量按响应类型预物化且每分支至多一次；
-  yield 只插在完整 World/反事实阶段之间，不改变分支、构造顺序或比较输入。
+  不运输 rawContext、真实 Player、敌方手牌或私人记忆；资源 root 不接受私密 selection。
   */
-  async buildResponseDecisionContext(responder, type, rawContext, cards = []) {
+  createResponseDecisionInput(responder, type, rawContext, cards = []) {
     const state = this.getState();
     const remainingCardCounts = deriveCurrentCardCounts(responder, state);
-    if (!(await this.yieldControl(state.gameId))) return null;
     const world = createInitialWorld(responder.id, state, remainingCardCounts);
     const players = world.players;
     const byId = new Map(players.map((player) => [player.id, player]));
@@ -2074,201 +2385,83 @@ export class Controller {
       futureSelectionOutcomes:null,
       futureCounterTerms:null
     };
-    if (!(await this.yieldControl(state.gameId))) return null;
-    if (type === "leverageAssault") {
-      const target = publicContext.target ?? responderView;
-      decision.leverageMetrics = this.evaluator.leverageResponseMetrics(
-        target,
-        remainingCardCounts
-      );
-    } else if (type === "skill" && publicContext.target) {
-      const simulator = this.simulatorFactory();
-      const worlds = simulator.buildGuardianAidWorlds(
-          world,
-          responder.id,
-          publicContext.target.id,
-          rawContext.source?.id ?? null,
-          Math.max(0, Number(rawContext.amount) || 0)
-        );
-      if (!(await this.yieldControl(state.gameId))) return null;
-      const stayLightningOutcomeSets = simulator.buildLightningOutcomeSets(worlds.stayWorld);
-      if (!(await this.yieldControl(state.gameId))) return null;
-      decision.guardianAidWorlds = {
-        stayWorld:worlds.stayWorld,
-        aidWorld:worlds.aidWorld,
-        stayLightningOutcomeSets,
-        aidLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.aidWorld)
-      };
-    } else if (type === "counter" && publicContext.statusCounterContext) {
-      const holder = players.find((player) => (
-        player.id === publicContext.statusCounterContext.holderId && player.alive
-      ));
-      if (holder && holder.battleTeam === responderView.battleTeam
-        && hasFactStatus(holder, publicContext.statusCounterContext.statusId)) {
-        if (publicContext.statusCounterContext.statusId === "sealed") {
-          decision.sealCounterTerms = this.evaluator.sealCounterTerms(
-            holder,
-            world,
-            remainingCardCounts
-          );
-        } else if (publicContext.statusCounterContext.statusId === "lightning") {
-          const simulator = this.simulatorFactory();
-          const receiverId = simulator.nextLightningReceiverId(players, holder);
-          const receiver = players.find((player) => player.id === receiverId) ?? null;
-          const transferred = receiver
-            ? simulator.buildTransferredLightningWorld(world, holder, receiver)
-            : null;
-          if (!(await this.yieldControl(state.gameId))) return null;
-          const stayOutcomeSet = simulator.buildLightningOutcomeWorlds(world, holder);
-          if (!(await this.yieldControl(state.gameId))) return null;
-          decision.lightningCounterWorlds = {
-            stayOutcomeSet,
-            transferredWorld:transferred?.world ?? null,
-            transferredOutcomeSet:transferred
-              ? simulator.buildLightningOutcomeWorlds(transferred.world, transferred.holder, 1)
-              : null
-          };
-        }
-      }
-    } else if (type === "counter") {
-      const rootCard = rawRootCard ?? rawCard;
-      const rootSourceId = rawContext.rootSourceId
-        ?? rawContext.rootSource?.id
-        ?? rawContext.source?.id
-        ?? null;
-      const rootTargetIds = Array.isArray(rawContext.rootTargetIds)
-        ? rawContext.rootTargetIds
-        : [];
-      if (["plunder", "destroy", "transfer"].includes(rootCard?.definitionId)) {
-        const projection = await this.buildFutureResourceCounterProjection({
-          responseWorld:world,
-          responder:responderView,
-          rootCard,
-          rootSourceId,
-          rootTargetIds,
-          counterDepth:rawContext.counterDepth ?? 0,
-          publicTransferContext:publicContext.publicTransferContext
-        });
-        if (!projection) return null;
-        decision.futureSelectionOutcomes = projection.futureSelectionOutcomes;
-        decision.futureCounterTerms = projection.futureCounterTerms;
-      } else {
-        const rootAction = this.actionGenerator.createRootResolutionAction(
-          world,
-          rootCard,
-          rootSourceId,
-          rootTargetIds,
-          { selection:rawContext.selection ?? null }
-        );
-        if (!rootAction) return decision;
-        const simulator = this.simulatorFactory();
-        const worlds = simulator.buildRootFlipWorlds(
-          world,
-          rootAction,
-          rawContext.counterDepth ?? 0
-        );
-        if (!(await this.yieldControl(state.gameId))) return null;
-        if (worlds) {
-          const baseLightningOutcomeSets = simulator.buildLightningOutcomeSets(worlds.baseWorld);
-          if (!(await this.yieldControl(state.gameId))) return null;
-          decision.rootFlipWorlds = {
-            ...worlds,
-            baseLightningOutcomeSets,
-            resolvedLightningOutcomeSets:simulator.buildLightningOutcomeSets(worlds.resolvedWorld)
-          };
-        }
-      }
-    }
-    return decision;
+    return {
+      decision,
+      rootAction:type === "counter" && !publicContext.statusCounterContext
+        && !["plunder", "destroy", "transfer"].includes((rawRootCard ?? rawCard)?.definitionId)
+        ? this.actionGenerator.createRootResolutionAction(
+            world, rawRootCard ?? rawCard,
+            rawContext.rootSourceId ?? rawContext.rootSource?.id ?? rawContext.source?.id ?? null,
+            rawContext.rootTargetIds ?? [], { selection:rawContext.selection ?? null }
+          )
+        : null,
+      rootCard:rawRootCard || rawCard ? {
+        id:(rawRootCard ?? rawCard).id,
+        definitionId:(rawRootCard ?? rawCard).definitionId
+      } : null
+    };
   }
 
   /*
   功能
-  判断 AI 是否在当前响应窗口使用候选响应。
+  请求 Worker 完成完整响应决策，并丢弃失效结果。
 
   调用方
-  ResponseWorkflow 与直接测试。
+  ResponseWorkflow。
 
   输入
-  响应者、响应类型、公开上下文与合法候选牌。
+  响应者、响应类型、公开 context 与合法响应卡。
 
   输出
-  Promise<是否响应的布尔值>；cooperative yield 期间会话失效时为 null。
+  Promise<boolean>；失效或取消为 null，真实异常向上抛出。
 
   读取状态
-  当前 GameState、Fact、runtime binding 与 Evaluator。
+  当前合法响应输入。
 
   写入状态
-  无。
+  请求诊断；不写 GameState 或 RNG。
 
   调用函数
-  buildResponseDecisionContext、Evaluator.shouldRespond。
+  createResponseDecisionInput、requestDecision。
 
   边界与不变量
-  候选牌默认空数组；门面不得构造或泄露额外隐藏信息；null 只表示会话取消，不能解释为 PASS。
+  每个 response 只有一次请求；最终 bool 返回后仍由 Application 校验并支付当前真实响应。
   */
   async shouldRespond(player, type, context, cards = []) {
     const startedAt = decisionNow();
-    const decisionContext = await this.buildResponseDecisionContext(player, type, context, cards);
-    if (!decisionContext) return null;
-    const decision = this.evaluator.shouldRespond(decisionContext);
-    this.recordMainThreadOperation(
-      "Controller.shouldRespond",
-      startedAt,
-      { candidateCount:Array.isArray(cards) ? cards.length : "unavailable" }
-    );
-    return decision;
+    const input = this.createResponseDecisionInput(player, type, context, cards);
+    return this.requestDecision("RESPONSE_DECISION", player, input, startedAt);
   }
 
   /*
   功能
-  基于当前合法信息评估一名 AI 对濒死目标的救援容量。
+  通过同一 Worker 评估合法救援容量。
 
   调用方
-  ResponseWorkflow 注入的必败救援查询与直接策略测试。
+  ResponseWorkflow 与策略测试。
 
   输入
-  响应者与濒死目标真实实体。
+  响应者与濒死目标当前实体。
 
   输出
-  Promise<Evaluator 生成的救援 assessment object>；会话失效时为 null。
+  data-only assessment；取消或失效为 null。
 
   读取状态
-  Controller 绑定的当前公开状态、合法记忆与 Probability。
+  合法响应输入。
 
   写入状态
-  无。
+  请求诊断。
 
   调用函数
-  buildResponseDecisionContext、Evaluator.assessDyingRescue。
+  createResponseDecisionInput、requestDecision。
 
   边界与不变量
-  Controller 只返回 data-only assessment；不得让 Application 直接访问 Evaluator 内部 owner。
+  真实错误传播；不修改 GameState，不新增救援策略或 RNG 消费。
   */
   async assessDyingRescue(responder, target) {
     const startedAt = decisionNow();
-    const decision = await this.buildResponseDecisionContext(
-      responder,
-      "dyingRescue",
-      { target },
-      []
-    );
-    if (!decision) return null;
-    const assessment = this.evaluator.assessDyingRescue({
-      responder:decision.responder,
-      target:decision.context.target,
-      rescueOrder:decision.rescueOrder,
-      responderHandDefinitionIds:decision.responderHandDefinitionIds,
-      knownCardsByPlayer:decision.knownCardsByPlayer,
-      recoverDensity:decision.recoverDensity,
-      remainingCardCounts:decision.remainingCardCounts
-    });
-    this.recordMainThreadOperation(
-      "Controller.assessDyingRescue",
-      startedAt,
-      { candidateCount:this.getState()?.players?.length }
-    );
-    return assessment;
+    const input = this.createResponseDecisionInput(responder, "dyingRescue", { target }, []);
+    return this.requestDecision("RESCUE_ASSESSMENT", responder, input, startedAt);
   }
 
 }

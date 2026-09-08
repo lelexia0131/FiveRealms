@@ -136,7 +136,7 @@ export function createAiChoiceAdapter({
       if (choiceRequest?.kind === "publicCard") {
         const choiceContext = getChoiceContext(choiceRequest.requestId);
         if (!choiceContext?.player || !Array.isArray(choiceContext.cards)) return createChoiceResult("cancelled");
-        const card = choosePublicCard(choiceContext.player, choiceContext.cards);
+        const card = await choosePublicCard(choiceContext.player, choiceContext.cards);
         return card
           ? createChoiceResult("selected", { selectedIds:[card.id] })
           : createChoiceResult("declined");

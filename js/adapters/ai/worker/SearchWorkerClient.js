@@ -290,13 +290,13 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     transport:"dedicated-worker",
     /*
     功能
-    向 Worker 发送一个 SEARCH 请求并返回 terminal outcome promise。
+    向同一 Worker 发送一个搜索或完整决策请求并返回 terminal outcome promise。
 
     调用方
     Controller。
 
     输入
-    SearchRequest。
+    SearchRequest 或带 kind 的 data-only 响应/资源请求。
 
     输出
     Promise<WorkerSearchOutcome>；in-flight/watchdog/cancel/dispose 时 reject。
@@ -311,7 +311,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     worker.postMessage、armWatchdog。
 
     边界与不变量
-    同一 client 同时只允许一个 in-flight search；HEARTBEAT 只续期当前 request 的 liveness watchdog；TIME/NODE outcome 不得被 transport 降级为 CANCEL。
+    所有 kind 共用一个 pending、requestId、cancel/dispose 和 watchdog；HEARTBEAT 只续期当前 request 的失联监测；TIME/NODE outcome 不得被 transport 降级为 CANCEL。
     */
     search(request) {
       if (disposed) return Promise.reject(new Error("AI Worker disposed"));
@@ -328,7 +328,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
         lifecycle.searchStarted += 1;
         const postMessageStartedAt = transportNow();
         try {
-          occupiedWorker.postMessage({ type:"SEARCH", requestId:request.requestId, request });
+          occupiedWorker.postMessage({ type:request.kind ?? "SEARCH", requestId:request.requestId, request });
         } catch (error) {
           lastTransportDiagnostics = Object.freeze({
             requestId:request.requestId,

@@ -1,6 +1,6 @@
 /*
 模块职责
-Dedicated Browser Worker entry：接收 SEARCH/CANCEL data-only message，调用共享 runSearchRequest，并返回 HEARTBEAT 与唯一 RESULT/ERROR terminal。
+Dedicated Browser Worker entry：接收搜索、响应、资源与 CANCEL data-only message，调用共享 runSearchRequest，并返回 HEARTBEAT 与唯一 RESULT/ERROR terminal。
 
 上游
 SearchWorkerClient 与浏览器 Worker runtime。
@@ -80,7 +80,8 @@ async function handleMessage(message) {
     if (activeRequestId === requestId) cancelled = true;
     return;
   }
-  if (type !== "SEARCH" || !requestId || !message.request) {
+  if (!["SEARCH", "POST_COUNTER_RESOURCE", "RESPONSE_DECISION", "RESCUE_ASSESSMENT", "PUBLIC_CARD"].includes(type)
+    || !requestId || !message.request || (type !== "SEARCH" && message.request.kind !== type)) {
     postMessage({ type:"ERROR", requestId:requestId ?? null, workerError:"unknown or malformed Worker message" });
     return;
   }

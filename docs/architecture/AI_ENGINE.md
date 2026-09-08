@@ -59,7 +59,13 @@ REAL GAME
   -> REAL GAME
 ```
 
-`Controller.js` 公开 `createRuntimeComposition`、`createSearchEngine` 与 `executeSearchRequest`，因此 main-thread 同步决策与 Worker search 不再各自维护第二套 Evaluator/Simulator semantic graph。Worker 只从公开 `Controller.js` 取得 serialization/outcome 与 search execution 能力；application/composition 不直接构造 internal `Rng`。
+`Controller.js` 内部的 `createRuntimeComposition` 是唯一 Evaluator/Simulator semantic graph；公开 `createSearchEngine`、`executeSearchRequest` 与 `executeDecisionRequest`。Worker 只通过 Controller public facade 执行计算；application/composition 不直接构造 internal `Rng`。
+
+浏览器使用同一个 Dedicated Worker 和同一个 `SearchWorkerClient`，除普通 `SEARCH` 外，还接收完整的 `POST_COUNTER_RESOURCE`、`RESPONSE_DECISION`、`RESCUE_ASSESSMENT` 和 `PUBLIC_CARD`。Renderer 经现有 Fact/World authority 过滤输入；资源候选枚举、Future resource projection、响应反事实、Lightning outcomes 与最终 Evaluator 比较在 Worker 内完成，只返回最终 selection、bool、assessment 或 cardId。公开池领取/换装的 receipt Worlds 同样在 Worker 内计算；不逐候选发消息，不回传中间 Worlds。
+
+所有请求共用单个 pending、requestId、cancel/dispose 和 Worker lifecycle。普通 Search 的 TIME/NODE/watchdog 保持原契约；完整响应/资源决策没有搜索截止时间，也不套用 Search 的失联 watchdog，因为其合法同步工作可能没有可发送 heartbeat 的检查点。取消或退出仍由 client 终止占用的 Worker。真实计算异常通过 ERROR reject，不能改写为 PASS/END。
+
+返回后 Controller 检查 session、gameId、stateVersion、phase、round、当前轮到的角色及实体身份，再按 Generator 的规范 selection 与当前资源重绑；Application 保留最终合法性校验和真实支付/结算权威。纯响应/资源计算不消耗 RNG；unknown hand 实体绑定仍由 Main 在验收成功后按原顺序推进 AI RNG。`lastAuxiliaryDecisionDiagnostics` 分别记录 preparation、postMessage、Worker compute、异步等待和 acceptance 时间，不把等待误报成 Renderer 同步阻塞。
 
 运行时方向已经固定为 `Simulator -> completed/alternative Worlds -> Evaluator`。Evaluator 不 import、构造、保存、接收或回调 Simulator/transition capability；StateValue/CardValue 不反调 Evaluator。counterfactual 的 World clone/mutation/action/damage construction 全部属于 Simulator，准备完成的 World comparison 属于 Evaluator，Searcher 只组织调用和预算。Controller 的 response `DecisionContext` 只包含 canonical World/player、预物化 paired/outcome Worlds、普通数据与标量，不含 lazy query 或 service locator。
 

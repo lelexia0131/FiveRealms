@@ -95,7 +95,10 @@ import { Rng as SearchRng } from "../js/ai/Searcher/Rng.js";
 import {
   SEARCH_RESULT_STATUS,
   createSearchRequest,
-  createWorkerSearchOutcome
+  createWorkerSearchOutcome,
+  executeDecisionRequest,
+  materializeResponseDecision,
+  buildFutureResourceCounterProjection
 } from "../js/ai/Controller.js";
 import {
   actionIntentKey,
@@ -376,6 +379,40 @@ function upgradeProbabilityFixture(state) {
     }
   }
   return state;
+}
+
+/*
+功能
+为响应专项测试本地物化生产纯计算输入，便于直接断言中间 World 和 terms。
+
+调用方
+AI 响应一致性、Counter 信息边界与资源 overlap 定向测试。
+
+输入
+Controller fixture、响应者、类型、公开 context 与候选响应牌。
+
+输出
+生产 materializeResponseDecision 的完整 DecisionContext。
+
+读取状态
+仅测试 fixture 经正式可见投影获得的输入。
+
+写入状态
+测试局部 World 和诊断；不写真实 GameState。
+
+调用函数
+Controller.createResponseDecisionInput、materializeResponseDecision。
+
+边界与不变量
+只复用正式 pure compute，不复制策略；生产 shouldRespond 仍必须通过 Worker 返回最终 bool。
+*/
+async function buildLocalResponseDecisionContext(controller, ...args) {
+  return materializeResponseDecision(controller.createResponseDecisionInput(...args), {
+    actionGenerator: controller.actionGenerator,
+    evaluator: controller.evaluator,
+    simulatorFactory: controller.simulatorFactory,
+    yieldControl: controller.yieldControl
+  });
 }
 
 const testResponseEvaluator = new Evaluator();
@@ -14978,7 +15015,7 @@ async function responseCombatSemanticClosure() {
   await assert.rejects(access(projectFile("js/ai/policy/ResponseBoundary.js")));
   assert.match(source.evaluator, /shouldRespond\(decision\)/);
   assert.match(source.evaluator, /decidePlanningCounter[\s\S]*decidePlanningDyingRescue/);
-  assert.match(source.controller, /buildResponseDecisionContext[\s\S]*this\.evaluator\.shouldRespond/);
+  assert.match(source.controller, /materializeResponseDecision[\s\S]*composition\.evaluator\.shouldRespond/);
   assert.doesNotMatch(source.controller, /ResponsePolicy|ResponseBoundary/);
   assert.doesNotMatch(
     source.controller,
@@ -16433,7 +16470,7 @@ test("AI·响应一致性：Block planning 与 runtime 共享致命和资源意�
     target.shield = 0;
     target.hand.push(block, instance("charge"), instance("charge"));
     const { game } = makeGame([source, target, allyA, allyB]);
-    const decision = await game.aiController.buildResponseDecisionContext(
+    const decision = await buildLocalResponseDecisionContext(game.aiController,
       target,
       "block",
       { target, source, amount: 1, requiredCount: 1 },
@@ -16470,7 +16507,7 @@ test("AI·响应一致性：Guardian planning 与 runtime 共享穿盾意愿", a
     target.shield = targetShield;
     guardian.hand.push(instance("charge"));
     const { game } = makeGame([source, target, guardian]);
-    const decision = await game.aiController.buildResponseDecisionContext(
+    const decision = await buildLocalResponseDecisionContext(game.aiController,
       guardian,
       "skill",
       { target, source, amount: 1 },
@@ -16509,7 +16546,7 @@ test("AI·响应一致性：Rescue planning 与 runtime 共享可救和必败合
     target.hp = targetHp;
     rescuer.hand.push(recover);
     const { game } = makeGame([target, rescuer, enemy]);
-    const decision = await game.aiController.buildResponseDecisionContext(
+    const decision = await buildLocalResponseDecisionContext(game.aiController,
       rescuer,
       "dyingRescue",
       { target },
@@ -16542,7 +16579,7 @@ test("AI·响应一致性：Counter planning 与 runtime 共享全体受益合�
     responder.hand.push(counter);
     if (largeTeamSize === 2) enemyC.alive = false;
     const { game } = makeGame([responder, source, ally, enemyB, enemyC]);
-    const decision = await game.aiController.buildResponseDecisionContext(
+    const decision = await buildLocalResponseDecisionContext(game.aiController,
       responder,
       "counter",
       { source, rootSource: source, card: rootCard, rootCard },
@@ -16646,7 +16683,7 @@ async function assertCounterPlanningRuntimeParity(definitionId) {
   const { game } = makeGame([responder, source, owner, enemyAlly, ally]);
   if (owner.hand.includes(selectedCard)) game.rememberPrivateCard(responder, owner, selectedCard);
   try {
-    const decision = await game.aiController.buildResponseDecisionContext(
+    const decision = await buildLocalResponseDecisionContext(game.aiController,
       responder,
       "counter",
       {
@@ -16753,7 +16790,7 @@ test("AI·响应一致性：Block 1/2 容量 planning/runtime 分别判断", asy
     target.hand.push(...blocks);
     const { game } = makeGame([source, target, allyA, enemy, allyB]);
     try {
-      const decision = await game.aiController.buildResponseDecisionContext(
+      const decision = await buildLocalResponseDecisionContext(game.aiController,
         target,
         "block",
         { target, source, amount: 1, requiredCount: 2 },
@@ -16871,7 +16908,7 @@ async function responseCooperativeYieldParity() {
       await Promise.resolve();
       return fixture.game.isSessionValid(gameId);
     };
-    const decisionContext = await fixture.game.aiController.buildResponseDecisionContext(
+    const decisionContext = await buildLocalResponseDecisionContext(fixture.game.aiController,
       fixture.responder,
       fixture.type,
       fixture.context,
@@ -16885,12 +16922,12 @@ async function responseCooperativeYieldParity() {
       fixture.cards
     );
     assert.equal(actual, expected, fixture.type);
-    assert.ok(yieldCount >= 2, fixture.type);
+    assert.ok(yieldCount >= 1, fixture.type);
     fixture.game.dispose();
   }
 }
 
-test("AI·响应一致性：cooperative yield 保持 Block/Counter/Guardian/状态/Lightning 决定", responseCooperativeYieldParity);
+test("AI·响应一致性：Worker 与本地完整 Block/Counter/Guardian/状态/Lightning 决定相同", responseCooperativeYieldParity);
 
 test("AI·响应一致性：Block mixed distribution 逐分支应用 willingness", () => {
   const source = makePlayer("mixed-block-source", 0, "dusk", "ai", 4);
@@ -25155,6 +25192,342 @@ test("AI·Action：dead aggregate facade 已删除且 named exports 完整", act
 
 /*
 功能
+构造可跨线程复现的资源与 Lightning 固定局面。
+
+调用方
+AI Worker 决策回归。
+
+输入
+资源卡定义与是否具有资源持有者的合法已知手牌。
+
+输出
+独立 Game、角色、公开声明和固定实体 ID。
+
+读取状态
+正式角色、卡牌定义。
+
+写入状态
+仅测试 fixture 与 AI 专用 seed。
+
+调用函数
+makePlayer、makeGame、SearchRng、rememberPrivateCard。
+
+边界与不变量
+迁移前基线来自 HEAD 62b9a8c；手牌、装备、Lightning、seed 与候选顺序不得为通过测试而调整。
+*/
+function makeWorkerDecisionFixture(definitionId, known = false) {
+  const players = ["dawn", "dusk", "dawn", "dusk", "dawn"].map((team, index) => (
+    makePlayer(`worker-decision-${index}`, index, team, "ai", index)
+  ));
+  const [actor, owner, receiver] = players;
+  for (const [index, player] of players.entries()) {
+    player.hand = ["counter", "assault", "recover", "block", "charge"].map((id, cardIndex) => ({
+      ...CARD_DEFINITIONS[id], id: `fixture-${index}-${cardIndex}`
+    }));
+    player.equipment = { ...CARD_DEFINITIONS[index % 2 ? "defenseDevice" : "barrierDevice"], id: `equipment-${index}` };
+
+  }
+  owner.statuses.lightning = { stacks: 1 };
+
+  const { game } = makeGame(players);
+  game.aiController.searchRng = new SearchRng(731);
+  const rootCard = { ...CARD_DEFINITIONS[definitionId], id: `root-${definitionId}` };
+  if (known) for (const card of owner.hand.slice(0, 3)) game.rememberPrivateCard(actor, owner, card);
+  const context = {
+    source: actor, rootSource: actor, card: rootCard, rootCard,
+    rootTargetIds: definitionId === "transfer" ? [] : [owner.id],
+    publicTransferContext: definitionId === "transfer"
+      ? { fromPlayerId: owner.id, receiverPlayerId: receiver.id } : null
+  };
+  return { game, actor, owner, receiver, rootCard, context };
+}
+
+/*
+功能
+以真实 Node Worker thread 承载浏览器 Worker 的正式协议，检查跨线程结构化克隆和事件循环。
+
+调用方
+AI·Worker 决策专项回归。
+
+输入
+无。
+
+输出
+可按浏览器 Worker 接口构造的测试类；每个实例仅有一条计算线程。
+
+读取状态
+正式 SearchWorkerMessageHandler 与测试计数 instrumentation。
+
+写入状态
+测试线程生命周期和最近消息；不修改生产 transport。
+
+调用函数
+node:worker_threads.Worker。
+
+边界与不变量
+只模拟 API 接线，计算实际位于另一线程；不得用同线程 protocol double 证明 Renderer 响应性。
+*/
+async function nodeDecisionWorkerClass() {
+  const { Worker } = await import("node:worker_threads");
+  return class {
+    constructor() {
+      this.thread = new Worker(new URL("./worker_decision_thread.mjs", import.meta.url));
+    }
+    addEventListener(type, listener) {
+      if (type === "message") this.thread.on("message", data => listener({ data }));
+      else this.thread.on(type, listener);
+    }
+    postMessage(message) { this.thread.postMessage(message); }
+    terminate() { this.thread.terminate(); }
+  };
+}
+
+test("AI·Worker 决策：真实线程与迁移前资源选择/RNG/World 数量相同且主线程继续运行", async () => {
+  const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js");
+  const reference = JSON.parse(await readFile(projectFile("tests/worker-decision-baseline.json"), "utf8"));
+  const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const WorkerClass = await nodeDecisionWorkerClass();
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: WorkerClass });
+  const client = createSearchWorkerClient("searchWorker.js");
+  try {
+    for (const baseline of reference) {
+      const { definitionId, known } = baseline;
+      const fixture = makeWorkerDecisionFixture(definitionId, known);
+      const { game, actor, owner, receiver, rootCard, context } = fixture;
+      game.searchExecutor.dispose();
+      const messages = [];
+      game.aiController.searchExecutor = {
+        async search(request) {
+          const captured = structuredClone(request);
+          const outcome = await client.search(request);
+          messages.push({ request: captured, outcome });
+          return outcome;
+        },
+        getLastTransportDiagnostics: () => client.getLastTransportDiagnostics()
+      };
+      // 如果 Renderer 边界仍调用了旧重型能力，本测试必须立即失败。
+      game.aiController.simulatorFactory = () => { throw new Error("Renderer performed Simulator work"); };
+      game.aiController.evaluator.shouldRespond = () => { throw new Error("Renderer evaluated response"); };
+      let ticks = 0, maxGapMs = 0, lastTick = performance.now();
+      const timer = setInterval(() => {
+        const now = performance.now();
+        maxGapMs = Math.max(maxGapMs, now - lastTick);
+        lastTick = now;
+        ticks += 1;
+      }, 5);
+      try {
+        const selected = await game.aiController.choosePostCounterResource(actor, owner, {
+          purpose: definitionId, receiver, card: rootCard
+        });
+        const response = await game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]);
+        clearInterval(timer);
+        assert.ok(ticks > 0, "Worker 计算期间主线程 timer 必须推进");
+        assert.equal(messages.length, 2, "每个完整决策只发送一次请求");
+        assert.deepEqual(selected.selection, baseline.selection);
+        assert.equal(selected.card.id, baseline.cardId);
+        assert.ok(owner.hand.includes(selected.card) || owner.equipment === selected.card);
+        assert.equal(response, baseline.response);
+        assert.deepEqual(messages[0].outcome.testCounts, baseline.resourceCounts);
+        assert.deepEqual(messages[1].outcome.testCounts, baseline.responseCounts);
+        assert.deepEqual(game.aiController.searchRng.snapshot(), baseline.rngAfter);
+        for (const { request, outcome } of messages) {
+          assert.deepEqual(await executeDecisionRequest(structuredClone(request)), outcome.decision);
+          const world = request.input.world ?? request.input.decision.world;
+          for (const player of world.players) {
+            if (player.id !== request.actorId) assert.equal(player.hand, undefined);
+            assert.equal(player.aiMemory, undefined);
+          }
+          assert.equal(outcome.rootWorlds, undefined);
+        }
+      } finally { clearInterval(timer); game.dispose(); }
+    }
+    const { game, actor, owner, receiver, rootCard } = makeWorkerDecisionFixture("transfer", true);
+    game.searchExecutor.dispose();
+    const controller = game.aiController;
+    controller.searchExecutor = client;
+    try {
+      const pool = [rootCard, { ...CARD_DEFINITIONS.recover, id: "public-recover" }];
+      const world = createInitialWorld(actor.id, game.state, deriveCurrentCardCounts(actor, game.state));
+      const expectedId = controller.simulatorFactory().resolvePublicCardChoice(world, actor.id, pool);
+      const decision = await buildLocalResponseDecisionContext(controller, owner, "dyingRescue", { target: receiver }, []);
+      const expectedRescue = controller.evaluator.assessDyingRescue({
+        responder: decision.responder, target: decision.context.target, rescueOrder: decision.rescueOrder,
+        responderHandDefinitionIds: decision.responderHandDefinitionIds,
+        knownCardsByPlayer: decision.knownCardsByPlayer, recoverDensity: decision.recoverDensity,
+        remainingCardCounts: decision.remainingCardCounts
+      });
+      controller.simulatorFactory = () => { throw new Error("Renderer projected public receipt"); };
+      controller.evaluator.assessDyingRescue = () => { throw new Error("Renderer evaluated rescue"); };
+      const selected = await controller.choosePublicCard(actor, pool);
+      assert.equal(selected.id, expectedId);
+      assert.ok(pool.includes(selected));
+      assert.deepEqual(await controller.assessDyingRescue(owner, receiver), expectedRescue);
+    } finally { game.dispose(); }
+    assert.equal(client.getLifecycleDiagnostics().activeSearchCount, 0);
+    assert.equal(client.getLifecycleDiagnostics().activeWorkerCount, 1);
+  } finally {
+    client.dispose();
+    if (previousWorker) Object.defineProperty(globalThis, "Worker", previousWorker);
+    else delete globalThis.Worker;
+  }
+});
+
+test("AI·Worker 决策：session/version/角色/公开声明失效不绑定、不推进 RNG", async () => {
+  for (const change of ["session", "version", "actor", "owner", "receiver", "phase", "round"]) {
+    const fixture = makeWorkerDecisionFixture("transfer");
+    const { game, actor, owner, receiver, rootCard } = fixture;
+    let release, sent;
+    game.aiController.searchExecutor = {
+      search(request) { sent = request; return new Promise(resolve => { release = resolve; }); }
+    };
+    const rngBefore = game.aiController.searchRng.snapshot();
+    const handIds = game.state.players.map(player => player.hand.map(card => card.id));
+    const pending = game.aiController.choosePostCounterResource(actor, owner, { purpose: "transfer", receiver, card: rootCard });
+    if (change === "session") game.state.gameId = "replacement-session";
+    if (change === "version") transitionChangeShield(game.state, owner, 1);
+    if (change === "actor") transitionSetAlive(game.state, actor, false);
+    if (change === "owner") transitionSetAlive(game.state, owner, false);
+    if (change === "receiver") transitionSetAlive(game.state, receiver, false);
+    if (change === "phase") transitionSetMatchPhase(game.state, "discard");
+    if (change === "round") transitionSetCurrentRound(game.state, game.state.currentRound + 1);
+    release({ requestId: sent.requestId, gameId: sent.gameId, kind: sent.kind, decision: { zone: "hand", selectionKind: "unknown", knownCardIds: [] } });
+    assert.equal(await pending, null, change);
+    assert.equal(game.aiController.lastAuxiliaryDecisionDiagnostics.status, "STALE", change);
+    assert.deepEqual(game.aiController.searchRng.snapshot(), rngBefore, change);
+    assert.deepEqual(game.state.players.map(player => player.hand.map(card => card.id)), handIds, change);
+    game.dispose();
+  }
+});
+
+test("AI·Worker 决策：异常传播且错误结果不得降级为 PASS 或 END", async () => {
+  const { runSearchRequest } = await import("../js/adapters/ai/worker/WorkerSearchRuntime.js");
+  const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js");
+  const { game, owner, context } = makeWorkerDecisionFixture("plunder");
+  let captured;
+  game.aiController.searchExecutor = { async search(request) { captured = request; throw new Error("decision computation failed"); } };
+  await assert.rejects(game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]), /decision computation failed/);
+  const invalid = structuredClone(captured);
+  invalid.input.decision.world.players = null;
+  await assert.rejects(runSearchRequest(invalid));
+  const messages = [];
+  const handler = createSearchWorkerMessageHandler({ postMessage: message => messages.push(message) });
+  await handler.handleMessage({ type: invalid.kind, requestId: invalid.requestId, request: invalid });
+  assert.equal(messages.filter(message => message.type === "RESULT").length, 0);
+  assert.equal(messages.filter(message => message.type === "ERROR").length, 1);
+  game.aiController.searchExecutor = { async search(request) { return { kind: request.kind, requestId: "wrong", gameId: request.gameId, decision: true }; } };
+  await assert.rejects(game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]), /identity\/shape mismatch/);
+  game.aiController.searchExecutor = { async search(request) { return { kind: request.kind, requestId: request.requestId, gameId: request.gameId, decision: "true" }; } };
+  await assert.rejects(game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]), /identity\/shape mismatch/);
+  game.dispose();
+});
+
+test("AI·Worker 决策：所有 kind 共用取消与销毁且完整决策没有搜索截止时间", async () => {
+  const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js");
+  const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const workers = [];
+  class HeldWorker {
+    constructor() { this.listeners = new Map(); this.messages = []; this.terminated = false; workers.push(this); }
+    addEventListener(type, listener) { this.listeners.set(type, listener); }
+    postMessage(message) { this.messages.push(message); }
+    terminate() { this.terminated = true; }
+    emit(message) { this.listeners.get("message")({ data: message }); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: HeldWorker });
+  const { game, actor, owner, receiver, rootCard, context } = makeWorkerDecisionFixture("transfer");
+  game.searchExecutor.dispose();
+  const client = createSearchWorkerClient("searchWorker.js", {
+    setTimeout: () => { throw new Error("完整决策不得创建 watchdog/deadline"); }
+  });
+  game.aiController.searchExecutor = client;
+  try {
+    const calls = [
+      () => game.aiController.choosePostCounterResource(actor, owner, { purpose: "transfer", receiver, card: rootCard }),
+      () => game.aiController.shouldRespond(owner, "counter", context, [owner.hand[0]]),
+      () => game.aiController.assessDyingRescue(owner, receiver),
+      () => game.aiController.choosePublicCard(actor, [rootCard])
+    ];
+    for (const call of calls) {
+      const pending = call();
+      const occupied = workers.at(-1);
+      const message = occupied.messages[0];
+      assert.ok(message.request.kind);
+      assert.equal(message.request.searchConfig, undefined);
+      client.cancel(message.requestId);
+      assert.equal(await pending, null);
+      assert.equal(occupied.terminated, true);
+      assert.equal(client.getLifecycleDiagnostics().activeSearchCount, 0);
+      assert.equal(client.getLifecycleDiagnostics().activeWorkerCount, 1);
+      const next = call();
+      const current = workers.at(-1);
+      const currentMessage = current.messages[0];
+      let settled = false;
+      next.then(() => { settled = true; });
+      occupied.emit({ type: "RESULT", requestId: message.requestId, outcome: { kind: message.type, requestId: message.requestId, gameId: message.request.gameId, decision: true } });
+      await Promise.resolve();
+      assert.equal(settled, false, "旧实例结果不能结算当前 request");
+      client.cancel(currentMessage.requestId);
+      assert.equal(await next, null);
+    }
+    const pending = calls[1]();
+    client.dispose();
+    assert.equal(await pending, null);
+    assert.equal(client.getLifecycleDiagnostics().activeWorkerCount, 0);
+    assert.equal(client.getLifecycleDiagnostics().activeSearchCount, 0);
+  } finally {
+    client.dispose(); game.dispose();
+    if (previousWorker) Object.defineProperty(globalThis, "Worker", previousWorker);
+    else delete globalThis.Worker;
+  }
+});
+
+test("AI·Worker 决策：拒绝改变 Transfer 公开方向或伪造已知牌身份", async () => {
+  const { game, actor, owner, receiver, rootCard } = makeWorkerDecisionFixture("transfer");
+  try {
+    const before = game.aiController.searchRng.snapshot();
+    for (const decision of [
+      { sourceId: owner.id, receiverId: actor.id, zone: "hand", selectionKind: "unknown", knownCardIds: [] },
+      { sourceId: owner.id, receiverId: receiver.id, zone: "hand", selectionKind: "known", cardId: owner.hand[0].id, definitionId: "counter" }
+    ]) {
+      game.aiController.searchExecutor = { async search(request) { return { kind: request.kind, requestId: request.requestId, gameId: request.gameId, decision }; } };
+      await assert.rejects(game.aiController.choosePostCounterResource(actor, owner, {
+        purpose: "transfer", receiver, card: rootCard
+      }), /invalid canonical resource selection/);
+      assert.deepEqual(game.aiController.searchRng.snapshot(), before);
+    }
+  } finally { game.dispose(); }
+});
+
+test("AI·Worker 决策：过期响应不得支付 Counter 或继续旧反制链", async () => {
+  for (const change of ["version", "dispose"]) {
+    const { game, actor, owner, rootCard } = makeWorkerDecisionFixture("plunder");
+    let release, notify;
+    const sent = new Promise(resolve => { notify = resolve; });
+    let requestCount = 0;
+    game.aiController.searchExecutor = {
+      search(request) {
+        requestCount += 1;
+        notify(request);
+        return new Promise(resolve => { release = resolve; });
+      }
+    };
+    const before = owner.hand.map(card => card.id);
+    const pending = game.responseWorkflow.askForCounter(actor, rootCard, [owner], { responders: [owner] });
+    const request = await sent;
+    if (change === "dispose") game.dispose();
+    else transitionChangeShield(game.state, owner, 1);
+    release({ requestId: request.requestId, gameId: request.gameId, kind: request.kind, decision: true });
+    const result = await pending;
+    assert.equal(result.status, "cancelled", change);
+    assert.deepEqual(owner.hand.map(card => card.id), before, change);
+    assert.equal(game.state.pendingResponses.length, 0);
+    assert.equal(requestCount, 1, "过期响应不得进入下一层反制或请求");
+    game.dispose();
+  }
+});
+
+
+/*
+功能
 验证 SearchResult 直接保存 canonical Action 且 planned sequence 不发生二次投影。
 
 调用方
@@ -32338,7 +32711,7 @@ async function buildCounterRootOverlapFixture({
       rememberedIds.add(known.id);
     }
   }
-  const decision = await game.aiController.buildResponseDecisionContext(
+  const decision = await buildLocalResponseDecisionContext(game.aiController,
     responder,
     "counter",
     {
@@ -32555,7 +32928,7 @@ Controller.buildResponseDecisionContext。
 不预填资源 identity，不复制价值或概率公式。
 */
 async function rebuildCounterResourceDecision(fixture, context = {}) {
-  return fixture.game.aiController.buildResponseDecisionContext(
+  return buildLocalResponseDecisionContext(fixture.game.aiController,
     fixture.responder,
     "counter",
     { ...fixture.decision.context, ...context },
@@ -32673,7 +33046,7 @@ test("AI·反制：future production path 不读取 actor 私密字段或启动�
       assert.equal(materialized.length, rootDefinitionId === "transfer" ? 1 : 2);
       assert.equal(materialized.filter((selection) => selection.zone === "hand").length, 1);
       assert.doesNotMatch(
-        controller.buildFutureResourceCounterProjection.toString(),
+        buildFutureResourceCounterProjection.toString(),
         /createInitialWorld|chooseCanonicalPostCounterSelection|hiddenStateSamples|sampleHidden|Searcher/
       );
       assert.doesNotMatch(
@@ -33845,13 +34218,15 @@ test("AI·救援：确定必败：固定拒绝仍经过 AI timing 且不消耗�
     = makeGame([human, ally, enemy]);
   const delays = [];
   game.cleanupManager.delay = async (milliseconds) => {
+    assert.equal(ui.thinking.at(-1)?.[0], true, "可见等待必须发生在 thinking 生命周期内");
     delays.push(milliseconds);
     return true;
   };
   const result = await game.responseWorkflow.requestDyingRescue(ally, human, recover);
   assert.equal(result.status, "declined");
-  assert.ok(delays.length >= 2);
-  assert.equal(delays[0], 0, "反事实评估前应先 cooperative yield");
+  assert.deepEqual(delays, [0], "headless timing 为零；计算让步已由 Worker runtime 承担");
+  assert.equal(game.aiController.lastAuxiliaryDecisionDiagnostics.kind, "RESCUE_ASSESSMENT");
+  assert.equal(game.aiController.lastAuxiliaryDecisionDiagnostics.status, "ACCEPTED");
   assert.ok(ui.thinking.some(([active, player]) => active && player.id === ally.id));
   assert.equal(ui.thinking.at(-1)[0], false);
   assert.equal(ally.hand.length, 1);
@@ -34151,7 +34526,7 @@ test("AI·救援：planning 与 runtime 共享 canonical common value semantic",
   target.hp = 0;
   responder.hand.push(instance("recover"));
   const { game } = makeGame([target, responder, enemy]);
-  const decision = await game.aiController.buildResponseDecisionContext(
+  const decision = await buildLocalResponseDecisionContext(game.aiController,
     responder,
     "dyingRescue",
     { target },
@@ -36183,7 +36558,7 @@ test("AI·角色选牌：canonical transfer selection 绑定自己手牌角色�
   assert.equal(chosen, recover);
 });
 
-test("AI·角色选牌：公开池领取按当前 StateValue 边际而非静态 CardValue", () => {
+test("AI·角色选牌：公开池领取按当前 StateValue 边际而非静态 CardValue", async () => {
   const shade = makePlayer("shade", 0, "dawn", "ai", 3);
   const medic = makePlayer("medic", 1, "dawn", "ai", 2);
   const { game }
@@ -36192,8 +36567,8 @@ test("AI·角色选牌：公开池领取按当前 StateValue 边际而非静态 
   const pool = [leverage, recover];
   const before = pool.map((card) => card.id);
   const selector = game.aiController;
-  assert.equal(selector.choosePublicCard(shade, pool), recover);
-  assert.equal(selector.choosePublicCard(medic, pool), recover);
+  assert.equal(await selector.choosePublicCard(shade, pool), recover);
+  assert.equal(await selector.choosePublicCard(medic, pool), recover);
   assert.deepEqual(pool.map((card) => card.id), before);
 });
 
@@ -36222,7 +36597,7 @@ createInitialWorld、Simulator.buildPublicCardReceiptOutcomes、Evaluator.stateU
 边界与不变量
 不禁止重复装备；同分仍保持公开池顺序，选择差异只能来自正式 StateValue 的 receipt/replacement 边际。
 */
-function mutualBenefitDuplicateEquipmentMarginalRegression() {
+async function mutualBenefitDuplicateEquipmentMarginalRegression() {
   const actor = makePlayer("mutual-telescope-actor", 0, "dawn", "ai", 3);
   const ally = makePlayer("mutual-telescope-ally", 1, "dawn", "ai", 1);
   const enemyA = makePlayer("mutual-telescope-enemy-a", 2, "dusk", "ai", 0);
@@ -36257,13 +36632,13 @@ function mutualBenefitDuplicateEquipmentMarginalRegression() {
   }, { telescope: 9, charge: 7 });
   assert.equal(world.players[0].equipmentDefinitionId, "telescope");
   assert.ok(marginalByDefinition.charge > marginalByDefinition.telescope);
-  assert.equal(game.aiController.choosePublicCard(actor, game.state.publicCardPool), charge);
+  assert.equal(await game.aiController.choosePublicCard(actor, game.state.publicCardPool), charge);
   assert.deepEqual(game.state.publicCardPool, [telescope, charge]);
 }
 
 test("AI·角色选牌：互利已装备望远镜时按真实边际选择替代资源", mutualBenefitDuplicateEquipmentMarginalRegression);
 
-test("AI·角色选牌：公开池相同价值保持原始顺序且空池返回 null", () => {
+test("AI·角色选牌：公开池相同价值保持原始顺序且空池返回 null", async () => {
   const shade = makePlayer("shade", 0, "dawn", "ai", 3);
   const ally = makePlayer("ally", 1, "dawn");
   const { game }
@@ -36271,8 +36646,8 @@ test("AI·角色选牌：公开池相同价值保持原始顺序且空池返回 
   const leverage = instance("leverage"), transfer = instance("transfer");
   // 两张牌领取后都只增加同一 handCount，且影客角色差量都为零。
   const selector = game.aiController;
-  assert.equal(selector.choosePublicCard(shade, [leverage, transfer]), leverage);
-  assert.equal(selector.choosePublicCard(shade, []), null);
+  assert.equal(await selector.choosePublicCard(shade, [leverage, transfer]), leverage);
+  assert.equal(await selector.choosePublicCard(shade, []), null);
 });
 
 test("AI·角色选牌：弃牌按角色有效值排序且同分保持原始顺序", () => {

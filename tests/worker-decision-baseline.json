@@ -1,0 +1,207 @@
+[
+  {
+    "definitionId": "plunder",
+    "known": false,
+    "selection": {
+      "zone": "equipment",
+      "selectionKind": "equipment",
+      "cardId": null,
+      "definitionId": "defenseDevice",
+      "availableUnknownCount": 0
+    },
+    "cardId": "equipment-1",
+    "response": true,
+    "resourceCounts": {
+      "buildRootFlipWorlds": 2,
+      "apply": 2,
+      "clone": 17,
+      "buildLightningOutcomeSets": 4,
+      "buildLightningOutcomeWorlds": 4
+    },
+    "responseCounts": {
+      "buildFutureResourceSelectionWorlds": 2,
+      "clone": 17,
+      "buildLightningOutcomeSets": 4,
+      "buildLightningOutcomeWorlds": 4,
+      "buildRootFlipWorlds": 1,
+      "apply": 1
+    },
+    "rngAfter": {
+      "seed": 731,
+      "state": 731,
+      "algorithm": "lcg",
+      "draws": 0
+    }
+  },
+  {
+    "definitionId": "plunder",
+    "known": true,
+    "selection": {
+      "zone": "equipment",
+      "selectionKind": "equipment",
+      "cardId": null,
+      "definitionId": "defenseDevice",
+      "availableUnknownCount": 0
+    },
+    "cardId": "equipment-1",
+    "response": true,
+    "resourceCounts": {
+      "buildRootFlipWorlds": 5,
+      "apply": 5,
+      "clone": 35,
+      "buildLightningOutcomeSets": 10,
+      "buildLightningOutcomeWorlds": 10
+    },
+    "responseCounts": {
+      "buildFutureResourceSelectionWorlds": 2,
+      "clone": 17,
+      "buildLightningOutcomeSets": 4,
+      "buildLightningOutcomeWorlds": 4,
+      "buildRootFlipWorlds": 1,
+      "apply": 1
+    },
+    "rngAfter": {
+      "seed": 731,
+      "state": 731,
+      "algorithm": "lcg",
+      "draws": 0
+    }
+  },
+  {
+    "definitionId": "destroy",
+    "known": false,
+    "selection": {
+      "zone": "equipment",
+      "selectionKind": "equipment",
+      "cardId": null,
+      "definitionId": "defenseDevice",
+      "availableUnknownCount": 0
+    },
+    "cardId": "equipment-1",
+    "response": true,
+    "resourceCounts": {
+      "buildRootFlipWorlds": 2,
+      "apply": 2,
+      "clone": 17,
+      "buildLightningOutcomeSets": 4,
+      "buildLightningOutcomeWorlds": 4
+    },
+    "responseCounts": {
+      "buildFutureResourceSelectionWorlds": 2,
+      "clone": 17,
+      "buildLightningOutcomeSets": 4,
+      "buildLightningOutcomeWorlds": 4,
+      "buildRootFlipWorlds": 1,
+      "apply": 1
+    },
+    "rngAfter": {
+      "seed": 731,
+      "state": 731,
+      "algorithm": "lcg",
+      "draws": 0
+    }
+  },
+  {
+    "definitionId": "destroy",
+    "known": true,
+    "selection": {
+      "zone": "equipment",
+      "selectionKind": "equipment",
+      "cardId": null,
+      "definitionId": "defenseDevice",
+      "availableUnknownCount": 0
+    },
+    "cardId": "equipment-1",
+    "response": true,
+    "resourceCounts": {
+      "buildRootFlipWorlds": 5,
+      "apply": 5,
+      "clone": 35,
+      "buildLightningOutcomeSets": 10,
+      "buildLightningOutcomeWorlds": 10
+    },
+    "responseCounts": {
+      "buildFutureResourceSelectionWorlds": 2,
+      "clone": 17,
+      "buildLightningOutcomeSets": 4,
+      "buildLightningOutcomeWorlds": 4,
+      "buildRootFlipWorlds": 1,
+      "apply": 1
+    },
+    "rngAfter": {
+      "seed": 731,
+      "state": 731,
+      "algorithm": "lcg",
+      "draws": 0
+    }
+  },
+  {
+    "definitionId": "transfer",
+    "known": false,
+    "selection": {
+      "zone": "hand",
+      "selectionKind": "unknown",
+      "cardId": null,
+      "definitionId": null,
+      "knownCardIds": [],
+      "availableUnknownCount": 5,
+      "sourceId": "worker-decision-1",
+      "receiverId": "worker-decision-2"
+    },
+    "cardId": "fixture-1-2",
+    "response": false,
+    "resourceCounts": {
+      "buildRootFlipWorlds": 1,
+      "apply": 1,
+      "clone": 11,
+      "buildLightningOutcomeSets": 2,
+      "buildLightningOutcomeWorlds": 2
+    },
+    "responseCounts": {
+      "buildFutureResourceSelectionWorlds": 1,
+      "clone": 11,
+      "buildLightningOutcomeSets": 2,
+      "buildLightningOutcomeWorlds": 2
+    },
+    "rngAfter": {
+      "seed": 731,
+      "state": 2230671998,
+      "algorithm": "lcg",
+      "draws": 1
+    }
+  },
+  {
+    "definitionId": "transfer",
+    "known": true,
+    "selection": {
+      "zone": "hand",
+      "selectionKind": "known",
+      "cardId": "fixture-1-0",
+      "definitionId": "counter",
+      "availableUnknownCount": 0,
+      "sourceId": "worker-decision-1",
+      "receiverId": "worker-decision-2"
+    },
+    "cardId": "fixture-1-0",
+    "response": false,
+    "resourceCounts": {
+      "buildRootFlipWorlds": 4,
+      "apply": 4,
+      "clone": 29,
+      "buildLightningOutcomeSets": 8,
+      "buildLightningOutcomeWorlds": 8
+    },
+    "responseCounts": {
+      "buildFutureResourceSelectionWorlds": 1,
+      "clone": 11,
+      "buildLightningOutcomeSets": 2,
+      "buildLightningOutcomeWorlds": 2
+    },
+    "rngAfter": {
+      "seed": 731,
+      "state": 731,
+      "algorithm": "lcg",
+      "draws": 0
+    }
+  }
+]
