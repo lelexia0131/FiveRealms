@@ -191,7 +191,7 @@ createSearchEngine、executeSearchRequest、ComputeWorkerPool、registerSlowWork
 不运行 Balance，不输出大段 JSON；slowTest 只改变入口分层，所有 Worker 和 timer 必须清理。
 */
 export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
-  test("AI·Compute Worker：隐藏样本准备跨过 deadline 时不 admission 或派发", async () => {
+  test("AI·Worker：隐藏样本准备跨过 deadline 时不 admission 或派发", async () => {
     const request = makeComputeSearchRequest();
     request.searchConfig = { ...request.searchConfig, nodeBudget:null };
     const transport = controlledTransport();
@@ -223,7 +223,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     } finally { pool.dispose(); }
   });
 
-  test("AI·Compute Worker：短 TIME 限制更多 admission 与 coverage，最后 atomic 批次跨期仍报告 TIME", async () => {
+  test("AI·Worker：短 TIME 限制更多 admission 与 coverage，最后 atomic 批次跨期仍报告 TIME", async () => {
     for (const size of [1, 2, 4]) {
       const counts = [];
       for (const mode of ["short", "long", "final-tail"]) {
@@ -290,7 +290,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     }
   });
 
-  slowTest("AI·Compute Worker：pure compute 抽取与封板基线逐候选等价", async () => {
+  slowTest("AI·Worker：pure compute 抽取与封板基线逐候选等价", async () => {
     const baseline = JSON.parse(await readFile(new URL("./search-compute-baseline.json", import.meta.url), "utf8"));
     const request = makeComputeSearchRequest();
     const rng = Rng.restore(request.rng);
@@ -309,7 +309,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     });
   });
 
-  slowTest("AI·Compute Worker：真实 poolSize 1/2/4 NODE、coverage、World 与 RNG 一致", async () => {
+  slowTest("AI·Worker：真实 poolSize 1/2/4 NODE、coverage、World 与 RNG 一致", async () => {
     const request = makeComputeSearchRequest();
     for (const nodeBudget of [1, 8, 9, 23, 1000]) {
       request.searchConfig = { ...request.searchConfig, nodeBudget };
@@ -330,7 +330,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     }
   });
 
-  test("AI·Compute Worker：乱序 C/A/D/B 按 canonical index join", async () => {
+  test("AI·Worker：乱序 C/A/D/B 按 canonical index join", async () => {
     const transport = controlledTransport();
     const pool = new ComputeWorkerPool({ poolSize:4, workerFactory:transport.factory });
     try {
@@ -341,7 +341,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     } finally { pool.dispose(); }
   });
 
-  test("AI·Compute Worker：TIME dispatch admission 仅占空闲 slot 且截止后不派发", async () => {
+  test("AI·Worker：TIME dispatch admission 仅占空闲 slot 且截止后不派发", async () => {
     for (const size of [1, 2, 4]) {
       const transport = controlledTransport();
       const pool = new ComputeWorkerPool({ poolSize:size, workerFactory:transport.factory });
@@ -364,7 +364,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     }
   });
 
-  test("AI·Compute Worker：真实 Search END 早完成仍等待 required sibling 且乱序不改 winner/RNG", async () => {
+  test("AI·Worker：真实 Search END 早完成仍等待 required sibling 且乱序不改 winner/RNG", async () => {
     const request = makeComputeSearchRequest();
     request.searchConfig = { ...request.searchConfig, depth:1 };
     const expected = deterministicResult(await executeSearchRequest(request));
@@ -404,7 +404,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     } finally { pool.dispose(); }
   });
 
-  test("AI·Compute Worker：真实 Search TIME 在 admission 后完成 atomic 尾部且不再采样或派发", async () => {
+  test("AI·Worker：真实 Search TIME 在 admission 后完成 atomic 尾部且不再采样或派发", async () => {
     for (const size of [1, 2, 4]) {
       const request = makeComputeSearchRequest();
       request.searchConfig = { ...request.searchConfig, nodeBudget:null };
@@ -440,7 +440,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     }
   });
 
-  slowTest("AI·Compute Worker：真实 Worker compute ERROR 通过现有 Search fault contract 传播", async () => {
+  slowTest("AI·Worker：真实 Worker compute ERROR 通过现有 Search fault contract 传播", async () => {
     const request = makeComputeSearchRequest();
     const pool = makeThreadPool(2);
     const runBatch = pool.runBatch.bind(pool);
@@ -459,7 +459,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     } finally { pool.dispose(); }
   });
 
-  test("AI·Compute Worker：cancel/stale/dispose/error 清空 pending 且不接收旧结果", async () => {
+  test("AI·Worker：cancel/stale/dispose/error 清空 pending 且不接收旧结果", async () => {
     const transport = controlledTransport();
     const pool = new ComputeWorkerPool({ poolSize:2, workerFactory:transport.factory });
     await pool.start({});
@@ -499,7 +499,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     assert.ok(disposedSlots.every(slot => slot.pending === null));
   });
 
-  test("AI·Compute Worker：只有完成进度续期 heartbeat，停滞 atomic 仍受 hard watchdog 保护", async () => {
+  test("AI·Worker：只有完成进度续期 heartbeat，停滞 atomic 仍受 hard watchdog 保护", async () => {
     const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js");
     const transport = controlledTransport();
     const pool = new ComputeWorkerPool({ poolSize:2, workerFactory:transport.factory });
@@ -543,7 +543,7 @@ export function registerComputeWorkerTests(test, slowTest, gameFixtures) {
     assert.equal(pool.batch, null);
   });
 
-  test("AI·Compute Worker：Coordinator requestId cancel/dispose 与 pending startup 不泄漏", async () => {
+  test("AI·Worker：Coordinator requestId cancel/dispose 与 pending startup 不泄漏", async () => {
     const { createSearchWorkerMessageHandler } = await import("../js/adapters/ai/worker/searchWorker.js");
     const transport = controlledTransport();
     const pool = new ComputeWorkerPool({ poolSize:2, workerFactory:transport.factory });

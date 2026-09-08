@@ -1280,7 +1280,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     leverageFixture.game.dispose();
   });
 
-  test("UI·难分上下：同一次决斗本人提交三次突袭后解锁", async () => {
+  test("UI·征途成就：难分上下要求同一次决斗本人提交三次突袭后解锁", async () => {
     const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
       humanAssaults: 3,
       opponentAssaults: 2
@@ -1315,7 +1315,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     fixture.game.dispose();
   });
 
-  test("UI·难分上下：同一次决斗本人只提交两次突袭不解锁", async () => {
+  test("UI·征途成就：难分上下在同一次决斗本人只提交两次突袭时不解锁", async () => {
     const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
       humanAssaults: 2,
       opponentAssaults: 2
@@ -1335,7 +1335,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     fixture.game.dispose();
   });
 
-  test("UI·难分上下：两次决斗合计三次突袭不会跨 Duel session 累计", async () => {
+  test("UI·征途成就：难分上下不会跨 Duel session 累计两次决斗的突袭", async () => {
     const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
       humanAssaults: 2,
       opponentAssaults: 2,
@@ -1363,7 +1363,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     fixture.game.dispose();
   });
 
-  test("UI·难分上下：第三次 committed 当场满足且无需等待第三次对手响应", async () => {
+  test("UI·征途成就：难分上下在第三次 committed 当场满足且无需等待对手响应", async () => {
     const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
       humanAssaults: 3,
       opponentAssaults: 2
@@ -1392,7 +1392,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     fixture.game.dispose();
   });
 
-  test("UI·难分上下：本人两次加对手一次不计为本人三次", async () => {
+  test("UI·征途成就：难分上下不把本人两次加对手一次计为本人三次", async () => {
     const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
       humanAssaults: 2,
       opponentAssaults: 1
@@ -1416,7 +1416,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     fixture.game.dispose();
   });
 
-  test("UI·难分上下：普通出牌阶段提交三次突袭不计入决斗", async () => {
+  test("UI·征途成就：难分上下不计普通出牌阶段提交的三次突袭", async () => {
     const fixture = createEvenlyMatchedDuelFixture(gameFixtures, { duelCards: 0 });
     for (let index = 0; index < 3; index += 1) {
       await fixture.game.eventDispatcher.emit("cardCommitted", {
@@ -1440,7 +1440,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     fixture.game.dispose();
   });
 
-  test("UI·难分上下：第三次突袭所在 Action rollback 后不计", async () => {
+  test("UI·征途成就：难分上下不计 Action rollback 的第三次突袭", async () => {
     const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
       humanAssaults: 3,
       opponentAssaults: 2
@@ -1471,7 +1471,7 @@ export function registerHistoryAchievementTests(test, gameFixtures) {
     fixture.game.dispose();
   });
 
-  test("UI·难分上下：达成后新决斗重置临时计数但保留已达成事实", async () => {
+  test("UI·征途成就：难分上下达成后新决斗重置临时计数但保留事实", async () => {
     const fixture = createEvenlyMatchedDuelFixture(gameFixtures, {
       humanAssaults: 3,
       opponentAssaults: 2,
