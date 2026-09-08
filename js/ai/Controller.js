@@ -37,6 +37,7 @@ import {
   SearchBudget,
   Searcher
 } from "./Searcher/Searcher.js";
+import { CandidateCompute } from "./Searcher/CandidateCompute.js";
 import { Pattern } from "./Searcher/Pattern.js";
 import { Rng, hashSearchSeed } from "./Searcher/Rng.js";
 import { Simulator } from "./Simulator/Simulator.js";
@@ -539,6 +540,7 @@ export function createSearchEngine(request, rng, runtimeControl = {}) {
     pattern:new Pattern(),
     config,
     simulatorFactory,
+    candidateExecutor:runtimeControl.candidateExecutor ?? null,
     searchBudgetFactory:() => new SearchBudget({
       timeBudget:config.timeBudgetMs,
       nodeBudget:config.nodeBudget,
@@ -583,6 +585,10 @@ Rng.restore、createSearchEngine、Searcher.search。
 不创建 transport DTO；返回值直接引用 canonical Action，并用其原 root index 供 Main Thread 常数次验收。
 */
 export async function executeSearchRequest(request, runtimeControl = {}) {
+  await runtimeControl.candidateExecutor?.start({
+    world:request.world,
+    difficultyMultiplier:request.searchConfig.difficultyMultiplier
+  });
   const rng = Rng.restore(request.rng);
   const actor = request.world.players.find((player) => player.id === request.actorId) ?? null;
   if (!actor) throw new Error(`Worker World 缺少 actor：${request.actorId}`);
@@ -609,6 +615,40 @@ export async function executeSearchRequest(request, runtimeControl = {}) {
     rngAfter:rng.snapshot(),
     cancelled
   };
+}
+
+/*
+功能
+构造 Worker 与 Local 共用的纯 candidate compute 实现。
+
+调用方
+Compute Worker INIT。
+
+输入
+root World 与既定 difficultyMultiplier；不含 RNG 或 SearchBudget。
+
+输出
+只接受 data-only candidate input 的 CandidateCompute。
+
+读取状态
+根 World 能量规则事实。
+
+写入状态
+局部语义组合。
+
+调用函数
+createRuntimeComposition、Generator、CandidateCompute。
+
+边界与不变量
+复用唯一 Evaluator/Simulator composition，不创建 Searcher 或第二套计算公式。
+*/
+export function createCandidateCompute({ world, difficultyMultiplier }) {
+  const { evaluator, simulatorFactory } = createRuntimeComposition({
+    world,
+    getDifficultyMultiplier:() => difficultyMultiplier
+  });
+  const generator = new Generator();
+  return new CandidateCompute({ evaluator, simulatorFactory, generateActions:(...args) => generator.generate(...args) });
 }
 
 /*

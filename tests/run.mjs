@@ -210,6 +210,8 @@ import {
   runAiDecision as runBenchmarkAiDecision
 } from "./ai_test_helpers.mjs";
 import { configureAllAiRoster } from "./headless_match_setup.mjs";
+import { CandidateCompute } from "../js/ai/Searcher/CandidateCompute.js";
+import { registerComputeWorkerTests } from "./compute_worker_test.mjs";
 import { registerMatchPerformanceTests } from "./match_performance_test.mjs";
 import { registerHistoryStatsTests } from "./history_stats_test.mjs";
 import { registerHistoryAchievementTests } from "./history_achievements_test.mjs";
@@ -15076,6 +15078,7 @@ async function finalAiResidueApiClosure() {
     resource: "js/ai/Simulator/Resource.js",
     response: "js/ai/Simulator/Response.js",
     searcher: "js/ai/Searcher/Searcher.js",
+    compute: "js/ai/Searcher/CandidateCompute.js",
     stateValue: "js/ai/Evaluator/StateValue.js",
     evaluator: "js/ai/Evaluator/Evaluator.js"
   };
@@ -15099,7 +15102,11 @@ async function finalAiResidueApiClosure() {
   const searcherCode = source.searcher.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
   assert.doesNotMatch(searcherCode, /\.energy\s*=/, "Searcher 不得写 World/player.energy");
   assert.doesNotMatch(searcherCode, /simulator\.clone\s*\(/, "Searcher 不得 clone World");
-  assert.match(searcherCode, /simulator\.buildSkillEnergyCounterfactualWorlds\s*\(/);
+  const computeCode = source.compute.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+  assert.match(searcherCode, /this\.candidateCompute\.compute\s*\(/);
+  assert.doesNotMatch(computeCode, /\.energy\s*=/, "CandidateCompute 不得写 World/player.energy");
+  assert.doesNotMatch(computeCode, /simulator\.clone\s*\(/, "CandidateCompute 不得 clone World");
+  assert.match(computeCode, /simulator\.buildSkillEnergyCounterfactualWorlds\s*\(/);
   for (const symbol of [
     "requestRootSafetyCompletion",
     "beginRootSafetyCandidate",
@@ -15903,7 +15910,7 @@ test("AI·价值归属：X 技能 finite delta 与非 X null 保持 END sibling 
 
 /*
 功能
-验证 X 技能能量反事实在重型 World 构造后的预算检查点 cooperative unwind。
+验证已 admission 的 X 技能能量反事实在 deadline 后仍完整返回。
 
 调用方
 AI 搜索 cooperative interruption 回归测试。
@@ -15921,12 +15928,12 @@ AI 搜索 cooperative interruption 回归测试。
 独立预算诊断、candidate timing 与调用计数。
 
 调用函数
-Searcher.materializeCandidate、SearchBudget.checkpointCurrentWork。
+CandidateCompute.compute、SearchBudget.shouldStop。
 
 边界与不变量
-过期的 X candidate 不得进入 transitionDelta、完整候选或 candidateFault；已有通用合同负责验证 incumbent 保留。
+Compute 不持有 Budget；构造反事实后即使 deadline 到达，仍完成 transitionDelta，节点只由 Searcher 登记。
 */
-function xSkillCounterfactualCooperativeCheckpointContract() {
+function xSkillAtomicComputeContract() {
   const actorId = "x-checkpoint-actor";
   const action = createAction({
     type: "skill",
@@ -15959,6 +15966,9 @@ function xSkillCounterfactualCooperativeCheckpointContract() {
       endOpportunityInputs: null,
       endPolicyInputs: null
     }),
+    requiresActionLightningOutcomes: () => false,
+    requiresHiddenWorldPrior: () => false,
+    composeSearchPrior: () => ({ domainPrior: 0, searchCredit: 0, prior: 0 }),
     transitionDelta: () => {
       transitionDeltaCalls += 1;
       return 0;
@@ -15981,45 +15991,47 @@ function xSkillCounterfactualCooperativeCheckpointContract() {
     yieldControl: async () => true
   });
   searcher.candidateFaults = [];
-  searcher.materializeValueTerms = () => ({
+  searcher.candidateCompute.materializeValueTerms = () => ({
     exposeMarginal: 0,
     assaultStacksCredit: 0
   });
+  let expired = false;
   const simulator = {
     apply: () => afterState,
     buildLightningOutcomeSets: () => [],
     buildSkillEnergyCounterfactualWorlds: () => {
       counterfactualBuildCalls += 1;
+      expired = true;
       return { beforeWorld: beforeState, afterWorld: afterState };
     }
   };
-  const clock = [0, 0, 1];
   const budget = new SearchBudget({
     timeBudget: 1,
-    now: () => clock.shift() ?? 1
+    now: () => expired ? 1 : 0
   });
-  const candidate = searcher.materializeCandidate({
+  assert.equal(budget.shouldStop(), false);
+  searcher.candidateCompute.simulatorFactory = () => simulator;
+  const receipt = searcher.candidateCompute.compute({
     action,
     beforeState,
     player: beforeState.players[0],
     depth: 1,
     remainingProvenance: null,
-    simulator,
-    context: {},
-    collectDiagnostics: false,
-    budget
+    collectDiagnostics: false
   });
-  assert.equal(candidate, null);
+  assert.ok(receipt.candidate);
+  assert.equal(receipt.timing.completed, true);
+  assert.equal(budget.expandedNodes, 0);
+  assert.equal(budget.shouldStop(), true);
   assert.equal(budget.stopReason, "TIME");
   assert.equal(counterfactualBuildCalls, 1);
-  assert.equal(transitionDeltaCalls, 0);
+  assert.equal(transitionDeltaCalls, 1);
   assert.equal(searcher.candidateFaults.length, 0);
-  assert.equal(searcher.slowestCandidateTimings[0].completed, false);
 }
 
 test(
-  "AI·搜索：X 技能能量反事实 TIME checkpoint 丢弃 partial candidate 且不记 fault",
-  xSkillCounterfactualCooperativeCheckpointContract
+  "AI·搜索：X 技能能量反事实已 admission 后完整返回且不拥有预算",
+  xSkillAtomicComputeContract
 );
 
 /*
@@ -17661,6 +17673,7 @@ test("AI·架构：正式目录无静态依赖环、旧兼容路径或内部 ser
     "Event/Probability/Probability.js",
     "Generator/Action.js",
     "Generator/Generator.js",
+    "Searcher/CandidateCompute.js",
     "Searcher/Pattern.js",
     "Searcher/Rng.js",
     "Searcher/Searcher.js",
@@ -17878,7 +17891,10 @@ test("AI·架构：唯一 Searcher 只通过注入能力消费 Simulator/SearchB
     /cardConfig|gameConfig|characterConfig|skillRegistry|ActionLegality|AiController|\.\.\/policy\/|\.\.\/domain\/|SearchPolicy/
   );
   assert.doesNotMatch(source, /nearTie|chooseCandidate|this\.random/);
-  assert.match(source, /simulatorFactory\(\{\s*searchBudget:budget\s*\}\)/);
+  const computeSource = await readFile(projectFile("js/ai/Searcher/CandidateCompute.js"), "utf8");
+  assert.match(source, /new CandidateCompute\(\{ evaluator, simulatorFactory, generateActions \}\)/);
+  assert.match(computeSource, /simulatorFactory\(\{\s*searchBudget:work\s*\}\)/);
+  assert.doesNotMatch(computeSource, /shouldStop\(|checkpointCurrentWork\(|new SearchBudget|new Searcher|Math\.random|sampleProbabilityWorlds/);
   assert.match(source, /searchBudgetFactory\(\)/);
   assert.throws(() => new Searcher({
     evaluator: {},
@@ -19302,6 +19318,8 @@ test("AI·Domain model 边界：折叠 Model 不回流且 Domain Rule 仍为 aut
 
 // ---- AI 搜索与规划·固定轨迹与预算 ----
 
+registerComputeWorkerTests(test);
+
 
 /*
 功能
@@ -19931,8 +19949,8 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
     assert.equal(outcome.searchStopReason, "TIME");
     assert.equal(outcome.stats.uniqueRootCandidateCount, 4);
     assert.equal(outcome.stats.completedRootCandidateCount, 4);
-    assert.equal(outcome.stats.expanded, 8);
-    assert.equal(outcome.stats.bestValueScore, 1.3264197530864201);
+    assert.equal(outcome.stats.expanded, 21);
+    assert.equal(outcome.stats.bestValueScore, 1.7064197530864191);
     assert.ok(outcome.stats.elapsedMs >= 30);
     assert.ok(outcome.stats.timeObservedAtMs >= 30);
     assert.ok(outcome.stats.searchReturnAtMs >= outcome.stats.timeObservedAtMs);
@@ -19964,7 +19982,7 @@ test("AI·搜索：TIME 深层生成中断保留已完成掠夺/聚能 root incu
 test("AI·搜索：TIME 在候选边界返回赌命者最佳完整 root incumbent", async () => {
   const fixture = await runTimedSearchAcceptanceFixture({
     label: "time-fate-gambler-incumbent",
-    timeBudgetMs: 40,
+    timeBudgetMs: 12,
     actorId: "fate-actor",
     seed: 1815,
     players: [
@@ -19999,9 +20017,9 @@ test("AI·搜索：TIME 在候选边界返回赌命者最佳完整 root incumben
     assert.equal(outcome.searchStopReason, "TIME");
     assert.equal(outcome.stats.uniqueRootCandidateCount, 3);
     assert.equal(outcome.stats.completedRootCandidateCount, 3);
-    assert.equal(outcome.stats.expanded, 9);
+    assert.equal(outcome.stats.expanded, 7);
     assert.equal(outcome.stats.bestValueScore, 0.8983950617283946);
-    assert.ok(outcome.stats.elapsedMs >= 40);
+    assert.ok(outcome.stats.elapsedMs >= 12);
     assert.deepEqual(describeBenchmarkAction(outcome.action), {
       type: "skill",
       cardId: "allIn",
@@ -22186,10 +22204,9 @@ async function runEndSiblingBudgetFixture(
         applied.push(action.type);
         if ((interruptFirstCandidate && applied.length === 1)
           || (interruptAfterFirstCandidate && applied.length === 2)) {
-          if (stopReason === "NODE") searchBudget.observeNode();
-          else if (stopReason === "TIME") clockCalls = Number.POSITIVE_INFINITY;
-          else searchBudget.cancel();
-          searchBudget.checkpointCurrentWork();
+          if (stopReason === "TIME") clockCalls = Number.POSITIVE_INFINITY;
+          assert.equal(searchBudget.shouldStop, undefined);
+          assert.equal(searchBudget.observeNode, undefined);
         }
         return { ...state, playPhaseEnded: action.type === "end" };
       },
@@ -22201,7 +22218,7 @@ async function runEndSiblingBudgetFixture(
         ? new SearchBudget({ nodeBudget: 100 })
         : new SearchBudget({
           timeBudget: 1,
-          now: () => (clockCalls++ < 2 ? 0 : 1)
+          now: () => (clockCalls++ < (interruptAfterFirstCandidate ? 3 : 2) ? 0 : 1)
         }),
     deduplicateActions: (actions) => actions,
     generateActions: () => [],
@@ -22447,7 +22464,7 @@ async function runSearcherFaultBoundaryFixture(mode) {
     }),
     searchBudgetFactory: () => {
       if (mode === "deep-best-time") {
-        const ticks = [0, 1, 2, 3, 4, 100];
+        const ticks = [0, 1, 2, 3, 4, 5, 100];
         return new SearchBudget({ timeBudget: 50, now: () => ticks.shift() ?? 100 });
       }
       return new SearchBudget({ nodeBudget: mode === "deep-best-node" ? 4 : 100 });
@@ -23612,20 +23629,20 @@ test("AI·搜索：TIME/CANCELLED 在 ROOT 未覆盖时不返回 partial incumbe
     assert.equal(result.selected, null, stopReason);
     assert.deepEqual(
       result.applied,
-      stopReason === "TIME" ? ["card", "card"] : ["card"],
+      ["card"],
       `${stopReason} 只能在下一候选边界停止`
     );
     assert.equal(result.stats.stopReason, stopReason);
-    assert.equal(result.stats.expanded, stopReason === "TIME" ? 2 : 1);
+    assert.equal(result.stats.expanded, 1);
     assert.equal(
       result.stats.completedRootCandidateCount,
-      stopReason === "TIME" ? 2 : 1
+      1
     );
     assert.deepEqual(result.stats.bestSequence, []);
   }
 });
 
-test("AI·搜索：TIME/NODE cooperative materialize interruption 不记录 candidate fault", async () => {
+test("AI·搜索：TIME/NODE admission 停止前的 atomic candidate 完整且不记 fault", async () => {
   for (const stopReason of ["TIME", "NODE"]) {
     const result = await runEndSiblingBudgetFixture(stopReason, {
       siblingType: "card",
@@ -23634,11 +23651,11 @@ test("AI·搜索：TIME/NODE cooperative materialize interruption 不记录 cand
     assert.equal(result.selected, null, stopReason);
     assert.equal(result.stats.stopReason, stopReason);
     assert.equal(result.stats.candidateFaults.length, 0, stopReason);
-    assert.equal(result.stats.completedRootCandidateCount, 0, stopReason);
+    assert.equal(result.stats.completedRootCandidateCount, 1, stopReason);
   }
 });
 
-test("AI·搜索：ROOT sibling 中断不因已有 candidate 返回残缺 incumbent", async () => {
+test("AI·搜索：ROOT sibling admission 中断不因已有 candidate 返回残缺 incumbent", async () => {
   for (const stopReason of ["TIME", "NODE"]) {
     const result = await runEndSiblingBudgetFixture(stopReason, {
       siblingType: "card",
@@ -23648,7 +23665,7 @@ test("AI·搜索：ROOT sibling 中断不因已有 candidate 返回残缺 incumb
     assert.equal(result.selected, null, stopReason);
     assert.equal(result.stats.stopReason, stopReason);
     assert.equal(result.stats.candidateFaults.length, 0, stopReason);
-    assert.equal(result.stats.completedRootCandidateCount, 1, stopReason);
+    assert.equal(result.stats.completedRootCandidateCount, 2, stopReason);
     assert.deepEqual(result.stats.bestSequence, [], stopReason);
   }
 });
@@ -25929,6 +25946,7 @@ async function frArch14ControllerWorkerClientHeartbeat() {
       this.listeners = new Map();
       this.terminated = false;
       this.handler = createSearchWorkerMessageHandler({
+        candidateExecutor: null,
         postMessage: (data) => {
           setTimeout(() => {
             if (!this.terminated) this.emit("message", structuredClone(data));
@@ -25946,7 +25964,7 @@ async function frArch14ControllerWorkerClientHeartbeat() {
         if (!this.terminated) this.handler.handleMessage(structuredClone(message));
       }, 0);
     }
-    terminate() { this.terminated = true; }
+    terminate() { this.terminated = true; this.handler.dispose(); }
     emit(type, data) {
       const event = type === "message" ? { data } : data ?? {};
       for (const listener of this.listeners.get(type) ?? []) listener(event);
@@ -26777,12 +26795,14 @@ async function runTimedWorkerSearch(timeBudgetMs, tickMs, cardDefinitionIds, nod
 
 test("AI·搜索配置：较长单步预算在同一局面物化更多完整节点", async () => {
   const cards = ["charge", "exposeWeakness", "assault", "scout", "recover", "harvest"];
-  const fast = await runTimedWorkerSearch(600, 10, cards);
-  const balanced = await runTimedWorkerSearch(1500, 10, cards);
-  const quality = await runTimedWorkerSearch(3000, 10, cards);
+  // 时钟只在 admission 等 Coordinator 边界被读取；固定步长让前两档仍有未派发工作。
+  const fast = await runTimedWorkerSearch(600, 30, cards);
+  const balanced = await runTimedWorkerSearch(1500, 30, cards);
+  const quality = await runTimedWorkerSearch(3000, 30, cards);
   assert.equal(fast.searchStopReason, "TIME");
-  assert.ok(balanced.stats.expanded > fast.stats.expanded, JSON.stringify({ fast: fast.stats, balanced: balanced.stats }));
-  assert.ok(quality.stats.expanded > balanced.stats.expanded, JSON.stringify({ balanced: balanced.stats, quality: quality.stats }));
+  assert.equal(balanced.searchStopReason, "TIME");
+  assert.ok(balanced.stats.expanded > fast.stats.expanded, "1500ms 应完成更多节点");
+  assert.ok(quality.stats.expanded > balanced.stats.expanded, "3000ms 应完成更多节点");
 });
 
 test("AI·搜索配置：简单局面三档都完整搜索并返回同一动作", async () => {
@@ -28208,7 +28228,7 @@ test("AI·互利：Counter 的部分 resolution 由同一 effect Worlds 单一 a
   ) > 1e-12);
   assert.equal(terms.transitionOptionPoints, 0);
   const callsAfterApply = counterDecisionCalls;
-  const searcher = Object.assign(Object.create(Searcher.prototype), {
+  const searcher = Object.assign(Object.create(CandidateCompute.prototype), {
     evaluator: {
       evaluateTransition: evaluator.evaluateTransition.bind(evaluator),
       requiresActionLightningOutcomes: () => false,

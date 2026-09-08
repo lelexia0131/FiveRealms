@@ -18,6 +18,7 @@ WorkerSearchRuntime。
 不得 import composition、application、UI/Audio 或 Domain transitions；不得使用 Math.random。
 */
 import { runSearchRequest } from "./WorkerSearchRuntime.js";
+import { ComputeWorkerPool } from "./ComputeWorkerPool.js";
 
 /*
 功能
@@ -44,9 +45,13 @@ handler 局部 activeRequestId/cancelled。
 边界与不变量
 每个 handler 独立；不共享跨 Worker 状态；heartbeat 只证明当前 Worker 仍在执行，不表示搜索完成。
 */
-export function createSearchWorkerMessageHandler({ postMessage }) {
+export function createSearchWorkerMessageHandler({ postMessage, candidateExecutor = undefined }) {
   let activeRequestId = null;
   let cancelled = false;
+  let disposed = false;
+  const computePool = candidateExecutor !== undefined ? candidateExecutor : (typeof Worker === "function"
+    ? new ComputeWorkerPool({ poolSize:Math.min(4, Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 4) - 2)) })
+    : null);
 
 /*
 功能
@@ -74,10 +79,14 @@ runSearchRequest、postMessage、setTimeout。
 一个 requestId 只允许一个 terminal outcome；HEARTBEAT 可重复且不清理请求；CANCEL 后只运输 Searcher 已完成的 incumbent，Main Thread 仍负责状态验收。
 */
 async function handleMessage(message) {
+  if (disposed) return;
   const type = message?.type;
   const requestId = message?.requestId ?? null;
   if (type === "CANCEL") {
-    if (activeRequestId === requestId) cancelled = true;
+    if (activeRequestId === requestId) {
+      cancelled = true;
+      computePool?.cancel();
+    }
     return;
   }
   if (!["SEARCH", "POST_COUNTER_RESOURCE", "RESPONSE_DECISION", "RESCUE_ASSESSMENT", "PUBLIC_CARD"].includes(type)
@@ -123,7 +132,8 @@ async function handleMessage(message) {
   heartbeat 不携带搜索结果或进度，不改变 SearchBudget；同步搜索检查点可直接 postMessage，无需等待 Worker timer 回调。
   */
   function reportHeartbeat(force = false, observedAt = null) {
-    const now = Number.isFinite(Number(observedAt))
+    if (disposed || activeRequestId !== requestId) return false;
+    const now = observedAt !== null && Number.isFinite(Number(observedAt))
       ? Number(observedAt)
       : globalThis.performance?.now?.() ?? Date.now();
     if (!force && heartbeatIntervalMs > 0 && now - lastHeartbeatAt < heartbeatIntervalMs) {
@@ -197,26 +207,94 @@ async function handleMessage(message) {
     return !cancelled;
   }
 
+  let heartbeatTimer = null;
+  let lastCompleted = 0;
+  /*
+  功能
+  在纯计算确有完成进度时续期 Coordinator heartbeat。
+
+  调用方
+  当前 SEARCH 的定时检查。
+
+  输入
+  无。
+
+  输出
+  无。
+
+  读取状态
+  ComputeWorkerPool 已完成计数。
+
+  写入状态
+  lastCompleted 与 heartbeat 时间。
+
+  调用函数
+  reportHeartbeat。
+
+  边界与不变量
+  乱序完成也能证明进度；只有 timer 存活不能掩盖停滞 candidate，hard watchdog 仍按失联时间触发。
+  */
+  function reportComputeProgress() {
+    const completed = computePool.stats.completed;
+    if (completed > lastCompleted && reportHeartbeat()) lastCompleted = completed;
+  }
   try {
     reportHeartbeat(true);
+    // 只有真实回执推进才续期，避免 Coordinator 的空转 timer 隐藏 Compute Worker 卡死。
+    if (computePool && type === "SEARCH" && heartbeatIntervalMs > 0) {
+      heartbeatTimer = setInterval(reportComputeProgress, heartbeatIntervalMs);
+    }
     const outcome = await runSearchRequest(message.request, {
       now:runtimeNow,
-      yieldControl:yieldToWorkerEventLoop
+      yieldControl:yieldToWorkerEventLoop,
+      candidateExecutor:computePool
     });
-    postMessage({ type:"RESULT", requestId, outcome });
+    if (activeRequestId === requestId) postMessage({ type:"RESULT", requestId, outcome });
   } catch (error) {
-    postMessage({
+    if (activeRequestId === requestId) postMessage({
       type:"ERROR",
       requestId,
       workerError:error instanceof Error ? error.message : String(error)
     });
   } finally {
+    clearInterval(heartbeatTimer);
     if (activeRequestId === requestId) activeRequestId = null;
     cancelled = false;
   }
 }
 
-  return { handleMessage };
+  /*
+  功能
+  释放 protocol 所拥有的全部 Compute Worker 并使旧结果失效。
+
+  调用方
+  Worker lifecycle 测试与宿主销毁入口。
+
+  输入
+  无。
+
+  输出
+  无。
+
+  读取状态
+  当前 protocol 与 computePool。
+
+  写入状态
+  activeRequestId、cancelled 与池生命周期。
+
+  调用函数
+  ComputeWorkerPool.dispose。
+
+  边界与不变量
+  已失效请求不得发布 terminal，销毁不触发 local retry。
+  */
+  function dispose() {
+    disposed = true;
+    activeRequestId = null;
+    cancelled = true;
+    computePool?.dispose();
+  }
+  return { handleMessage, dispose };
 }
 
 if (typeof self !== "undefined") {

@@ -1,7 +1,7 @@
 # FiveRealms AI Engine 2.0
 
 当前状态：AI-ARCH-0 至 AI-ARCH-10 COMPLETE；STEP 5.8 VALUE AUTHORITY / TEST DEBT CLOSURE COMPLETE，AI architecture FROZEN。
-架构结论：AI core 严格为 18 个 JavaScript 文件；Immediate/end opportunity 死链、SpyGap Final 一级泄漏、production residue 与 active AI test debt 均已关闭。
+架构结论：AI core 为 19 个 JavaScript 文件（含共享的 CandidateCompute）；Immediate/end opportunity 死链、SpyGap Final 一级泄漏、production residue 与 active AI test debt 均已关闭。
 本轮语义闭合基线：`6d9fcb8 STEP 5.7 — REMOTE VERIFIED`
 历史审计基线：`e16a429 fix: preserve end fallback against non-positive actions`
 最新校验日期：2026-08-25
@@ -29,7 +29,7 @@
 
 ## Current Architecture Snapshot
 
-当前生产 AI 严格为 18 个 JavaScript 模块：
+当前生产 AI 为 19 个 JavaScript 模块：
 
 | Authority | 当前正式 owner | 边界 |
 |---|---|---|
@@ -61,9 +61,11 @@ REAL GAME
 
 `Controller.js` 内部的 `createRuntimeComposition` 是唯一 Evaluator/Simulator semantic graph；公开 `createSearchEngine`、`executeSearchRequest` 与 `executeDecisionRequest`。Worker 只通过 Controller public facade 执行计算；application/composition 不直接构造 internal `Rng`。
 
+正式 Search 由 Coordinator 内唯一 Searcher 拥有 traversal、SearchBudget、SearchRng、Beam 与 ordering。`ComputeWorkerPool` 最多四个 Worker，只并行 sibling candidate compute；Local 与 Worker 共用 `Searcher/CandidateCompute.js`，结果按 canonical index join，END 等全部 required siblings 完整后才 finalize。Compute Worker 不拥有 RNG、Budget 或 Beam，隐藏样本仍由 Coordinator 按原顺序生成。NODE 在 poolSize 1/2/4 下保持确定性。TIME 是 soft candidate-admission deadline：只有向空闲 Worker 实际派发才计 admission，准备/等待任务不计；deadline 后不再启动新 candidate，在途数不超过 poolSize，已在途 atomic candidate 可完整完成并报告 TIME，因此墙钟可有限超过 timeBudget。预算数值不变，hard watchdog 与 cancellation 继续独立保护异常长任务。
+
 浏览器使用同一个 Dedicated Worker 和同一个 `SearchWorkerClient`，除普通 `SEARCH` 外，还接收完整的 `POST_COUNTER_RESOURCE`、`RESPONSE_DECISION`、`RESCUE_ASSESSMENT` 和 `PUBLIC_CARD`。Renderer 经现有 Fact/World authority 过滤输入；资源候选枚举、Future resource projection、响应反事实、Lightning outcomes 与最终 Evaluator 比较在 Worker 内完成，只返回最终 selection、bool、assessment 或 cardId。公开池领取/换装的 receipt Worlds 同样在 Worker 内计算；不逐候选发消息，不回传中间 Worlds。
 
-所有请求共用单个 pending、requestId、cancel/dispose 和 Worker lifecycle。普通 Search 的 TIME/NODE/watchdog 保持原契约；完整响应/资源决策没有搜索截止时间，也不套用 Search 的失联 watchdog，因为其合法同步工作可能没有可发送 heartbeat 的检查点。取消或退出仍由 client 终止占用的 Worker。真实计算异常通过 ERROR reject，不能改写为 PASS/END。
+所有请求共用单个 pending、requestId、cancel/dispose 和 Worker lifecycle。普通 Search 的预算数值、owner 与 watchdog 保持原契约，TIME 中断粒度采用上述 admission boundary；完整响应/资源决策没有搜索截止时间，也不套用 Search 的失联 watchdog，因为其合法同步工作可能没有可发送 heartbeat 的检查点。取消或退出仍由 client 终止占用的 Worker。真实计算异常通过 ERROR reject，不能改写为 PASS/END。
 
 返回后 Controller 检查 session、gameId、stateVersion、phase、round、当前轮到的角色及实体身份，再按 Generator 的规范 selection 与当前资源重绑；Application 保留最终合法性校验和真实支付/结算权威。纯响应/资源计算不消耗 RNG；unknown hand 实体绑定仍由 Main 在验收成功后按原顺序推进 AI RNG。`lastAuxiliaryDecisionDiagnostics` 分别记录 preparation、postMessage、Worker compute、异步等待和 acceptance 时间，不把等待误报成 Renderer 同步阻塞。
 
@@ -1562,6 +1564,7 @@ js/ai/
 │  └─ Action.js
 ├─ Searcher/
 │  ├─ Searcher.js
+│  ├─ CandidateCompute.js
 │  ├─ Rng.js
 │  └─ Pattern.js
 ├─ Event/
@@ -1582,7 +1585,7 @@ js/ai/
    └─ CardValue.js
 ```
 
-不存在 compatibility forwarder、额外 Query/DTO/Policy/Service owner 或第十九个 AI JavaScript 文件。canonical Action 只在 `Generator/Action.js` 定义，canonical World 只在 `Simulator/World.js` 定义。
+不存在 compatibility forwarder 或额外 Query/DTO/Policy/Service owner。`CandidateCompute.js` 只承接 sibling 纯计算；canonical Action 只在 `Generator/Action.js` 定义，canonical World 只在 `Simulator/World.js` 定义。
 
 ### 最终 owner 与吸收结果
 

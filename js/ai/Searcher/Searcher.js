@@ -21,39 +21,10 @@ import {
   PROBABILITY_CLASSIFICATION
 } from "../Event/Probability/Probability.js";
 import {
-  assertCompleteTransitionTerms,
   isValidFinalUtility
 } from "../Evaluator/Evaluator.js";
+import { CandidateCompute } from "./CandidateCompute.js";
 import { actionIntentKey, actionSearchKey } from "../Generator/Action.js";
-
-/*
-功能
-读取只服务搜索性能诊断的单调墙钟。
-
-调用方
-Searcher candidate/value/counterfactual 诊断与 SearchBudget operation 诊断。
-
-输入
-无。
-
-输出
-高精度毫秒时间；不支持 performance 时回退 Date.now。
-
-读取状态
-globalThis.performance。
-
-写入状态
-无。
-
-调用函数
-performance.now、Date.now。
-
-边界与不变量
-不得调用注入的预算时钟，避免诊断改变确定性 TIME/NODE 观察次数或搜索选择。
-*/
-function searchDiagnosticNow() {
-  return globalThis.performance?.now?.() ?? Date.now();
-}
 
 /*
 功能
@@ -134,7 +105,8 @@ export class Searcher {
     deduplicateActions,
     generateActions,
     sampleUnknownHands,
-    yieldControl
+    yieldControl,
+    candidateExecutor = null
   } = {}) {
     const services = {
       evaluator,
@@ -161,6 +133,9 @@ export class Searcher {
     }
     Object.assign(this, services);
     Object.assign(this, capabilities);
+    this.candidateCompute = new CandidateCompute({ evaluator, simulatorFactory, generateActions });
+    this.candidateExecutor = candidateExecutor;
+    this.computeBatchId = 0;
     this.config = Object.freeze({ ...config });
     this.hiddenSampleCount = this.config.hiddenSamples;
     this.lastSearchStats = null;
@@ -524,236 +499,7 @@ considerIncumbent 与 prune。
     };
   }
 
-  /*
-  功能
-  为 diagnostics 中已识别的响应消费构造配对 World，并交给 Evaluator 计算归属价值。
 
-  调用方
-  evaluateCandidate 的显式 diagnostics 路径。
-
-  输入
-  before/after World、canonical Action、viewer、Simulator 与响应 attribution 描述。
-
-  输出
-  带纯 evaluation 结果的 attribution 数组。
-
-  读取状态
-  Evaluator 描述的移除项与 Simulator transition。
-
-  写入状态
-  只写 Simulator 返回的独立反事实 World。
-
-  调用函数
-  Simulator.buildResponseCounterfactualWorlds/buildLightningOutcomeSets、Evaluator.evaluateResponseCounterfactual。
-
-  边界与不变量
-  Searcher 只编排 transition/value owner；响应价值只作诊断，不参与 final value。
-  */
-  evaluateResponseAttributions(before, action, after, viewerId, simulator) {
-    const descriptions = this.evaluator.describeResponseAttributions(
-      before,
-      action,
-      after,
-      viewerId
-    );
-    return descriptions.map((description) => {
-      const worlds = simulator.buildResponseCounterfactualWorlds(
-        before,
-        action,
-        description.responderId,
-        description.remove,
-        after
-      );
-      const actualLightningOutcomeSets = simulator.buildLightningOutcomeSets(
-        worlds.actualWorld
-      );
-      const counterfactualLightningOutcomeSets = simulator.buildLightningOutcomeSets(
-        worlds.counterfactualWorld
-      );
-      return {
-        ...description,
-        evaluation:this.evaluator.evaluateResponseCounterfactual(
-          worlds.actualWorld,
-          worlds.counterfactualWorld,
-          description.responderId,
-          viewerId,
-          actualLightningOutcomeSets,
-          counterfactualLightningOutcomeSets
-        )
-      };
-    });
-  }
-
-  /*
-  功能
-  把一次已经模拟完成的 canonical Action 组装为完整可比较搜索候选。
-
-  调用方
-  materializeCandidate。
-
-  输入
-  动作前后 World、行动者、深度、provenance、Simulator、上下文、诊断开关与 SearchBudget。
-
-  输出
-  单一候选估值记录；X 技能另带由 Simulator 构造的同 World E+1 完整 StateDelta。
-
-  读取状态
-  Searcher 反事实项、Evaluator 与搜索上下文。
-
-  写入状态
-  只写独立候选记录和显式诊断。
-
-  调用函数
-  materializeValueTerms、Simulator.getTransitionEvaluationWorlds/buildSkillEnergyCounterfactualWorlds、
-  Evaluator.evaluateTransition/transitionDelta/composeSearchPrior。
-
-  边界与不变量
-  Searcher 只机械组装各 owner 的结果；X 技能 World clone、能量替换与技能结算全部归 Simulator，
-  Searcher 不写 World、不定义 value formula；Simulator 已准备的 effect baseline 只透传给 Evaluator；
-  调用方必须 finalize 后才能登记候选。
-  */
-  evaluateCandidate({
-    action,
-    beforeState,
-    afterState,
-    player,
-    depth,
-    remainingProvenance,
-    simulator,
-    context,
-    collectDiagnostics = false,
-    searchBudget = null
-  }) {
-    const terms = this.materializeValueTerms({
-      beforeState,
-      afterState,
-      action,
-      actorId:player.id,
-      remainingProvenance,
-      simulator,
-      searchBudget
-    });
-    const beforeLightningOutcomeSets = simulator.buildLightningOutcomeSets(beforeState);
-    const afterLightningOutcomeSets = simulator.buildLightningOutcomeSets(afterState);
-    const transitionEvaluationWorlds = simulator.getTransitionEvaluationWorlds?.(afterState)
-      ?? null;
-    const baseTerms = assertCompleteTransitionTerms(this.evaluator.evaluateTransition({
-      action,
-      player,
-      beforeState,
-      afterState,
-      effectBaselineState:transitionEvaluationWorlds?.effectBaselineState ?? null,
-      effectResolutionScale:transitionEvaluationWorlds?.effectResolutionScale ?? 1,
-      depth,
-      beforeLightningOutcomeSets,
-      afterLightningOutcomeSets
-    }));
-    let nextEnergyStateDelta = null;
-    if (Number.isFinite(baseTerms.xSkillNextEnergy)) {
-      const currentEnergy = Math.max(
-        0,
-        Number(beforeState.players.find((entry) => entry.id === player.id)?.energy) || 0
-      );
-      if (baseTerms.xSkillNextEnergy === currentEnergy) {
-        nextEnergyStateDelta = baseTerms.stateDelta;
-      } else {
-        searchBudget?.checkpointCurrentWork?.();
-        searchBudget?.observeSimulation();
-        const counterfactual = simulator.buildSkillEnergyCounterfactualWorlds(
-          beforeState,
-          action,
-          baseTerms.xSkillNextEnergy
-        );
-        searchBudget?.checkpointCurrentWork?.();
-        const counterfactualStartedAt = searchDiagnosticNow();
-        try {
-          nextEnergyStateDelta = this.evaluator.transitionDelta(
-            counterfactual.beforeWorld,
-            counterfactual.afterWorld,
-            player.id,
-            simulator.buildLightningOutcomeSets(counterfactual.beforeWorld),
-            simulator.buildLightningOutcomeSets(counterfactual.afterWorld)
-          );
-        } finally {
-          searchBudget?.observeCounterfactual(
-            2,
-            Math.max(0, searchDiagnosticNow() - counterfactualStartedAt)
-          );
-        }
-        searchBudget?.checkpointCurrentWork?.();
-      }
-    }
-    const completeTerms = assertCompleteTransitionTerms({
-      ...baseTerms,
-      nextEnergyStateDelta
-    });
-    const responseAttributions = collectDiagnostics
-      ? this.evaluateResponseAttributions(
-          beforeState,
-          action,
-          afterState,
-          player.id,
-          simulator
-        )
-      : [];
-    const candidateLedger = collectDiagnostics
-      ? this.evaluator.computeCandidateLedger(
-          beforeState,
-          action,
-          afterState,
-          player.id,
-          true,
-          beforeLightningOutcomeSets,
-          afterLightningOutcomeSets,
-          responseAttributions
-        )
-      : null;
-    const responseNet = (candidateLedger?.responses ?? [])
-      .reduce((sum, response) => sum + (response.netValue ?? 0), 0);
-    const terminal = Boolean(afterState.playPhaseEnded);
-    const lightningOutcomeWorlds = this.evaluator.requiresActionLightningOutcomes(action)
-      ? simulator.buildLightningOutcomeWorlds(
-          beforeState,
-          beforeState.players.find((entry) => entry.id === player.id) ?? player,
-          1
-        )
-      : [];
-    const searchPrior = this.evaluator.composeSearchPrior({
-      action,
-      player,
-      state:beforeState,
-      lightningOutcomeWorlds,
-      searchBudget,
-      hiddenWorlds:this.evaluator.requiresHiddenWorldPrior(action)
-        ? this.getUnknownHandEstimate(context).worlds
-        : [],
-      exposeMarginal:terms.exposeMarginal,
-      assaultStacksCredit:terms.assaultStacksCredit
-    });
-    const { domainPrior, searchCredit, prior } = searchPrior;
-    return {
-      action,
-      state:afterState,
-      comparisonTerms:this.evaluator.resourceSelectionPreference?.(
-        action,
-        player,
-        beforeState,
-        afterState
-      ) ?? null,
-      terminal,
-      baseTerms:completeTerms,
-      nextEnergyStateDelta,
-      baseTransition:baseTerms.baseTransition,
-      exposeMarginal:terms.exposeMarginal,
-      assaultStacksCredit:terms.assaultStacksCredit,
-      remainingProvenance:terms.nextProvenance,
-      candidateLedger,
-      responseNet,
-      domainPrior,
-      searchCredit,
-      prior
-    };
-  }
 
   /*
   功能
@@ -870,124 +616,6 @@ considerIncumbent 与 prune。
     return terminalIndex >= 0 ? sequence.slice(0, terminalIndex + 1) : [...sequence];
   }
 
-  /*
-  功能
-  物化一个普通候选的 Simulator、Evaluator 与 finalize 链。
-
-  调用方
-  materializeSiblingCandidates。
-
-  输入
-  canonical Action、父 World、行动者、深度、provenance、Simulator、搜索上下文与诊断选项。
-
-  输出
-  完整候选；预算中断返回 null，ordinary candidate fault 向 search 边界抛出。
-
-  读取状态
-  Simulator、Evaluator 与 SearchBudget 工作计数。
-
-  写入状态
-  只更新工作计数、candidate fault 与纯数字阶段耗时 diagnostics；普通故障不恢复搜索。
-
-  调用函数
-  Simulator.apply、evaluateCandidate、finalizeCandidate、recordCandidateFault、recordCandidateTiming。
-
-  边界与不变量
-  candidate atomicity 只保证 partial candidate 不得登记，不代表 candidate 不可中断；
-  safe checkpoint 的 TIME/NODE signal 会 unwind 当前未完成 candidate，且不记录 candidate fault；
-  ordinary candidate fault 必须终止本次搜索，不能把缺失候选的空间当成正式比较集合；
-  END 必须由 sibling group 在完整上下文中单独 finalize。
-  */
-  materializeCandidate({
-    action,
-    beforeState,
-    player,
-    depth,
-    remainingProvenance,
-    simulator,
-    context,
-    collectDiagnostics,
-    budget
-  }) {
-    const startedAt = searchDiagnosticNow();
-    const workBefore = {
-      simulationCalls:budget.simulationCalls,
-      cloneCalls:budget.cloneCalls,
-      probabilityOperations:budget.probabilityOperations,
-      probabilityWorldBranches:budget.probabilityWorldBranches,
-      stateUtilityCalls:budget.stateUtilityCalls,
-      stateUtilityDurationMs:budget.stateUtilityDurationMs ?? 0,
-      counterfactualCalls:budget.counterfactualCalls,
-      counterfactualDurationMs:budget.counterfactualDurationMs ?? 0,
-      actionGenerationPhysicalCandidates:budget.actionGenerationPhysicalCandidates,
-      actionGenerationUniqueCandidates:budget.actionGenerationUniqueCandidates
-    };
-    let mainSimulatorApplyMs = 0;
-    let valueMaterializationMs = 0;
-    let completed = false;
-    try {
-      budget.observeSimulation();
-      const applyStartedAt = searchDiagnosticNow();
-      let state;
-      try {
-        state = simulator.apply(beforeState, action);
-      } finally {
-        mainSimulatorApplyMs = Math.max(0, searchDiagnosticNow() - applyStartedAt);
-      }
-      const valueStartedAt = searchDiagnosticNow();
-      let candidate;
-      try {
-        candidate = this.evaluateCandidate({
-          action,
-          beforeState,
-          afterState:state,
-          player,
-          depth,
-          remainingProvenance,
-          simulator,
-          context,
-          collectDiagnostics,
-          searchBudget:budget
-        });
-      } finally {
-        valueMaterializationMs = Math.max(0, searchDiagnosticNow() - valueStartedAt);
-      }
-      const result = action.type === "end" ? candidate : this.finalizeCandidate(candidate);
-      completed = true;
-      return result;
-    } catch (error) {
-      if (budget.isCurrentWorkInterruption(error)) return null;
-      const fault = this.recordCandidateFault(action, "materialize", error);
-      const candidateError = new Error(
-        `Searcher candidate materialize fault [${actionSearchKey(action)}]: ${fault.message}`
-      );
-      candidateError.name = "CandidateMaterializationError";
-      throw candidateError;
-    } finally {
-      this.recordCandidateTiming({
-        action,
-        depth,
-        completed,
-        durationMs:Math.max(0, searchDiagnosticNow() - startedAt),
-        mainSimulatorApplyMs,
-        valueMaterializationMs,
-        simulationCalls:budget.simulationCalls - workBefore.simulationCalls,
-        cloneCalls:budget.cloneCalls - workBefore.cloneCalls,
-        probabilityOperations:budget.probabilityOperations - workBefore.probabilityOperations,
-        probabilityWorldBranches:budget.probabilityWorldBranches - workBefore.probabilityWorldBranches,
-        stateUtilityCalls:budget.stateUtilityCalls - workBefore.stateUtilityCalls,
-        stateUtilityDurationMs:(budget.stateUtilityDurationMs ?? 0)
-          - workBefore.stateUtilityDurationMs,
-        counterfactualCalls:budget.counterfactualCalls - workBefore.counterfactualCalls,
-        counterfactualDurationMs:(budget.counterfactualDurationMs ?? 0)
-          - workBefore.counterfactualDurationMs,
-        actionGenerationPhysicalCandidates:budget.actionGenerationPhysicalCandidates
-          - workBefore.actionGenerationPhysicalCandidates,
-        actionGenerationUniqueCandidates:budget.actionGenerationUniqueCandidates
-          - workBefore.actionGenerationUniqueCandidates
-      });
-    }
-  }
 
   /*
   功能
@@ -1284,24 +912,24 @@ search 的 root 与逐层 beam 完整节点登记点。
   search 的 root 与逐层 beam expansion。
 
   输入
-  同 parent 的 canonical Actions、父 World/provenance、行动者、深度、Simulator、预算、
-  搜索上下文、结构、会话 ID，以及此前是否已有完整 incumbent。
+  同 parent 的 canonical Actions、父 World/provenance、行动者、深度、预算、
+  搜索上下文、结构与会话 ID。
 
   输出
   完整 candidates，以及 stopped/cancelled 状态。
 
   读取状态
-  Simulator、Evaluator、SearchBudget 与 yieldControl。
+  CandidateCompute/executor、Evaluator、SearchBudget 与 yieldControl。
 
   写入状态
   只更新完整节点工作计数和 candidate fault diagnostics；普通故障直接上抛。
 
   调用函数
-  materializeCandidate、finalizeCandidate、SearchBudget.shouldStop/observeNode、continueAfterYield。
+  CandidateCompute.compute/executor.runBatch、finalizeCandidate、SearchBudget.shouldStop/observeNode、continueAfterYield。
 
   边界与不变量
-  TIME/NODE 可在候选边界阻止新工作，也可经 safe checkpoint unwind 未完成 candidate；
-  candidate atomicity 只保证 partial candidate 不得进入完整候选或 incumbent；
+  TIME 只在空闲 executor 的 admission 边界阻止新工作；已派发 candidate 完整返回。
+  NODE 在 Searcher 预留 canonical non-END 位置，回执按 canonical index 登记；
   END 只有在全部 canonical siblings 都成功物化时才可 finalize；candidate fault 不得静默丢失当前候选后继续比较。
   */
   async materializeSiblingCandidates({
@@ -1310,51 +938,168 @@ search 的 root 与逐层 beam 完整节点登记点。
     parentProvenance,
     depth,
     player,
-    simulator,
     budget,
     context,
     structure,
     gameId,
-    collectDiagnostics = false,
-    hasIncumbent = false
+    collectDiagnostics = false
   }) {
     const completeCandidates = [];
     const materializedCandidates = [];
     let endCandidate = null;
     let attemptedAll = true;
-    for (const action of actions) {
-      if ((hasIncumbent || completeCandidates.length > 0) && budget.shouldStop()) {
+    let admittedNodes = 0;
+    /*
+    功能
+    在空闲 executor 真正派发前按 canonical index 准备一个 atomic candidate。
+
+    调用方
+    ComputeWorkerPool FIFO dispatch 或本地串行循环。
+
+    输入
+    同 parent 的 canonical index。
+
+    输出
+    data-only compute input；预算不允许时返回 null。
+
+    读取状态
+    SearchBudget、父 World、canonical Actions 与隐藏样本缓存。
+
+    写入状态
+    Searcher 的 admission 计数与惰性采样缓存。
+
+    调用函数
+    SearchBudget.shouldStop、getUnknownHandEstimate。
+
+    边界与不变量
+    NODE 为尚未 join 的 non-END 预留位置，不能超出原串行前缀；TIME 每次实际派发都检查。
+    Worker 不获得 Budget 或 RNG；等待任务不提前采样，准备跨期时不得登记 admission。
+    */
+    const admit = (canonicalIndex) => {
+      const action = actions[canonicalIndex];
+      const nodeLimit = budget.nodeBudget !== null
+        && budget.expandedNodes + admittedNodes >= budget.nodeBudget;
+      if (budget.shouldStop() || nodeLimit) {
         attemptedAll = false;
-        break;
+        return null;
       }
-      const candidate = this.materializeCandidate({
+      const hadHiddenEstimate = Boolean(context.unknownHandEstimate);
+      const input = {
         action,
         beforeState:parentState,
         player,
         depth,
         remainingProvenance:parentProvenance,
-        simulator,
-        context,
+        lightningCache:this.candidateCaches.get(parentState),
         collectDiagnostics,
-        budget
-      });
-      if (!candidate) continue;
+        hiddenWorlds:this.evaluator.requiresHiddenWorldPrior(action)
+          ? this.getUnknownHandEstimate(context).worlds
+          : []
+      };
+      // 首次隐藏采样是同步准备工作，可能跨过 deadline；准备完成才允许实际 admission。
+      if (!hadHiddenEstimate && context.unknownHandEstimate && budget.shouldStop()) {
+        attemptedAll = false;
+        return null;
+      }
+      if (action.type !== "end") admittedNodes += 1;
+      return input;
+    };
+    let faultIndex = 0;
+    /*
+    功能
+    按 canonical 顺序把完整 receipt 登记为候选。
+
+    调用方
+    ComputeWorkerPool 的串行 join chain 与 Local executor。
+
+    输入
+    完整计算回执与 canonical index。
+
+    输出
+    可继续返回 true；取消返回 false。
+
+    读取状态
+    Evaluator、SearchBudget 与既定 yield 频率。
+
+    写入状态
+    完整节点计数、候选集合、闪电缓存和诊断。
+
+    调用函数
+    finalizeCandidate、observeNode、continueAfterYield。
+
+    边界与不变量
+    不受 Worker 完成顺序影响；END 暂存，必须等同 parent 所有 required siblings 完整。
+    */
+    const join = async (receipt, canonicalIndex) => {
+      if (budget.stopReason === "CANCELLED") return false;
+      faultIndex = canonicalIndex;
+      const action = actions[canonicalIndex];
+      this.candidateCaches.set(parentState, receipt.beforeLightningCache);
+      for (const event of receipt.events) budget[event.name](...event.args);
+      this.recordCandidateTiming(receipt.timing);
+      const rawCandidate = { ...receipt.candidate, action };
+      this.candidateCaches.set(rawCandidate.state, receipt.afterLightningCache);
+      const candidate = action.type === "end" ? rawCandidate : this.finalizeCandidate(rawCandidate);
       candidate.completedAtWorkCount = budget.simulationCalls;
       materializedCandidates.push(candidate);
       if (action.type === "end") {
         endCandidate = candidate;
       } else {
         completeCandidates.push(candidate);
+        admittedNodes -= 1;
         budget.observeNode();
       }
       if (budget.expandedNodes > 0
         && budget.expandedNodes % structure.yieldEvery === 0) {
         budget.observeYield();
         if (!(await this.continueAfterYield(budget, gameId))) {
-          return { candidates:completeCandidates, stopped:true, cancelled:true };
+          attemptedAll = false;
+          return false;
         }
       }
+      return true;
+    };
+    let receipts;
+    try {
+      if (this.candidateExecutor) {
+        receipts = [];
+        // 根 World 尚无缓存时，首个真实 candidate 先完整返回；其余 siblings 共享同一纯数据缓存。
+        // 深层父 World 的缓存已随上一层 receipt 返回，不需要重复准备或额外模拟。
+        if (!this.candidateCaches.has(parentState) && actions.length) {
+          receipts = await this.candidateExecutor.runBatch({ batchId:++this.computeBatchId, count:1, admit, join });
+          if (receipts.length) this.candidateCaches.set(parentState, receipts[0].beforeLightningCache);
+        }
+        if (attemptedAll && receipts.length < actions.length) {
+          receipts.push(...await this.candidateExecutor.runBatch({
+            batchId:++this.computeBatchId, count:actions.length, startIndex:receipts.length, admit, join
+          }));
+        }
+      } else {
+        receipts = [];
+        for (let canonicalIndex = 0; canonicalIndex < actions.length; canonicalIndex += 1) {
+          const input = admit(canonicalIndex);
+          if (!input) break;
+          faultIndex = canonicalIndex;
+          const receipt = this.candidateCompute.compute(input);
+          receipts.push(receipt);
+          if (!(await join(receipt, canonicalIndex))) break;
+        }
+      }
+    } catch (error) {
+      if (error.computeCancelled === true) {
+        budget.cancel();
+        return { candidates:completeCandidates, stopped:true, cancelled:true };
+      }
+      const index = error.canonicalIndex ?? faultIndex;
+      const action = actions[index];
+      const fault = this.recordCandidateFault(action, "materialize", error);
+      const candidateError = new Error(
+        `Searcher candidate materialize fault [${actionSearchKey(action)}]: ${fault.message}`
+      );
+      candidateError.name = "CandidateMaterializationError";
+      throw candidateError;
     }
+    if (!attemptedAll && budget.nodeBudget !== null) budget.shouldStop();
     if (attemptedAll && endCandidate && materializedCandidates.length === actions.length) {
       try {
         const completeEnd = this.finalizeCandidate(endCandidate, materializedCandidates);
@@ -1515,17 +1260,18 @@ search 的 root 与逐层 beam 完整节点登记点。
 
   调用函数
   validateRootActions、deduplicateActions、Pattern.match、materializeSiblingCandidates、
-  buildRootNodes、buildChildNode、prune、considerIncumbent、recordResult。
+  buildRootNodes、buildChildNode、prune、considerIncumbent、SearchBudget.shouldStop/complete、recordResult。
 
   边界与不变量
-  root contract 只在入口验证一次；TIME/NODE 可在候选边界或 candidate 内 safe checkpoint 停止；
-  candidate atomicity 只保证 partial candidate 不得登记，不禁止 cooperative interruption；
+  root contract 只在入口验证一次；TIME 在实际 admission 边界停止新 candidate；
+  已 admission 的纯计算完整返回，NODE 的位置预留、登记和排序都只归 Searcher；
   candidate fault 与共享结构异常都直接上抛，不能形成缺失候选的正式空间；
   所有 canonical roots 完整物化并完成 END sibling terms 前，不登记任何正式 root incumbent；
   END 只有全部同 parent canonical siblings 完整时才可比较；
   Pattern 只调度，Evaluator comparator 是唯一 winner authority。
   */
   async search(player, world, rootActions, options = {}) {
+    this.candidateCaches = new WeakMap();
     this.comparisonActor = player;
     this.comparisonWorld = world;
     this.lastSequence = [];
@@ -1558,7 +1304,6 @@ search 的 root 与逐层 beam 完整节点登记点。
       patternProposals
     );
     const context = this.createContext(player, world);
-    const simulator = this.simulatorFactory({ searchBudget:budget });
     const workDiagnostics = {
       rootCandidateCount,
       uniqueRootCandidateCount:uniqueRootActions.length,
@@ -1595,13 +1340,11 @@ search 的 root 与逐层 beam 完整节点登记点。
       parentProvenance:context.rootProvenance,
       depth:1,
       player,
-      simulator,
       budget,
       context,
       structure,
       gameId:options.gameId,
-      collectDiagnostics:Boolean(options.collectAiDecisionDiagnostics),
-      hasIncumbent:false
+      collectDiagnostics:Boolean(options.collectAiDecisionDiagnostics)
     });
     const rootCandidates = rootResult.candidates;
     workDiagnostics.completedRootCandidateCount = rootCandidates.length;
@@ -1679,12 +1422,10 @@ search 的 root 与逐层 beam 完整节点登记点。
           parentProvenance:node.remainingProvenance,
           depth,
           player,
-          simulator,
           budget,
           context,
           structure,
-          gameId:options.gameId,
-          hasIncumbent:true
+          gameId:options.gameId
         });
         const childNodes = childResult.candidates.map(
           (candidate) => this.buildChildNode(node, candidate, depth)
@@ -1711,6 +1452,8 @@ search 的 root 与逐层 beam 完整节点登记点。
       activeBeam = this.prune(nextNodes, structure.beamWidth);
     }
 
+    // 最后一批可能全部已派发，没有下一次 admission 来观察 TIME；完整 incumbent 仍可返回。
+    if (budget.nodeBudget === null) budget.shouldStop();
     budget.complete();
     return this.recordResult({
       budget,
@@ -1765,214 +1508,9 @@ search 的 root 与逐层 beam 完整节点登记点。
     return context.unknownHandEstimate;
   }
 
-  /*
-  功能
-  遍历 Evaluator 指定的后续候选并比较 Simulator paired Worlds。
 
-  调用方
-  materializeValueTerms 与领域边际测试。
 
-  输入
-  动作前后 World、canonical Action、行动者 ID、复用 Simulator 与可选 SearchBudget。
 
-  输出
-  Evaluator 返回的最大非负效用增量。
-
-  读取状态
-  输入 Worlds、Generator、Simulator 与 Evaluator value requests。
-
-  写入状态
-  只写 Simulator 返回的独立反事实状态。
-
-  调用函数
-  Evaluator.exposeMarginalStackDelta/realizesExposeMarginal/positiveWorldMarginal、generate、Simulator.apply。
-
-  边界与不变量
-  Searcher 不识别具体牌；paired worlds 只改变被测层数，nested value 查询继承同一 SearchBudget。
-  */
-  evaluateFollowUpMarginal(
-    beforeState,
-    afterState,
-    action,
-    actorId,
-    simulator,
-    searchBudget = null
-  ) {
-    const addedStacks = this.evaluator.exposeMarginalStackDelta(
-      action,
-      beforeState,
-      afterState,
-      actorId
-    );
-    if (!(addedStacks > 0)) return 0;
-    const { baselineWorld, boostedWorld } = simulator.buildExposeMarginalWorlds(
-      afterState,
-      actorId,
-      addedStacks
-    );
-    searchBudget?.checkpointCurrentWork?.();
-    const candidates = this.generateActions(afterState, actorId, searchBudget);
-    let best = 0;
-    for (const candidate of candidates) {
-      if (!this.evaluator.realizesExposeMarginal(candidate)) continue;
-      searchBudget?.checkpointCurrentWork?.();
-      searchBudget?.observeSimulation();
-      const base = simulator.apply(baselineWorld, candidate);
-      searchBudget?.checkpointCurrentWork?.();
-      searchBudget?.observeSimulation();
-      const boosted = simulator.apply(boostedWorld, candidate);
-      searchBudget?.checkpointCurrentWork?.();
-      const counterfactualStartedAt = searchDiagnosticNow();
-      let marginal;
-      try {
-        marginal = this.evaluator.positiveWorldMarginal(
-          base,
-          boosted,
-          actorId,
-          simulator.buildLightningOutcomeSets(base),
-          simulator.buildLightningOutcomeSets(boosted)
-        );
-      } finally {
-        searchBudget?.observeCounterfactual(
-          2,
-          Math.max(0, searchDiagnosticNow() - counterfactualStartedAt)
-        );
-      }
-      if (marginal > best) best = marginal;
-    }
-    return best;
-  }
-
-  /*
-  功能
-  为 Evaluator 声明的当前动作 provenance 构造并比较 paired Worlds。
-
-  调用方
-  materializeValueTerms 与领域边际测试。
-
-  输入
-  当前 World、canonical Action、行动者 ID、剩余 provenance、复用 Simulator 与可选 SearchBudget。
-
-  输出
-  Evaluator 返回的非负 provenance 消费信用。
-
-  读取状态
-  当前过滤状态、Evaluator value request 与回合开始时的来源记录。
-
-  写入状态
-  只写两个独立克隆及 Simulator 返回状态。
-
-  调用函数
-  Evaluator.assaultMarginalStackCount/positiveWorldMarginal、Simulator.apply。
-
-  边界与不变量
-  Searcher 不识别具体牌；paired worlds 只改变 exposeWeaknessStacks，nested value 查询继承同一 SearchBudget。
-  */
-  evaluateCurrentActionMarginal(
-    currentState,
-    action,
-    actorId,
-    remainingRootExposeStacks,
-    simulator,
-    searchBudget = null
-  ) {
-    const marginalStacks = this.evaluator.assaultMarginalStackCount(
-      action,
-      remainingRootExposeStacks
-    );
-    if (!(marginalStacks > 0)) return 0;
-    const { baselineWorld, boostedWorld } = simulator.buildAssaultStackWorlds(
-      currentState,
-      actorId,
-      marginalStacks
-    );
-    searchBudget?.checkpointCurrentWork?.();
-    searchBudget?.observeSimulation();
-    const boosted = simulator.apply(boostedWorld, action);
-    searchBudget?.checkpointCurrentWork?.();
-    searchBudget?.observeSimulation();
-    const baseline = simulator.apply(baselineWorld, action);
-    searchBudget?.checkpointCurrentWork?.();
-    const counterfactualStartedAt = searchDiagnosticNow();
-    try {
-      return this.evaluator.positiveWorldMarginal(
-        baseline,
-        boosted,
-        actorId,
-        simulator.buildLightningOutcomeSets(baseline),
-        simulator.buildLightningOutcomeSets(boosted)
-      );
-    } finally {
-      searchBudget?.observeCounterfactual(
-        2,
-        Math.max(0, searchDiagnosticNow() - counterfactualStartedAt)
-      );
-    }
-  }
-
-  /*
-  功能
-  为单个候选物化 Evaluator 请求的领域价值输入与下一节点 provenance。
-
-  调用方
-  Searcher.evaluateCandidate。
-
-  输入
-  before/after、动作、行动者、回合开始时已有层的来源记录与 Simulator。
-
-  输出
-  exposeMarginal、assaultStacksCredit 与 remainingProvenance。
-
-  读取状态
-  Evaluator value requests 及配对反事实所需过滤状态。
-
-  写入状态
-  仅通过反事实辅助函数写独立状态。
-
-  调用函数
-  evaluateFollowUpMarginal、evaluateCurrentActionMarginal 与 Evaluator provenance。
-
-  边界与不变量
-  Searcher 不读取具体牌或角色 identity；所有业务识别和价值公式都由 Evaluator 返回。
-  */
-  materializeValueTerms({
-    beforeState,
-    afterState,
-    action,
-    actorId,
-    remainingProvenance,
-    simulator,
-    searchBudget = null
-  }) {
-    const exposeMarginal = this.evaluateFollowUpMarginal(
-      beforeState,
-      afterState,
-      action,
-      actorId,
-      simulator,
-      searchBudget
-    );
-    const assaultStacksCredit = this.evaluateCurrentActionMarginal(
-      beforeState,
-      action,
-      actorId,
-      remainingProvenance,
-      simulator,
-      searchBudget
-    );
-    const nextProvenance = this.evaluator.advanceTransitionProvenance(
-      action,
-      beforeState,
-      afterState,
-      actorId,
-      remainingProvenance
-    );
-    return {
-      exposeMarginal,
-      assaultStacksCredit,
-      nextProvenance
-    };
-  }
 }
 
 const DEFAULT_SEARCH_TIME_BUDGET_MS = 900;
@@ -2135,8 +1673,8 @@ export class SearchBudget {
   now。
 
   边界与不变量
-  节点模式不读取时钟；已开始物化可在 safe checkpoint cooperative unwind，
-  无 checkpoint 的单段工作才可能轻微越过时间预算；已完成 incumbent 必须保留。
+  节点模式不读取时钟；候选在 admission 前检查，已派发 atomic compute 不再接收预算能力；
+  其它既有调用者仍可通过 checkpointCurrentWork unwind；已完成 incumbent 必须保留。
   */
   shouldStop() {
     if (this.stopReason !== null) return true;

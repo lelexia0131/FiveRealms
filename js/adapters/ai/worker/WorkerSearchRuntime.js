@@ -76,6 +76,10 @@ export async function runSearchRequest(request, runtimeControl = {}) {
       }
     });
   } catch (error) {
+    if (error.computeCancelled === true) {
+      return createWorkerSearchOutcome({ request, action:null, rngAfter:request.rng,
+        cancelled:true, searchStopReason:"CANCELLED" });
+    }
     return createWorkerSearchOutcome({ request,
       action:null,
       searchFault:{

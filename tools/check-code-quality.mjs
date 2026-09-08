@@ -75,6 +75,7 @@ const FINAL_AI_ALLOWLIST = Object.freeze(new Set([
   GENERATOR_FILE,
   ACTION_FILE,
   "js/ai/Searcher/Searcher.js",
+  "js/ai/Searcher/CandidateCompute.js",
   "js/ai/Searcher/Rng.js",
   "js/ai/Searcher/Pattern.js",
   "js/ai/Event/Fact.js",
@@ -401,7 +402,7 @@ function removedLegacyArtifacts() {
 
 /*
 功能
-比较真实 js/ai JavaScript 树与最终十八文件契约。
+比较真实 js/ai JavaScript 树与正式 owner 文件契约。
 
 调用方
 main 与 runSelfTest。
@@ -1669,7 +1670,7 @@ function inspectSource(file, source, changed) {
       file,
       functionName:"<architecture>",
       line:1,
-      missing:["架构约束：Event/Simulator/Evaluator 只允许最终十八文件契约中的 owner"]
+      missing:["架构约束：Event/Simulator/Evaluator 只允许正式文件契约中的 owner"]
     });
   }
 
@@ -3921,7 +3922,7 @@ function identity(value) { return value; }`;
     throw new Error("root artifact guard incorrectly rejected valid root files");
   }
   if (finalAiTreeViolations([...FINAL_AI_ALLOWLIST]).length !== 0) {
-    throw new Error("final AI tree guard rejected the exact eighteen-file fixture");
+    throw new Error("final AI tree guard rejected the exact owner-file fixture");
   }
   const invalidFinalTree = [...FINAL_AI_ALLOWLIST].filter((file) => file !== CARD_VALUE_FILE);
   invalidFinalTree.push("js/ai/search/SearchPrior.js");
@@ -4271,7 +4272,7 @@ function main() {
   );
   if (finalAiTreeErrors.length) {
     for (const error of finalAiTreeErrors) {
-      process.stderr.write(`js/ai:1 <architecture> missing: 架构约束：最终十八文件树不匹配（${error}）\n`);
+      process.stderr.write(`js/ai:1 <architecture> missing: 架构约束：正式 owner 文件树不匹配（${error}）\n`);
     }
     process.stderr.write(`code-quality failed: ${finalAiTreeErrors.length} final AI tree violation(s)\n`);
     process.exitCode = 1;
