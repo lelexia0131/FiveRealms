@@ -128,64 +128,59 @@ export class GameInfoView {
   */
   render() {
     this.root.innerHTML = `<div class="game-info-atmosphere" aria-hidden="true"><i></i><i></i><i></i></div>
-      <div class="game-info-shell">
-        <header class="game-info-header">
-          <button class="ghost-button game-info-back-button" type="button" data-game-info-back>← 返回</button>
-          <div class="game-info-title-lockup"><h1>五域纷争</h1><p>FIVE REALMS</p></div>
-          <span class="game-info-seal" aria-hidden="true"></span>
-        </header>
-
-        <section class="game-info-facts">
-          <div><span>当前版本</span><strong>v${this.version}</strong></div>
-          <div><span>游戏作者</span><strong>Lelexia</strong></div>
-          <div><span>更新时间</span><strong>2026.09.07</strong></div>
+    <div class="game-info-shell">
+      <header class="game-info-header">
+        <button class="ghost-button game-info-back-button" type="button" data-game-info-back>← 返回</button>
+        <div class="game-info-title-lockup"><h1>五域纷争</h1><p>FIVE REALMS</p></div>
+        <span class="game-info-seal" aria-hidden="true"></span>
+      </header>
+      <section class="game-info-facts">
+        <div><span>当前版本</span><strong>v${this.version}</strong></div>
+        <div><span>游戏作者</span><strong>Lelexia</strong></div>
+        <div><span>更新时间</span><strong>2026.09.08</strong></div>
+      </section>
+      <div class="game-info-columns">
+        <section class="game-info-card game-info-about">
+          <h2>关于游戏</h2>
+          <p>《五域纷争》是一款以阵营对抗、卡牌博弈与角色能力为核心的策略游戏。</p>
+          <p>游戏将根据实际对局体验持续进行规则调整、平衡优化、Bug 修复与界面改进。</p>
+          <p>如有对游戏玩法有疑问，可前往首页“入局说明”查看详细游玩介绍。</p>
+          <p>游戏最新安装包链接：</p>
+          <div class="game-info-links">
+            <span class="game-info-copy-link">
+              http://179.255.156.84:8080/FiveRealms
+            </span>
+          </div>
+          <p>推荐 Windows PowerShell 命令直接下载：</p>
+          <p>
+            <code class="download-command">
+              curl.exe -fL "http://179.255.156.84:8080/FiveRealms" -o "$HOME\\Downloads\\FiveRealms-Setup.exe"
+            </code>
+          </p>
         </section>
-
-        <div class="game-info-columns">
-          <section class="game-info-card game-info-about">
-            <h2>关于游戏</h2>
-            <p>《五域纷争》是一款以阵营对抗、卡牌博弈与角色能力为核心的策略游戏。</p>
-            <p>游戏将根据实际对局体验持续进行规则调整、平衡优化、Bug 修复与界面改进。</p>
-            <p>如有对游戏玩法有疑问，可前往首页“入局说明”查看详细游玩介绍。</p>
-            <p>
-              游戏最新安装包链接：
-              <div class="game-info-links">
-              <a href="http://179.255.156.84:8080/FiveRealms" target="_blank" rel="noopener noreferrer">
-                http://179.255.156.84:8080/FiveRealms
-              </a>
-              </div>
-            </p>
-            <p>推荐 Windows Powershell 命令直接下载：</p>
-            <p>
-              <code class="download-command">
-                curl.exe -fL "http://179.255.156.84:8080/FiveRealms" -o "$HOME\\Downloads\\FiveRealms-Setup.exe"
-              </code>
-            </p>
-          </section>
-
-          <section class="game-info-card game-info-contact">
-            <h2>反馈与联系</h2>
-            <p>如发现规则异常、程序错误、显示问题，<br />或对游戏设计、平衡性及后续内容有建议，欢迎联系。</p>
-            <div class="game-info-links">
-              <a href="mailto:colasmith3783@gmail.com">colasmith3783@gmail.com</a>
-              <a href="mailto:2100532928@qq.com">2100532928@qq.com</a>
-              <a href="https://github.com/lelexia0131/FiveRealms" target="_blank" rel="noopener noreferrer">https://github.com/lelexia0131/FiveRealms</a>
-            </div>
-          </section>
-        </div>
-
-        <section class="game-info-copyright">
-          <h2>版权说明</h2>
-          <div>
-            <p>© 2026 Five Realms. All Rights Reserved.</p>
-            <p>除另有说明外，《五域纷争》的游戏规则、程序代码、角色设定、<br />界面设计及原创素材版权归作者所有。</p>
-            <p>未经许可，不得将本游戏或其中的原创内容用于商业发行、<br />再分发、冒充官方版本或移除原作者署名。</p>
-            <p>第三方字体、图形、音频及其他资源的相关权利<br />归各自权利人所有，并按照对应授权协议使用。</p>
+        <section class="game-info-card game-info-contact">
+          <h2>反馈与联系</h2>
+          <p>如发现规则异常、程序错误、显示问题，<br />或对游戏设计、平衡性及后续内容有建议，欢迎联系。</p>
+          <div class="game-info-links">
+            <a href="mailto:colasmith3783@gmail.com">colasmith3783@gmail.com</a>
+            <a href="mailto:2100532928@qq.com">2100532928@qq.com</a>
+            <a href="https://github.com/lelexia0131/FiveRealms" target="_blank" rel="noopener noreferrer">
+              https://github.com/lelexia0131/FiveRealms
+            </a>
           </div>
         </section>
-
-        <footer class="game-info-footer"><p>感谢游玩《五域纷争》</p></footer>
-      </div>`;
+      </div>
+      <section class="game-info-copyright">
+        <h2>版权说明</h2>
+        <div>
+          <p>© 2026 Five Realms. All Rights Reserved.</p>
+          <p>除另有说明外，《五域纷争》的游戏规则、程序代码、角色设定、<br />界面设计及原创素材版权归作者所有。</p>
+          <p>未经许可，不得将本游戏或其中的原创内容用于商业发行、<br />再分发、冒充官方版本或移除原作者署名。</p>
+          <p>第三方字体、图形、音频及其他资源的相关权利<br />归各自权利人所有，并按照对应授权协议使用。</p>
+        </div>
+      </section>
+      <footer class="game-info-footer"><p>感谢游玩《五域纷争》</p></footer>
+    </div>`;
   }
 
   /*

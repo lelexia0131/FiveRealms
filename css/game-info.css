@@ -426,7 +426,30 @@ body:has(.game-info-screen:not(.is-hidden)) {
   }
 }
 
+.game-info-copy-link,
+.game-info-copy-link *,
 .download-command,
 .download-command * {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+.game-info-copy-link {
+  display: inline-block;
+  width: fit-content;
+  max-width: 100%;
+  color: #356f6a;
+  font-size: clamp(11px, .9vw, 13px);
+  font-weight: 750;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-color: rgba(35, 125, 120, .35);
+  text-underline-offset: 3px;
+  cursor: text;
+}
+
+.download-command {
   color: #22c55e !important;
+  cursor: text;
 }
