@@ -37,7 +37,6 @@ export function renderNetworkEntryView({ join = false, error = "" } = {}) {
           <input id="network-port" name="port" type="number" required min="1" max="65535" step="1" inputmode="numeric" value="${NETWORK_DEFAULT_PORT}" aria-describedby="network-form-error">
         </label>
       </div>
-      <p id="network-join-help" class="network-notice">跨网络联机时，可填写房主显示的 Tailscale 地址。</p>
       <p id="network-form-error" class="network-notice" data-network-form-error role="status">${escapeHtml(error)}</p>
       <button class="primary-button" type="submit">连接</button>
     </form>` : `<div class="network-mode-grid">
