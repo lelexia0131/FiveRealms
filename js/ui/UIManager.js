@@ -23,6 +23,7 @@ import { MatchMvpResultView } from "./results/MatchMvpResultView.js";
 import { RulebookView } from "./RulebookView.js";
 import { HistoryArchiveView } from "./history/HistoryArchiveView.js";
 import { GameInfoView } from "./GameInfoView.js";
+import { isMatchPersistenceEligible } from "../application/match/MatchMode.js";
 
 const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
@@ -203,7 +204,7 @@ export class UIManager {
   */
   constructor({ historyStatsManager = null } = {}) {
     this.elements = Object.fromEntries([
-      "start-screen", "history-archive-screen", "game-info-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "game-info-button", "rules-button",
+      "network-screen", "start-screen", "history-archive-screen", "game-info-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "game-info-button", "rules-button",
       "squad-mode-grid", "back-to-start-button", "back-to-squad-button", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
       "thinking-indicator", "current-card", "action-prompt", "private-reveal", "response-panel",
@@ -507,6 +508,8 @@ export class UIManager {
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
     this.elements.squad_mode_grid.addEventListener("click", (event) => this.handleSquadModeClick(event));
+    this.elements.network_screen?.addEventListener("click", (event) => this.callbacks.onNetworkClick?.(event));
+    this.elements.network_screen?.addEventListener("submit", (event) => this.callbacks.onNetworkSubmit?.(event));
     this.elements.candidate_grid.addEventListener("click", (event) => this.handleCharacterCandidateClick(event));
     this.bindHorizontalCardDrag(this.elements.game_screen);
     this.elements.human_hand.addEventListener("click", (event) => this.handleHandClick(event));
@@ -645,6 +648,7 @@ export class UIManager {
   只清理 UI，不销毁或创建 MatchApplication。
   */
   showStart() {
+    this.elements.network_screen?.classList.add("is-hidden");
     this.sound.playMenuMusic();
     this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
@@ -787,6 +791,42 @@ export class UIManager {
   }
 
   /*
+功能
+显示游玩方式、联机入口或共用征召页。
+
+调用方
+createNetworkFlow。
+
+输入
+安全页面 markup 与可选 squad 布局。
+
+输出
+无。
+
+读取状态
+屏幕元素和声音 owner。
+
+写入状态
+屏幕可见性、Network DOM。
+
+调用函数
+cancelPendingInteractions、playSquadSelectionMusic。
+
+边界与不变量
+Network 页面只渲染 Session 提供的数据，不存放角色分池 authority。
+*/
+  showNetworkPage(markup, layout = "menu") {
+    this.cancelPendingInteractions();
+    this.sound.playSquadSelectionMusic();
+    for (const name of ["start_screen", "history_archive_screen", "game_info_screen", "squad_selection_screen", "selection_screen", "game_screen"]) {
+      this.elements[name]?.classList.add("is-hidden");
+    }
+    this.elements.game_over_overlay.classList.add("is-hidden");
+    this.elements.network_screen.className = `screen network-screen network-layout-${layout}`;
+    this.elements.network_screen.innerHTML = markup;
+  }
+
+  /*
   功能
   展示独立的编队方式选择界面。
 
@@ -812,6 +852,7 @@ export class UIManager {
   只展示选择入口，不保存模式或解析阵营规模；隐藏的候选与编队预览不得残留上一轮内容。
   */
   showSquadSelection() {
+    this.elements.network_screen?.classList.add("is-hidden");
     this.sound.playSquadSelectionMusic();
     this.cancelPendingInteractions();
     this.resetCurrentCard();
@@ -899,6 +940,7 @@ export class UIManager {
   仅全部角色已确认后执行首帧 render。
   */
   showGame(game) {
+    this.elements.network_screen?.classList.add("is-hidden");
     this.sound.stopMusic();
     this.attachGame(game);
     this.resetCurrentCard();
@@ -3171,9 +3213,9 @@ export class UIManager {
     const humanPlayerId = this.game?.state?.players?.find(
       (player) => player.controllerType === "human"
     )?.id ?? null;
-    const achievementMarkup = this.historyArchiveView.achievementView.renderMatchUnlockList(
-      this.newlyUnlockedAchievements
-    );
+    const achievementMarkup = isMatchPersistenceEligible(this.game?.mode)
+      ? this.historyArchiveView.achievementView.renderMatchUnlockList(this.newlyUnlockedAchievements)
+      : "";
     this.matchMvpResultView.render(viewModel, humanPlayerId, achievementMarkup);
   }
 

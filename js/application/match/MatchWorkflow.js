@@ -17,6 +17,7 @@ pre-live setup 字段经显式 one-shot collaborator 写入；live Domain 字段
 架构约束
 不得依赖 Game、UIManager、AIController、SoundManager、EventDispatcher runtime、AI search internals 或 concrete adapters。
 */
+import { CHARACTER_BY_ID } from "../../domain/definitions/characters/CharacterDefinitions.js";
 import { RULESET_DEFINITION } from "../../domain/definitions/ruleset/RulesetDefinition.js";
 import {
   getInitialHandCount, getMaxEnergy, getTeamSize, getWinningTeam
@@ -76,6 +77,7 @@ export function createMatchWorkflow(dependencies) {
     startingPlayerIndexCommitted: false
   };
   let liveAuthoritativeMatch = false;
+  let initializationStarted = false;
   let candidates = [];
   let teamAssignmentMode = null;
   let pendingTeams = null;
@@ -206,6 +208,119 @@ export function createMatchWorkflow(dependencies) {
       player.character = assigned[index];
     });
 
+    return initializeMatch(human, selected, aiPlayers);
+  }
+
+  /*
+功能
+将外部已确认编队装入同一 MatchWorkflow，暂不发牌或启动回合。
+
+调用方
+composition network setup 入口。
+
+输入
+经 setup authority 校验的五席描述。
+
+输出
+true。
+
+读取状态
+canonical 角色定义与当前 pre-live 标记。
+
+写入状态
+roster、角色、能量上限与 selectedCharacterId。
+
+调用函数
+createPlayer、applyCharacterDefinition、commitPreLiveSetup。
+
+边界与不变量
+只允许一次准备；本地玩家保持索引零，开始必须另经 Game Ready capability。
+*/
+  function prepareSetup(setup) {
+    const state = runtime.getState();
+    if (state.isDisposed || preLiveSetup.rosterCommitted || state.selectedCharacterId) throw new Error("对局已准备或已销毁");
+    const entries = setup.players;
+    if (entries.length !== RULESET_DEFINITION.playerCount || entries.some((entry) => !CHARACTER_BY_ID[entry.characterId])) throw new Error("无效编队");
+    const roster = entries.map((entry, seatIndex) => runtime.createPlayer({
+      id: entry.playerId, seatIndex, battleTeam: entry.teamId,
+      controllerType: entry.controlType === "AI" ? "ai" : "human",
+      controlType: entry.controlType, seatId: entry.seatId
+    }));
+    commitPreLiveSetup("rosterCommitted", () => runtime.setRoster(roster));
+    for (let index = 0; index < roster.length; index += 1) {
+      const player = roster[index];
+      commitPreLiveSetup("maxEnergyCommitted", () => runtime.setMaxEnergy(player, getMaxEnergy({ players: roster }, player)));
+      const character = CHARACTER_BY_ID[entries[index].characterId];
+      applyCharacterDefinition(state, player, character);
+      player.character = character;
+    }
+    runtime.setSelectedCharacterId(entries[0].characterId);
+    runtime.emitEvent("teamAssigned", { type: "teamAssigned", players: roster });
+    return true;
+  }
+
+  /*
+功能
+经外部启动屏障进入与单人相同的发牌和回合 continuation。
+
+调用方
+network coordinator。
+
+输入
+无。
+
+输出
+启动完成 Promise。
+
+读取状态
+预备 roster 与 canStartPreparedMatch capability。
+
+写入状态
+由 initializeMatch 提交开局。
+
+调用函数
+initializeMatch。
+
+边界与不变量
+没有启动许可不得发牌；并发重复启动在首个 await 前拒绝。
+*/
+  function startPreparedMatch() {
+    const state = runtime.getState();
+    if (!preLiveSetup.rosterCommitted || !runtime.canStartPreparedMatch?.()) throw new Error("游戏尚未就绪");
+    const human = state.players[0];
+    return initializeMatch(human, human.character, state.players.filter((player) => player.controllerType === "ai"));
+  }
+
+  /*
+功能
+完成共享的发牌、开局事件与唯一 TurnWorkflow 启动。
+
+调用方
+confirmCharacter、startPreparedMatch。
+
+输入
+本地真人、选定角色与 AI 列表。
+
+输出
+成功 true；会话失效 false。
+
+读取状态
+roster、deck、gameId。
+
+写入状态
+原始开局状态与 startingPlayerIndex。
+
+调用函数
+registerGlobalRules、drawCards、publishFact、startTurnLoop。
+
+边界与不变量
+单人 RNG 与事件顺序保持原样；开局 continuation 每局只执行一次。
+*/
+  async function initializeMatch(human, selected, aiPlayers) {
+    const state = runtime.getState();
+    const gameId = state.gameId;
+    if (initializationStarted || state.isDisposed) return false;
+    initializationStarted = true;
     runtime.registerGlobalRules();
     runtime.registerPassiveSkills();
     runtime.buildDeck();
@@ -442,6 +557,8 @@ export function createMatchWorkflow(dependencies) {
     get candidates() { return Object.freeze(candidates.slice()); },
     startSelection,
     confirmCharacter,
+    prepareSetup,
+    startPreparedMatch,
     checkVictory,
     dispose
   });

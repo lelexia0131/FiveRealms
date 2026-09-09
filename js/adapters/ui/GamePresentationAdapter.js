@@ -56,7 +56,7 @@ createPresentationPort、UIManager 的语义展示方法与 render。
 Application 传入 data-only DTO；伤害与减伤从同一 descriptor map 选择平级视觉变体；
 本 adapter 只映射 UI 调用，不决定结算是否生效。
 */
-export function createGamePresentationAdapter({ log, getPlayerById, getCardById, ui, renderTarget }) {
+export function createGamePresentationAdapter({ log, getPlayerById, getCardById, ui, renderTarget, presentPrivateReveal = (_descriptor, presentLocal) => presentLocal() }) {
   if (typeof log !== "function" || typeof getPlayerById !== "function"
     || typeof getCardById !== "function" || !ui || !renderTarget) {
     throw new TypeError("GamePresentationAdapter 缺少 log/getPlayerById/getCardById/ui/renderTarget capability");
@@ -116,10 +116,10 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
     clearThinking: () => ui.setThinking?.(false),
     isThinkingActive: () => ui.thinkingPlayerId != null,
     showGameOver: (winnerTeam, humanWon) => ui.showGameOver?.(winnerTeam, humanWon),
-    showPrivateReveal: ({ title, cardIds }) => {
-      const cards = (cardIds ?? []).map((cardId) => getCardById(cardId)).filter(Boolean);
-      return ui.showPrivateReveal?.(title, cards);
-    },
+    showPrivateReveal: (descriptor) => presentPrivateReveal(descriptor, () => {
+      const cards = (descriptor.cardIds ?? []).map((cardId) => getCardById(cardId)).filter(Boolean);
+      return ui.showPrivateReveal?.(descriptor.title, cards);
+    }),
     showDuel: ({ playerId, opponentId }) => {
       const player = getPlayerById(playerId);
       const opponent = getPlayerById(opponentId);

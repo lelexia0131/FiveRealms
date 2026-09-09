@@ -788,11 +788,12 @@ export function createActionWorkflow(dependencies) {
   边界与不变量
   current actor/phase/lock/session 验证与旧 handleHumanCard 一致；finally cleanup 不得覆盖正在传播的 rollback failure。
   */
-  async function handleHumanCard(cardId) {
+  async function handleHumanCard(cardId, actorId) {
     const state = runtime.getState();
     const gameId = state.gameId;
     if (!runtime.isSessionValid(gameId)) return false;
-    const human = runtime.getHumanPlayer();
+    const human = runtime.getHumanPlayer(actorId);
+    if (!human) return false;
     const card = human.hand.find((entry) => entry.id === cardId);
     if (!card || getCurrentActor(state)?.id !== human.id || state.phase !== "play"
       || actionRuntime.actionLocked || actionRuntime.interactionLocked) return false;
@@ -877,11 +878,12 @@ export function createActionWorkflow(dependencies) {
   边界与不变量
   skill legality/lock/session 验证与旧 handleHumanSkill 一致；finally cleanup 不得覆盖正在传播的 rollback failure。
   */
-  async function handleHumanSkill() {
+  async function handleHumanSkill(actorId) {
     const state = runtime.getState();
     const gameId = state.gameId;
     if (!runtime.isSessionValid(gameId)) return false;
-    const human = runtime.getHumanPlayer();
+    const human = runtime.getHumanPlayer(actorId);
+    if (!human || getCurrentActor(state)?.id !== human.id || state.phase !== "play") return false;
     const skill = runtime.skillRuntime.getActiveSkill(human);
     if (!skill || actionRuntime.actionLocked || actionRuntime.interactionLocked
       || !runtime.skillRuntime.canUse(human, skill).ok) return false;

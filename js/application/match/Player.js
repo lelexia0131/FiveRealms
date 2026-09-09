@@ -44,6 +44,8 @@ export class Player {
     this.id = playerState.id;
     this.seatIndex = playerState.seatIndex;
     this.controllerType = options.controllerType;
+    this.controlType = options.controlType;
+    this.seatId = options.seatId;
     this.battleTeam = playerState.battleTeam;
     this.characterId = playerState.characterId;
     this.name = playerState.name;

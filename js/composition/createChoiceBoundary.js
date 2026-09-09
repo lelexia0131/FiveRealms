@@ -17,6 +17,7 @@ application/choice、application/ports 与 adapters/ui、adapters/ai。
 架构约束
 不接收或回读应用对象；所有 concrete capability 由 composition root 显式注入。
 */
+import { createNetworkChoiceAdapter } from "../network/NetworkDecisionAdapter.js";
 import { createChoiceCoordinator } from "../application/choice/ChoiceCoordinator.js";
 import { createChoicePort, createChoiceResult } from "../application/ports/ChoicePort.js";
 import { createAiChoiceAdapter } from "../adapters/ai/AiChoiceAdapter.js";
@@ -53,6 +54,7 @@ createUiChoiceAdapter、createAiChoiceAdapter、createChoicePort、createChoiceC
 export function createChoiceBoundary(dependencies, injectedPort = null) {
   const {
     state,
+    controlRouter,
     ui,
     choiceContexts,
     isSessionValid,
@@ -63,6 +65,7 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     choosePostCounterResource,
     requestHiddenCards,
     requestZoneCard,
+    createHiddenSelection,
     resolveHiddenToken,
     resolveConfirmedHiddenTokens,
     isHiddenSelectionActive,
@@ -106,6 +109,12 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     isSessionValid,
     now
   }));
+  const remotePort = controlRouter ? createNetworkChoiceAdapter({
+    requestRemote: (request) => controlRouter.requestRemote(request),
+    getChoiceContext: (requestId) => choiceContexts.get(requestId),
+    createHiddenSelection, resolveHiddenToken, resolveConfirmedHiddenTokens,
+    isHiddenSelectionActive, clearHiddenSelection, isSessionValid
+  }) : null;
   const choicePort = createChoicePort({
     /*
     功能
@@ -133,6 +142,7 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     不是 service locator；未知 actor 返回 cancelled。
     */
     async request(choiceRequest) {
+      if (controlRouter) return controlRouter.request(choiceRequest, humanPort, aiPort, remotePort);
       const actor = state.players.find((player) => player.id === choiceRequest?.actorId);
       if (!actor) return createChoiceResult("cancelled", { reason:"unknown-actor" });
       const port = actor.controllerType === "human" ? humanPort : aiPort;

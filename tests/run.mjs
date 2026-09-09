@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { registerNetworkTests, registerNetworkUiTests } from "./network_test.mjs";
 import { createHash } from "node:crypto";
 import { access, readFile, readdir } from "node:fs/promises";
 import * as nodePath from "node:path";
@@ -4162,6 +4163,8 @@ test("Application 架构：公开牌池只跨边界传 ID 并由 adapter 重绑�
 });
 
 // ---- Match setup ----
+
+registerNetworkTests(test, { makeUi, instance });
 
 /*
 功能
@@ -41478,6 +41481,8 @@ test("UI·游戏说明：入口与返回复用现有顶层页面生命周期", g
 
 // ---- UI·编队方式 ----
 
+registerNetworkUiTests(test);
+
 test("UI·编队方式：独立界面提供三张原生按钮卡与专属 SVG", async () => {
   const [index, charactersCss, layoutCss] = await Promise.all([
     readFile(projectFile("index.html"), "utf8"),
@@ -41498,14 +41503,16 @@ test("UI·编队方式：独立界面提供三张原生按钮卡与专属 SVG", 
   assert.match(layoutCss, /@media\s*\(max-width:\s*760px\)[\s\S]*?\.squad-mode-grid\s*\{[^}]*grid-template-columns:\s*1fr/s);
 });
 
-test("UI·编队方式：各征召入口与选角返回统一进入全新模式选择", async () => {
+test("UI·编队方式：游玩方式入口与单人征召返回各自保持正确路由", async () => {
   const [main, index, manager] = await Promise.all([
     readFile(projectFile("js/main.js"), "utf8"),
     readFile(projectFile("index.html"), "utf8"),
     readFile(projectFile("js/ui/UIManager.js"), "utf8")
   ]);
-  assert.match(main, /onStart:\s*startRecruitment/);
-  assert.match(main, /onRestart:\s*startRecruitment/);
+  assert.match(main, /onStart:\s*showPlayModeSelection/);
+  assert.match(main, /onSingleplayer:\s*startRecruitment/);
+  assert.match(main, /onRestart:\s*restartRecruitment/);
+  assert.match(main, /else startRecruitment\(\)/);
   assert.match(main, /onBackToSquadSelection:\s*startRecruitment/);
   assert.match(main, /onSelectTeamAssignmentMode\(teamAssignmentMode\)/);
   assert.match(main, /function startRecruitment\(\)[\s\S]*?ui\.showSquadSelection\(\)/);
@@ -41564,17 +41571,18 @@ test("UI·编队方式：角色选择页显示 two、three 与 random 的征召�
 
 // ---- UI·编队返回 ----
 
-test("UI·编队返回：返回主界面按钮位于随机分配之后并复用现有生命周期", async () => {
+test("UI·编队返回：统一返回按钮位于随机分配之后并回到游玩方式", async () => {
   const [index, manager, main] = await Promise.all([
     readFile(projectFile("index.html"), "utf8"),
     readFile(projectFile("js/ui/UIManager.js"), "utf8"),
     readFile(projectFile("js/main.js"), "utf8")
   ]);
   assert.match(index, /data-team-assignment-mode="random"[\s\S]*?id="back-to-start-button"/);
-  assert.match(index, /id="back-to-start-button"[^>]*class="ghost-button squad-back-button"[^>]*>\s*← 返回主界面/);
+  assert.match(index, /id="back-to-start-button"[^>]*class="ghost-button squad-back-button"[^>]*>\s*返回\s*<\/button>/);
   assert.match(manager, /back_to_start_button\.addEventListener\("click", \(\) => \{ this\.playSound\("select"\); this\.callbacks\.onBackToStart\?\.\(\); \}\)/);
   assert.match(main, /function returnToStart\(\)[\s\S]*?game\?\.dispose\(\);[\s\S]*?game = null;[\s\S]*?ui\.attachGame\(null\);[\s\S]*?ui\.showStart\(\)/);
-  assert.match(main, /onBackToStart:\s*returnToStart/);
+  assert.match(main, /onBackToStart:\s*showPlayModeSelection/);
+  assert.match(main, /function showPlayModeSelection\(\)\s*\{\s*networkFlow\.show\(\);\s*\}/);
 });
 
 // ---- UI·准备阶段卡牌 ----

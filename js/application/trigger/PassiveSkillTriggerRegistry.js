@@ -313,7 +313,7 @@ const PASSIVE_SKILLS = {
         });
       }
       if (!runtime.isSessionValid(gameId)) return;
-      if (owner.controllerType === "human") await runtime.presentation.showPrivateReveal({ title: `窥隙：${target.name}的手牌`, cardIds: seen.map((card) => card.id) });
+      if (owner.controllerType === "human") await runtime.presentation.showPrivateReveal({ viewerId: owner.id, title: `窥隙：${target.name}的手牌`, cardIds: seen.map((card) => card.id) });
       if (!runtime.isSessionValid(gameId)) return;
       runtime.presentation.log(`${owner.name}触发「窥隙」，查看了${target.name}的${seen.length}张手牌。`);
     }

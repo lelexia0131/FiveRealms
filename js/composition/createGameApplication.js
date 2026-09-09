@@ -17,6 +17,9 @@ Application、Domain、AI 与 concrete adapters。
 架构约束
 不得重新拥有动作、响应、濒死、判定、资源或规则公式；不得增加第二套业务 boundary 或 Game shell class。
 */
+import { MATCH_MODE, isMatchPersistenceEligible } from "../application/match/MatchMode.js";
+import { PlayerControlRouter } from "../network/PlayerControlRouter.js";
+import { NETWORK_STATE } from "../network/NetworkLobbyState.js";
 import { RUNTIME_POLICY } from "../application/policy/RuntimePolicy.js";
 import { AI_RUNTIME_POLICY, createSearchRng } from "../ai/Controller.js";
 import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js";
@@ -189,6 +192,8 @@ function assembleApplicationBoundary(application) {
       return application.aiSpeed;
     },
     startSelection:application.matchWorkflow.startSelection,
+    prepareNetworkMatch:application.matchWorkflow.prepareSetup,
+    startPreparedMatch:application.matchWorkflow.startPreparedMatch,
     confirmCharacter:application.matchWorkflow.confirmCharacter,
     /*
     功能
@@ -459,7 +464,8 @@ class MatchApplication {
     this.now = typeof options.now === "function"
       ? options.now
       : () => globalThis.performance?.now?.() ?? Date.now();
-    this.onMatchResult = typeof options.onMatchResult === "function" ? options.onMatchResult : null;
+    Object.defineProperty(this, "mode", { value: options.mode ?? MATCH_MODE.SINGLEPLAYER, enumerable: true });
+    this.onMatchResult = isMatchPersistenceEligible(this.mode) && typeof options.onMatchResult === "function" ? options.onMatchResult : null;
     this.cleanupManager = new CleanupManager();
     this.characterSelection = new CharacterSelection(this.random);
     const deck = new Deck(this.random, (channel, message, data) => Debug.log(channel, message, data));
@@ -490,6 +496,10 @@ class MatchApplication {
       resolutionSerial: 0,
       stateVersion: matchState.stateVersion
     };
+    this.controlRouter = new PlayerControlRouter({
+      getState: () => this.state,
+      remoteDecision: options.networkSession ? (request) => options.networkSession.requestDecision(request) : null
+    });
     this.uiManager = ui;
     this.ui = ui.createGameSession?.(this) ?? ui;
     this.eventDispatcher = new EventDispatcher(() => this.isSessionValid(this.state.gameId), (channel, message, data) => Debug.log(channel, message, data));
@@ -532,6 +542,7 @@ class MatchApplication {
     this.hiddenCardSelection = new HiddenCardSelectionAdapter(() => this.state.players);
     const choiceBoundary = createChoiceBoundary({
       state: this.state,
+      controlRouter: this.controlRouter,
       ui: this.ui,
       choiceContexts: this.choiceContexts,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
@@ -542,6 +553,7 @@ class MatchApplication {
       choosePostCounterResource: (...args) => this.aiController.choosePostCounterResource(...args),
       requestHiddenCards: (...args) => this.ui.requestHiddenCards?.(...args),
       requestZoneCard: (...args) => this.ui.requestZoneCard?.(this, ...args),
+      createHiddenSelection: (...args) => this.hiddenCardSelection.createHiddenSelection(...args),
       resolveHiddenToken: (...args) => this.hiddenCardSelection.resolveToken(...args),
       resolveConfirmedHiddenTokens: (...args) => this.hiddenCardSelection.resolveConfirmedTokens(...args),
       isHiddenSelectionActive: (...args) => this.hiddenCardSelection.isSelectionActive(...args),
@@ -593,6 +605,7 @@ class MatchApplication {
       getPlayerById: (playerId) => this.state.players.find((player) => player.id === playerId),
       getCardById: (cardId) => findCardEntity(this, cardId),
       ui: this.ui,
+      presentPrivateReveal: (descriptor, presentLocal) => this.controlRouter.presentPrivateReveal(descriptor, presentLocal),
       renderTarget: this
     });
     this.diagnosticsPort = createPlayerStatisticsDiagnosticsAdapter({
@@ -887,10 +900,12 @@ class MatchApplication {
         execute: (skill, source, targets, context) => this.skillEffectRuntime.execute(skill, source, targets, context)
       },
       getSkillTargets: (source, skill) => ActionLegality.getSkillTargets(this, source, skill),
-      getHumanPlayer: () => this.state.players[0],
+      getHumanPlayer: (actorId) => this.controlRouter.humanPlayer(actorId),
       choiceCoordinator: this.choiceCoordinator,
       choiceContexts: this.choiceContexts,
-      requestCardFlow: (actor, card, targets) => this.ui.requestCardFlow?.(this, actor, card, targets),
+      requestCardFlow: (actor, card, targets) => this.controlRouter.requestCardFlow(
+        actor, card, targets, () => this.ui.requestCardFlow?.(this, actor, card, targets)
+      ),
       resolveHumanPlayEnd: (gameId) => this.ui.resolveHumanPlayEnd(gameId),
       createId,
       setResolutionSerialProjection: (value) => { this.state.resolutionSerial = value; },
@@ -945,7 +960,12 @@ class MatchApplication {
       getRemainingAiDecisionDelay,
       now: () => this.now(),
       getTeamRules: (player) => this.teamRules.getRules(player),
-      waitForHumanPlayEnd: (gameId) => this.ui.waitForHumanPlayEnd(gameId),
+      waitForHumanPlayEnd: (gameId, player) => this.controlRouter.waitForHumanPlay(player, gameId, {
+        waitLocal: (id) => this.ui.waitForHumanPlayEnd(id),
+        handleCard: (cardId, actorId) => this.actionWorkflow.handleHumanCard(cardId, actorId),
+        handleSkill: (actorId) => this.actionWorkflow.handleHumanSkill(actorId),
+        setPrompt: (...args) => this.ui.setPrompt(...args)
+      }),
       runAiPlayPhase: (...args) => this.takeAiPlayPhase(...args),
       choiceCoordinator: this.choiceCoordinator,
       choiceContexts: this.choiceContexts,
@@ -969,6 +989,7 @@ class MatchApplication {
       cancelPendingInteractions: () => this.ui.cancelPendingInteractions?.()
     });
     this.matchWorkflow = createMatchWorkflow({
+      canStartPreparedMatch: () => this.mode === MATCH_MODE.NETWORK && options.networkSession?.snapshot().state === NETWORK_STATE.IN_GAME,
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
       createId,

@@ -1,6 +1,8 @@
 /**
  * 页面入口：创建 UIManager，并通过最终 composition root 创建/替换单局应用。
  */
+import { MATCH_MODE } from "./application/match/MatchMode.js";
+import { createNetworkFlow } from "./composition/createNetworkFlow.js";
 import { createGameApplication } from "./composition/createGameApplication.js";
 import { UIManager } from "./ui/UIManager.js";
 import { HistoryStatsManager } from "./ui/history/HistoryStatsManager.js";
@@ -82,10 +84,10 @@ function startRecruitment() {
 
 /*
 功能
-销毁未完成的征召并返回首页。
+销毁当前对局并返回首页。
 
 调用方
-UIManager 编队页返回主界面按钮 callback。
+NetworkFlow 模式页返回按钮 callback。
 
 输入
 无。
@@ -112,10 +114,147 @@ function returnToStart() {
   ui.showStart();
 }
 
+
+/*
+功能
+把已确认的 Network setup 装入现有 Match 并初始化本地 UI。
+
+调用方
+NetworkFlow 游戏准备 callback。
+
+输入
+本地投影 setup 与 NetworkSession。
+
+输出
+无。
+
+读取状态
+UI aiSpeed。
+
+写入状态
+game 与 UI owner。
+
+调用函数
+createGameApplication、prepareNetworkMatch、showGame。
+
+边界与不变量
+不发牌或启动回合；只由后续 MATCH_START 调用 startPreparedMatch。
+*/
+function prepareNetworkMatch(setup, networkSession) {
+  game = createGameApplication(ui, Math.random, { mode: MATCH_MODE.NETWORK, networkSession });
+  ui.attachGame(game);
+  game.setAiSpeed(ui.aiSpeed);
+  game.prepareNetworkMatch(setup);
+  ui.showGame(game);
+  ui.setMusicTeam(game.state.players[0].battleTeam);
+}
+
+/*
+功能
+销毁并解绑当前 Match。
+
+调用方
+NetworkFlow navigation 与断线。
+
+输入
+无。
+
+输出
+无。
+
+读取状态
+game。
+
+写入状态
+game 与 UI owner。
+
+调用函数
+dispose、attachGame。
+
+边界与不变量
+重复调用安全，不写历史。
+*/
+function disposeCurrentMatch() {
+  game?.dispose();
+  game = null;
+  ui.attachGame(null);
+}
+
+/*
+功能
+进入正式游玩方式选择页。
+
+调用方
+开始本局、单人编队返回与 Network 重新征召。
+
+输入
+无。
+
+输出
+无。
+
+读取状态
+networkFlow。
+
+写入状态
+页面 lifecycle。
+
+调用函数
+networkFlow.show。
+
+边界与不变量
+单人入口仍由 startRecruitment 接管。
+*/
+function showPlayModeSelection() {
+  networkFlow.show();
+}
+
+/*
+功能
+按当前 Match mode 处理重新征召。
+
+调用方
+UI restart。
+
+输入
+无。
+
+输出
+无。
+
+读取状态
+game.mode。
+
+写入状态
+当前 Match lifecycle。
+
+调用函数
+showPlayModeSelection、startRecruitment。
+
+边界与不变量
+单人重新征召仍直达既有编队选择；Network 关闭旧房间。
+*/
+function restartRecruitment() {
+  if (game?.mode === MATCH_MODE.NETWORK) showPlayModeSelection();
+  else startRecruitment();
+}
+
+const networkFlow = createNetworkFlow({
+  ui,
+  capability: globalThis.fiveRealmsNetworkCapability ?? null,
+  onSingleplayer: startRecruitment,
+  onHome: returnToStart,
+  onPrepareMatch: prepareNetworkMatch,
+  onStartMatch: () => game.startPreparedMatch(),
+  onDisposeMatch: disposeCurrentMatch
+});
+
 ui.setCallbacks({
-  onStart: startRecruitment,
-  onRestart: startRecruitment,
-  onBackToStart: returnToStart,
+  onStart: showPlayModeSelection,
+  onRestart: restartRecruitment,
+  onNetworkClick: networkFlow.handleClick,
+  onNetworkSubmit: networkFlow.handleSubmit,
+  onBackToStart: showPlayModeSelection,
   onBackToSquadSelection: startRecruitment,
   /*
   功能

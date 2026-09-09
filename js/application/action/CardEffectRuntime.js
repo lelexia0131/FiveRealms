@@ -346,7 +346,7 @@ rememberPrivateCard、publishFact 与私密展示 collaborator。
         });
       }
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
-      if (source.controllerType === "human") await runtime.presentation.showPrivateReveal({ title: `${target.name}的手牌情报`, cardIds: chosen.map((card) => card.id) });
+      if (source.controllerType === "human") await runtime.presentation.showPrivateReveal({ viewerId: source.id, title: `${target.name}的手牌情报`, cardIds: chosen.map((card) => card.id) });
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
       runtime.presentation.log(`${source.name}窥探了${target.name}的${chosen.length}张手牌。`);
       return { resolved: true };
