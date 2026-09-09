@@ -1,3 +1,4 @@
+import { NetworkGameView } from "../ui/network/NetworkGameView.js";
 import { NetworkSession } from "../network/NetworkSession.js";
 import { NETWORK_ROLE as R } from "../network/NetworkProtocol.js";
 import { NETWORK_STATE as S } from "../network/NetworkLobbyState.js";
@@ -37,6 +38,7 @@ export function createNetworkFlow({ ui, capability = null, onSingleplayer, onHom
   let draft = {};
   let prepared = false;
   let started = false;
+  let guestView = null;
 
   /*
 功能
@@ -66,21 +68,32 @@ onPrepareMatch、gameReady、onStartMatch、showNetworkPage。
   function update(snapshot) {
     if (page !== "squad") return;
     if (snapshot.state === S.DISCONNECTED && prepared) {
-      onDisposeMatch();
+      if (snapshot.role === R.HOST) onDisposeMatch();
+      guestView = null;
       prepared = false;
     }
     if (snapshot.state === S.LOADING_GAME || snapshot.state === S.IN_GAME) {
       if (!prepared) {
         prepared = true;
         try {
-          onPrepareMatch(snapshot.matchSetup, session);
+          if (snapshot.role === R.HOST) {
+            onPrepareMatch(snapshot.matchSetup, session);
+            session.gameChannel.publish();
+          } else {
+            guestView = new NetworkGameView({
+              showPage: (markup) => ui.showNetworkPage(markup, "game"),
+              getRoot: () => ui.elements?.network_screen,
+              submit: (requestId, result) => session.gameChannel.respond(requestId, result)
+            });
+            guestView.update(session.gameChannel.snapshot());
+          }
           ui.setPrompt("双方已完成选择，等待游戏就绪", "双方就绪后将自动开始");
           session.gameReady();
         } catch (error) {
           session.disconnect(error.message);
         }
       }
-      if (snapshot.state === S.IN_GAME && prepared && !started) {
+      if (snapshot.role === R.HOST && snapshot.state === S.IN_GAME && prepared && !started) {
         started = true;
         void Promise.resolve(onStartMatch()).catch((error) => session.disconnect(error.message));
       }
@@ -89,6 +102,7 @@ onPrepareMatch、gameReady、onStartMatch、showNetworkPage。
     ui.showNetworkPage(renderNetworkSquadSelectionView(snapshot, draft), "squad");
   }
   session.subscribe(update);
+  session.gameChannel.subscribe((snapshot) => guestView?.update(snapshot));
 
   /*
 功能
@@ -117,6 +131,7 @@ session.close、onDisposeMatch、showNetworkPage。
 */
   function show(destination = "mode") {
     page = destination;
+    guestView = null;
     session.close();
     onDisposeMatch();
     prepared = false;
@@ -151,6 +166,7 @@ show、session.open/select/confirm、callbacks。
 disabled 元素不提交；候选与席位全部齐备后才向 Host 提交。
 */
   function handleClick(event) {
+    if (guestView?.handleClick(event)) return;
     const button = event.target.closest("button");
     if (!button || button.disabled) return;
     ui.playSound("select");

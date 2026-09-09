@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { projectNetworkGame } from "../js/network/NetworkViewerProjection.js";
+import { NetworkGameView } from "../js/ui/network/NetworkGameView.js";
 import { NetworkSession } from "../js/network/NetworkSession.js";
 import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER } from "../js/network/NetworkProtocol.js";
 import { NETWORK_STATE as S, transitionNetworkState } from "../js/network/NetworkLobbyState.js";
@@ -117,6 +120,270 @@ test。
 所有随机验证仅证明正确性，不运行平衡或自博弈。
 */
 export function registerNetworkTests(test, { makeUi, instance }) {
+
+
+  test("Network：Guest出牌意图经原ActionWorkflow在Host真实结算并同步能量", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    game.runGameLoop = () => {};
+    pair.host.gameReady(); pair.guest.gameReady();
+    await game.startPreparedMatch();
+    const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    game.state.currentPlayerIndex = actor.seatIndex;
+    game.state.phase = "play";
+    actor.energy = 0;
+    const card = instance("charge");
+    actor.hand.push(card);
+    let used = false;
+    pair.guest.gameChannel.subscribe(({ requests }) => {
+      for (const request of requests) {
+        assert.equal(request.kind, "player-intent");
+        const option = !used ? request.options.find((entry) => entry.card?.id === card.id)
+          : request.options.find((entry) => entry.label === "结束出牌");
+        assert.ok(option);
+        used = true;
+        pair.guest.gameChannel.respond(request.requestId, { status: "selected", selectedIds: [option.optionId] });
+      }
+    });
+    const finished = await game.controlRouter.waitForHumanPlay(actor, game.state.gameId, {
+      waitLocal: () => { throw Error("不应在Host等待Guest本地输入"); },
+      handleCard: (...args) => game.actionWorkflow.handleHumanCard(...args),
+      handleSkill: (...args) => game.actionWorkflow.handleHumanSkill(...args), setPrompt: () => {}
+    });
+    assert.equal(finished, true);
+    assert.equal(actor.energy, 1);
+    assert.ok(!actor.hand.includes(card));
+    assert.ok(game.state.discardPile.includes(card));
+    const projected = pair.guest.gameChannel.snapshot().projection.players.find((player) => player.playerId === actor.id);
+    assert.equal(projected.energy, 1);
+    assert.ok(!projected.hand.some((entry) => entry.id === card.id));
+    game.dispose();
+  });
+
+  test("Network：Host终局Result安全投影到Guest真实MVP模板且没有成就section", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const ui = makeUi();
+    ui.showMatchPerformance = () => {};
+    const game = createGameApplication(ui, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    pair.host.gameReady(); pair.guest.gameReady();
+    await game.eventDispatcher.publishFact("gameStart", { gameId: game.state.gameId });
+    game.state.isGameOver = true;
+    game.state.winnerTeam = "dawn";
+    await game.eventDispatcher.publishFact("gameOver", { gameId: game.state.gameId, winnerTeam: "dawn" });
+    const snapshot = pair.guest.gameChannel.snapshot();
+    const result = snapshot.projection.presentation.result;
+    assert.equal(snapshot.projection.presentation.kind, "result");
+    assert.equal(result.players.length, 5);
+    assert.ok(result.mvpPlayerId);
+    assert.doesNotMatch(JSON.stringify(result), /achievementFacts|contributionFacts|aiMemory|handVersion|pendingResponses/);
+    const root = { innerHTML: "", addEventListener: () => {}, querySelectorAll: () => [], querySelector: () => null };
+    const view = new NetworkGameView({
+      showPage: () => {}, getRoot: () => ({ querySelector: () => root }), submit: () => {}
+    });
+    view.update(snapshot);
+    assert.match(root.innerHTML, /MVP/);
+    assert.match(root.innerHTML, /全场表现排名/);
+    assert.doesNotMatch(root.innerHTML, /match-achievement-section|本局解锁成就|本局没有新的征途铭刻/);
+    game.dispose();
+  });
+
+  test("Network：Host唯一创建并启动Match而Guest只初始化投影UI", async () => {
+    let roomId, hostGame, startPromise, hostCreated = 0, guestCreated = 0, hostLoops = 0, guestLoops = 0;
+    const receivers = {};
+    const capabilities = (role) => ({
+      createRoom: async (room) => { roomId = room.roomId; return room; },
+      joinRoom: async () => ({ roomId }),
+      subscribe: (receive) => { receivers[role] = receive; return () => {}; },
+      send: (event) => receivers[role === R.HOST ? R.GUEST : R.HOST]?.(structuredClone(event)),
+      close: () => {}
+    });
+    let guestMarkup = "";
+    const hostUi = { ...makeUi(), showNetworkPage: () => {}, playSound: () => {} };
+    const guestUi = { showNetworkPage: (html) => { guestMarkup = html; }, playSound: () => {}, setPrompt: () => {} };
+    const hostFlow = createNetworkFlow({
+      ui: hostUi, capability: capabilities(R.HOST), onDisposeMatch: () => hostGame?.dispose(),
+      onPrepareMatch: (setup, session) => {
+        hostCreated += 1;
+        hostGame = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: session });
+        hostGame.runGameLoop = () => { hostLoops += 1; };
+        hostGame.prepareNetworkMatch(setup);
+      },
+      onStartMatch: () => (startPromise = hostGame.startPreparedMatch())
+    });
+    const guestFlow = createNetworkFlow({
+      ui: guestUi, capability: capabilities(R.GUEST), onDisposeMatch: () => {},
+      onPrepareMatch: () => { guestCreated += 1; throw Error("Guest 创建了 Match"); },
+      onStartMatch: () => { guestLoops += 1; throw Error("Guest 启动了 GameLoop"); }
+    });
+    hostFlow.handleClick({ target: { closest: () => ({ dataset: { networkAction: "create" } }) } });
+    await Promise.resolve(); await Promise.resolve();
+    const previousFormData = globalThis.FormData;
+    try {
+      globalThis.FormData = class { get() { return "test-room"; } };
+      guestFlow.handleSubmit({ target: { matches: () => true }, preventDefault: () => {} });
+    } finally { globalThis.FormData = previousFormData; }
+    await Promise.resolve(); await Promise.resolve();
+    receivers.GUEST({ type: E.PEER_CONNECTED, sender: NETWORK_CAPABILITY_SENDER, roomId });
+    receivers.HOST({ type: E.PEER_CONNECTED, sender: NETWORK_CAPABILITY_SENDER, roomId });
+    const pair = { host: hostFlow.session, guest: guestFlow.session };
+    choosePair(pair);
+    pair.host.confirm(); pair.guest.confirm();
+    assert.ok(startPromise, "Host 必须触发真实启动入口");
+    await startPromise;
+    assert.equal(pair.host.snapshot().state, S.IN_GAME);
+    assert.equal(pair.guest.snapshot().state, S.IN_GAME);
+    assert.equal(hostCreated, 1);
+    assert.equal(hostLoops, 1);
+    assert.equal(guestCreated, 0);
+    assert.equal(guestLoops, 0);
+    assert.match(guestMarkup, /五域战场/);
+    assert.match(guestMarkup, /你的手牌/);
+    assert.ok(pair.guest.gameChannel.snapshot().projection.players.every((p) => p.handCount > 0));
+    hostGame.dispose();
+    pair.host.close(); pair.guest.close();
+  });
+
+  test("Network：Guest构造入口在RNG和Worker初始化前拒绝且不能绑定Authority", async () => {
+    const pair = await connectedPair();
+    let rngCalls = 0, workerCalls = 0;
+    const previousWorker = globalThis.Worker;
+    try {
+      globalThis.Worker = class { constructor() { workerCalls += 1; throw Error("不应创建Worker"); } };
+      assert.throws(() => createGameApplication(makeUi(), () => { rngCalls += 1; return 0.5; },
+        { mode: MATCH_MODE.NETWORK, networkSession: pair.guest }), /只能在 Host/);
+    } finally { globalThis.Worker = previousWorker; }
+    assert.equal(rngCalls, 0);
+    assert.equal(workerCalls, 0);
+    assert.throws(() => pair.guest.gameChannel.bindHost({ getState: () => {}, prepareDecision: () => {} }), /仅 Host/);
+    await assert.rejects(pair.guest.requestDecision({}), /仅 Host/);
+    for (const file of ["js/ui/network/NetworkGameView.js", "js/network/NetworkGameChannel.js", "js/composition/createNetworkFlow.js"]) {
+      const source = await readFile(new URL("../" + file, import.meta.url), "utf8");
+      assert.doesNotMatch(source, /new Worker|new MatchState|createGameApplication\(|createSearchExecutor\(|Math\.random\(/);
+    }
+  });
+
+  test("Network：Host投影仅含Guest手牌和公开信息且客户端修改不影响Host", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const ui = makeUi();
+    const game = createGameApplication(ui, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const guest = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
+    const host = game.state.players[0];
+    host.hand.push({ ...instance("assault"), id: "HOST_PRIVATE_CARD", secret: "SECRET_EXTENSION" });
+    guest.hand.push({ ...instance("block"), id: "GUEST_OWN_CARD", secret: "OWN_PRIVATE_EXTENSION" });
+    game.state.deck.cards.push({ ...instance("counter"), id: "SECRET_DECK_TOP" });
+    game.state.hiddenSelection = { secret: "SECRET_SELECTION" };
+    game.state.pendingResponses.push({ secret: "SECRET_RESPONSE" });
+    game.state.logs.push({ message: "HOST_PRIVATE_KNOWLEDGE" });
+    pair.host.gameChannel.publish({ kind: "unexpected", secret: "PRESENTATION_SECRET" });
+    const copy = pair.guest.gameChannel.snapshot().projection;
+    const json = JSON.stringify(copy);
+    assert.match(json, /GUEST_OWN_CARD/);
+    for (const value of ["HOST_PRIVATE_CARD", "SECRET_EXTENSION", "OWN_PRIVATE_EXTENSION", "SECRET_DECK_TOP", "SECRET_SELECTION", "SECRET_RESPONSE", "HOST_PRIVATE_KNOWLEDGE", "PRESENTATION_SECRET"]) assert.ok(!json.includes(value), value);
+    assert.equal(copy.players.find((p) => p.playerId === host.id).hand, null);
+    assert.equal(copy.players.find((p) => p.playerId === host.id).handCount, 1);
+    copy.players[0].hp = 999;
+    assert.notEqual(host.hp, 999);
+    assert.notEqual(pair.guest.gameChannel.snapshot().projection.players[0].hp, 999);
+    let markup = "";
+    const view = new NetworkGameView({ showPage: (html) => { markup = html; }, getRoot: () => null, submit: () => {} });
+    view.update(pair.guest.gameChannel.snapshot());
+    assert.match(markup, /手牌 1 张/);
+    assert.doesNotMatch(markup, /HOST_PRIVATE_CARD|SECRET_DECK_TOP/);
+    game.state.phase = "discard";
+    game.ui.render(game);
+    assert.equal(pair.guest.gameChannel.snapshot().projection.phase, "discard");
+    game.ui.queueFeedback("damage", guest.id, 1);
+    assert.equal(pair.guest.gameChannel.snapshot().projection.presentation.kind, "feedback");
+    game.dispose();
+  });
+
+  test("Network：Guest输入经请求关联往返返回Host且不发送任意selection", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const actor = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
+    const card = instance("block"); actor.hand.push(card);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const pending = game.choicePort.request({
+      kind: "response", requestId: "domain-response", actorId: actor.id, gameId: game.state.gameId,
+      options: [{ optionId: card.id }], constraints: { requiredCount: 1 }, canDecline: true,
+      context: { label: "请响应", secret: "DO_NOT_SEND" }
+    });
+    const safe = pair.guest.gameChannel.snapshot();
+    assert.equal(safe.requests.length, 1);
+    assert.ok(!JSON.stringify(safe).includes("DO_NOT_SEND"));
+    const view = new NetworkGameView({
+      showPage: () => {}, getRoot: () => null,
+      submit: (requestId, result) => pair.guest.gameChannel.respond(requestId, result)
+    });
+    view.update(safe);
+    view.handleClick({ target: { closest: () => ({ dataset: { networkOption: card.id } }) } });
+    view.handleClick({ target: { closest: () => ({ dataset: { networkAnswer: "selected" } }) } });
+    assert.deepEqual(await pending, { status: "selected", selectedIds: [card.id] });
+    assert.ok(pair.events.some((e) => e.type === E.DECISION_REQUEST));
+    assert.ok(pair.events.some((e) => e.type === E.DECISION_RESPONSE));
+    const last = pair.events.findLast((e) => e.type === E.DECISION_RESPONSE);
+    assert.equal(pair.host.receive(last), false);
+    assert.equal(pair.guest.gameChannel.snapshot().requests.length, 0);
+    assert.equal(actor.hand[0], card);
+    game.dispose();
+  });
+
+  test("Network：回答拒绝越权过期和非法选项且断线收束等待", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const actor = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const pending = pair.host.requestDecision({ kind: "target", actorId: actor.id, gameId: game.state.gameId,
+      options: [{ optionId: game.state.players[0].id }], constraints: { requiredCount: 1 }, context: {} });
+    const request = pair.guest.gameChannel.snapshot().requests[0];
+    const response = { requestId: request.requestId, actorId: request.actorId, gameId: request.gameId,
+      stateVersion: request.stateVersion, status: "selected", selectedIds: [request.options[0].optionId] };
+    let sequence = 100;
+    const deliver = (payload) => pair.host.receive({ type: E.DECISION_RESPONSE, sender: R.GUEST, roomId: pair.roomId, sequence: sequence++, payload });
+    assert.equal(deliver({ ...response, actorId: "forged-actor" }), false);
+    assert.equal(deliver({ ...response, gameId: "old-game" }), false);
+    assert.equal(deliver({ ...response, selectedIds: ["forged-option"] }), false);
+    assert.equal(deliver({ ...response, status: "declined", selectedIds: [] }), false);
+    game.state.stateVersion += 1;
+    assert.equal(deliver(response), false);
+    assert.equal((await pending).status, "cancelled");
+    const waiting = pair.host.requestDecision({ kind: "target", actorId: actor.id, gameId: game.state.gameId,
+      options: [{ optionId: actor.id }], constraints: { requiredCount: 1 }, context: {} });
+    const rejected = assert.rejects(waiting, /已关闭/);
+    pair.host.disconnect();
+    await rejected;
+    game.dispose();
+  });
+
+  test("Network：远端出牌意图和公开组合由Host映射而Guest不能上传动作对象", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const actor = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
+    game.state.currentPlayerIndex = actor.seatIndex; game.state.phase = "play";
+    pair.host.gameReady(); pair.guest.gameReady();
+    const pending = pair.host.requestDecision({ kind: "player-intent", actorId: actor.id, gameId: game.state.gameId });
+    const request = pair.guest.gameChannel.snapshot().requests[0];
+    const end = request.options.find((option) => option.label === "结束出牌");
+    pair.guest.gameChannel.respond(request.requestId, { status: "selected", selectedIds: [end.optionId], kind: "card", cardId: "forged" });
+    assert.deepEqual(await pending, { kind: "end" });
+    const event = pair.events.findLast((e) => e.type === E.PLAYER_INTENT);
+    assert.equal(event.payload.cardId, undefined);
+    assert.equal(event.payload.kind, undefined);
+    game.dispose();
+  });
+
   test("Network：无 Transport 创建等待且不能选择或提前准备", async () => {
     const session = new NetworkSession();
     await session.open(R.HOST);
@@ -312,16 +579,21 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     pair.host.confirm(); pair.guest.confirm();
     const requests = [];
     const ui = makeUi();
-    const game = createGameApplication(ui, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: {
-      requestDecision: async (request) => { requests.push(request); return { status: "selected", selectedIds: request.optionIds?.slice(0, 1) ?? [] }; }
-    } });
+    const game = createGameApplication(ui, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    pair.guest.gameChannel.subscribe(({ requests: pending }) => {
+      for (const request of pending) {
+        requests.push(request);
+        pair.guest.gameChannel.respond(request.requestId, { status: "selected", selectedIds: request.options.slice(0, request.min).map((option) => option.optionId) });
+      }
+    });
+    pair.host.gameReady(); pair.guest.gameReady();
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const remote = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
     const owner = game.state.players[0];
     owner.hand.push(instance("assault"));
     const chosen = await game.hiddenCardChoiceWorkflow.chooseHiddenCards(remote, owner, 1, "测试选择");
     assert.equal(chosen[0], owner.hand[0]);
-    assert.notEqual(requests[0].optionIds[0], owner.hand[0].id);
+    assert.notEqual(requests[0].options[0].optionId, owner.hand[0].id);
     await game.presentationPort.showPrivateReveal({ viewerId: remote.id, title: "私密", cardIds: [owner.hand[0].id] });
     assert.equal(requests.at(-1).kind, "private-reveal");
     assert.equal(ui.reveals.length, 0);

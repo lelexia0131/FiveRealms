@@ -146,10 +146,10 @@ export class MatchMvpResultView {
     </header>
     <div class="match-mvp-layout">
       <section class="match-mvp-ranking" aria-label="全场表现排名"><h3>全场表现排名</h3>${rows}
-        <section class="match-achievement-section" aria-labelledby="match-achievement-title">
+        ${matchAchievementMarkup ? `<section class="match-achievement-section" aria-labelledby="match-achievement-title">
           <h4 id="match-achievement-title">本局解锁成就</h4>
           <div class="match-achievement-list">${matchAchievementMarkup}</div>
-        </section>
+        </section>` : ""}
       </section>
       <section class="match-mvp-detail" data-match-performance-detail aria-live="polite"></section>
     </div>`;

@@ -1,3 +1,4 @@
+import { NetworkGameChannel } from "./NetworkGameChannel.js";
 import { MATCH_MODE } from "../application/match/MatchMode.js";
 import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER } from "./NetworkProtocol.js";
 import { NETWORK_STATE as S, transitionNetworkState } from "./NetworkLobbyState.js";
@@ -43,6 +44,9 @@ reset。
     this.#capability = capability;
     this.#random = random;
     this.reset();
+    this.gameChannel = new NetworkGameChannel({
+      getSession: () => this.snapshot(), send: (type, payload) => this.send(type, payload)
+    });
   }
 
   /*
@@ -388,6 +392,9 @@ Guest 不分池；Host 重验 Guest 席位与确认内容；重复连接不重�
         }
         return true;
       }
+      if ([E.GAME_SNAPSHOT, E.DECISION_REQUEST, E.DECISION_RESPONSE, E.DECISION_CANCELLED, E.PLAYER_INTENT].includes(event.type)) {
+        return this.gameChannel.receive(event);
+      }
       if (d.role === R.GUEST) return this.acceptSnapshot(event);
       if (!d.peerConnected) return false;
       if (event.type === E.SELECTION_CHANGED) this.selectFor(R.GUEST, event.payload);
@@ -624,40 +631,31 @@ publish、send。
 
   /*
 功能
-向远端真人请求统一决定并绑定会话取消。
+把远端真人决定交给游戏侧请求与回答通道。
 
 调用方
 PlayerControlRouter。
 
 输入
-data-only request。
+Host 内部 data-only request。
 
 输出
-决定 Promise。
+经过关联与选项校验的结果 Promise。
 
 读取状态
-state、capability。
+gameChannel。
 
 写入状态
-无。
+pending request registry。
 
 调用函数
-capability.requestDecision。
+NetworkGameChannel.request。
 
 边界与不变量
-仅 IN_GAME 可请求；断线/关闭解除等待，迟到回答不得继续结算。
+Transport 只发送 envelope，不再代替游戏侧实现 decision round-trip。
 */
-  async requestDecision(request) {
-    if (this.#data.state !== S.IN_GAME || !this.#capability?.requestDecision) throw new Error("远程决定通道不可用");
-    const signal = this.#abort.signal;
-    let rejectAbort;
-    const cancelled = new Promise((_, reject) => { rejectAbort = () => reject(new Error("NetworkSession 已结束")); });
-    signal.addEventListener("abort", rejectAbort, { once: true });
-    try {
-      return await Promise.race([this.#capability.requestDecision(structuredClone(request), { signal }), cancelled]);
-    } finally {
-      signal.removeEventListener("abort", rejectAbort);
-    }
+  requestDecision(request) {
+    return this.gameChannel.request(request);
   }
 
   /*
@@ -688,6 +686,7 @@ move、notify、AbortController.abort。
   disconnect(message = "连接已断开") {
     if (this.#data.state === S.IDLE) return;
     this.#abort.abort();
+    this.gameChannel.reset();
     this.#data.peerConnected = false;
     this.#data.ready = { HOST: false, GUEST: false };
     this.#data.gameReady = { HOST: false, GUEST: false };
@@ -724,6 +723,7 @@ unsubscribe、capability.close、reset、notify。
   close() {
     this.#generation += 1;
     this.#abort.abort();
+    this.gameChannel.reset();
     this.#unsubscribe?.();
     this.#unsubscribe = null;
     this.#capability?.close?.();

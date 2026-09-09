@@ -17,6 +17,8 @@ Application、Domain、AI 与 concrete adapters。
 架构约束
 不得重新拥有动作、响应、濒死、判定、资源或规则公式；不得增加第二套业务 boundary 或 Game shell class。
 */
+import { createNetworkHostBridge } from "../network/NetworkHostBridge.js";
+import { NETWORK_ROLE } from "../network/NetworkProtocol.js";
 import { MATCH_MODE, isMatchPersistenceEligible } from "../application/match/MatchMode.js";
 import { PlayerControlRouter } from "../network/PlayerControlRouter.js";
 import { NETWORK_STATE } from "../network/NetworkLobbyState.js";
@@ -386,6 +388,7 @@ function assembleApplicationBoundary(application) {
     search executor 无论 workflow 返回值为何都必须释放；重复销毁保持下游幂等语义。
     */
     dispose() {
+      application.networkBridge?.dispose();
       application.matchPerformanceSidecar?.dispose();
       const result = application.matchWorkflow.dispose();
       application.searchExecutor?.dispose?.();
@@ -456,6 +459,9 @@ class MatchApplication {
   领域字段值只来自 createMatchState；presentationRandom 不复用真实游戏或 AI search RNG；gameId/isDisposed/logs/pendingResponses 属于 Application session；stateVersion 保持 authoritative。
   */
   constructor(ui, random = Math.random, options = {}) {
+    if (options.mode === MATCH_MODE.NETWORK && options.networkSession?.snapshot?.().role !== NETWORK_ROLE.HOST) {
+      throw new Error("Network MatchApplication 只能在 Host 创建");
+    }
     this.randomPort = createRandomPort({ next: () => random() });
     this.random = () => this.randomPort.next();
     this.presentationRandom = typeof options.presentationRandom === "function"
@@ -502,6 +508,17 @@ class MatchApplication {
     });
     this.uiManager = ui;
     this.ui = ui.createGameSession?.(this) ?? ui;
+    this.networkBridge = options.mode === MATCH_MODE.NETWORK ? createNetworkHostBridge({
+      session: options.networkSession, getState: () => this.state,
+      canPlayCard: (actor, card) => ActionLegality.canPlayCard(this, actor, card),
+      getActiveSkill,
+      canUseSkill: (actor, skill) => canUseActiveSkill(this, actor, skill),
+      getLeverageFirstTargets: (actor) => ActionLegality.getLeverageFirstTargets(this, actor),
+      getAssaultTargets: (actor) => ActionLegality.getAssaultTargetCandidates(this, actor),
+      getTransferSources: (actor, card) => ActionLegality.getTransferSources(this, actor, card),
+      getTransferReceivers: (actor, source, card) => ActionLegality.getTransferReceivers(this, actor, source, card)
+    }) : null;
+    if (this.networkBridge) this.ui = this.networkBridge.wrapUi(this.ui);
     this.eventDispatcher = new EventDispatcher(() => this.isSessionValid(this.state.gameId), (channel, message, data) => Debug.log(channel, message, data));
     this.matchPerformanceSidecar = createMatchPerformanceSidecar({
       eventDispatcher: this.eventDispatcher,
@@ -989,7 +1006,7 @@ class MatchApplication {
       cancelPendingInteractions: () => this.ui.cancelPendingInteractions?.()
     });
     this.matchWorkflow = createMatchWorkflow({
-      canStartPreparedMatch: () => this.mode === MATCH_MODE.NETWORK && options.networkSession?.snapshot().state === NETWORK_STATE.IN_GAME,
+      canStartPreparedMatch: () => this.mode === MATCH_MODE.NETWORK && options.networkSession?.snapshot().role === NETWORK_ROLE.HOST && options.networkSession.snapshot().state === NETWORK_STATE.IN_GAME,
       getState: () => this.state,
       isSessionValid: (gameId) => this.isSessionValid(gameId),
       createId,

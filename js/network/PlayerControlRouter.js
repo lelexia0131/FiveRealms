@@ -193,6 +193,7 @@ requestRemote、handleCard、handleSkill、waitLocal。
       const intent = await this.requestRemote({ kind: "player-intent", gameId, actorId: actor.id, stateVersion: state.stateVersion });
       if (state.isDisposed || state.isGameOver || !actor.alive || state.phase !== "play"
         || state.players[state.currentPlayerIndex]?.id !== actor.id) return false;
+      if (intent?.kind === "cancelled") return false;
       if (intent?.kind === "end") return true;
       if (intent?.kind === "card") await handleCard(intent.cardId, actor.id);
       else if (intent?.kind === "skill") await handleSkill(actor.id);
