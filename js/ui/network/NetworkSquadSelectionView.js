@@ -38,6 +38,16 @@ candidateCardTemplate、escapeHtml。
 */
 export function renderNetworkSquadSelectionView(snapshot, draft = {}) {
   const editable = snapshot.state === S.SELECTING;
+  const waitingHost = snapshot.role === "HOST" && snapshot.state === S.WAITING_PEER && !snapshot.peerConnected;
+  const info = snapshot.connectionInfo;
+  const connectionCard = waitingHost ? `<div class="network-connection-card">
+    <p class="eyebrow">连接地址</p>
+    ${info ? `<code class="network-connection-address">${escapeHtml(info.host)}:${escapeHtml(info.port)}</code>
+      <p>将此连接地址发送给另一名玩家。</p>
+      <button class="ghost-button" type="button" data-network-action="copy-address">复制连接地址</button>
+      <p class="network-copy-status" data-network-copy-status role="status"></p>`
+      : `<p>连接地址将在网络服务启动后显示</p>`}
+  </div>` : "";
   const selected = { ...snapshot.localSelection, ...draft };
   const cards = snapshot.candidates.map((id, index) => {
     let card = candidateCardTemplate(CHARACTER_BY_ID[id], index);
@@ -53,7 +63,7 @@ export function renderNetworkSquadSelectionView(snapshot, draft = {}) {
   return `<div class="network-squad"><header class="selection-header"><div><p class="eyebrow">双人征召 · ${snapshot.role === "HOST" ? "房主" : "加入方"}</p><h2>选择你的角色与席位</h2></div>
     <span class="network-status" role="status">${STATUS[snapshot.state] ?? ""}</span></header>
     ${cards ? `<div class="candidate-grid">${cards}</div><div class="network-seat-row" aria-label="阵营与席位">${seats}</div>`
-      : `<div class="network-waiting"><span class="network-wait-sigil" aria-hidden="true">✧</span><h3>${STATUS[snapshot.state]}</h3><p>双方连接后，开启各自的四名角色征召。</p></div>`}
+      : `<div class="network-waiting${waitingHost ? " network-waiting-host" : ""}">${waitingHost ? "" : `<span class="network-wait-sigil" aria-hidden="true">✧</span>`}<h3>${waitingHost ? "房间已创建" : STATUS[snapshot.state]}</h3>${connectionCard}<p>${waitingHost ? "等待另一名玩家加入……" : "双方连接后，开启各自的四名角色征召。"}</p></div>`}
     <footer class="network-squad-footer"><button class="ghost-button" type="button" data-network-action="cancel">取消并返回</button>
       <p class="network-notice" role="status">${escapeHtml(snapshot.error ?? "晨星 2 席 · 暮影 3 席 · 剩余席位由电脑角色补齐")}</p>
       <button class="primary-button" type="button" data-network-action="confirm" ${!editable || !snapshot.localSelection || selected.characterId !== snapshot.localSelection.characterId || selected.seatId !== snapshot.localSelection.seatId ? "disabled" : ""}>${snapshot.localReady ? "已确认" : "确认角色与席位"}</button>

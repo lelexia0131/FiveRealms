@@ -1,6 +1,6 @@
 import { NetworkGameView } from "../ui/network/NetworkGameView.js";
 import { NetworkSession } from "../network/NetworkSession.js";
-import { NETWORK_ROLE as R } from "../network/NetworkProtocol.js";
+import { NETWORK_ROLE as R, normalizeNetworkEndpoint } from "../network/NetworkProtocol.js";
 import { NETWORK_STATE as S } from "../network/NetworkLobbyState.js";
 import { MATCH_MODE } from "../application/match/MatchMode.js";
 import { renderPlayModeSelectionView } from "../ui/network/PlayModeSelectionView.js";
@@ -171,7 +171,18 @@ disabled 元素不提交；候选与席位全部齐备后才向 Host 提交。
     if (!button || button.disabled) return;
     ui.playSound("select");
     const action = button.dataset.networkAction;
-    if (action === MATCH_MODE.SINGLEPLAYER) {
+    if (action === "copy-address") {
+      const snapshot = session.snapshot();
+      const info = snapshot.connectionInfo;
+      if (!info || snapshot.role !== R.HOST) return;
+      const status = button.parentElement.querySelector("[data-network-copy-status]");
+      void Promise.resolve().then(() => navigator.clipboard.writeText(`${info.host}:${info.port}`))
+        .then(() => {
+          if (button.isConnected && session.snapshot().roomId === snapshot.roomId) status.textContent = "连接地址已复制";
+        }).catch(() => {
+          if (button.isConnected && session.snapshot().roomId === snapshot.roomId) status.textContent = "复制失败，请选中上方地址手动复制。";
+        });
+    } else if (action === MATCH_MODE.SINGLEPLAYER) {
       page = "singleplayer";
       session.close();
       onSingleplayer();
@@ -236,10 +247,16 @@ session.open。
   function handleSubmit(event) {
     if (!event.target.matches("[data-network-form]")) return;
     event.preventDefault();
-    const address = new FormData(event.target).get("address");
-    if (!String(address ?? "").trim()) return;
+    const form = new FormData(event.target);
+    let endpoint;
+    try {
+      endpoint = normalizeNetworkEndpoint({ host: String(form.get("host") ?? ""), port: Number(form.get("port")) });
+    } catch (error) {
+      event.target.querySelector("[data-network-form-error]").textContent = error.message;
+      return;
+    }
     page = "squad";
-    void session.open(R.GUEST, String(address));
+    void session.open(R.GUEST, endpoint);
   }
 
   return Object.freeze({ show, handleClick, handleSubmit, session });

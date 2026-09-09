@@ -1,6 +1,6 @@
 import { NetworkGameChannel } from "./NetworkGameChannel.js";
 import { MATCH_MODE } from "../application/match/MatchMode.js";
-import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER } from "./NetworkProtocol.js";
+import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER, normalizeNetworkEndpoint } from "./NetworkProtocol.js";
 import { NETWORK_STATE as S, transitionNetworkState } from "./NetworkLobbyState.js";
 import { createNetworkSetup, isNetworkSetupValid, isNetworkSelectionValid, finalizeNetworkSetup, projectNetworkMatch } from "./NetworkSetup.js";
 
@@ -75,7 +75,7 @@ constructor、close。
 仅关闭房间清除角色池；重绘与重连不调用。
 */
   reset() {
-    this.#data = { mode: MATCH_MODE.NETWORK, state: S.IDLE, role: null, roomId: null,
+    this.#data = { mode: MATCH_MODE.NETWORK, state: S.IDLE, role: null, roomId: null, connectionInfo: null,
       revision: 0, peerConnected: false, setup: null, selections: { HOST: null, GUEST: null },
       ready: { HOST: false, GUEST: false }, gameReady: { HOST: false, GUEST: false },
       finalSetup: null, error: null };
@@ -113,6 +113,7 @@ structuredClone、projectNetworkMatch。
     const peer = d.role === R.HOST ? R.GUEST : R.HOST;
     return structuredClone({
       mode: d.mode, state: d.state, role: d.role, roomId: d.roomId, revision: d.revision,
+      connectionInfo: d.connectionInfo,
       peerConnected: d.peerConnected, error: d.error,
       candidates: d.peerConnected ? d.setup?.pools[d.role] ?? [] : [],
       seats: d.setup?.seats ?? [], localSelection: d.selections[d.role] ?? null,
@@ -239,7 +240,7 @@ capability.createRoom/joinRoom/subscribe、move、notify。
 边界与不变量
 无 capability 时 HOST 等待、GUEST 报未接入；不得宣称真实连接成功。
 */
-  async open(role, address = "") {
+  async open(role, endpoint = null) {
     if (this.#data.state !== S.IDLE) throw new Error("请先关闭当前房间");
     if (!Object.values(R).includes(role)) throw new Error("无效会话身份");
     const generation = ++this.#generation;
@@ -250,11 +251,15 @@ capability.createRoom/joinRoom/subscribe、move、notify。
     this.notify();
     try {
       if (role === R.GUEST && !this.#capability?.joinRoom) throw new Error("连接功能尚未接入");
+      const connectionInfo = role === R.GUEST ? normalizeNetworkEndpoint(endpoint ?? {}) : null;
       const result = role === R.HOST
         ? await this.#capability?.createRoom?.({ roomId: this.#data.roomId })
-        : await this.#capability.joinRoom({ address: address.trim() });
+        : await this.#capability.joinRoom(connectionInfo);
       if (generation !== this.#generation) return;
       if (result?.roomId) this.#data.roomId = result.roomId;
+      this.#data.connectionInfo = role === R.HOST
+        ? result?.connectionInfo ? normalizeNetworkEndpoint(result.connectionInfo) : null
+        : connectionInfo;
       if (!this.#data.roomId) throw new Error("缺少房间标识");
       this.move(S.WAITING_PEER);
       this.#unsubscribe = this.#capability?.subscribe?.((event) => this.receive(event, generation)) ?? null;
