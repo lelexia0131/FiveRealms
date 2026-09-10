@@ -129,13 +129,13 @@ NetworkFlow 游戏准备 callback。
 无。
 
 读取状态
-UI aiSpeed。
+UI aiSpeed 与 controlRouter 的本地真人身份。
 
 写入状态
 game 与 UI owner。
 
 调用函数
-createGameApplication、prepareNetworkMatch、showGame。
+createGameApplication、prepareNetworkMatch、showGame、controlRouter.humanPlayer。
 
 边界与不变量
 不发牌或启动回合；只由后续 MATCH_START 调用 startPreparedMatch。
@@ -146,7 +146,7 @@ function prepareNetworkMatch(setup, networkSession) {
   game.setAiSpeed(ui.aiSpeed);
   game.prepareNetworkMatch(setup);
   ui.showGame(game);
-  ui.setMusicTeam(game.state.players[0].battleTeam);
+  ui.setMusicTeam(game.controlRouter.humanPlayer().battleTeam);
 }
 
 /*
@@ -235,7 +235,7 @@ showPlayModeSelection、startRecruitment。
 单人重新征召仍直达既有编队选择；Network 关闭旧房间。
 */
 function restartRecruitment() {
-  if (game?.mode === MATCH_MODE.NETWORK) showPlayModeSelection();
+  if (game?.mode === MATCH_MODE.NETWORK || ui.networkPresentation) showPlayModeSelection();
   else startRecruitment();
 }
 
@@ -254,6 +254,8 @@ ui.setCallbacks({
   onRestart: restartRecruitment,
   onNetworkClick: networkFlow.handleClick,
   onNetworkSubmit: networkFlow.handleSubmit,
+  onNetworkPaste: networkFlow.handlePaste,
+  onNetworkInput: networkFlow.handleInput,
   onBackToStart: showPlayModeSelection,
   onBackToSquadSelection: startRecruitment,
   /*
@@ -327,9 +329,9 @@ ui.setCallbacks({
       }
     }
   },
-  onCard: (cardId) => game?.handleHumanCard(cardId),
-  onSkill: () => game?.handleHumanSkill(),
-  onEndPlay: () => game?.requestEndHumanPlay(),
+  onCard: (cardId) => ui.networkPresentation ? networkFlow.guestIntent("card", cardId) : game?.handleHumanCard(cardId),
+  onSkill: () => ui.networkPresentation ? networkFlow.guestIntent("skill") : game?.handleHumanSkill(),
+  onEndPlay: () => ui.networkPresentation ? networkFlow.guestIntent("end") : game?.requestEndHumanPlay(),
   onChangeAiSpeed: (speed) => game?.setAiSpeed(speed)
 });
 

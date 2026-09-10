@@ -4,7 +4,7 @@ import { NETWORK_ROLE as R, normalizeNetworkEndpoint } from "../network/NetworkP
 import { NETWORK_STATE as S } from "../network/NetworkLobbyState.js";
 import { MATCH_MODE } from "../application/match/MatchMode.js";
 import { renderPlayModeSelectionView } from "../ui/network/PlayModeSelectionView.js";
-import { renderNetworkEntryView } from "../ui/network/NetworkEntryView.js";
+import { renderNetworkEntryView, handleNetworkHostPaste, validateNetworkHost } from "../ui/network/NetworkEntryView.js";
 import { renderNetworkSquadSelectionView } from "../ui/network/NetworkSquadSelectionView.js";
 
 /*
@@ -69,6 +69,7 @@ onPrepareMatch、gameReady、onStartMatch、showNetworkPage。
     if (page !== "squad") return;
     if (snapshot.state === S.DISCONNECTED && prepared) {
       if (snapshot.role === R.HOST) onDisposeMatch();
+      guestView?.dispose();
       guestView = null;
       prepared = false;
     }
@@ -81,8 +82,7 @@ onPrepareMatch、gameReady、onStartMatch、showNetworkPage。
             session.gameChannel.publish();
           } else {
             guestView = new NetworkGameView({
-              showPage: (markup) => ui.showNetworkPage(markup, "game"),
-              getRoot: () => ui.elements?.network_screen,
+              ui,
               submit: (requestId, result) => session.gameChannel.respond(requestId, result)
             });
             guestView.update(session.gameChannel.snapshot());
@@ -131,6 +131,7 @@ session.close、onDisposeMatch、showNetworkPage。
 */
   function show(destination = "mode") {
     page = destination;
+    guestView?.dispose();
     guestView = null;
     session.close();
     onDisposeMatch();
@@ -166,7 +167,6 @@ show、session.open/select/confirm、callbacks。
 disabled 元素不提交；候选与席位全部齐备后才向 Host 提交。
 */
   function handleClick(event) {
-    if (guestView?.handleClick(event)) return;
     const button = event.target.closest("button");
     if (!button || button.disabled) return;
     ui.playSound("select");
@@ -247,6 +247,7 @@ session.open。
   function handleSubmit(event) {
     if (!event.target.matches("[data-network-form]")) return;
     event.preventDefault();
+    if (!validateNetworkHost(event.target)) return;
     const form = new FormData(event.target);
     let endpoint;
     try {
@@ -259,5 +260,10 @@ session.open。
     void session.open(R.GUEST, endpoint);
   }
 
-  return Object.freeze({ show, handleClick, handleSubmit, session });
+  return Object.freeze({
+    show, handleClick, handleSubmit, session,
+    handlePaste: handleNetworkHostPaste,
+    handleInput: (event) => event.target.form?.matches("[data-network-form]") && validateNetworkHost(event.target.form),
+    guestIntent: (kind, cardId) => guestView?.intent(kind, cardId)
+  });
 }

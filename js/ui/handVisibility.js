@@ -92,6 +92,40 @@ function compareDisplayEntries(left, right) {
 
 /*
 功能
+统一人物面板与隐藏选择的合法已知牌定义判定。
+
+调用方
+createOpponentHandView、createHiddenSelectionView。
+
+输入
+viewer、owner 与当前手牌实体。
+
+输出
+合法可见的公开定义；未知返回 null。
+
+读取状态
+viewer 的实体记忆、双方存活状态与阵营、owner 当前手牌。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+记忆必须同时匹配实体和当前定义；仅本人手牌或阵亡 viewer 的存活队友允许直接显示。
+*/
+function knownHandDefinition(viewer, owner, card) {
+  if (!card) return null;
+  const knownByEntity = viewer?.aiMemory?.knownCardsByPlayer?.[owner?.id] ?? {};
+  const revealLivingAllyHand = viewer?.alive === false
+    && owner?.alive === true && viewer.battleTeam === owner.battleTeam;
+  return viewer?.id === owner?.id || revealLivingAllyHand || knownByEntity[card.id] === card.definitionId
+    ? CARD_DEFINITIONS[card.definitionId] ?? null : null;
+}
+
+/*
+功能
 生成本地真人可合法观察的其他玩家手牌展示序列。
 
 调用方
@@ -110,24 +144,15 @@ owner.hand、双方 alive/battleTeam 与 viewer.aiMemory.knownCardsByPlayer。
 无。
 
 调用函数
-knownCardView、compareDisplayEntries。
+knownHandDefinition、knownCardView、compareDisplayEntries。
 
 边界与不变量
 真人存活时记忆必须同时匹配实体 ID 与当前 definitionId；真人阵亡后只亮出存活队友牌面，
 敌方和阵亡队友仍按原知识显示；该覆盖不得写入知识或携带实体 ID。
 */
 export function createOpponentHandView(viewer, owner) {
-  const knownByEntity = viewer?.aiMemory?.knownCardsByPlayer?.[owner?.id] ?? {};
-  const revealLivingAllyHand = viewer?.alive === false
-    && owner?.alive === true
-    && viewer.battleTeam === owner.battleTeam;
   return (owner?.hand ?? []).map((card, originalIndex) => {
-    const visibleDefinitionId = revealLivingAllyHand ? card.definitionId : knownByEntity[card.id];
-    if (visibleDefinitionId !== card.definitionId) return {
-      view:Object.freeze({ known:false }), originalIndex,
-      categoryOrder:CARD_CATEGORY_DISPLAY_ORDER.unknown, definitionOrder:Number.MAX_SAFE_INTEGER
-    };
-    const definition = CARD_DEFINITIONS[visibleDefinitionId];
+    const definition = knownHandDefinition(viewer, owner, card);
     if (!definition) return {
       view:Object.freeze({ known:false }), originalIndex,
       categoryOrder:CARD_CATEGORY_DISPLAY_ORDER.unknown, definitionOrder:Number.MAX_SAFE_INTEGER
@@ -145,7 +170,7 @@ export function createOpponentHandView(viewer, owner) {
 为一次隐藏选择生成仅含合法知识和不透明 token 的展示槽位。
 
 调用方
-InteractionController.requestZoneCard/requestHiddenCards。
+InteractionController.requestZoneCard/requestHiddenCards、NetworkHostBridge。
 
 输入
 观察者、手牌所有者与 HiddenCardSelectionAdapter selection。
@@ -160,17 +185,15 @@ owner.hand、selection.positions 与 viewer.aiMemory。
 无。
 
 调用函数
-knownCardView、Object.freeze。
+knownHandDefinition、knownCardView、Object.freeze。
 
 边界与不变量
 未知项只能包含 token 与 known=false；不得把真实实体 ID 或 definitionId 写入 DOM 模型。
 */
 export function createHiddenSelectionView(viewer, owner, selection) {
-  const knownByEntity = viewer?.aiMemory?.knownCardsByPlayer?.[owner?.id] ?? {};
   return (selection?.tokens ?? []).map((entry) => {
     const card = owner?.hand?.[entry.position - 1];
-    const definitionId = card && (viewer?.id === owner?.id || knownByEntity[card.id] === card.definitionId) ? card.definitionId : null;
-    const definition = definitionId ? CARD_DEFINITIONS[definitionId] : null;
+    const definition = knownHandDefinition(viewer, owner, card);
     return Object.freeze({ token:entry.token, ...(definition ? knownCardView(definition) : { known:false }) });
   });
 }

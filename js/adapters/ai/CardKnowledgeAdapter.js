@@ -156,7 +156,7 @@ export function createCardKnowledgeAdapter(getPlayers) {
     已知时返回带牌名标签，未知时返回“1张手牌”。
 
     读取状态
-    当前玩家列表及真人的合法 card knowledge。
+    当前玩家列表及本地真人的合法 card knowledge。
 
     写入状态
     无。
@@ -165,11 +165,13 @@ export function createCardKnowledgeAdapter(getPlayers) {
     getPlayers、isKnownTo。
 
     边界与不变量
-    不得为了日志标签读取或揭示真人未知的真实 card.name。
+    不得用 canonical 第零席或另一名真人代替本地 viewer，也不得为了日志标签读取或揭示本地真人未知的真实 card.name。
     */
     labelForHuman(owner, card) {
       const players = getPlayers();
-      const human = players.find((player) => player.controllerType === "human") ?? players[0];
+      const human = players.find((player) => player.controlType === "LOCAL_HUMAN")
+        ?? players.find((player) => player.controllerType === "human")
+        ?? players[0];
       return isKnownTo(human, owner, card) ? `「${card.name}」` : "1张手牌";
     }
   });

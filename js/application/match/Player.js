@@ -18,7 +18,7 @@ export class Player {
   MatchWorkflow.startSelection 经 createPlayer capability 与测试 fixture。
 
   输入
-  id、seatIndex、controllerType 与 battleTeam。
+  id、seatIndex、controllerType、controlType、networkRole 与 battleTeam。
 
   输出
   初始化完成的 Player 实例。
@@ -33,7 +33,7 @@ export class Player {
   createPlayerState。
 
   边界与不变量
-  controllerType 属于 Application participant metadata；aiMemory 属于 AI adapter state；两者均作为 extension 保留，不进入 Domain PlayerState。
+  controllerType/controlType/networkRole 属于 Application participant metadata；aiMemory 属于 AI adapter state；这些字段均作为 extension 保留，不进入 Domain PlayerState。
   */
   constructor(options) {
     const playerState = createPlayerState({
@@ -45,6 +45,7 @@ export class Player {
     this.seatIndex = playerState.seatIndex;
     this.controllerType = options.controllerType;
     this.controlType = options.controlType;
+    this.networkRole = options.networkRole ?? null;
     this.seatId = options.seatId;
     this.battleTeam = playerState.battleTeam;
     this.characterId = playerState.characterId;

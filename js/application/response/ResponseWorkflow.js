@@ -46,7 +46,7 @@ ResponseWorkflow 的格挡、反制、调息救援与突袭响应入口。
 已知匹配牌加全部未知牌仍不足时返回 true，否则返回 false。
 
 读取状态
-响应者当前手牌数量与实体 ID，以及真人 observer 的 knownCardsByPlayer 合法知识。
+响应者当前手牌数量与实体 ID，以及本地真人 observer 的 knownCardsByPlayer 合法知识。
 
 写入状态
 无。
@@ -55,11 +55,13 @@ ResponseWorkflow 的格挡、反制、调息救援与突袭响应入口。
 无。
 
 边界与不变量
-只能依据 observer 已合法获得的公开/已知信息；不得读取仍隐藏牌的真实 definitionId。
+只能依据本地 observer 已合法获得的公开/已知信息；不得把另一名真人或 canonical 第零席当作 viewer，也不得读取仍隐藏牌的真实 definitionId。
 false 不代表实际可响应；只要未知牌仍可能补足要求，就必须继续原有 timing boundary。
 */
 function isCardResponseImpossibleFromPublicInfo(state, responder, definitionId, requiredCount) {
-  const observer = state.players.find((player) => player.controllerType === "human") ?? null;
+  const observer = state.players.find((player) => player.controlType === "LOCAL_HUMAN")
+    ?? state.players.find((player) => player.controllerType === "human")
+    ?? null;
   const knownCards = observer?.aiMemory?.knownCardsByPlayer?.[responder.id] ?? {};
   let knownCurrentCards = 0;
   let knownMatchingCards = 0;

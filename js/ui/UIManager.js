@@ -24,6 +24,7 @@ import { RulebookView } from "./RulebookView.js";
 import { HistoryArchiveView } from "./history/HistoryArchiveView.js";
 import { GameInfoView } from "./GameInfoView.js";
 import { isMatchPersistenceEligible } from "../application/match/MatchMode.js";
+import { orderPlayersForViewer } from "./PlayerPresentationOrder.js";
 
 const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
@@ -510,6 +511,8 @@ export class UIManager {
     this.elements.squad_mode_grid.addEventListener("click", (event) => this.handleSquadModeClick(event));
     this.elements.network_screen?.addEventListener("click", (event) => this.callbacks.onNetworkClick?.(event));
     this.elements.network_screen?.addEventListener("submit", (event) => this.callbacks.onNetworkSubmit?.(event));
+    this.elements.network_screen?.addEventListener("paste", (event) => this.callbacks.onNetworkPaste?.(event));
+    this.elements.network_screen?.addEventListener("input", (event) => this.callbacks.onNetworkInput?.(event));
     this.elements.candidate_grid.addEventListener("click", (event) => this.handleCharacterCandidateClick(event));
     this.bindHorizontalCardDrag(this.elements.game_screen);
     this.elements.human_hand.addEventListener("click", (event) => this.handleHandClick(event));
@@ -928,7 +931,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   无返回值。
 
   读取状态
-  game.state 玩家角色与当前窗口宽度。
+  game.state 玩家角色、当前窗口宽度；Guest 正式展示允许 game 为 null。
 
   写入状态
   停止准备阶段 BGM，更新 UI owner、主屏显隐、日志折叠与结算牌 DOM。
@@ -937,7 +940,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   SoundManager.stopMusic、attachGame、resetCurrentCard、clearLog、setLogCollapsed、render。
 
   边界与不变量
-  仅全部角色已确认后执行首帧 render。
+  仅全部角色已确认后执行首帧 render；Guest 的 NetworkPresentation 不绑定伪 Match。
   */
   showGame(game) {
     this.elements.network_screen?.classList.add("is-hidden");
@@ -953,7 +956,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     this.elements.game_screen.classList.remove("is-hidden");
     this.setLogCollapsed(window.innerWidth < 1280);
     this.viewportWasNarrow = window.innerWidth < 1280;
-    if (game.state.players.length && game.state.players.every((player) => player.character)) this.render(game);
+    if (game?.state.players.length && game.state.players.every((player) => player.character)) this.render(game);
   }
 
   /*
@@ -1043,17 +1046,13 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   同一 gameId 按玩家 ID 独立恢复位置，新对局不得继承旧位置。
   */
   render(game = this.game) {
-    if (!this.isGameAttached(game) || !game.state.players.length || !game.state.players[0].character) return false;
+    if (!game && this.networkPresentation) return this.networkPresentation.render();
+    if (!this.isGameAttached(game) || !game.state.players.length) return false;
     const state = game.state;
-    const human = state.players[0];
+    const human = state.players.find((player) => player.controlType === "LOCAL_HUMAN") ?? state.players[0];
+    if (!human?.character) return false;
+    const presentationPlayers = orderPlayersForViewer(state.players, human.id);
     const preserveCardScroll = this.horizontalCardScrollGameId === state.gameId;
-    const opponentHandScroll = new Map();
-    if (preserveCardScroll) {
-      for (const panel of this.elements.cpu_grid.querySelectorAll?.("[data-player-id]") ?? []) {
-        const scroller = panel.querySelector?.(".opponent-hand-strip");
-        if (scroller) opponentHandScroll.set(panel.dataset.playerId, scroller.scrollLeft);
-      }
-    }
     const dawnAlive = state.players.filter((player) => player.alive && player.battleTeam === "dawn").length;
     const duskAlive = state.players.filter((player) => player.alive && player.battleTeam === "dusk").length;
     const metrics = [
@@ -1061,37 +1060,74 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
       ["阶段", PHASE_PRESENTATION[state.phase] ?? state.phase, "phase"], ["阵营", `晨 ${dawnAlive} · 暮 ${duskAlive}`, "teams"],
       ["牌堆", state.deck.cards.length, "deck"], ["弃牌", state.deck.discardPile.length, "discard"]
     ];
-    this.elements.status_metrics.innerHTML = metrics.map(([label, value, key]) => `<span class="metric metric-${key}" data-pile="${key}"><small>${label}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
     const targetOptions = { humanTeam: human.battleTeam, isTargeting: Boolean(this.targetState) };
     const targetSource = this.targetState?.meta?.source ?? human;
-    this.elements.cpu_grid.innerHTML = state.players.slice(1).map((player) => playerPanelTemplate(player, {
+    const opponents = presentationPlayers.slice(1).map((player) => ({ player, options: {
       ...targetOptions, isCurrent: game.currentPlayer?.id === player.id,
       isLegalTarget: Boolean(this.targetState?.legalIds.has(player.id)),
       isSelectedTarget: this.targetState?.selected?.id === player.id,
       isThinking: this.thinkingPlayerId === player.id,
       distanceInfo: human.alive ? ActionLegality.describeDistance(game, targetSource, player) : null,
       distanceState: human.alive ? this.getDistanceState(targetSource, player) : null,
+      networkRole: player.networkRole,
       opponentHandSlots: createOpponentHandView(human, player)
-    })).join("");
-    for (const panel of this.elements.cpu_grid.querySelectorAll?.("[data-player-id]") ?? []) {
-      if (!opponentHandScroll.has(panel.dataset.playerId)) continue;
-      restoreHorizontalCardScroll(
-        panel.querySelector?.(".opponent-hand-strip"), opponentHandScroll.get(panel.dataset.playerId)
-      );
-    }
-    this.elements.human_panel.innerHTML = playerPanelTemplate(human, {
+    } }));
+    const self = { player: human, options: {
       ...targetOptions, isHuman: true, isCurrent: game.currentPlayer?.id === human.id,
       isLegalTarget: Boolean(this.targetState?.legalIds.has(human.id)),
       isSelectedTarget: this.targetState?.selected?.id === human.id,
       isThinking: this.thinkingPlayerId === human.id,
+      networkRole: human.networkRole,
       distanceInfo:human.alive && this.targetState && targetSource.id !== human.id ? ActionLegality.describeDistance(game, targetSource, human) : null,
       distanceState:human.alive && this.targetState && targetSource.id !== human.id ? this.getDistanceState(targetSource, human) : null
-    });
+    } };
+    UIManager.prototype.renderBattlefield.call(this, { gameId: state.gameId, metrics, opponents, self });
     this.renderHand(game, human, { preserveScroll: preserveCardScroll });
     this.renderControls(game, human);
     this.animationController.flush(document);
     this.horizontalCardScrollGameId = state.gameId;
     return true;
+  }
+
+  /*
+  功能
+  把展示模型绘制到唯一正式战场 DOM。
+
+  调用方
+  Host render 与 Network presentation adapter。
+
+  输入
+  gameId、指标、本人和四名对手的展示字段及模板选项。
+
+  输出
+  无返回值。
+
+  读取状态
+  仅传入展示模型与卡牌滚动位置。
+
+  写入状态
+  正式人物、装备、距离、指标 DOM。
+
+  调用函数
+  playerPanelTemplate、restoreHorizontalCardScroll。
+
+  边界与不变量
+  不接收 MatchState，不调用合法性、规则或随机源；双方复用同一模板与布局。
+  */
+  renderBattlefield({ gameId, metrics, opponents, self }) {
+    const scroll = new Map();
+    if (this.horizontalCardScrollGameId === gameId) {
+      for (const panel of this.elements.cpu_grid.querySelectorAll?.("[data-player-id]") ?? []) {
+        const strip = panel.querySelector?.(".opponent-hand-strip");
+        if (strip) scroll.set(panel.dataset.playerId, strip.scrollLeft);
+      }
+    }
+    this.elements.status_metrics.innerHTML = metrics.map(([label, value, key]) => `<span class="metric metric-${key}" data-pile="${key}"><small>${label}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
+    this.elements.cpu_grid.innerHTML = opponents.map(({ player, options }) => playerPanelTemplate(player, options)).join("");
+    this.elements.human_panel.innerHTML = playerPanelTemplate(self.player, self.options);
+    for (const panel of this.elements.cpu_grid.querySelectorAll?.("[data-player-id]") ?? []) {
+      if (scroll.has(panel.dataset.playerId)) restoreHorizontalCardScroll(panel.querySelector?.(".opponent-hand-strip"), scroll.get(panel.dataset.playerId));
+    }
   }
 
   /*
@@ -1221,18 +1257,48 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   renderHand(game, human, { preserveScroll = true } = {}) {
     const inDiscard = Boolean(this.discardState);
     const blockedByInteraction = this.isInteractionActive();
-    const hand = this.elements.human_hand;
-    const previousScrollLeft = preserveScroll ? hand.scrollLeft : 0;
-    hand.innerHTML = human.hand.map((card) => {
+    const cards = human.hand.map((card) => {
       const playable = ActionLegality.canPlayCard(game, human, card).ok;
       const selected = this.discardState?.selectedIds.has(card.id)
         || this.targetState?.meta?.card?.id === card.id;
       const disabled = !inDiscard && (!playable || blockedByInteraction || game.actionLocked);
-      return handCardTemplate(card, { selected, disabled });
-    }).join("") || '<div class="empty-hand"><span aria-hidden="true">◇</span><strong>手牌为空</strong><small>下一次摸牌会从牌堆飞入这里</small></div>';
-    restoreHorizontalCardScroll(hand, previousScrollLeft);
+      return { card, selected, disabled };
+    });
+    UIManager.prototype.renderPresentedHand.call(this, cards, preserveScroll);
     if (this.discardState) this.elements.hand_hint.textContent = `已选 ${this.discardState.selectedIds.size} / ${this.discardState.count}`;
     else if (!this.targetState) this.elements.hand_hint.textContent = `${human.hand.length}张手牌`;
+  }
+
+  /*
+  功能
+  按给定可用性和选择状态渲染正式手牌区。
+
+  调用方
+  renderHand 与 NetworkGameView。
+
+  输入
+  已可见的牌及 selected/disabled 标记，是否保留横向位置。
+
+  输出
+  无返回值。
+
+  读取状态
+  仅卡牌展示字段与手牌 DOM。
+
+  写入状态
+  正式手牌 DOM 与滚动位置。
+
+  调用函数
+  handCardTemplate、restoreHorizontalCardScroll。
+
+  边界与不变量
+  可用性由 Host 提供或由单人入口查询；此函数不执行规则。
+  */
+  renderPresentedHand(cards, preserveScroll = true) {
+    const hand = this.elements.human_hand;
+    const previousScrollLeft = preserveScroll ? hand.scrollLeft : 0;
+    hand.innerHTML = cards.map(({ card, selected, disabled }) => handCardTemplate(card, { selected, disabled })).join("") || '<div class="empty-hand"><span aria-hidden="true">◇</span><strong>手牌为空</strong><small>下一次摸牌会从牌堆飞入这里</small></div>';
+    restoreHorizontalCardScroll(hand, previousScrollLeft);
   }
 
   /*
@@ -1265,11 +1331,44 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     const interaction = this.isInteractionActive();
     const skill = getActiveSkill(human);
     const skillLegal = skill ? canUseActiveSkill(game, human, skill).ok : false;
-    this.elements.skill_button.textContent = skillButtonLabel(skill);
-    this.elements.skill_button.disabled = !humanPlay || !skillLegal || interaction || game.actionLocked;
-    this.elements.end_play_button.disabled = !humanPlay || interaction || game.actionLocked;
+    UIManager.prototype.renderPresentedControls.call(this, {
+      skillLabel: skillButtonLabel(skill),
+      skillDisabled: !humanPlay || !skillLegal || interaction || game.actionLocked,
+      endDisabled: !humanPlay || interaction || game.actionLocked
+    });
+  }
+
+  /*
+  功能
+  把按钮展示能力映射到同一正式行动区。
+
+  调用方
+  renderControls 与 NetworkGameView。
+
+  输入
+  技能标题及技能/结束是否禁用。
+
+  输出
+  无返回值。
+
+  读取状态
+  UI 的弃牌和目标选择状态。
+
+  写入状态
+  行动区按钮 DOM。
+
+  调用函数
+  classList.toggle。
+
+  边界与不变量
+  不计算技能或结束合法性；Guest 只能使用 Host 发来的选项。
+  */
+  renderPresentedControls({ skillLabel, skillDisabled, endDisabled }) {
+    this.elements.skill_button.textContent = skillLabel;
+    this.elements.skill_button.disabled = skillDisabled;
+    this.elements.end_play_button.disabled = endDisabled;
     this.elements.discard_confirm_button.classList.toggle("is-hidden", !this.discardState);
-    this.elements.cancel_interaction_button.classList.toggle("is-hidden", !this.targetState);
+    this.elements.cancel_interaction_button.classList.toggle("is-hidden", !this.targetState || this.targetState.meta?.canDecline === false);
     if (this.discardState) {
       this.elements.discard_confirm_button.disabled = this.discardState.selectedIds.size !== this.discardState.count;
       this.elements.discard_confirm_button.textContent = `确认弃牌 ${this.discardState.selectedIds.size}/${this.discardState.count}`;
@@ -1561,7 +1660,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     // 目标选择期间，角色区域点击优先用于选择目标。
     const skillTrigger = event.target.closest("[data-skill-player-id]");
     if (skillTrigger && !this.targetState) {
-      const player = this.game?.state.players.find((entry) => entry.id === skillTrigger.dataset.skillPlayerId);
+      const player = (this.game?.state.players ?? this.networkPresentation?.players ?? []).find((entry) => entry.id === skillTrigger.dataset.skillPlayerId);
       if (player) this.showSkillDetails(player, skillTrigger);
       return;
     }
@@ -1716,7 +1815,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   renderTargetConfirmation() {
     if (!this.targetState?.meta?.confirmSelection) return;
     const selectedName = this.targetState.selected?.name ?? "尚未选择";
-    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(this.targetState.meta.stepTitle ?? "选择目标")}</strong><span>${escapeHtml(selectedName)}</span></div><div class="response-copy"><p class="response-event">${escapeHtml(this.targetState.prompt)}</p></div><div class="response-actions"><button class="primary-button" type="button" data-target-confirm${this.targetState.selected ? "" : " disabled aria-disabled=\"true\""}>确认选择</button><button class="ghost-button" type="button" data-target-cancel>取消</button></div>`;
+    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>${escapeHtml(this.targetState.meta.stepTitle ?? "选择目标")}</strong><span>${escapeHtml(selectedName)}</span></div><div class="response-copy"><p class="response-event">${escapeHtml(this.targetState.prompt)}</p></div><div class="response-actions"><button class="primary-button" type="button" data-target-confirm${this.targetState.selected ? "" : " disabled aria-disabled=\"true\""}>确认选择</button>${this.targetState.meta.canDecline === false ? "" : '<button class="ghost-button" type="button" data-target-cancel>取消</button>'}</div>`;
     this.elements.response_panel.classList.remove("is-hidden");
   }
 
@@ -2002,7 +2101,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     const countdown = Number.isFinite(state.deadline)
       ? `<span class="countdown">${Math.max(0, Math.ceil((state.deadline - Date.now()) / 1000))}s</span>`
       : "";
-    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong>${countdown}</div><div class="response-copy"><p class="response-event">${renderResponseEvent(presentation, eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button><button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button></div>`;
+    this.elements.response_panel.innerHTML = `<div class="response-title"><strong>响应窗口</strong>${countdown}</div><div class="response-copy"><p class="response-event">${renderResponseEvent(presentation, eventText)}</p><p class="response-requirement">${escapeHtml(responseText)}</p>${availabilityText ? `<p class="response-availability ${canUse ? "is-ready" : "is-insufficient"}">${escapeHtml(availabilityText)}</p>` : ""}</div><div class="response-actions"><button class="primary-button" data-response-choice="use"${canUse ? "" : ' disabled aria-disabled="true"'}>${escapeHtml(presentation.buttonLabel ?? label)}</button>${request.allowDecline === false ? "" : `<button class="ghost-button" data-response-choice="decline">${escapeHtml(presentation.declineLabel ?? "放弃响应")}</button>`}</div>`;
   }
 
   /*
@@ -2273,7 +2372,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     // 思考指示已经包含完整行动和目标，避免下方 action-prompt 重复显示同一信息。
     this.elements.action_prompt.classList.toggle("is-hidden", isThinking);
     if (isThinking) this.elements.thinking_indicator.innerHTML = thinkingTemplate(player, message);
-    if (this.game?.state.players[0]?.character) this.render(this.game);
+    if (this.game?.state.players.some((entry) => entry.character)) this.render(this.game);
   }
 
   /*
@@ -3211,8 +3310,8 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   */
   showMatchPerformance(viewModel) {
     const humanPlayerId = this.game?.state?.players?.find(
-      (player) => player.controllerType === "human"
-    )?.id ?? null;
+      (player) => player.controlType === "LOCAL_HUMAN"
+    )?.id ?? this.game?.state?.players?.find((player) => player.controllerType === "human")?.id ?? null;
     const achievementMarkup = isMatchPersistenceEligible(this.game?.mode)
       ? this.historyArchiveView.achievementView.renderMatchUnlockList(this.newlyUnlockedAchievements)
       : "";
@@ -3276,16 +3375,10 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   销毁/重开不得遗留 Promise、timer 或私密 DOM；不修改权威游戏状态。
   */
   cancelPendingInteractions() {
-    if (this.targetState) { const resolve = this.targetState.resolve; this.targetState = null; resolve(null); }
-    if (this.discardState) { const resolve = this.discardState.resolve; this.discardState = null; resolve([]); }
-    if (this.responseState) this.responseState.resolve({ status:"cancelled" });
-    if (this.playEndState) { const resolve = this.playEndState.resolve; this.playEndState = null; resolve(false); }
+    UIManager.prototype.cancelChoiceInteractions.call(this);
     this.privateRevealToken += 1;
     this.thinkingPlayerId = null;
     this.animationController.clear();
-    this.interactionController.cancel();
-    this.publicPoolView.cancel();
-    this.privateRevealView.hide();
     this.judgmentView.hide();
     this.hideDying();
     this.hideDuel();
@@ -3295,5 +3388,42 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     this.elements.response_panel.innerHTML = "";
     this.elements.thinking_indicator.classList.add("is-hidden");
     this.elements.action_prompt.classList.remove("is-hidden");
+  }
+
+  /*
+  功能
+  取消当前输入请求而保留公开行动与反馈展示。
+
+  调用方
+  Network 请求切换和 cancelPendingInteractions。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  target/discard/response/playEnd 与选择子视图 pending。
+
+  写入状态
+  取消 UI Promise，清除响应和私密选择 DOM。
+
+  调用函数
+  resolve、InteractionController.cancel、PublicPoolView.cancel、PrivateRevealView.hide。
+
+  边界与不变量
+  切换请求不能抹去当前判定、濒死、Duel、thinking 或动画；这些展示只由 Host 清除。
+  */
+  cancelChoiceInteractions() {
+    if (this.targetState) { const resolve = this.targetState.resolve; this.targetState = null; resolve(null); }
+    if (this.discardState) { const resolve = this.discardState.resolve; this.discardState = null; resolve([]); }
+    if (this.responseState) this.responseState.resolve({ status:"cancelled" });
+    if (this.playEndState) { const resolve = this.playEndState.resolve; this.playEndState = null; resolve(false); }
+    this.interactionController.cancel();
+    this.publicPoolView.cancel();
+    this.privateRevealView.hide();
+    this.elements.response_panel.classList.add("is-hidden");
+    this.elements.response_panel.innerHTML = "";
   }
 }

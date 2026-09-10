@@ -124,7 +124,7 @@ export function finalizeNetworkSetup(setup, selections, ready) {
 
 /*
 功能
-把共享五席 setup 投影成本地视角及统一控制来源。
+为共享 canonical 五席标注当前端的控制来源。
 
 调用方
 network 页面 Match 装配。
@@ -145,17 +145,15 @@ network 页面 Match 装配。
 无。
 
 边界与不变量
-旋转座次使既有 UI 的本地玩家仍在索引零，保持环顺序与稳定 seatId。
+players 顺序与 seatIndex 始终等于 Host 确认的 canonical 座次；viewer rotation 只允许发生在 presentation 层。
 */
 export function projectNetworkMatch(setup, localRole) {
-  const localIndex = setup.players.findIndex((player) => player.role === localRole);
-  if (localIndex < 0) throw new Error("缺少本地真人席位");
+  if (!setup.players.some((player) => player.role === localRole)) throw new Error("缺少本地真人席位");
   return Object.freeze({
     mode: MATCH_MODE.NETWORK,
-    players: Object.freeze(setup.players.map((_, index) => {
-      const player = setup.players[(index + localIndex) % setup.players.length];
+    players: Object.freeze(setup.players.map((player, seatIndex) => {
       if (!CHARACTER_BY_ID[player.characterId]) throw new Error("未知角色");
-      return Object.freeze({ ...player, seatIndex: index,
+      return Object.freeze({ ...player, seatIndex,
         controlType: !player.role ? PLAYER_CONTROL.AI
           : player.role === localRole ? PLAYER_CONTROL.LOCAL_HUMAN : PLAYER_CONTROL.REMOTE_HUMAN });
     }))

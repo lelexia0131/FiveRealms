@@ -11,6 +11,7 @@ export class NetworkGameChannel {
   #listeners = new Set();
   #projection = null;
   #serial = 0;
+  #projectionRevision = 0;
 
   /*
 功能
@@ -67,9 +68,9 @@ Host capability 引用。
 边界与不变量
 Guest 不能取得真实状态能力；Host 状态本体仍由 MatchApplication 持有。
 */
-  bindHost({ getState, prepareDecision }) {
+  bindHost({ getState, prepareDecision, getDisplay = () => null }) {
     if (this.#getSession().role !== R.HOST || this.#host) throw new Error("仅 Host 可绑定唯一 Match authority");
-    this.#host = { getState, prepareDecision };
+    this.#host = { getState, prepareDecision, getDisplay };
   }
 
   /*
@@ -86,7 +87,7 @@ Host presentation bridge、请求决策前。
 无。
 
 读取状态
-唯一 Host 状态与双方正式 setup。
+  唯一 Host 状态、双方正式 setup 与真实 Network role metadata。
 
 写入状态
 只发送消息，不写游戏状态。
@@ -95,7 +96,7 @@ Host presentation bridge、请求决策前。
 projectNetworkGame、send。
 
 边界与不变量
-只有已完成选角的 Host 能发布；不允许传入或发送 raw MatchState。
+  只有已完成选角的 Host 能发布；role 只按 setup.playerId 映射，不允许按数组位置猜；不允许传入或发送 raw MatchState。
 */
   publish(presentation = null) {
     const session = this.#getSession();
@@ -103,7 +104,12 @@ projectNetworkGame、send。
     const viewerId = session.matchSetup?.players.find((player) => player.role === R.GUEST)?.playerId;
     const state = this.#host.getState();
     if (!viewerId || state.isDisposed || !state.players.length) return;
-    this.#send(E.GAME_SNAPSHOT, projectNetworkGame(state, viewerId, presentation));
+    const networkRoles = Object.fromEntries(
+      session.matchSetup.players.filter((player) => player.role).map((player) => [player.playerId, player.role])
+    );
+    this.#send(E.GAME_SNAPSHOT, projectNetworkGame(
+      state, viewerId, presentation, this.#host.getDisplay(), networkRoles
+    ));
   }
 
   /*
@@ -163,7 +169,7 @@ structuredClone。
 不持有或暴露 Host 真实状态。
 */
   snapshot() {
-    return structuredClone({ projection: this.#projection, requests: [...this.#requests.values()] });
+    return structuredClone({ projection: this.#projection, projectionRevision: this.#projectionRevision, requests: [...this.#requests.values()] });
   }
 
   /*
@@ -280,6 +286,7 @@ Guest 无法反向写 snapshot；仅 Host 可发请求，LOADING 只允许接收
       if (!projection?.gameId || projection.viewerId !== viewerId
         || (this.#projection && (projection.gameId !== this.#projection.gameId || projection.stateVersion < this.#projection.stateVersion))) return false;
       this.#projection = structuredClone(projection);
+      this.#projectionRevision += 1;
       this.notify();
       return true;
     }

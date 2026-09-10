@@ -43,6 +43,35 @@ const REQUIRED_DEPENDENCIES = [
 
 /*
 功能
+取得当前端唯一的本地真人；单人旧契约回退到第零席。
+
+调用方
+Network 预备启动、胜负展示与单人初始化。
+
+输入
+当前 Match state。
+
+输出
+本地真人 Player；无玩家时为 null。
+
+读取状态
+players 的 controlType 与 canonical 顺序。
+
+写入状态
+无。
+
+调用函数
+Array.find。
+
+边界与不变量
+不得用数组零位表达 Network viewer；单人模式仍保留 player0=human 契约。
+*/
+function getLocalHuman(state) {
+  return state.players.find((player) => player.controlType === "LOCAL_HUMAN") ?? state.players[0] ?? null;
+}
+
+/*
+功能
 创建 Application Match Workflow。
 
 调用方
@@ -234,7 +263,7 @@ roster、角色、能量上限与 selectedCharacterId。
 createPlayer、applyCharacterDefinition、commitPreLiveSetup。
 
 边界与不变量
-只允许一次准备；本地玩家保持索引零，开始必须另经 Game Ready capability。
+只允许一次准备；roster 保持 setup 的 canonical 顺序，本地真人由 controlType 显式解析；开始必须另经 Game Ready capability。
 */
   function prepareSetup(setup) {
     const state = runtime.getState();
@@ -244,7 +273,7 @@ createPlayer、applyCharacterDefinition、commitPreLiveSetup。
     const roster = entries.map((entry, seatIndex) => runtime.createPlayer({
       id: entry.playerId, seatIndex, battleTeam: entry.teamId,
       controllerType: entry.controlType === "AI" ? "ai" : "human",
-      controlType: entry.controlType, seatId: entry.seatId
+      controlType: entry.controlType, networkRole: entry.role, seatId: entry.seatId
     }));
     commitPreLiveSetup("rosterCommitted", () => runtime.setRoster(roster));
     for (let index = 0; index < roster.length; index += 1) {
@@ -254,7 +283,9 @@ createPlayer、applyCharacterDefinition、commitPreLiveSetup。
       applyCharacterDefinition(state, player, character);
       player.character = character;
     }
-    runtime.setSelectedCharacterId(entries[0].characterId);
+    const human = getLocalHuman(state);
+    if (!human) throw new Error("缺少本地真人");
+    runtime.setSelectedCharacterId(human.characterId);
     runtime.emitEvent("teamAssigned", { type: "teamAssigned", players: roster });
     return true;
   }
@@ -287,7 +318,8 @@ initializeMatch。
   function startPreparedMatch() {
     const state = runtime.getState();
     if (!preLiveSetup.rosterCommitted || !runtime.canStartPreparedMatch?.()) throw new Error("游戏尚未就绪");
-    const human = state.players[0];
+    const human = getLocalHuman(state);
+    if (!human) throw new Error("缺少本地真人");
     return initializeMatch(human, human.character, state.players.filter((player) => player.controllerType === "ai"));
   }
 
@@ -311,7 +343,7 @@ roster、deck、gameId。
 原始开局状态与 startingPlayerIndex。
 
 调用函数
-registerGlobalRules、drawCards、publishFact、startTurnLoop。
+registerGlobalRules、drawCards、publishFact、log、startTurnLoop。
 
 边界与不变量
 单人 RNG 与事件顺序保持原样；开局 continuation 每局只执行一次。
@@ -350,7 +382,13 @@ registerGlobalRules、drawCards、publishFact、startTurnLoop。
     const dawnCount = getTeamSize({ players: state.players }, "dawn");
     const duskCount = getTeamSize({ players: state.players }, "dusk");
     runtime.log(`本局晨星阵营有${dawnCount}名角色，暮影阵营有${duskCount}名角色。`, "important");
-    runtime.log(`你选择了${human.name}，你的阵营是${runtime.getTeamName(human.battleTeam)}。`, "important");
+    runtime.log({
+      type: "opening",
+      viewerId: human.id,
+      players: state.players.filter((player) => player.id === human.id || player.controllerType === "human").map((player) => ({
+        playerId: player.id, name: player.name, battleTeam: player.battleTeam
+      }))
+    }, "important");
     runtime.log(`电脑角色为${aiPlayers.map((player) => player.name).join("、")}。`);
     const currentActor = state.players[state.currentPlayerIndex];
     runtime.log(`${currentActor.name}获得首个行动回合。`, "important");
@@ -403,7 +441,7 @@ registerGlobalRules、drawCards、publishFact、startTurnLoop。
     }));
     if (!runtime.isSessionValid(gameId)) return null;
     runtime.render();
-    runtime.showGameOver(winnerTeam, state.players[0].battleTeam === winnerTeam);
+    runtime.showGameOver(winnerTeam, getLocalHuman(state)?.battleTeam === winnerTeam);
     return winnerTeam;
   }
 

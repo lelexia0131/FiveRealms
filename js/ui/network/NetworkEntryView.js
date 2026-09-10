@@ -3,6 +3,80 @@ import { NETWORK_DEFAULT_PORT } from "../../network/NetworkProtocol.js";
 
 /*
 功能
+在粘贴完整连接地址时拆分 Host 和合法端口。
+
+调用方
+NetworkFlow 的 paste 委托。
+
+输入
+Host 输入框的 clipboard event。
+
+输出
+无。
+
+读取状态
+剪贴板纯文本与当前表单。
+
+写入状态
+仅 Host、Port 输入值及表单验证提示。
+
+调用函数
+preventDefault、setCustomValidity。
+
+边界与不变量
+只拆分单冒号的 host:port；非法端口保留原文并阻止提交，逐字输入不受影响。
+*/
+export function handleNetworkHostPaste(event) {
+  const host = event.target;
+  if (!host.matches('[name="host"]') || !host.form?.matches("[data-network-form]")) return;
+  const text = event.clipboardData?.getData("text");
+  if (text == null) return;
+  const value = text.trim();
+  const match = /^([^\s:]+):([^:]+)$/.exec(value);
+  if (!match) return;
+  event.preventDefault();
+  const valid = /^\d+$/.test(match[2]) && Number(match[2]) >= 1 && Number(match[2]) <= 65535;
+  host.value = valid ? match[1] : value;
+  if (valid) host.form.elements.port.value = String(Number(match[2]));
+  host.setCustomValidity(valid ? "" : "端口须为 1–65535 的整数");
+  host.form.querySelector("[data-network-form-error]").textContent = host.validationMessage;
+}
+
+/*
+功能
+在手动修改连接信息后清除粘贴校验，并拒绝 Host 中残留的组合地址。
+
+调用方
+NetworkFlow input 与 submit 委托。
+
+输入
+加入房间表单。
+
+输出
+Host 字段是否可提交。
+
+读取状态
+Host 文本。
+
+写入状态
+Host 自定义校验与错误提示。
+
+调用函数
+setCustomValidity。
+
+边界与不变量
+不在提交时猜测拆分；合法手填 Host/Port 仍由原 endpoint authority 验证。
+*/
+export function validateNetworkHost(form) {
+  const host = form.elements.host;
+  const combined = /^[^\s:]+:[^:]+$/.test(host.value.trim());
+  host.setCustomValidity(combined ? "请将 IP / 主机名与端口分别填写；端口须为 1–65535 的整数" : "");
+  form.querySelector("[data-network-form-error]").textContent = host.validationMessage;
+  return !combined;
+}
+
+/*
+功能
 渲染联机入口或加入房间页面。
 
 调用方

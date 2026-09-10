@@ -157,10 +157,42 @@ export function skillDetailsTemplate(player) {
   return `<div class="skill-dialog-card" role="document"><button type="button" class="skill-dialog-close" data-skill-dialog-close aria-label="关闭技能详情">×</button><header><img src="${escapeHtml(character.portrait)}" alt="${escapeHtml(player.name)}肖像"><div><small>${escapeHtml(player.loreFaction)}</small><h2 id="skill-details-title">${escapeHtml(player.name)} · 技能详情</h2><span>${escapeHtml(TEAM_PRESENTATION[player.battleTeam]?.name ?? "")}</span></div></header><div class="skill-dialog-scroll">${active}${passive}</div></div>`;
 }
 
+  /*
+  功能
+  渲染本人或对手的正式人物、装备和公开状态面板。
+
+  调用方
+  UIManager.renderBattlefield 与模板测试。
+
+  输入
+  公开玩家展示字段、手牌数量、真实 Network role 及已脱敏的对手槽位。
+
+  输出
+  安全 HTML。
+
+  读取状态
+  仅传入的公开展示值和角色定义。
+
+  写入状态
+  无。
+
+  调用函数
+  presentCharacter、equipmentSlotTemplate、opponentHandStripTemplate。
+
+  边界与不变量
+  手牌数量可以独立于牌实体提供；HOST/GUEST 只接受 setup 投影值，AI 不得显示身份标签；不得为未知手牌创建虚假实体。
+  */
 export function playerPanelTemplate(player, options = {}) {
+  const handCount = player.handCount ?? player.hand.length;
   const character = presentCharacter(player.character) ?? {};
-  const { humanTeam = player.battleTeam, isHuman = false, isCurrent = false, isLegalTarget = false, isSelectedTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null, opponentHandSlots = null } = options;
-  const relationship = isHuman ? "is-self" : player.battleTeam === humanTeam ? "is-ally" : "is-enemy";
+  const { humanTeam = player.battleTeam, isHuman = false, isViewer = isHuman, isCurrent = false, isLegalTarget = false, isSelectedTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null, opponentHandSlots = null } = options;
+  const networkRole = ["HOST", "GUEST"].includes(options.networkRole ?? player.networkRole)
+    ? options.networkRole ?? player.networkRole
+    : null;
+  const networkRoleBadge = networkRole
+    ? `<span class="network-role-badge" aria-label="联机身份 ${networkRole}">${networkRole}</span>`
+    : "";
+  const relationship = isViewer ? "is-self" : player.battleTeam === humanTeam ? "is-ally" : "is-enemy";
   const statuses = player.alive ? [
     player.statuses?.exposeWeakness ? [`破势 ${player.statuses.exposeWeakness.stacks}`, "danger"] : null,
     player.statuses?.huntMark ? ["猎印", "mark"] : null,
@@ -173,22 +205,22 @@ export function playerPanelTemplate(player, options = {}) {
   const statusSummary = statuses.length ? statuses.map(([label]) => label).join(" · ") : "—";
   const statusText = isThinking ? "正在思考" : isCurrent ? "正在行动" : player.alive ? "等待行动" : "已阵亡";
   const showDistance = Boolean(player.alive && distanceInfo);
-  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isSelectedTarget ? "target-selected" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_PRESENTATION[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${player.hand.length}张，状态${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}${showDistance ? `，距离${distanceInfo.distance}` : ""}">
+  return `<article class="player-seat ${isHuman ? "human-seat" : "cpu-seat"} team-${escapeHtml(player.battleTeam)} ${relationship} ${isCurrent ? "is-active" : ""} ${isLegalTarget ? "target-legal" : ""} ${isSelectedTarget ? "target-selected" : ""} ${isTargeting && !isLegalTarget ? "target-illegal" : ""} ${isThinking ? "is-thinking" : ""} ${player.alive ? "" : "is-dead"}" data-player-id="${escapeHtml(player.id)}" tabindex="${isLegalTarget ? "0" : "-1"}" aria-label="${escapeHtml(player.name)}，${TEAM_PRESENTATION[player.battleTeam].name}，生命${player.hp}点，能量${player.energy}点，手牌${handCount}张，状态${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}${showDistance ? `，距离${distanceInfo.distance}` : ""}">
     <button type="button" class="seat-portrait-wrap" data-skill-player-id="${escapeHtml(player.id)}" aria-label="查看${escapeHtml(player.name)}的技能">
       ${image(character.portrait, `${player.name}肖像`, "seat-portrait")}
       <span class="team-emblem" aria-label="${TEAM_PRESENTATION[player.battleTeam].name}">${player.battleTeam === "dawn" ? "晨" : "暮"}</span>
       ${!player.alive ? `<span class="death-stamp"><b>${escapeHtml(character.glyph)}</b> 阵亡</span>` : ""}
     </button>
     <div class="seat-main">
-      <div class="seat-heading"><button type="button" class="seat-name-button" data-skill-player-id="${escapeHtml(player.id)}"><strong>${escapeHtml(player.name)}${isHuman ? " · 你" : ""}</strong><small>${escapeHtml(player.loreFaction)}</small></button><span class="turn-state"><i aria-hidden="true"></i>${statusText}</span></div>
+      <div class="seat-heading"><button type="button" class="seat-name-button" data-skill-player-id="${escapeHtml(player.id)}"><strong>${escapeHtml(player.name)}${isViewer ? " · 你" : ""}</strong><small>${escapeHtml(player.loreFaction)}</small></button><span class="turn-state">${networkRoleBadge}<i aria-hidden="true"></i>${statusText}</span></div>
       <div class="vitals">
         <div class="life-readout"><span class="life-label">生命</span><div class="life-cells">${lifeCells(player)}</div><strong>${player.hp}<small>/${player.maxHp}</small></strong></div>
-        <div class="resource-pills"><span class="resource-pill energy"><small>能量</small><strong>${player.energy}/${player.maxEnergy}</strong></span><span class="resource-pill shield"><small>护盾</small><strong>${player.shield}</strong></span><span class="resource-pill hand-count"><small>手牌</small><strong>${player.hand.length}</strong></span></div>
+        <div class="resource-pills"><span class="resource-pill energy"><small>能量</small><strong>${player.energy}/${player.maxEnergy}</strong></span><span class="resource-pill shield"><small>护盾</small><strong>${player.shield}</strong></span><span class="resource-pill hand-count"><small>手牌</small><strong>${handCount}</strong></span></div>
       </div>
       <div class="range-readout ${showDistance ? "" : "is-status-only"}"><span class="panel-status" title="状态：${escapeHtml(statusSummary === "—" ? "无" : statusSummary)}"><small>状态</small><b>${escapeHtml(statusSummary)}</b></span>${showDistance ? `<strong>${escapeHtml(distanceState ?? `距离 ${distanceInfo.distance}`)}</strong><small>射程 ${distanceInfo.range}</small>` : ""}</div>
       ${equipmentSlotTemplate(player, isHuman)}
     </div>
-    ${!isHuman ? opponentHandStripTemplate(opponentHandSlots ?? Array.from({ length:player.hand.length }, () => ({ known:false }))) : ""}
+    ${!isHuman ? opponentHandStripTemplate(opponentHandSlots ?? Array.from({ length:handCount }, () => ({ known:false }))) : ""}
   </article>`;
 }
 

@@ -1,6 +1,51 @@
 import { createOpponentHandView } from "../ui/handVisibility.js";
 import { MATCH_PERFORMANCE_DIMENSIONS } from "../ui/results/MatchPerformancePolicy.js";
 
+  /*
+  功能
+  按字段白名单保留 Host 已计算的公开距离与安全日志。
+
+  调用方
+  projectNetworkGame。
+
+  输入
+  Host presentation bridge 生成的展示 DTO。
+
+  输出
+  仅展示用途的 DTO，缺省为 null。
+
+  读取状态
+  Host 计算的距离、射程、可达性说明与经过脱敏的日志片段。
+
+  写入状态
+  无。
+
+  调用函数
+  Object.fromEntries。
+
+  边界与不变量
+  不能展开 state、任意嵌套对象或原始 Host 日志；可达性和说明必须由 Host bridge 提供。
+  */
+export function projectNetworkDisplay(display) {
+  if (!display) return null;
+  return {
+    distances: Object.fromEntries(Object.entries(display.distances ?? {}).map(([target, value]) => [
+      target, {
+        distance: value.distance, range: value.range, seat: value.seat,
+        reachable: value.reachable === true,
+        distanceState: typeof value.distanceState === "string" ? value.distanceState : ""
+      }
+    ])),
+    logs: (display.logs ?? []).map((entry) => ({
+      id: entry.id, kind: entry.kind,
+      fragments: entry.fragments.map((fragment) => fragment.type === "player"
+        ? { type: "player", text: fragment.text, playerId: fragment.playerId, battleTeam: fragment.battleTeam }
+        : { type: "text", text: fragment.text })
+    }))
+  };
+}
+
+
 /*
 功能
 将已经允许展示的牌缩减为稳定身份和定义。
@@ -38,13 +83,13 @@ export function projectNetworkCard(card) {
 NetworkGameChannel.publish。
 
 输入
-真实 state、Guest playerId 与经过筛选的 presentation。
+真实 state、Guest playerId、经过筛选的 presentation/display 与 setup 角色映射。
 
 输出
 data-only client projection。
 
 读取状态
-玩家公开属性、本地手牌、合法已知记忆及公开牌区。
+玩家公开属性、本地手牌、合法已知记忆、公开牌区及 Network setup role metadata。
 
 写入状态
 无。
@@ -55,16 +100,25 @@ createOpponentHandView、projectNetworkCard。
 边界与不变量
 不输出敌方未知手牌 ID、牌库内容、RNG、aiMemory、待处理响应或隐藏 selection；绝不展开 MatchState。
 */
-export function projectNetworkGame(state, viewerId, presentation = null) {
+export function projectNetworkGame(state, viewerId, presentation = null, display = null, networkRoles = {}) {
   const viewer = state.players.find((player) => player.id === viewerId);
   if (!viewer) throw new Error("缺少合法 Network viewer");
   const players = state.players.map((player) => ({
     playerId: player.id, seatId: player.seatId, seatIndex: player.seatIndex,
+    networkRole: ["HOST", "GUEST"].includes(networkRoles[player.id]) ? networkRoles[player.id] : null,
     teamId: player.battleTeam, characterId: player.characterId, name: player.name,
     hp: player.hp, maxHp: player.maxHp, energy: player.energy, maxEnergy: player.maxEnergy,
     shield: player.shield, alive: player.alive, handCount: player.hand.length,
     equipment: projectNetworkCard(player.equipment),
     statusIds: Object.keys(player.statuses ?? {}),
+    publicDisplay: {
+      exposeWeaknessStacks: player.statuses?.exposeWeakness?.stacks ?? 0,
+      turnFlags: {
+        momentum: player.turnFlags?.momentum ?? 0,
+        recycleDeviceUses: player.turnFlags?.recycleDeviceUses ?? 0,
+        assaultMagazineUsed: player.turnFlags?.assaultMagazineUsed ?? 0
+      }
+    },
     hand: player.id === viewerId ? player.hand.map(projectNetworkCard) : null,
     observedHand: player.id === viewerId ? null : createOpponentHandView(viewer, player)
   }));
@@ -77,7 +131,8 @@ export function projectNetworkGame(state, viewerId, presentation = null) {
     players, resolvingCards: (state.resolvingCards ?? []).map(projectNetworkCard),
     discardCount: state.discardPile?.length ?? 0,
     publicCards: (state.publicCardPool ?? []).map(projectNetworkCard),
-    presentation: projectNetworkPresentation(presentation)
+    presentation: projectNetworkPresentation(presentation),
+    display: projectNetworkDisplay(display)
   };
 }
 
@@ -153,10 +208,21 @@ projectNetworkCard、projectNetworkResult。
 export function projectNetworkPresentation(presentation) {
   if (!presentation) return null;
   const p = presentation;
+  if (p.kind === "duel") return { kind: p.kind, playerId: p.playerId, opponentId: p.opponentId };
+  if (p.kind === "clear" && ["hideJudgment", "hideDying", "hideDuel", "resetCurrentCard"].includes(p.view)) return { kind: p.kind, view: p.view };
+  if (p.kind === "vfx" && ["playRadarSuccess", "playLightningHit"].includes(p.view)) return { kind: p.kind, view: p.view, playerId: p.playerId };
   if (p.kind === "result") return { kind: p.kind, result: projectNetworkResult(p.result) };
-  if (p.kind === "feedback") return { kind: p.kind, effect: String(p.effect), playerId: p.playerId, amount: p.amount };
-  if (p.kind === "action") return { kind: p.kind, card: projectNetworkCard(p.card), skillName: p.skillName };
-  if (p.kind === "judgment") return { kind: p.kind, card: projectNetworkCard(p.card), playerId: p.playerId };
-  if (["thinking", "dying"].includes(p.kind)) return { kind: p.kind, playerId: p.playerId };
+  if (p.kind === "feedback") return { kind: p.kind, effect: String(p.effect), playerId: p.playerId, amount: p.amount, variant: typeof p.variant === "string" ? p.variant : null };
+  if (p.kind === "action") return {
+    kind: p.kind, card: projectNetworkCard(p.card), skillName: p.skillName,
+    source: typeof p.source === "string" ? p.source : "", targetLabel: typeof p.targetLabel === "string" ? p.targetLabel : "",
+    displayTargets: p.displayTargets?.map((target) => ({ id: target.id, name: target.name, isSelf: target.isSelf === true })) ?? null
+  };
+  if (p.kind === "judgment") return {
+    kind: p.kind, card: projectNetworkCard(p.card), playerId: p.playerId,
+    delayedStatus: p.delayedStatus ? { ownerName: p.delayedStatus.ownerName, statusName: p.delayedStatus.statusName } : null
+  };
+  if (p.kind === "thinking") return { kind: p.kind, playerId: p.playerId, message: typeof p.message === "string" ? p.message : "正在思考" };
+  if (p.kind === "dying") return { kind: p.kind, playerId: p.playerId, currentHp: p.currentHp, need: p.need };
   return null;
 }
