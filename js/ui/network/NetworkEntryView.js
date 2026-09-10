@@ -68,7 +68,8 @@ setCustomValidity。
 不在提交时猜测拆分；合法手填 Host/Port 仍由原 endpoint authority 验证。
 */
 export function validateNetworkHost(form) {
-  const host = form.elements.host;
+  const host = form.elements?.host;
+  if (!host) return true;
   const combined = /^[^\s:]+:[^:]+$/.test(host.value.trim());
   host.setCustomValidity(combined ? "请将 IP / 主机名与端口分别填写；端口须为 1–65535 的整数" : "");
   form.querySelector("[data-network-form-error]").textContent = host.validationMessage;
