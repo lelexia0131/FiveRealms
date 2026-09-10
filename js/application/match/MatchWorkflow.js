@@ -273,7 +273,7 @@ createPlayer、applyCharacterDefinition、commitPreLiveSetup。
     const roster = entries.map((entry, seatIndex) => runtime.createPlayer({
       id: entry.playerId, seatIndex, battleTeam: entry.teamId,
       controllerType: entry.controlType === "AI" ? "ai" : "human",
-      controlType: entry.controlType, networkRole: entry.role, seatId: entry.seatId
+      controlType: entry.controlType, networkRole: entry.networkRole, seatId: entry.seatId
     }));
     commitPreLiveSetup("rosterCommitted", () => runtime.setRoster(roster));
     for (let index = 0; index < roster.length; index += 1) {

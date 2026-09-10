@@ -163,6 +163,38 @@ There is no `general` domain schema. Internal identifiers and state use `charact
 
 ## 8. Messaging and Domain Events
 
+### Network 游戏侧多人 authority
+
+`js/network/NetworkSession.js` 唯一拥有房间成员、容量、选择、准备屏障和席位控制权。Host 独占真实 MatchApplication、MatchState、GameLoop、canonical Action、AI 与 RNG；Guest 只保留 Host 快照和本地展示/输入状态。
+
+- 真人成员保存在 `participants[participantId]`，包含 role、稳定 guestOrdinal、connectionId、Transport 注入的 remoteAddress、connected/kicked、selection、ready、gameReady。AI 不进入此集合。
+- `finalSetup.players` 始终为五个 canonical 席位，每席的 `controller = { type: HOST | GUEST | AI, participantId }` 是唯一 ownership 描述。AI 的 participantId 为 null；角色、playerId、seatId 和阵营在锁房后固定。
+- `NetworkSetup` 每个房间只生成一次共享角色排列与既有 2V3 阵营席位。真人共用角色候选，Host 校验角色和席位唯一；同一成员只能保存一项 selection。
+- `snapshot().currentHumanCount` 统计仍有效且连接的真人，`maxHumanCount` 可由 Host 设置为 2–5。允许 Host 单真人开局；最大值不是必须达到的人数。未锁房的加入达到上限返回 `ROOM_FULL`；降低上限到现有人数以下返回 `CAPACITY_BELOW_COUNT`，不踢人。
+- 第一屏障是现有 selection confirmation：所有当前真人选择并确认后仅得到 `canStart`。Host 显式 `start()` 锁房并补齐 AI，然后进入原 `LOADING_GAME / gameReady / MATCH_START` 屏障。全部有效真人的 UI 就绪后才由原 composition 调用 `startPreparedMatch → initializeMatch → GameLoop`。
+- Lobby 移除 Guest 会删除其成员和 selection；锁房后移除只标记成员失效并将原席位 controller 转 AI。`NetworkHostBridge` 将 ownership 投影到原 Player 的 controlType/controllerType/networkRole，不替换任何实体或写入领域状态。
+- `NetworkGameChannel.cancelParticipant` 只取消该成员的 pending 决定。`PlayerControlRouter` 将挂起的 ChoiceRequest 转交原 AI port；尚未完成的真人目标/附加选择取消，当前出牌等待接续既有 AI play-phase capability；后续所有选择按 AI 路由。私密揭示不得转而显示给 Host。
+- 断线和踢人不属于可回滚的 Action 数据。Host bridge 通过原 transaction participant 扩展点，在领域对象原位恢复后重新投影当前 ownership，防止 rollback 恢复已撤销的真人控制权。
+- 状态、距离、提示和事件时日志按每位 Guest 的 viewerId 独立投影；私有手牌、请求和日志不得广播给其他 Guest。对局标签来自 controller ownership，不从位置或阵营推断。
+
+#### Transport 消费契约
+
+本仓库只提供游戏侧 capability，不实现 Electron、Socket 或 IPC 多连接。
+
+| 入口或字段 | 契约 |
+|---|---|
+| `addParticipant({ connectionId, remoteAddress })` | Host-only，接收 Transport 认证的新连接；返回 `{ ok, participantId }` 或 `ROOM_FULL / ROOM_LOCKED / INVALID_CONNECTION`。重复当前连接幂等；新的连接应使用新的 connectionId。 |
+| `setMaxHumanCount(count)` | Host-only，锁房后拒绝。 |
+| `markParticipantDisconnected(participantId)` | Host-only，Transport 根据已保存映射通知指定 Guest 离线；不得用于 Host migration。 |
+| `kickParticipant(participantId)` | Host-only，禁止踢自己；发出游戏侧离房通知并撤销控制权，实际关闭 Socket 由外部 Transport 负责。 |
+| `receive(envelope)` | capability 交付事件前必须根据真实连接覆盖注入 connectionId，禁止信任客户端同名字段；participantId 必须匹配 Host 保存的映射，sequence 按连接检查。 |
+| `send(envelope).recipientParticipantId` | Host 指定唯一接收成员。Transport 按映射定向发送，严禁向其他 Guest 广播 viewer 私有内容；首个定向房间快照同时确立 Guest 的 participantId。 |
+| `CAPABILITY / PEER_CONNECTED` | 生命周期事件由 Transport 构造，payload.remoteAddress 也必须由 Transport 注入；普通 Guest payload 中的地址或身份字段不更新成员。 |
+| `CAPABILITY / DISCONNECTED` | Host 按 connectionId 接管该 Guest；已移除连接的迟到通知忽略。Guest 收到 Host 连接消失则终止本端。 |
+| `CAPABILITY / ERROR` | 整端 authority/连接故障终止会话；不迁移 Host。 |
+
+既有未提供 connectionId 的 Transport 使用 `default` 作为该连接标识，仍进入同一成员模型和业务流程；多连接 Transport 必须提供独立认证 connectionId 并实现 recipientParticipantId 定向路由。`formatNetworkAddress` 统一显示 IPv4-mapped IPv6 地址，游戏侧不查询网卡或 Socket。
+
 `EventDispatcher` 是 mutable hook 的唯一 owner：listener registry、顺序 await、generation、clear 与 shared mutable context 都在 Application。
 
 `MatchEvents` 只创建不可变、data-only 的已发生事实。玩家日志属于 Presentation；Domain Event 不携带应用对象、Player entity、UI 或 callback。

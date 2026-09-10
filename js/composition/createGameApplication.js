@@ -940,7 +940,8 @@ class MatchApplication {
           this.cardIntentRuntime,
           this.cardEffectRuntime,
           this.publicCardPoolWorkflow,
-          this.matchPerformanceSidecar.tracker
+          this.matchPerformanceSidecar.tracker,
+          ...(this.networkBridge ? [this.networkBridge] : [])
         ],
         randomPort:this.randomPort
       })
@@ -983,7 +984,8 @@ class MatchApplication {
       waitForHumanPlayEnd: (gameId, player) => this.controlRouter.waitForHumanPlay(player, gameId, {
         waitLocal: (id) => this.ui.waitForHumanPlayEnd(id),
         handleCard: (cardId, actorId) => this.actionWorkflow.handleHumanCard(cardId, actorId),
-        handleSkill: (actorId) => this.actionWorkflow.handleHumanSkill(actorId)
+        handleSkill: (actorId) => this.actionWorkflow.handleHumanSkill(actorId),
+        runAi: (actor, id) => this.takeAiPlayPhase(actor, id)
       }),
       runAiPlayPhase: (...args) => this.takeAiPlayPhase(...args),
       choiceCoordinator: this.choiceCoordinator,

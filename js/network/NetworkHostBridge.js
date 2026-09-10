@@ -40,6 +40,7 @@ export function createNetworkHostBridge({
   const publicLogBoundaries = [];
   let prompt = null;
   let promptRevision = 0;
+  let hostUi = null;
 
   /*
 功能
@@ -321,6 +322,7 @@ Reflect.get、presentPrompt、projectPresentation、channel.publish。
 不包装 input 等待；只有正式 prompt 描述和结算音效可投影，私密 UI 不广播；日志按正式尾部边界回滚。
 */
   function wrapUi(ui) {
+    hostUi = ui;
     const observed = new Set(["render", "setPrompt", "playSound", "appendLog", "restoreLogBoundary", "queueFeedback", "setCurrentCard", "resetCurrentCard", "showJudgment", "hideJudgment", "setThinking", "showDying", "hideDying", "showDuel", "hideDuel", "playRadarSuccess", "playLightningHit", "showMatchPerformance"]);
     return new Proxy(ui, {
 /*
@@ -387,13 +389,16 @@ Reflect.get、channel.publish。
     if (property === "setPrompt") {
       // 只有受控 presentation 描述可投影；本地选牌和私密 UI 文案不广播。
       if (!args[2]) return result;
-      const viewerId = session.snapshot().matchSetup?.players.find((player) => player.role === "GUEST")?.playerId;
-      prompt = presentPrompt(args[2], viewerId);
+      prompt = structuredClone(args[2]);
       promptRevision += 1;
     }
     if (property === "playSound" && !["playCard", "skill"].includes(args[0])) return result;
     if (property === "appendLog") {
-      publicLogs.set(args[0].id, projectPublicLog(args[0]));
+      const projections = new Map();
+      for (const seat of session.snapshot().matchSetup.players) {
+        if (seat.controller.type === "GUEST") projections.set(seat.playerId, projectPublicLog(args[0], seat.playerId));
+      }
+      publicLogs.set(args[0].id, projections);
       publicLogBoundaries.push({ id: args[0].id, count: args[1] });
     }
     if (property === "restoreLogBoundary") {
@@ -411,7 +416,7 @@ Reflect.get、channel.publish。
   NetworkGameChannel.publish。
 
   输入
-  无。
+  当前 Guest viewerId。
 
   输出
   公开展示 DTO。
@@ -428,13 +433,12 @@ Reflect.get、channel.publish。
   边界与不变量
   距离和日志均由 Host 展示边界生成；不发送日志内部事实或其他 viewer 知识。
   */
-  function getDisplay() {
+  function getDisplay(viewerId) {
     const state = getState();
-    const viewerId = session.snapshot().matchSetup?.players.find((player) => player.role === "GUEST")?.playerId;
     const viewer = state.players.find((player) => player.id === viewerId);
     return {
       aiSpeed: getAiSpeed(),
-      prompt: prompt && { ...prompt, revision: promptRevision },
+      prompt: prompt && { ...presentPrompt(prompt, viewerId), revision: promptRevision },
       distances: Object.fromEntries(state.players.filter((target) => viewer?.alive && target.id !== viewer.id)
         .map((target) => {
           const info = describeDistance(viewer, target);
@@ -445,7 +449,7 @@ Reflect.get、channel.publish。
           }];
         })),
       // 缓存随正式追加/回滚边界同步；只发送有效投影，未经过展示入口的日志没有公开权限。
-      logs: [...publicLogs.values()]
+      logs: [...publicLogs.values()].map((projections) => projections.get(viewerId)).filter(Boolean)
     };
   }
 
@@ -457,7 +461,7 @@ Reflect.get、channel.publish。
   wrapUi 的 appendLog 观察入口。
 
   输入
-  正式 MatchLogAdapter 的日志 entry。
+  正式 MatchLogAdapter 的日志 entry 和目标 viewerId。
 
   输出
   白名单日志 DTO。
@@ -474,9 +478,8 @@ Reflect.get、channel.publish。
   边界与不变量
   结构化事实按 Guest 的事件时知识渲染；纯字符串必须是调用方确认公开的文本，禁止从 Host 文案推断或替换私密牌名。
   */
-  function projectPublicLog(entry) {
+  function projectPublicLog(entry, viewerId) {
     if (entry.presentationFact) {
-      const viewerId = session.snapshot().matchSetup.players.find((player) => player.role === "GUEST").playerId;
       return { id: entry.id, kind: entry.kind, fragments: presentLogFact(entry.presentationFact, viewerId) };
     }
     return {
@@ -488,6 +491,109 @@ Reflect.get、channel.publish。
   }
 
 
-  channel.bindHost({ getState, prepareDecision, getDisplay });
-  return Object.freeze({ wrapUi, prepareDecision, publish: () => channel.publish(), dispose: () => channel.reset() });
+  /*
+功能
+把 authoritative 席位控制元数据应用到原有 Player。
+
+调用方
+NetworkGameChannel.syncControllers。
+
+输入
+Session 的 Match setup 投影。
+
+输出
+无。
+
+读取状态
+Host 当前 roster 与 controller ownership。
+
+写入状态
+仅 Player.controlType/controllerType/networkRole。
+
+调用函数
+getState。
+
+边界与不变量
+不更换对象，不写 character、阵营、资源、手牌、状态或回合数据。
+*/
+
+  function syncControllers(setup) {
+    if (!setup) return;
+    let changed = false;
+    for (const seat of setup.players) {
+      const player = getState().players.find((entry) => entry.id === seat.playerId);
+      if (!player) continue;
+      changed ||= player.controlType !== seat.controlType || player.networkRole !== seat.networkRole;
+      player.controlType = seat.controlType;
+      player.controllerType = seat.controlType === "AI" ? "ai" : "human";
+      player.networkRole = seat.networkRole;
+    }
+    if (changed) hostUi?.render();
+  }
+
+  /*
+功能
+声明联机控制权不随卡牌 Action 建立历史副本。
+
+调用方
+既有 ActionTransaction participant 扩展点。
+
+输入
+无。
+
+输出
+null checkpoint。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+房间成员和连接生命周期不属于可回滚的卡牌状态。
+*/
+
+  function captureActionCheckpoint() {
+    return null;
+  }
+
+  /*
+功能
+在 Action 原位回滚后重新投影当前有效的席位控制权。
+
+调用方
+既有 ActionTransaction.rollback。
+
+输入
+无；不读取旧 checkpoint。
+
+输出
+无。
+
+读取状态
+Session 当前 ownership。
+
+写入状态
+仅现有 Player 的控制元数据。
+
+调用函数
+channel.syncControllers。
+
+边界与不变量
+角色资源仍由原 transaction 恢复；断线或踢人不能被卡牌回滚撤销。
+*/
+
+  function restoreActionCheckpoint() {
+    channel.syncControllers();
+  }
+
+  channel.bindHost({ getState, prepareDecision, getDisplay, syncControllers });
+  return Object.freeze({
+    wrapUi, prepareDecision, publish: () => channel.publish(), dispose: () => channel.reset(),
+    captureActionCheckpoint, restoreActionCheckpoint
+  });
 }

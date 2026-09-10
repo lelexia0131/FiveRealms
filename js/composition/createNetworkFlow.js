@@ -87,7 +87,7 @@ onPrepareMatch、gameReady、onStartMatch、showNetworkPage。
             });
             guestView.update(session.gameChannel.snapshot());
           }
-          ui.setPrompt("双方已完成选择，等待游戏就绪", "双方就绪后将自动开始");
+          ui.setPrompt("Host 已开始，等待成员游戏就绪", "全部成员就绪后进入对局");
           session.gameReady();
         } catch (error) {
           session.disconnect(error.message);
@@ -200,6 +200,20 @@ disabled 元素不提交；候选与席位全部齐备后才向 Host 提交。
       void session.open(R.HOST);
     } else if (action === "confirm") {
       try { session.confirm(); } catch (error) { ui.setPrompt(error.message); }
+    } else if (["start", "kick", "capacity"].includes(action)) {
+      try {
+        const result = action === "start" ? session.start()
+          : action === "kick" ? session.kickParticipant(button.dataset.participantId)
+            : session.setMaxHumanCount(Number(button.dataset.capacity));
+        if (!result.ok) ui.setPrompt({
+          NOT_READY: "请等待所有已加入成员确认角色与席位。",
+          ROOM_LOCKED: "房间已开始，不能更改编队。",
+          CAPACITY_BELOW_COUNT: "人数上限不能低于当前房间人数。",
+          INVALID_CAPACITY: "真人上限须为 2 至 5 人。",
+          CANNOT_REMOVE_HOST: "房主不能踢出自己。",
+          UNKNOWN_PARTICIPANT: "该成员已离开房间。"
+        }[result.code] ?? "房间状态已变化，请重试。");
+      } catch (error) { ui.setPrompt(error.message); }
     } else if (button.dataset.characterId || button.dataset.networkSeat) {
       const snapshot = session.snapshot();
       if (snapshot.state !== S.SELECTING) return;

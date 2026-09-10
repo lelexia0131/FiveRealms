@@ -31,6 +31,6 @@ export function renderPlayModeSelectionView() {
       <button type="button" class="network-mode-card" data-network-action="${MATCH_MODE.SINGLEPLAYER}">
         <span class="network-mode-symbol" aria-hidden="true">✦</span><span class="eyebrow">独自征召</span><strong>单人游玩</strong><span>选择编队与角色<br>与四位电脑角色展开对局</span></button>
       <button type="button" class="network-mode-card network-mode-dusk" data-network-action="${MATCH_MODE.NETWORK}">
-        <span class="network-mode-symbol" aria-hidden="true">✧ ✧</span><span class="eyebrow">双人同行</span><strong>多人游玩</strong><span>各自选择角色与阵营<br>并肩作战，或成为彼此的对手</span></button>
+        <span class="network-mode-symbol" aria-hidden="true">✧ ✧</span><span class="eyebrow">同域同行</span><strong>多人游玩</strong><span>各自选择角色与阵营<br>并肩作战，或成为彼此的对手</span></button>
     </div><button type="button" class="ghost-button" data-network-action="home">返回</button></div>`;
 }

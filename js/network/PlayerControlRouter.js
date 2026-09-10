@@ -124,8 +124,46 @@ port.request、requestRemote。
     const actor = this.getState().players.find((player) => player.id === request.actorId);
     if (!actor) return Promise.resolve(createChoiceResult("cancelled", { reason: "unknown-actor" }));
     const control = getPlayerControl(actor);
-    if (control === PLAYER_CONTROL.REMOTE_HUMAN) return remotePort ? remotePort.request(request) : this.requestRemote(request);
+    if (control === PLAYER_CONTROL.REMOTE_HUMAN) return this.requestRemoteChoice(request, actor, aiPort, remotePort);
     return (control === PLAYER_CONTROL.LOCAL_HUMAN ? humanPort : aiPort).request(request);
+  }
+
+
+  /*
+功能
+在真人等待失效后把原 ChoiceRequest 交给既有 AI port。
+
+调用方
+PlayerControlRouter.request。
+
+输入
+原请求、actor、AI 与 remote port。
+
+输出
+ChoiceResult Promise。
+
+读取状态
+actor 当前控制类型。
+
+写入状态
+无。
+
+调用函数
+remotePort.request、requestRemote、aiPort.request。
+
+边界与不变量
+仅 CONTROLLER_CHANGED 可降转；隐藏 token 的 finally 先清理，再由 AI port 重绑原请求。
+*/
+
+  async requestRemoteChoice(request, actor, aiPort, remotePort) {
+    try {
+      const result = await (remotePort ? remotePort.request(request) : this.requestRemote(request));
+      if (getPlayerControl(actor) === PLAYER_CONTROL.AI) return aiPort.request(request);
+      return result;
+    } catch (error) {
+      if (error.code === "CONTROLLER_CHANGED" && getPlayerControl(actor) === PLAYER_CONTROL.AI) return aiPort.request(request);
+      throw error;
+    }
   }
 
   /*
@@ -166,7 +204,7 @@ structuredClone、remoteDecision。
 TurnWorkflow 经 composition waitForHumanPlayEnd。
 
 输入
-actor、gameId、本地等待及 card/skill 执行 callbacks。
+actor、gameId、本地等待、card/skill 执行与现有 AI 阶段 callbacks。
 
 输出
 阶段完成布尔值 Promise。
@@ -178,20 +216,32 @@ actor、gameId、本地等待及 card/skill 执行 callbacks。
 经 callbacks 进入唯一 ActionWorkflow。
 
 调用函数
-requestRemote、handleCard、handleSkill、waitLocal。
+requestRemote、handleCard、handleSkill、waitLocal、runAi。
 
 边界与不变量
 远端每条意图重验当前回合；正常卡牌、目标和技能复用原 workflow，不创建第二回合循环。
 */
-  async waitForHumanPlay(actor, gameId, { waitLocal, handleCard, handleSkill }) {
-    if (getPlayerControl(actor) !== PLAYER_CONTROL.REMOTE_HUMAN) return waitLocal(gameId);
+  async waitForHumanPlay(actor, gameId, { waitLocal, handleCard, handleSkill, runAi }) {
+    if (getPlayerControl(actor) === PLAYER_CONTROL.LOCAL_HUMAN) return waitLocal(gameId);
     while (true) {
       const state = this.getState();
       if (state.isDisposed || state.gameId !== gameId || state.isGameOver || !actor.alive
         || state.phase !== "play" || state.players[state.currentPlayerIndex]?.id !== actor.id) return false;
-      const intent = await this.requestRemote({ kind: "player-intent", gameId, actorId: actor.id, stateVersion: state.stateVersion });
+      // 同一出牌阶段内撤销真人权限后，接续已有 AI 阶段 capability，不创建另一条 GameLoop。
+      if (getPlayerControl(actor) === PLAYER_CONTROL.AI) {
+        await runAi(actor, gameId);
+        return true;
+      }
+      let intent;
+      try {
+        intent = await this.requestRemote({ kind: "player-intent", gameId, actorId: actor.id, stateVersion: state.stateVersion });
+      } catch (error) {
+        if (error.code === "CONTROLLER_CHANGED" && getPlayerControl(actor) === PLAYER_CONTROL.AI) continue;
+        throw error;
+      }
       if (state.isDisposed || state.isGameOver || !actor.alive || state.phase !== "play"
         || state.players[state.currentPlayerIndex]?.id !== actor.id) return false;
+      if (getPlayerControl(actor) === PLAYER_CONTROL.AI) continue;
       if (intent?.kind === "cancelled") return false;
       if (intent?.kind === "end") return true;
       if (intent?.kind === "card") await handleCard(intent.cardId, actor.id);
@@ -226,11 +276,15 @@ requestRemote、requestLocal。
 未来资源、技能参数与手牌选择通过同一远端决策边界，结算仍重验 selection。
 */
   requestCardFlow(actor, card, targets, requestLocal) {
+    if (getPlayerControl(actor) === PLAYER_CONTROL.AI) return Promise.resolve(null);
     if (getPlayerControl(actor) !== PLAYER_CONTROL.REMOTE_HUMAN) return requestLocal();
     return this.requestRemote({
       kind: "card-flow", gameId: this.getState().gameId, actorId: actor.id,
       cardId: card.id, targetIds: targets.map((target) => target.id),
       flow: card.selectionFlow
+    }).catch((error) => {
+      if (error.code === "CONTROLLER_CHANGED" && getPlayerControl(actor) === PLAYER_CONTROL.AI) return null;
+      throw error;
     });
   }
 
@@ -261,7 +315,11 @@ requestRemote、presentLocal。
 */
   presentPrivateReveal(descriptor, presentLocal) {
     const viewer = this.getState().players.find((player) => player.id === descriptor.viewerId);
+    if (getPlayerControl(viewer) === PLAYER_CONTROL.AI) return Promise.resolve();
     if (getPlayerControl(viewer) !== PLAYER_CONTROL.REMOTE_HUMAN) return presentLocal();
-    return this.requestRemote({ ...descriptor, kind: "private-reveal", gameId: this.getState().gameId, actorId: viewer.id });
+    return this.requestRemote({ ...descriptor, kind: "private-reveal", gameId: this.getState().gameId, actorId: viewer.id }).catch((error) => {
+      if (error.code === "CONTROLLER_CHANGED" && getPlayerControl(viewer) === PLAYER_CONTROL.AI) return;
+      throw error;
+    });
   }
 }

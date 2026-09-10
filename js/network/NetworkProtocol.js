@@ -22,11 +22,45 @@ export const NETWORK_EVENT = Object.freeze({
 // Transport capability: createRoom({roomId}) -> {roomId, connectionInfo: {host, port} | null},
 // joinRoom({host, port}) -> {roomId}, send(envelope),
 // subscribe(receive) -> unsubscribe, close()。subscribe 只交付经身份认证的对端事件；
-// roomId + sender + sequence 标识消息，revision 是 Host setup 快照版本。
+// connectionId 必须由 Transport 按真实连接覆盖注入，不得直接沿用客户端报文中的同名字段。
+// roomId + connectionId + sequence 标识消息；participantId 必须匹配 Host 保存的连接映射。
+// Host 的 recipientParticipantId 指定唯一接收成员；Transport 不可把私有消息广播给其他 Guest。
+// PEER_CONNECTED 的 remoteAddress 由 Transport 注入；无元数据的既有连接使用 default 标识。
+// revision 是 Host 房间快照版本；Guest 身份由首个定向房间快照的接收人确定。
 // GAME_SNAPSHOT 仅携带 viewer-safe projection；DECISION_REQUEST/RESPONSE 与 PLAYER_INTENT
 // 由游戏侧关联并验证，Transport 不解释决定，也不得把消息 sender 覆盖为 CAPABILITY。
-// 无 capability 时仅能创建本地等待会话，不伪造连接或决定。
+// 无 capability 时可由 Host 准备单真人房间，但不伪造远端连接或决定。
 export const NETWORK_DEFAULT_PORT = 38520;
+
+/*
+功能
+统一格式化 Transport 注入的远端地址。
+
+调用方
+NetworkSquadSelectionView。
+
+输入
+remoteAddress 字符串或 null。
+
+输出
+展示地址或未知占位。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+只移除 IPv4-mapped IPv6 前缀，不查询网卡、Socket 或网络。
+*/
+export function formatNetworkAddress(remoteAddress) {
+  if (typeof remoteAddress !== "string" || !remoteAddress.trim()) return "地址未提供";
+  return remoteAddress.trim().replace(/^::ffff:(?=\d{1,3}(?:\.\d{1,3}){3}$)/i, "");
+}
 
 // Shared UI/Transport boundary; hostnames are resolved by the Transport.
 export function normalizeNetworkEndpoint({ host, port } = {}) {

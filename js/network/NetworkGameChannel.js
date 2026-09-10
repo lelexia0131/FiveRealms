@@ -51,7 +51,7 @@ channel。
 Host composition。
 
 输入
-getState、prepareDecision。
+getState、prepareDecision、getDisplay 与控制元数据同步 capability。
 
 输出
 无；Guest 或重复绑定抛错。
@@ -68,9 +68,9 @@ Host capability 引用。
 边界与不变量
 Guest 不能取得真实状态能力；Host 状态本体仍由 MatchApplication 持有。
 */
-  bindHost({ getState, prepareDecision, getDisplay = () => null }) {
+  bindHost({ getState, prepareDecision, getDisplay = () => null, syncControllers = () => {} }) {
     if (this.#getSession().role !== R.HOST || this.#host) throw new Error("仅 Host 可绑定唯一 Match authority");
-    this.#host = { getState, prepareDecision, getDisplay };
+    this.#host = { getState, prepareDecision, getDisplay, syncControllers };
   }
 
   /*
@@ -87,7 +87,7 @@ Host presentation bridge、请求决策前。
 无。
 
 读取状态
-  唯一 Host 状态、双方正式 setup 与真实 Network role metadata。
+  唯一 Host 状态、五席 controller ownership 与真人成员。
 
 写入状态
 只发送消息，不写游戏状态。
@@ -96,20 +96,24 @@ Host presentation bridge、请求决策前。
 projectNetworkGame、send。
 
 边界与不变量
-  只有已完成选角的 Host 能发布；role 只按 setup.playerId 映射，不允许按数组位置猜；不允许传入或发送 raw MatchState。
+  只有已完成选角的 Host 能发布；controller 标签只按 setup.playerId 映射，不允许按数组位置猜；不允许传入或发送 raw MatchState。
 */
   publish(presentation = null) {
     const session = this.#getSession();
     if (!this.#host || session.role !== R.HOST || ![S.LOADING_GAME, S.IN_GAME].includes(session.state)) return;
-    const viewerId = session.matchSetup?.players.find((player) => player.role === R.GUEST)?.playerId;
     const state = this.#host.getState();
-    if (!viewerId || state.isDisposed || !state.players.length) return;
+    if (state.isDisposed || !state.players.length) return;
     const networkRoles = Object.fromEntries(
-      session.matchSetup.players.filter((player) => player.role).map((player) => [player.playerId, player.role])
+      session.matchSetup.players.map((player) => [player.playerId, player.networkRole])
     );
-    this.#send(E.GAME_SNAPSHOT, projectNetworkGame(
-      state, viewerId, presentation, this.#host.getDisplay(), networkRoles
-    ));
+    for (const seat of session.matchSetup.players) {
+      if (seat.controller.type !== R.GUEST) continue;
+      const participant = session.participants[seat.controller.participantId];
+      if (!participant?.connected || participant.kicked) continue;
+      this.#send(E.GAME_SNAPSHOT, projectNetworkGame(
+        state, seat.playerId, presentation, this.#host.getDisplay(seat.playerId), networkRoles
+      ), participant.participantId);
+    }
   }
 
   /*
@@ -232,19 +236,21 @@ publish、prepareDecision、send。
     const session = this.#getSession();
     if (session.role !== R.HOST || session.state !== S.IN_GAME || !this.#host) return Promise.reject(new Error("仅 Host 可请求远端决定"));
     const state = this.#host.getState();
-    const guestId = session.matchSetup.players.find((player) => player.role === R.GUEST)?.playerId;
-    if (state.isDisposed || state.isGameOver || request.actorId !== guestId || request.gameId !== state.gameId) {
+    const seat = session.matchSetup.players.find((player) => player.playerId === request.actorId);
+    const participant = session.participants[seat?.controller.participantId];
+    if (state.isDisposed || state.isGameOver || seat?.controller.type !== R.GUEST
+      || !participant?.connected || participant.kicked || request.gameId !== state.gameId) {
       return Promise.reject(new Error("无效远端决定 actor 或游戏"));
     }
     const prepared = this.#host.prepareDecision(request);
     if (Object.hasOwn(prepared, "immediate")) return Promise.resolve(prepared.immediate);
     const requestId = `network-decision-${++this.#serial}`;
-    const view = { ...prepared.view, requestId, actorId: guestId, gameId: state.gameId, stateVersion: state.stateVersion };
+    const view = { ...prepared.view, requestId, actorId: seat.playerId, gameId: state.gameId, stateVersion: state.stateVersion };
     const promise = new Promise((resolve, reject) => {
-      this.#pending.set(requestId, { view, decode: prepared.decode, resolve, reject });
+      this.#pending.set(requestId, { view, participantId: participant.participantId, decode: prepared.decode, resolve, reject });
     });
     this.publish();
-    this.#send(E.DECISION_REQUEST, view);
+    this.#send(E.DECISION_REQUEST, view, participant.participantId);
     return promise;
   }
 
@@ -282,7 +288,7 @@ Guest 无法反向写 snapshot；仅 Host 可发请求，LOADING 只允许接收
     }
     if (event.type === E.GAME_SNAPSHOT) {
       const projection = event.payload;
-      const viewerId = session.matchSetup?.players.find((player) => player.role === R.GUEST)?.playerId;
+      const viewerId = session.matchSetup?.players.find((player) => player.controller.participantId === session.participantId)?.playerId;
       if (!projection?.gameId || projection.viewerId !== viewerId
         || (this.#projection && (projection.gameId !== this.#projection.gameId || projection.stateVersion < this.#projection.stateVersion))) return false;
       this.#projection = structuredClone(projection);
@@ -334,7 +340,12 @@ pending.decode、resolve、send。
   acceptResponse(event) {
     const response = event.payload;
     const pending = this.#pending.get(response?.requestId);
-    if (!pending || !this.#host) return false;
+    if (!pending || !this.#host || event.participantId !== pending.participantId) return false;
+    const session = this.#getSession();
+    const participant = session.participants[pending.participantId];
+    const seat = session.matchSetup.players.find((player) => player.playerId === pending.view.actorId);
+    if (!participant?.connected || participant.kicked || seat?.controller.type !== R.GUEST
+      || seat.controller.participantId !== pending.participantId) return false;
     const { view } = pending;
     const expectedType = view.kind === "player-intent" ? E.PLAYER_INTENT : E.DECISION_RESPONSE;
     if (event.type !== expectedType || response.gameId !== view.gameId || response.actorId !== view.actorId
@@ -343,7 +354,7 @@ pending.decode、resolve、send。
     const actor = state.players.find((player) => player.id === view.actorId);
     if (state.isDisposed || state.isGameOver || state.gameId !== view.gameId || state.stateVersion !== view.stateVersion || !actor?.alive) {
       this.#pending.delete(view.requestId);
-      this.#send(E.DECISION_CANCELLED, { requestId: view.requestId });
+      this.#send(E.DECISION_CANCELLED, { requestId: view.requestId }, pending.participantId);
       pending.resolve(view.kind === "player-intent" ? { kind: "cancelled" } : { status: "cancelled", selectedIds: [] });
       return false;
     }
@@ -354,7 +365,7 @@ pending.decode、resolve、send。
     } else if (response.status !== "selected" || ids.length < view.min || ids.length > view.max
       || ids.some((id) => !view.options.some((option) => option.optionId === id))) return false;
     this.#pending.delete(view.requestId);
-    this.#send(E.DECISION_CANCELLED, { requestId: view.requestId });
+    this.#send(E.DECISION_CANCELLED, { requestId: view.requestId }, pending.participantId);
     pending.resolve(pending.decode(response));
     return true;
   }
@@ -394,6 +405,71 @@ send、notify。
     });
     this.notify();
     return true;
+  }
+
+
+  /*
+功能
+将 Session 席位控制投影同步到已有 runtime Player 元数据。
+
+调用方
+NetworkSession.publish/removeParticipant。
+
+输入
+无。
+
+输出
+无。
+
+读取状态
+唯一 session.matchSetup。
+
+写入状态
+经 Host capability 只更新控制元数据。
+
+调用函数
+host.syncControllers。
+
+边界与不变量
+不创建 Player，不写领域状态；Session 始终是 ownership owner。
+*/
+
+  syncControllers() {
+    if (this.#host) this.#host.syncControllers(this.#getSession().matchSetup);
+  }
+
+  /*
+功能
+解除被撤销真人的挂起请求，允许原 router 转交 AI。
+
+调用方
+NetworkSession.removeParticipant。
+
+输入
+participantId。
+
+输出
+无。
+
+读取状态
+pending 的 participantId。
+
+写入状态
+删除对应 pending。
+
+调用函数
+pending.reject。
+
+边界与不变量
+只中断该成员的决定；其他 Guest 的响应窗口保持有效。
+*/
+
+  cancelParticipant(participantId) {
+    for (const [requestId, pending] of this.#pending) {
+      if (pending.participantId !== participantId) continue;
+      this.#pending.delete(requestId);
+      pending.reject(Object.assign(new Error("真人控制权已转交 AI"), { code: "CONTROLLER_CHANGED" }));
+    }
   }
 
   /*

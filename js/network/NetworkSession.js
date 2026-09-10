@@ -11,19 +11,18 @@ export class NetworkSession {
   #random;
   #generation = 0;
   #sequence = 0;
-  #peerSequence = 0;
+  #peerSequence = new Map();
   #unsubscribe = null;
-  #abort = new AbortController();
 
   /*
 功能
-创建无 Transport 实现的游戏侧联机会话 owner。
+创建唯一游戏侧房间 authority。
 
 调用方
-network 页面 composition 与测试。
+NetworkFlow 与测试。
 
 输入
-可选 capability、确定性 random。
+Transport capability 与 Host RNG。
 
 输出
 NetworkSession。
@@ -32,26 +31,26 @@ NetworkSession。
 无。
 
 写入状态
-私有会话、订阅与随机源。
+私有会话和通道。
 
 调用函数
-reset。
+reset、NetworkGameChannel。
 
 边界与不变量
-真实连接必须由外部 capability 通知，生产代码不模拟对端。
+Guest 不创建 Match authority。
 */
   constructor({ capability = null, random = Math.random } = {}) {
     this.#capability = capability;
     this.#random = random;
     this.reset();
     this.gameChannel = new NetworkGameChannel({
-      getSession: () => this.snapshot(), send: (type, payload) => this.send(type, payload)
+      getSession: () => this.snapshot(), send: (type, payload, participantId) => this.send(type, payload, participantId)
     });
   }
 
   /*
 功能
-重置关闭房间后的游戏侧状态。
+清除已关闭房间的成员与控制权。
 
 调用方
 constructor、close。
@@ -66,35 +65,34 @@ constructor、close。
 无。
 
 写入状态
-私有 data 与消息序号。
+data、序号。
 
 调用函数
 无。
 
 边界与不变量
-仅关闭房间清除角色池；重绘与重连不调用。
+仅关闭或构造时重置，不重建对局角色。
 */
   reset() {
-    this.#data = { mode: MATCH_MODE.NETWORK, state: S.IDLE, role: null, roomId: null, connectionInfo: null,
-      revision: 0, peerConnected: false, setup: null, selections: { HOST: null, GUEST: null },
-      ready: { HOST: false, GUEST: false }, gameReady: { HOST: false, GUEST: false },
-      finalSetup: null, error: null };
+    this.#data = { mode: MATCH_MODE.NETWORK, state: S.IDLE, role: null, participantId: null,
+      roomId: null, connectionInfo: null, revision: 0, maxHumanCount: 2, participants: {},
+      setup: null, finalSetup: null, locked: false, error: null };
     this.#sequence = 0;
-    this.#peerSequence = 0;
+    this.#peerSequence.clear();
   }
 
   /*
 功能
-提供仅含本地候选与公开选角事实的隔离快照。
+返回真人成员与席位控制权的隔离投影。
 
 调用方
-NetworkSquadSelectionView 与页面 coordinator。
+页面订阅、NetworkGameChannel 与 Host 管理入口。
 
 输入
 无。
 
 输出
-可独立修改而不影响 authority 的 snapshot。
+data-only room snapshot。
 
 读取状态
 私有 data。
@@ -103,24 +101,25 @@ NetworkSquadSelectionView 与页面 coordinator。
 无。
 
 调用函数
-structuredClone、projectNetworkMatch。
+projectNetworkMatch。
 
 边界与不变量
-不得把对方四名候选提供给 View。
+人数来自 authority；AI 不在成员集合，只有 Host 可开始。
 */
   snapshot() {
     const d = this.#data;
-    const peer = d.role === R.HOST ? R.GUEST : R.HOST;
+    const local = d.participants[d.participantId];
+    const humans = Object.values(d.participants).filter((participant) => participant.connected && !participant.kicked);
     return structuredClone({
-      mode: d.mode, state: d.state, role: d.role, roomId: d.roomId, revision: d.revision,
-      connectionInfo: d.connectionInfo,
-      peerConnected: d.peerConnected, error: d.error,
-      candidates: d.peerConnected ? d.setup?.pools[d.role] ?? [] : [],
-      seats: d.setup?.seats ?? [], localSelection: d.selections[d.role] ?? null,
-      remoteSelection: d.selections[peer], localReady: d.ready[d.role] ?? false,
-      remoteReady: d.ready[peer], localGameReady: d.gameReady[d.role] ?? false,
-      remoteGameReady: d.gameReady[peer],
-      matchSetup: d.finalSetup ? projectNetworkMatch(d.finalSetup, d.role) : null
+      mode: d.mode, state: d.state, role: d.role, participantId: d.participantId, roomId: d.roomId,
+      revision: d.revision, connectionInfo: d.connectionInfo, error: d.error,
+      participants: d.participants, currentHumanCount: humans.length, maxHumanCount: d.maxHumanCount,
+      locked: d.locked, canStart: !d.locked && humans.length > 0
+        && humans.every((participant) => participant.ready && isNetworkSelectionValid(d.setup, participant.participantId, participant.selection, d.participants)),
+      candidates: d.setup?.candidates ?? [], seats: d.setup?.seats ?? [],
+      localSelection: local?.selection ?? null, localReady: local?.ready ?? false,
+      localGameReady: local?.gameReady ?? false,
+      matchSetup: d.finalSetup ? projectNetworkMatch(d.finalSetup, d.participantId, d.participants) : null
     });
   }
 
@@ -217,51 +216,89 @@ UI 只能消费状态，不能自行推测准备阶段。
 
   /*
 功能
-创建房间或请求加入，隔离迟到的异步连接结果。
+在 authority 层限制房间管理入口。
 
 调用方
-NetworkEntryView coordinator。
+Host-only 管理、选择确认与广播入口。
 
 输入
-HOST/GUEST；加入地址。
+无。
 
 输出
-连接请求完成 Promise。
+无；非 Host 抛错。
 
 读取状态
-capability 与 generation。
+role、state。
 
 写入状态
-房间 lifecycle、role、roomId、订阅。
+无。
 
 调用函数
-capability.createRoom/joinRoom/subscribe、move、notify。
+无。
 
 边界与不变量
-无 capability 时 HOST 等待、GUEST 报未接入；不得宣称真实连接成功。
+Guest 即使直接调用方法也不能管理成员或开局。
+*/
+  assertHost() {
+    if (this.#data.role !== R.HOST || ![S.SELECTING, S.WAITING_REMOTE, S.LOADING_GAME, S.IN_GAME].includes(this.#data.state)) {
+      throw Object.assign(new Error("仅 Host 可管理房间"), { code: "HOST_ONLY" });
+    }
+  }
+
+  /*
+功能
+创建或加入房间并隔离迟到连接结果。
+
+调用方
+NetworkFlow 创建或加入按钮。
+
+输入
+HOST/GUEST 与加入地址。
+
+输出
+连接准备 Promise。
+
+读取状态
+capability、generation。
+
+写入状态
+房间身份、Host 成员、setup、订阅。
+
+调用函数
+normalizeNetworkEndpoint、createNetworkSetup、move、notify。
+
+边界与不变量
+只有 Host 生成候选和席位；未连接的 Guest 不伪造成员。
 */
   async open(role, endpoint = null) {
     if (this.#data.state !== S.IDLE) throw new Error("请先关闭当前房间");
     if (!Object.values(R).includes(role)) throw new Error("无效会话身份");
     const generation = ++this.#generation;
-    this.#abort = new AbortController();
-    this.#data.role = role;
-    this.#data.roomId = role === R.HOST ? crypto.randomUUID() : null;
+    const d = this.#data;
+    d.role = role;
+    d.roomId = role === R.HOST ? crypto.randomUUID() : null;
     this.move(role === R.HOST ? S.CREATING : S.JOINING);
     this.notify();
     try {
       if (role === R.GUEST && !this.#capability?.joinRoom) throw new Error("连接功能尚未接入");
       const connectionInfo = role === R.GUEST ? normalizeNetworkEndpoint(endpoint ?? {}) : null;
       const result = role === R.HOST
-        ? await this.#capability?.createRoom?.({ roomId: this.#data.roomId })
+        ? await this.#capability?.createRoom?.({ roomId: d.roomId })
         : await this.#capability.joinRoom(connectionInfo);
       if (generation !== this.#generation) return;
-      if (result?.roomId) this.#data.roomId = result.roomId;
-      this.#data.connectionInfo = role === R.HOST
-        ? result?.connectionInfo ? normalizeNetworkEndpoint(result.connectionInfo) : null
-        : connectionInfo;
-      if (!this.#data.roomId) throw new Error("缺少房间标识");
+      if (result?.roomId) d.roomId = result.roomId;
+      d.connectionInfo = role === R.HOST
+        ? result?.connectionInfo ? normalizeNetworkEndpoint(result.connectionInfo) : null : connectionInfo;
+      if (!d.roomId) throw new Error("缺少房间标识");
       this.move(S.WAITING_PEER);
+      if (role === R.HOST) {
+        d.participantId = crypto.randomUUID();
+        d.participants[d.participantId] = { participantId: d.participantId, role: R.HOST, guestOrdinal: null,
+          connectionId: null, remoteAddress: result?.remoteAddress ?? null, connected: true, kicked: false,
+          selection: null, ready: false, gameReady: false };
+        d.setup = createNetworkSetup(this.#random);
+        this.move(S.SELECTING);
+      }
       this.#unsubscribe = this.#capability?.subscribe?.((event) => this.receive(event, generation)) ?? null;
       this.notify();
     } catch (error) {
@@ -271,393 +308,658 @@ capability.createRoom/joinRoom/subscribe、move、notify。
 
   /*
 功能
-封装唯一 protocol envelope 并交给 capability。
+接收 Transport 注入的连接并分配稳定真人身份。
 
 调用方
-选择、Ready 与 Host 广播。
+Transport capability、receive 的认证连接通知。
 
 输入
-protocol type 与 data-only payload。
+已认证 connectionId 和可选 remoteAddress。
 
 输出
-无。
+{ok, participantId} 或稳定错误 code。
 
 读取状态
-房间、role、revision、generation。
+成员、上限、锁房标志。
 
 写入状态
-本地发送 sequence。
+仅新 Guest 成员与其序号。
 
 调用函数
-capability.send、disconnect。
+assertHost、publish。
 
 边界与不变量
-send 失败必须终止等待；异步失败不得污染新房间。
+不采信 Guest 自报 IP；不重编号现存成员，锁房后不再加入。
 */
-  send(type, payload = {}) {
-    const generation = this.#generation;
-    const envelope = { type, roomId: this.#data.roomId, sender: this.#data.role,
-      sequence: ++this.#sequence, revision: this.#data.revision, payload: structuredClone(payload) };
-    try {
-      Promise.resolve(this.#capability?.send?.(envelope)).catch((error) => {
-        if (generation === this.#generation) this.disconnect(error.message);
-      });
-    } catch (error) {
-      this.disconnect(error.message);
-    }
+  addParticipant({ connectionId, remoteAddress = null }) {
+    this.assertHost();
+    const d = this.#data;
+    if (d.locked) return { ok: false, code: "ROOM_LOCKED" };
+    if (typeof connectionId !== "string" || !connectionId) return { ok: false, code: "INVALID_CONNECTION" };
+    const humans = Object.values(d.participants);
+    const existing = humans.find((participant) => participant.connectionId === connectionId);
+    if (existing) return { ok: true, participantId: existing.participantId };
+    if (humans.length >= d.maxHumanCount) return { ok: false, code: "ROOM_FULL" };
+    let guestOrdinal = 1;
+    while (humans.some((participant) => participant.guestOrdinal === guestOrdinal)) guestOrdinal += 1;
+    const participantId = crypto.randomUUID();
+    d.participants[participantId] = { participantId, role: R.GUEST, guestOrdinal, connectionId,
+      remoteAddress: typeof remoteAddress === "string" ? remoteAddress : null,
+      connected: true, kicked: false, selection: null, ready: false, gameReady: false };
+    this.#peerSequence.delete(connectionId);
+    d.error = null;
+    this.publish(E.ROLE_POOL_ASSIGNED);
+    return { ok: true, participantId };
   }
 
   /*
 功能
-提交 Host 快照并同步到 Guest。
+由 Host 设置当前房间真人上限。
 
 调用方
-Host 连接、选择与准备变更。
+Host 房间管理 UI。
 
 输入
-protocol type。
+2、3、4 或 5。
+
+输出
+稳定操作结果。
+
+读取状态
+当前真人数、locked。
+
+写入状态
+maxHumanCount。
+
+调用函数
+assertHost、publish。
+
+边界与不变量
+不得降低到现有人数以下或自动踢人。
+*/
+  setMaxHumanCount(maxHumanCount) {
+    this.assertHost();
+    if (this.#data.locked) return { ok: false, code: "ROOM_LOCKED" };
+    if (![2, 3, 4, 5].includes(maxHumanCount)) return { ok: false, code: "INVALID_CAPACITY" };
+    if (maxHumanCount < Object.keys(this.#data.participants).length) return { ok: false, code: "CAPACITY_BELOW_COUNT" };
+    this.#data.maxHumanCount = maxHumanCount;
+    this.publish(E.SELECTION_CHANGED);
+    return { ok: true };
+  }
+
+  /*
+功能
+发送按成员定向的 protocol envelope。
+
+调用方
+publish、Guest 意图与 NetworkGameChannel。
+
+输入
+事件、data-only payload、目标 participantId。
 
 输出
 无。
 
 读取状态
-全部权威 lobby data。
+房间、身份、revision、capability。
 
 写入状态
-revision、state。
+发送序号。
 
 调用函数
-move、send、notify。
+capability.send、markParticipantDisconnected、disconnect。
 
 边界与不变量
-双方确认才产生 final setup，双方 Game Ready 才进入 IN_GAME。
+定向消息由 Transport 按接收人路由；发送失败只接管对应 Guest，旧房间错误失效。
+*/
+  send(type, payload = {}, recipientParticipantId = null) {
+    const generation = this.#generation;
+    const d = this.#data;
+    const envelope = { type, roomId: d.roomId, sender: d.role, participantId: d.participantId,
+      recipientParticipantId, sequence: ++this.#sequence, revision: d.revision, payload: structuredClone(payload) };
+/*
+功能
+收束当前房间的发送错误。
+
+调用方
+send 的同步异常或 Promise rejection。
+
+输入
+Transport error。
+
+输出
+无。
+
+读取状态
+generation、role、接收成员。
+
+写入状态
+对应成员控制权或会话终止状态。
+
+调用函数
+markParticipantDisconnected、disconnect。
+
+边界与不变量
+旧 generation 的失败忽略；定向发送失败不终止其他真人。
+*/
+    const failed = (error) => {
+      if (generation !== this.#generation || [S.IDLE, S.DISCONNECTED].includes(d.state)) return;
+      if (d.role === R.HOST && recipientParticipantId) this.markParticipantDisconnected(recipientParticipantId);
+      else this.disconnect(error.message);
+    };
+    try { Promise.resolve(this.#capability?.send?.(envelope)).catch(failed); }
+    catch (error) { failed(error); }
+  }
+
+  /*
+功能
+广播 Host 房间快照并推进既有准备屏障。
+
+调用方
+Host 成员、选择、确认、开始和就绪变更。
+
+输入
+lobby event type。
+
+输出
+无。
+
+读取状态
+成员 ready/gameReady 与 finalSetup。
+
+写入状态
+revision、state；同步 runtime 控制元数据。
+
+调用函数
+move、gameChannel.syncControllers、send、notify。
+
+边界与不变量
+确认不自动开局；锁房后所有有效真人 Game Ready 才进入 IN_GAME。
 */
   publish(type) {
+    this.assertHost();
     const d = this.#data;
-    if (d.ready.HOST && d.ready.GUEST && !d.finalSetup) {
-      d.finalSetup = finalizeNetworkSetup(d.setup, d.selections, d.ready);
-    }
-    if (d.finalSetup) this.move(d.gameReady.HOST && d.gameReady.GUEST ? S.IN_GAME : S.LOADING_GAME);
-    else this.move(d.ready[d.role] ? S.WAITING_REMOTE : S.SELECTING);
+    const humans = Object.values(d.participants).filter((participant) => participant.connected && !participant.kicked);
+    if (d.locked) {
+      this.move(humans.every((participant) => participant.gameReady) ? S.IN_GAME : S.LOADING_GAME);
+    } else this.move(d.participants[d.participantId].ready ? S.WAITING_REMOTE : S.SELECTING);
     d.revision += 1;
-    this.send(d.state === S.IN_GAME ? E.MATCH_START : type, {
-      setup: d.setup, selections: d.selections, ready: d.ready, gameReady: d.gameReady, finalSetup: d.finalSetup
-    });
+    this.gameChannel.syncControllers();
+    for (const participant of humans) {
+      if (participant.role !== R.GUEST) continue;
+      this.send(d.state === S.IN_GAME ? E.MATCH_START : type, {
+        setup: d.setup, participants: d.participants, maxHumanCount: d.maxHumanCount,
+        locked: d.locked, finalSetup: d.finalSetup
+      }, participant.participantId);
+    }
     this.notify();
   }
 
   /*
 功能
-处理已认证对端语义，拒绝旧房间、重复序号与越权命令。
+校验 Transport 认证身份与逐连接序号后分派消息。
 
 调用方
-Transport subscribe；测试注入。
+Transport subscribe callback 与定向集成测试。
 
 输入
-envelope 与订阅 generation。
+envelope；可选订阅 generation。
 
 输出
-有效消息 true，否则 false。
+是否接收；加入可返回 capacity 结果。
 
 读取状态
-房间、角色、revision、selection。
+connectionId 映射、成员身份、revision。
 
 写入状态
-合法 lobby data。
+已认证连接序号与经入口提交的房间状态。
 
 调用函数
-publish、acceptSnapshot、selectFor、confirmFor、disconnect。
+addParticipant、selectFor、confirmFor、acceptSnapshot、gameChannel.receive。
 
 边界与不变量
-Guest 不分池；Host 重验 Guest 席位与确认内容；重复连接不重洗。
+connectionId 必须由 capability 注入而非 payload；无元数据的既有 Transport 使用默认连接标识。
 */
   receive(event, generation = this.#generation) {
     const d = this.#data;
-    if (generation !== this.#generation || !d.roomId || event?.roomId !== d.roomId) return false;
+    if (generation !== this.#generation || !d.roomId || event?.roomId !== d.roomId || d.state === S.DISCONNECTED) return false;
+    const connectionId = event.connectionId ?? "default";
     const lifecycle = event.sender === NETWORK_CAPABILITY_SENDER && [E.PEER_CONNECTED, E.DISCONNECTED, E.ERROR].includes(event.type);
-    if (!lifecycle) {
-      if (event.sender !== (d.role === R.HOST ? R.GUEST : R.HOST)
-        || !Number.isSafeInteger(event.sequence) || event.sequence <= this.#peerSequence
-        || event.type === E.PEER_CONNECTED) return false;
-      this.#peerSequence = event.sequence;
-    }
     try {
-      if (event.type === E.DISCONNECTED || event.type === E.ERROR) {
-        this.disconnect(event.payload?.message ?? "另一名玩家已断开连接");
+      if (lifecycle) {
+        if (event.type === E.PEER_CONNECTED) {
+          return d.role === R.HOST ? this.addParticipant({ connectionId, remoteAddress: event.payload?.remoteAddress }) : true;
+        }
+        const participant = Object.values(d.participants).find((entry) => entry.connectionId === connectionId);
+        if (d.role === R.HOST && event.type === E.DISCONNECTED) {
+          return participant ? this.markParticipantDisconnected(participant.participantId).ok : false;
+        }
+        this.disconnect(event.payload?.message ?? "Host authority 或连接已关闭");
         return true;
       }
-      if (event.type === E.PEER_CONNECTED) {
-        if (d.peerConnected || d.finalSetup) return false;
-        d.peerConnected = true;
-        d.error = null;
-        this.#abort = new AbortController();
-        if (d.role === R.HOST) {
-          d.setup ??= createNetworkSetup(this.#random);
-          this.publish(E.ROLE_POOL_ASSIGNED);
-        }
+      if (event.sender !== (d.role === R.HOST ? R.GUEST : R.HOST)
+        || !Number.isSafeInteger(event.sequence) || event.sequence <= (this.#peerSequence.get(connectionId) ?? 0)) return false;
+      const participant = d.role === R.HOST
+        ? Object.values(d.participants).find((entry) => entry.connectionId === connectionId && entry.connected && !entry.kicked) : null;
+      if (d.role === R.HOST && (!participant || (event.participantId != null && event.participantId !== participant.participantId))) return false;
+      if (d.role === R.GUEST && d.participantId && event.recipientParticipantId && event.recipientParticipantId !== d.participantId) return false;
+      this.#peerSequence.set(connectionId, event.sequence);
+      if (event.type === E.DISCONNECTED && d.role === R.GUEST) {
+        this.disconnect(event.payload?.message ?? "已离开房间");
         return true;
       }
       if ([E.GAME_SNAPSHOT, E.DECISION_REQUEST, E.DECISION_RESPONSE, E.DECISION_CANCELLED, E.PLAYER_INTENT].includes(event.type)) {
-        return this.gameChannel.receive(event);
+        return this.gameChannel.receive({ ...event, participantId: participant?.participantId ?? event.participantId });
       }
       if (d.role === R.GUEST) return this.acceptSnapshot(event);
-      if (!d.peerConnected) return false;
-      if (event.type === E.SELECTION_CHANGED) this.selectFor(R.GUEST, event.payload);
-      else if (event.type === E.SELECTION_CONFIRMED) this.confirmFor(R.GUEST, event.payload);
-      else if (event.type === E.GAME_READY && d.finalSetup) {
-        d.gameReady.GUEST = true;
+      if (event.type === E.SELECTION_CHANGED) this.selectFor(participant.participantId, event.payload);
+      else if (event.type === E.SELECTION_CONFIRMED) this.confirmFor(participant.participantId, event.payload);
+      else if (event.type === E.GAME_READY && d.locked && !participant.gameReady) {
+        participant.gameReady = true;
         this.publish(E.GAME_READY);
       } else return false;
       return true;
     } catch (error) {
-      // 非法对端命令不改变已确认结果；错误反馈携带权威快照，允许修正过时的席位选择。
       d.error = error.message;
-      if (d.role === R.HOST && d.setup && !d.finalSetup) this.publish(E.SELECTION_CHANGED);
-      else this.notify();
+      this.notify();
       return false;
     }
   }
 
   /*
 功能
-验证并接收 Host 权威选角快照。
+接收 Host 的完整房间权威投影。
 
 调用方
 Guest receive。
 
 输入
-Host envelope。
+已认证 Host envelope。
 
 输出
 是否接收。
 
 读取状态
-当前 revision 与固定角色池。
+旧 setup、revision、locked、finalSetup。
 
 写入状态
-Guest 的 lobby 副本与状态。
+Guest 房间只读副本。
 
 调用函数
-finalizeNetworkSetup、move、notify。
+isNetworkSetupValid、finalizeNetworkSetup、move、notify。
 
 边界与不变量
-固定 pools 不可重分；final setup 必须由同一快照的合法选择和 Ready 推导。
+不合并 Guest 自有状态；锁房后固定角色与席位，只允许 Guest controller 转 AI。
 */
   acceptSnapshot(event) {
     const d = this.#data;
     if (![E.ROLE_POOL_ASSIGNED, E.SELECTION_CHANGED, E.PEER_READY, E.GAME_READY, E.MATCH_START].includes(event.type)
       || !Number.isSafeInteger(event.revision) || event.revision <= d.revision) return false;
-    if (d.finalSetup && !d.peerConnected) return false;
     const p = structuredClone(event.payload);
-    if (!isNetworkSetupValid(p.setup)
-      || (d.setup && JSON.stringify(d.setup) !== JSON.stringify(p.setup))) throw new Error("无效角色池快照");
-    const finalSetup = finalizeNetworkSetup(p.setup, p.selections, p.ready);
-    if (JSON.stringify(finalSetup) !== JSON.stringify(p.finalSetup)) throw new Error("无效最终编队");
-    if (event.type === E.MATCH_START && (!finalSetup || !p.gameReady.HOST || !p.gameReady.GUEST)) return false;
-    d.setup = p.setup;
-    d.selections = p.selections;
-    d.ready = p.ready;
-    d.gameReady = p.gameReady;
-    d.finalSetup = finalSetup;
-    d.peerConnected = true;
-    d.revision = event.revision;
-    d.error = null;
-    if (d.state === S.WAITING_PEER || d.state === S.DISCONNECTED) this.move(S.SELECTING);
-    this.move(event.type === E.MATCH_START ? S.IN_GAME
-      : finalSetup ? S.LOADING_GAME : d.ready.GUEST ? S.WAITING_REMOTE : S.SELECTING);
+    const localId = d.participantId ?? event.recipientParticipantId;
+    const humans = Object.values(p.participants ?? {});
+    if (!localId || !p.participants?.[localId]?.connected || p.participants[localId].kicked
+      || p.participants[localId].role !== R.GUEST || ![2, 3, 4, 5].includes(p.maxHumanCount)
+      || humans.length > p.maxHumanCount || humans.filter((entry) => entry.role === R.HOST).length !== 1
+      || !isNetworkSetupValid(p.setup) || (d.setup && JSON.stringify(d.setup) !== JSON.stringify(p.setup))) return false;
+    if (d.locked && !p.locked) return false;
+    if (p.locked && !d.locked) {
+      const expected = finalizeNetworkSetup(p.setup, p.participants);
+      if (!expected || JSON.stringify(expected) !== JSON.stringify(p.finalSetup)) return false;
+    } else if (d.locked) {
+      if (p.finalSetup?.players?.length !== d.finalSetup.players.length) return false;
+      for (let index = 0; index < d.finalSetup.players.length; index += 1) {
+        const old = d.finalSetup.players[index], next = p.finalSetup.players[index];
+        const transfer = old.controller.type === R.GUEST && next.controller.type === "AI"
+          && next.controller.participantId === null && !p.participants[old.controller.participantId]?.connected;
+        if (JSON.stringify({ ...old, controller: null }) !== JSON.stringify({ ...next, controller: null })
+          || (!transfer && JSON.stringify(old.controller) !== JSON.stringify(next.controller))) return false;
+      }
+    } else if (p.finalSetup != null) return false;
+    const allGameReady = humans.filter((entry) => entry.connected && !entry.kicked).every((entry) => entry.gameReady);
+    if (event.type === E.MATCH_START && (!p.locked || !allGameReady)) return false;
+    Object.assign(d, { participantId: localId, setup: p.setup, participants: p.participants,
+      maxHumanCount: p.maxHumanCount, locked: p.locked, finalSetup: p.finalSetup, revision: event.revision, error: null });
+    if (d.state === S.WAITING_PEER) this.move(S.SELECTING);
+    this.move(event.type === E.MATCH_START ? S.IN_GAME : d.locked ? S.LOADING_GAME
+      : d.participants[localId].ready ? S.WAITING_REMOTE : S.SELECTING);
     this.notify();
     return true;
   }
 
   /*
 功能
-提交本地候选与席位选择意图。
+提交本地真人选角意图。
 
 调用方
-NetworkSquadSelectionView。
+NetworkFlow 角色与席位按钮。
 
 输入
 characterId、teamId、seatId。
 
 输出
-无；非法选择抛错。
+无；非法抛错。
 
 读取状态
-本地投影与 ready。
+local participant、setup。
 
 写入状态
-Host 直接提交，Guest 等待 Host 回执。
+Host 提交或 Guest 发消息。
 
 调用函数
 selectFor、send、isNetworkSelectionValid。
 
 边界与不变量
-已确认不能修改；Guest 不乐观占用席位。
+Guest 不乐观写入，也不能覆盖其他成员。
 */
   select(selection) {
     const d = this.#data;
-    if (!d.peerConnected || d.ready[d.role] || d.finalSetup
-      || !isNetworkSelectionValid(d.setup, d.role, selection, d.selections)) throw new Error("请选择自己的角色与空闲席位");
-    if (d.role === R.HOST) this.selectFor(R.HOST, selection);
+    if (d.locked || d.participants[d.participantId]?.ready
+      || !isNetworkSelectionValid(d.setup, d.participantId, selection, d.participants)) throw new Error("请选择自己的角色与空闲席位");
+    if (d.role === R.HOST) this.selectFor(d.participantId, selection);
     else this.send(E.SELECTION_CHANGED, selection);
   }
 
   /*
 功能
-由房主唯一提交真人选择。
+由 Host 唯一更新一位真人的 selection。
 
 调用方
-本地 select 与 Guest SELECTION_CHANGED。
+Host 本地 select 与已认证 Guest 选择消息。
 
 输入
-角色及选择。
+已认证 participantId 和选择意图。
 
 输出
 无；冲突抛错。
 
 读取状态
-setup、ready、selections。
+setup、成员、ready。
 
 写入状态
-对应 selection。
+该成员 selection。
 
 调用函数
-isNetworkSelectionValid、publish。
+assertHost、isNetworkSelectionValid、publish。
 
 边界与不变量
-selection 拷贝只保留正式字段，不接受对端扩展状态。
+只拷贝三个正式选择字段；身份来自发送连接而非意图。
 */
-  selectFor(role, selection) {
+  selectFor(participantId, selection) {
+    this.assertHost();
     const d = this.#data;
-    if (!d.peerConnected || d.finalSetup || d.ready[role]
-      || !isNetworkSelectionValid(d.setup, role, selection, d.selections)) throw new Error("席位已占用或选择已确认");
-    d.selections[role] = { characterId: selection.characterId, teamId: selection.teamId, seatId: selection.seatId };
+    const participant = d.participants[participantId];
+    if (d.locked || participant?.ready || !isNetworkSelectionValid(d.setup, participantId, selection, d.participants)) throw new Error("席位或角色已占用，或选择已确认");
+    participant.selection = { characterId: selection.characterId, teamId: selection.teamId, seatId: selection.seatId };
     d.error = null;
     this.publish(E.SELECTION_CHANGED);
   }
 
   /*
 功能
-请求确认当前本地选择。
+确认当前本地选择。
 
 调用方
-选角确认按钮。
+NetworkFlow 确认按钮。
 
 输入
 无。
 
 输出
-无；无合法选择抛错。
+无。
 
 读取状态
-当前本地 selection。
+本地成员 selection。
 
 写入状态
-经 Host 提交 ready。
+经 Host 写 ready。
 
 调用函数
 confirmFor、send。
 
 边界与不变量
-只确认已被 authority 接收的选择，不提前创建 Match。
+只确认 authority 已接收的选项，不自动开始。
 */
   confirm() {
     const d = this.#data;
-    if (d.role === R.HOST) this.confirmFor(R.HOST, d.selections.HOST);
-    else this.send(E.SELECTION_CONFIRMED, d.selections.GUEST);
+    if (d.role === R.HOST) this.confirmFor(d.participantId, d.participants[d.participantId]?.selection);
+    else this.send(E.SELECTION_CONFIRMED, d.participants[d.participantId]?.selection);
   }
 
   /*
 功能
-由房主验证精确选择后记录 Ready。
+由 Host 重验选择后通过真人确认屏障。
 
 调用方
-confirm 与 Guest 确认消息。
+Host 本地 confirm 与已认证 Guest 确认消息。
 
 输入
-角色及确认的 selection。
+认证身份与确认 selection。
 
 输出
-无；过时或非法确认抛错。
+无；过期抛错。
 
 读取状态
-固定池、选择与 finalSetup。
+成员与 setup。
 
 写入状态
-ready。
+该成员 ready。
 
 调用函数
-isNetworkSelectionValid、publish。
+assertHost、isNetworkSelectionValid、publish。
 
 边界与不变量
-拒绝迟到确认覆盖新选择；单方 Ready 不生成 finalSetup。
+所有真人确认只产生 canStart，Host 仍需主动开始。
 */
-  confirmFor(role, selection) {
+  confirmFor(participantId, selection) {
+    this.assertHost();
     const d = this.#data;
-    if (!d.peerConnected || d.finalSetup || !isNetworkSelectionValid(d.setup, role, selection, d.selections)
-      || JSON.stringify(selection) !== JSON.stringify(d.selections[role])) throw new Error("确认内容已过期，请重新选择");
-    d.ready[role] = true;
+    const participant = d.participants[participantId];
+    if (d.locked || !isNetworkSelectionValid(d.setup, participantId, selection, d.participants)
+      || JSON.stringify(selection) !== JSON.stringify(participant.selection)) throw new Error("确认内容已过期，请重新选择");
+    participant.ready = true;
     this.publish(E.PEER_READY);
   }
 
   /*
 功能
-记录本地游戏 UI 已初始化完成。
+由 Host 锁定真人成员并为余下席位补 AI。
 
 调用方
-network Match 页面初始化完成 callback。
+Host NetworkFlow 开始按钮。
 
 输入
 无。
 
 输出
-无。
+操作结果。
 
 读取状态
-finalSetup 与 gameReady。
+canStart、setup、成员确认。
 
 写入状态
-对应 gameReady。
+locked、finalSetup。
+
+调用函数
+assertHost、finalizeNetworkSetup、publish。
+
+边界与不变量
+保留第一道确认屏障；不调用 GameLoop，随后进入现有 Game Ready。
+*/
+  start() {
+    this.assertHost();
+    if (!this.snapshot().canStart) return { ok: false, code: this.#data.locked ? "ROOM_LOCKED" : "NOT_READY" };
+    this.#data.finalSetup = finalizeNetworkSetup(this.#data.setup, this.#data.participants);
+    this.#data.locked = true;
+    this.publish(E.PEER_READY);
+    return { ok: true };
+  }
+
+  /*
+功能
+记录本端已完成正式 UI 初始化。
+
+调用方
+NetworkFlow 完成 Host Match 或 Guest UI 初始化后。
+
+输入
+无。
+
+输出
+无；重复幂等。
+
+读取状态
+locked、local gameReady。
+
+写入状态
+本地 Host gameReady 或远端意图。
 
 调用函数
 publish、send。
 
 边界与不变量
-只有双方 gameReady 才发布 MATCH_START；重复调用幂等。
+只在原 LOADING_GAME 阶段生效；所有有效真人就绪才 MATCH_START。
 */
   gameReady() {
     const d = this.#data;
-    if (!d.finalSetup || d.state !== S.LOADING_GAME || d.gameReady[d.role]) return;
+    if (!d.locked || d.state !== S.LOADING_GAME || d.participants[d.participantId]?.gameReady) return;
     if (d.role === R.HOST) {
-      d.gameReady.HOST = true;
+      d.participants[d.participantId].gameReady = true;
       this.publish(E.GAME_READY);
     } else this.send(E.GAME_READY);
   }
 
   /*
 功能
-把远端真人决定交给游戏侧请求与回答通道。
+将指定 Guest 断线收口到成员失效和 AI 接管。
 
 调用方
-PlayerControlRouter。
+Transport capability、定向发送失败与 receive。
 
 输入
-Host 内部 data-only request。
+Transport 已认证的 participantId。
 
 输出
-经过关联与选项校验的结果 Promise。
+稳定操作结果。
+
+读取状态
+成员和锁房状态。
+
+写入状态
+经 removeParticipant 更新成员和 controller。
+
+调用函数
+assertHost、removeParticipant。
+
+边界与不变量
+Host 消失必须终止房间，不能迁移 Host authority。
+*/
+  markParticipantDisconnected(participantId) {
+    this.assertHost();
+    return this.removeParticipant(participantId, false);
+  }
+
+  /*
+功能
+由 Host 踢出 Guest 并撤销其决策权限。
+
+调用方
+Host 房间管理 UI。
+
+输入
+目标 participantId。
+
+输出
+稳定操作结果。
+
+读取状态
+成员。
+
+写入状态
+经 removeParticipant 更新成员和 controller。
+
+调用函数
+assertHost、send、removeParticipant。
+
+边界与不变量
+Host 不可踢自己；只发送游戏侧移除通知，不关闭 Socket。
+*/
+  kickParticipant(participantId) {
+    this.assertHost();
+    const participant = this.#data.participants[participantId];
+    if (!participant || participant.role === R.HOST) return { ok: false, code: participant ? "CANNOT_REMOVE_HOST" : "UNKNOWN_PARTICIPANT" };
+    this.send(E.DISCONNECTED, { message: "已被 Host 移出房间" }, participantId);
+    return this.removeParticipant(participantId, true);
+  }
+
+  /*
+功能
+统一释放大厅成员或将锁定席位控制权交给 AI。
+
+调用方
+markParticipantDisconnected、kickParticipant。
+
+输入
+目标身份、是否踢出。
+
+输出
+稳定操作结果。
+
+读取状态
+participant、finalSetup。
+
+写入状态
+成员连接状态、controller ownership。
+
+调用函数
+assertHost、gameChannel.syncControllers/cancelParticipant、publish。
+
+边界与不变量
+不删除或重建 Player；先切控制元数据再解除等待，角色和全部领域状态保持原样。
+*/
+  removeParticipant(participantId, kicked) {
+    this.assertHost();
+    const d = this.#data, participant = d.participants[participantId];
+    if (!participant || participant.role === R.HOST) return { ok: false, code: participant ? "CANNOT_REMOVE_HOST" : "UNKNOWN_PARTICIPANT" };
+    if (!participant.connected) return { ok: true };
+    participant.connected = false;
+    participant.kicked = kicked;
+    if (d.locked) {
+      d.finalSetup = { ...d.finalSetup, players: d.finalSetup.players.map((player) =>
+        player.controller.participantId === participantId
+          ? { ...player, controller: { type: "AI", participantId: null } } : player) };
+      this.gameChannel.syncControllers();
+      this.gameChannel.cancelParticipant(participantId);
+    } else delete d.participants[participantId];
+    this.publish(E.SELECTION_CHANGED);
+    this.gameChannel.publish();
+    return { ok: true };
+  }
+
+  /*
+功能
+复用唯一游戏消息通道请求真人决定。
+
+调用方
+PlayerControlRouter 的远端 decision capability。
+
+输入
+Host data-only request。
+
+输出
+结果 Promise。
 
 读取状态
 gameChannel。
 
 写入状态
-pending request registry。
+通道 pending。
 
 调用函数
 NetworkGameChannel.request。
 
 边界与不变量
-Transport 只发送 envelope，不再代替游戏侧实现 decision round-trip。
+合法性仍交既有 canonical Action，Session 不建立 legality checker。
 */
   requestDecision(request) {
     return this.gameChannel.request(request);
@@ -665,13 +967,13 @@ Transport 只发送 envelope，不再代替游戏侧实现 decision round-trip�
 
   /*
 功能
-冻结断线会话并取消远端等待，保留池供选角重连。
+终止失去 Host authority 或本端失败的房间。
 
 调用方
-Transport 断线及本地失败。
+本端 authority 故障、Guest 失去 Host 连接与 NetworkFlow 错误收束。
 
 输入
-面向玩家的错误说明。
+错误说明。
 
 输出
 无。
@@ -680,32 +982,30 @@ Transport 断线及本地失败。
 state。
 
 写入状态
-peerConnected、Ready、error、abort。
+连接状态、error、通道等待。
 
 调用函数
-move、notify、AbortController.abort。
+gameChannel.reset、move、notify。
 
 边界与不变量
-已生成 Match 的断线必须由页面销毁对局；不自动恢复真实战斗。
+Guest 单独离线使用成员接管入口；此入口代表整端会话终止。
 */
   disconnect(message = "连接已断开") {
-    if (this.#data.state === S.IDLE) return;
-    this.#abort.abort();
+    const d = this.#data;
+    if (d.state === S.IDLE) return;
     this.gameChannel.reset();
-    this.#data.peerConnected = false;
-    this.#data.ready = { HOST: false, GUEST: false };
-    this.#data.gameReady = { HOST: false, GUEST: false };
-    this.#data.error = message;
+    for (const participant of Object.values(d.participants)) participant.connected = false;
+    d.error = message;
     this.move(S.DISCONNECTED);
     this.notify();
   }
 
   /*
 功能
-关闭房间并使所有旧订阅和异步回执失效。
+关闭房间并使旧订阅和异步回执失效。
 
 调用方
-返回、重新进入与页面销毁。
+NetworkFlow 导航、取消与页面销毁。
 
 输入
 无。
@@ -717,17 +1017,16 @@ move、notify、AbortController.abort。
 capability、unsubscribe。
 
 写入状态
-generation、abort、整个 lobby 生命周期。
+generation、全部 lobby 数据。
 
 调用函数
-unsubscribe、capability.close、reset、notify。
+gameChannel.reset、unsubscribe、capability.close、reset、notify。
 
 边界与不变量
-不修改游戏规则或永久存储；只有再次 open 才可能生成新池。
+不写持久化或规则；新的 open 才重新生成房间。
 */
   close() {
     this.#generation += 1;
-    this.#abort.abort();
     this.gameChannel.reset();
     this.#unsubscribe?.();
     this.#unsubscribe = null;

@@ -107,7 +107,7 @@ export function projectNetworkGame(state, viewerId, presentation = null, display
   if (!viewer) throw new Error("缺少合法 Network viewer");
   const players = state.players.map((player) => ({
     playerId: player.id, seatId: player.seatId, seatIndex: player.seatIndex,
-    networkRole: ["HOST", "GUEST"].includes(networkRoles[player.id]) ? networkRoles[player.id] : null,
+    networkRole: networkRoles[player.id] ?? null,
     teamId: player.battleTeam, characterId: player.characterId, name: player.name,
     hp: player.hp, maxHp: player.maxHp, energy: player.energy, maxEnergy: player.maxEnergy,
     shield: player.shield, alive: player.alive, handCount: player.hand.length,

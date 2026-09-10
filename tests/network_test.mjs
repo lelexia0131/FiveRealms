@@ -4,7 +4,7 @@ import { projectNetworkGame } from "../js/network/NetworkViewerProjection.js";
 import { NetworkGameView } from "../js/ui/network/NetworkGameView.js";
 import { MatchMvpResultView } from "../js/ui/results/MatchMvpResultView.js";
 import { handleNetworkHostPaste, validateNetworkHost, renderNetworkEntryView } from "../js/ui/network/NetworkEntryView.js";
-import { NETWORK_DEFAULT_PORT } from "../js/network/NetworkProtocol.js";
+import { NETWORK_DEFAULT_PORT, formatNetworkAddress } from "../js/network/NetworkProtocol.js";
 import { NetworkSession } from "../js/network/NetworkSession.js";
 import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER } from "../js/network/NetworkProtocol.js";
 import { NETWORK_STATE as S, transitionNetworkState } from "../js/network/NetworkLobbyState.js";
@@ -102,7 +102,7 @@ function choosePair(pair, sameTeam = true) {
   const dawn = h.seats.filter((seat) => seat.teamId === "dawn");
   const guestSeat = sameTeam ? dawn[1] : h.seats.find((seat) => seat.teamId === "dusk");
   pair.host.select({ characterId: h.candidates[0], ...dawn[0] });
-  pair.guest.select({ characterId: pair.guest.snapshot().candidates[0], ...guestSeat });
+  pair.guest.select({ characterId: pair.guest.snapshot().candidates.find((id) => id !== pair.host.snapshot().localSelection?.characterId), ...guestSeat });
 }
 
 /*
@@ -119,7 +119,7 @@ Network canonical seat 与正式 UI 测试。
 无。
 
 读取状态
-共享 seats 与双方独立候选池。
+共享 seats 与共享候选池。
 
 写入状态
 经 Session authority 提交双方选择。
@@ -134,7 +134,7 @@ function choosePairAtSeats(pair, hostSeatIndex, guestSeatIndex) {
   const host = pair.host.snapshot();
   const guest = pair.guest.snapshot();
   pair.host.select({ characterId: host.candidates[0], ...host.seats[hostSeatIndex] });
-  pair.guest.select({ characterId: guest.candidates[0], ...guest.seats[guestSeatIndex] });
+  pair.guest.select({ characterId: guest.candidates.find((id) => id !== pair.host.snapshot().localSelection?.characterId), ...guest.seats[guestSeatIndex] });
 }
 
   /*
@@ -288,11 +288,104 @@ test。
 边界与不变量
 所有随机验证仅证明正确性，不运行平衡或自博弈。
 */
+
+/*
+功能
+建立多个已认证内存连接以验证同一个 NetworkSession。
+
+调用方
+多人 Network contract tests。
+
+输入
+真人数量 1–5。
+
+输出
+Host、Guests、envelopes 和清理函数。
+
+读取状态
+无。
+
+写入状态
+仅测试内存 receivers 和生产 session。
+
+调用函数
+NetworkSession.open/addParticipant。
+
+边界与不变量
+不启动 Socket、浏览器、Electron 或真实对局循环。
+*/
+
+async function connectedRoom(humanCount) {
+  const receivers = new Map(), events = [];
+  let roomId, host;
+  const capability = (connectionId) => ({
+    createRoom: async (room) => { roomId = room.roomId; return { ...room, remoteAddress: "10.0.0.1" }; },
+    joinRoom: async () => ({ roomId }),
+    subscribe: (receive) => { receivers.set(connectionId, receive); return () => receivers.delete(connectionId); },
+    send: (event) => {
+      events.push(structuredClone(event));
+      if (connectionId === "host") {
+        const recipient = host.snapshot().participants[event.recipientParticipantId];
+        receivers.get(recipient?.connectionId)?.({ ...structuredClone(event), connectionId: "host" });
+      } else receivers.get("host")?.({ ...structuredClone(event), connectionId });
+    },
+    close() {}
+  });
+  host = new NetworkSession({ capability: capability("host"), random: () => 0.25 });
+  await host.open(R.HOST);
+  host.setMaxHumanCount(5);
+  const guests = [];
+  for (let index = 1; index < humanCount; index += 1) {
+    const connectionId = `connection-${index}`;
+    const guest = new NetworkSession({ capability: capability(connectionId), random: () => { throw Error("Guest RNG"); } });
+    await guest.open(R.GUEST, { host: "test-room", port: NETWORK_DEFAULT_PORT });
+    assert.equal(host.addParticipant({ connectionId, remoteAddress: `::ffff:10.0.0.${index + 1}` }).ok, true);
+    guests.push(guest);
+  }
+  return { host, guests, events, roomId,
+    close() { host.close(); for (const guest of guests) guest.close(); }
+  };
+}
+
+/*
+功能
+通过真实 selection 与确认入口准备全体真人。
+
+调用方
+多人 Network tests。
+
+输入
+connectedRoom fixture。
+
+输出
+无。
+
+读取状态
+session candidates 与 canonical seats。
+
+写入状态
+经生产入口写成员 selection/ready。
+
+调用函数
+select、confirm。
+
+边界与不变量
+不调用 start，也不绕过任何屏障。
+*/
+
+function chooseRoom(room) {
+  for (const [index, session] of [room.host, ...room.guests].entries()) {
+    const snapshot = session.snapshot();
+    session.select({ characterId: snapshot.candidates[index], ...snapshot.seats[index] });
+    session.confirm();
+  }
+}
+
 export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：正式回合提示按viewer归属且Guest保留主提示与hand hint", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const hostUi = makeUi();
     const hostPrompts = [];
     hostUi.setPrompt = (message, hint) => hostPrompts.push([message, hint]);
@@ -333,7 +426,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：真实card与skill结算提示归属正确且Guest正式cue各播放一次", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const hostUi = makeUi();
     const hostPrompts = [];
     hostUi.setPrompt = (message, hint) => hostPrompts.push([message, hint]);
@@ -383,7 +476,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：阵亡目标仍有正式distance与target entry且不显示普通不可达", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
@@ -417,7 +510,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：借势保留最终确认且转移保留分阶段目标并只发送有限选项", async () => {
     const pair = await connectedPair();
-    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
@@ -511,7 +604,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：响应快捷跳过必须被Host和Guest分别合法证明", async () => {
     const pair = await connectedPair();
-    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const hostUi = makeUi();
     const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
@@ -541,7 +634,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Guest复用正式响应确认支持AssaultDuel救援借势与零卡技能", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
@@ -575,7 +668,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Guest沿用正式目标和弃牌控件且取消迟到输入不再提交", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
@@ -620,7 +713,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Guest普通目标取消收束Host请求且卡牌技能不提交不耗资源", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
@@ -677,7 +770,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Host切换AI速度立即同步Guest只读档位且不写Guest偏好", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const hostUi = makeUi();
     hostUi.elements = {};
     hostUi.setAiSpeed = UIManager.prototype.setAiSpeed;
@@ -726,7 +819,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     try {
       for (const kind of ["damage", "loseHp"]) {
         const pair = await connectedPair();
-        choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+        choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
         const hostUi = makeUi();
         const panelUi = makeGuestUi();
         hostUi.elements = panelUi.elements;
@@ -781,7 +874,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：正式战场按Guest旋转且canonical座次、身份、距离和手牌知识属实", async () => {
     const pair = await connectedPair();
-    choosePairAtSeats(pair, 0, 2); pair.host.confirm(); pair.guest.confirm();
+    choosePairAtSeats(pair, 0, 2); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const guest = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
@@ -830,9 +923,9 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     assert.match(ui.elements.human_panel.innerHTML, /手牌1张/);
     assert.doesNotMatch(ui.elements.cpu_grid.innerHTML + ui.elements.human_panel.innerHTML, /HOST_SECRET_ID/);
     assert.match(ui.elements.human_panel.innerHTML, / · 你/);
-    assert.match(ui.elements.human_panel.innerHTML, /network-role-badge[^>]*>GUEST</);
-    assert.match(ui.elements.cpu_grid.innerHTML, /network-role-badge[^>]*>HOST</);
-    assert.equal((ui.elements.cpu_grid.innerHTML.match(/network-role-badge/g) ?? []).length, 1, "三个 AI 不显示真人身份");
+    assert.match(ui.elements.human_panel.innerHTML, /network-role-badge[^>]*>Guest 1</);
+    assert.match(ui.elements.cpu_grid.innerHTML, /network-role-badge[^>]*>Host</);
+    assert.equal((ui.elements.cpu_grid.innerHTML.match(/network-role-badge/g) ?? []).length, 4, "三个 AI 显示实际控制权");
     const hostUi = makeGuestUi();
     Object.assign(hostUi, {
       game,
@@ -848,8 +941,8 @@ export function registerNetworkTests(test, { makeUi, instance }) {
       globalThis.document = previousDocument;
     }
     assert.match(hostUi.elements.human_panel.innerHTML, new RegExp(`data-player-id="${host.id}"`));
-    assert.match(hostUi.elements.human_panel.innerHTML, /network-role-badge[^>]*>HOST</);
-    assert.match(hostUi.elements.cpu_grid.innerHTML, /network-role-badge[^>]*>GUEST</);
+    assert.match(hostUi.elements.human_panel.innerHTML, /network-role-badge[^>]*>Host</);
+    assert.match(hostUi.elements.cpu_grid.innerHTML, /network-role-badge[^>]*>Guest 1</);
     const distanceTarget = game.state.players[3];
     assert.notEqual(
       ActionLegality.describeDistance(game, host, distanceTarget).distance,
@@ -862,20 +955,20 @@ export function registerNetworkTests(test, { makeUi, instance }) {
   test("Network：真人不在第零席时Match仍保持canonical并显式区分本地与远端", async () => {
     const pair = await connectedPair();
     choosePairAtSeats(pair, 3, 1);
-    pair.host.confirm(); pair.guest.confirm();
+    pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const hostSetup = pair.host.snapshot().matchSetup;
     const guestSetup = pair.guest.snapshot().matchSetup;
     assert.deepEqual(hostSetup.players.map((player) => player.playerId), guestSetup.players.map((player) => player.playerId));
     assert.deepEqual(hostSetup.players.map((player) => player.seatIndex), [0, 1, 2, 3, 4]);
-    assert.equal(hostSetup.players[3].role, R.HOST);
+    assert.equal(hostSetup.players[3].controller.type, R.HOST);
     assert.equal(hostSetup.players[3].controlType, C.LOCAL_HUMAN);
-    assert.equal(guestSetup.players[1].role, R.GUEST);
+    assert.equal(guestSetup.players[1].controller.type, R.GUEST);
     assert.equal(guestSetup.players[1].controlType, C.LOCAL_HUMAN);
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.runGameLoop = () => {};
     game.prepareNetworkMatch(hostSetup);
     assert.deepEqual(game.state.players.map((player) => player.seatIndex), [0, 1, 2, 3, 4]);
-    assert.equal(game.state.players[3].networkRole, R.HOST);
+    assert.equal(game.state.players[3].networkRole, "Host");
     assert.equal(game.state.selectedCharacterId, game.state.players[3].characterId);
     pair.host.gameReady(); pair.guest.gameReady();
     assert.equal(await game.startPreparedMatch(), true);
@@ -884,7 +977,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Host非零席且与首席敌对时开局BGM使用本地控制身份", async () => {
     const pair = await connectedPair();
-    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const ui = makeUi();
     let musicTeam;
     Object.assign(ui, { attachGame() {}, showGame() {}, setMusicTeam(team) { musicTeam = team; } });
@@ -896,7 +989,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     const game = prepare(createGameApplication, ui, MATCH_MODE, pair.host.snapshot().matchSetup, pair.host);
     try {
       const host = game.controlRouter.humanPlayer();
-      assert.equal(host.networkRole, R.HOST);
+      assert.equal(host.networkRole, "Host");
       assert.equal(host.seatIndex, 3);
       assert.notEqual(host.battleTeam, game.state.players[0].battleTeam);
       assert.equal(musicTeam, host.battleTeam);
@@ -905,7 +998,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：开局日志按各自viewer渲染角色阵营且公开事实一致", async () => {
     const pair = await connectedPair();
-    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const ui = makeUi();
     const hostEntries = [];
     ui.appendLog = (entry) => hostEntries.push(entry);
@@ -940,7 +1033,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：正式presentation白名单保留来源目标判定VFX且日志不裸传Host私有牌名", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const ui = makeUi();
     ui.playRadarSuccess = () => {};
     ui.playLightningHit = () => {};
@@ -979,7 +1072,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：publicLogs随正式rollback删除失效entry并保持后续追加顺序", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const hostUi = makeUi();
     hostUi.restoreLogBoundary = (count) => { hostUi.logs.length = count; };
     const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
@@ -1018,7 +1111,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     for (const action of ["transfer", "plunder", "steal"]) {
       for (const [hostKnows, guestKnows] of [[true, false], [false, true], [true, true], [false, false]]) {
         const pair = await connectedPair();
-        choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+        choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
         const hostEntries = [];
         const hostUi = makeUi();
         hostUi.appendLog = (entry) => hostEntries.push(entry);
@@ -1065,7 +1158,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Guest正式手牌技能END只发送Host选项且重复点击不会修改投影", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
@@ -1098,7 +1191,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Guest出牌意图经原ActionWorkflow在Host真实结算并同步能量", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     game.runGameLoop = () => {};
@@ -1138,7 +1231,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Host终局Result安全投影到Guest真实MVP模板且没有成就section", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const ui = makeUi();
     ui.showMatchPerformance = () => {};
     const game = createGameApplication(ui, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
@@ -1202,7 +1295,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     receivers.HOST({ type: E.PEER_CONNECTED, sender: NETWORK_CAPABILITY_SENDER, roomId });
     const pair = { host: hostFlow.session, guest: guestFlow.session };
     choosePair(pair);
-    pair.host.confirm(); pair.guest.confirm();
+    pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     assert.ok(startPromise, "Host 必须触发真实启动入口");
     await startPromise;
     assert.equal(pair.host.snapshot().state, S.IN_GAME);
@@ -1241,7 +1334,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Host投影仅含Guest手牌和公开信息且客户端修改不影响Host", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const ui = makeUi();
     const game = createGameApplication(ui, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
@@ -1278,7 +1371,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：Guest输入经请求关联往返返回Host且不发送任意selection", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const actor = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
@@ -1313,7 +1406,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：回答拒绝越权过期和非法选项且断线收束等待", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const actor = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
@@ -1342,7 +1435,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：远端出牌意图和公开组合由Host映射而Guest不能上传动作对象", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const actor = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
@@ -1359,11 +1452,305 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     game.dispose();
   });
 
-  test("Network：无 Transport 创建等待且不能选择或提前准备", async () => {
+
+  // 多人房间、controller ownership 与 Transport 游戏侧 contract。
+  for (const humanCount of [1, 2, 3, 4, 5]) {
+    test(`Network：多人房间${humanCount}真人经Host主动开始和原两道屏障生成五席`, async () => {
+      const room = await connectedRoom(humanCount);
+      try {
+        assert.equal(room.host.snapshot().currentHumanCount, humanCount);
+        assert.equal(room.host.start().code, "NOT_READY");
+        chooseRoom(room);
+        assert.equal(room.host.snapshot().canStart, true);
+        assert.equal(room.host.snapshot().locked, false);
+        assert.equal(room.host.snapshot().matchSetup, null, "全部确认也不能自动开始");
+        assert.equal(room.host.start().ok, true);
+        assert.equal(room.host.snapshot().state, S.LOADING_GAME);
+        const setup = room.host.snapshot().matchSetup;
+        assert.equal(setup.players.length, 5);
+        assert.equal(setup.players.filter((seat) => seat.controller.type === "AI").length, 5 - humanCount);
+        assert.equal(setup.players.filter((seat) => seat.controller.type === "GUEST").length, humanCount - 1);
+        assert.equal(Object.keys(room.host.snapshot().participants).length, humanCount);
+        assert.ok(Object.values(room.host.snapshot().participants).every((p) => ["HOST", "GUEST"].includes(p.role)));
+        assert.equal(room.host.addParticipant({ connectionId: "late" }).code, "ROOM_LOCKED");
+        assert.equal(room.host.start().code, "ROOM_LOCKED");
+        room.host.gameReady();
+        for (const guest of room.guests) {
+          assert.equal(room.host.snapshot().state, S.LOADING_GAME);
+          guest.gameReady();
+        }
+        assert.equal(room.host.snapshot().state, S.IN_GAME);
+        for (const guest of room.guests) {
+          assert.equal(guest.snapshot().state, S.IN_GAME);
+          const local = guest.snapshot().matchSetup.players.filter((seat) => seat.controlType === C.LOCAL_HUMAN);
+          assert.equal(local.length, 1);
+          assert.equal(local[0].controller.participantId, guest.snapshot().participantId);
+        }
+      } finally { room.close(); }
+    });
+  }
+
+  test("Network：多人容量满员和降低上限均返回稳定结果且不踢人", async () => {
+    const room = await connectedRoom(3);
+    try {
+      assert.equal(room.host.setMaxHumanCount(3).ok, true);
+      assert.deepEqual(room.host.addParticipant({ connectionId: "overflow" }), { ok: false, code: "ROOM_FULL" });
+      assert.deepEqual(room.host.setMaxHumanCount(2), { ok: false, code: "CAPACITY_BELOW_COUNT" });
+      assert.equal(room.host.snapshot().currentHumanCount, 3);
+      assert.equal(room.host.snapshot().maxHumanCount, 3);
+      for (const guest of room.guests) {
+        assert.equal(guest.snapshot().maxHumanCount, 3);
+        assert.throws(() => guest.setMaxHumanCount(5), { code: "HOST_ONLY" });
+        assert.throws(() => guest.addParticipant({ connectionId: "fake" }), { code: "HOST_ONLY" });
+        assert.throws(() => guest.start(), { code: "HOST_ONLY" });
+      }
+    } finally { room.close(); }
+  });
+
+  test("Network：多人selection按认证连接归属且角色席位唯一", async () => {
+    const room = await connectedRoom(3);
+    try {
+      const [first, second] = room.guests;
+      const setup = room.host.snapshot();
+      const firstId = first.snapshot().participantId, secondId = second.snapshot().participantId;
+      first.select({ characterId: setup.candidates[1], ...setup.seats[1] });
+      assert.throws(() => second.select({ characterId: setup.candidates[1], ...setup.seats[2] }));
+      assert.throws(() => second.select({ characterId: setup.candidates[2], ...setup.seats[1] }));
+      first.select({ characterId: setup.candidates[3], ...setup.seats[3] });
+      second.select({ characterId: setup.candidates[1], ...setup.seats[1] });
+      const forged = { type: E.SELECTION_CHANGED, sender: R.GUEST, roomId: room.roomId, sequence: 100,
+        connectionId: "connection-1", participantId: secondId,
+        payload: { characterId: setup.candidates[2], ...setup.seats[2] } };
+      assert.equal(room.host.receive(forged), false);
+      assert.equal(room.host.snapshot().participants[secondId].selection.seatId, "seat-1");
+      assert.equal(room.host.receive({ ...forged, participantId: firstId,
+        payload: { ...forged.payload, participantId: secondId, remoteAddress: "forged-ip" } }), true);
+      const members = room.host.snapshot().participants;
+      assert.equal(members[firstId].selection.seatId, "seat-2");
+      assert.equal(members[secondId].selection.seatId, "seat-1");
+      assert.equal(members[firstId].remoteAddress, "::ffff:10.0.0.2");
+      assert.deepEqual(Object.keys(members[firstId].selection).sort(), ["characterId", "seatId", "teamId"]);
+    } finally { room.close(); }
+  });
+
+  test("Network：Lobby踢人释放选择且Guest编号不因中间成员退出重排", async () => {
+    const room = await connectedRoom(4);
+    try {
+      const [, middle, last] = room.guests;
+      const hostId = room.host.snapshot().participantId, middleId = middle.snapshot().participantId, lastId = last.snapshot().participantId;
+      const setup = middle.snapshot();
+      middle.select({ characterId: setup.candidates[2], ...setup.seats[2] });
+      assert.equal(room.host.kickParticipant(hostId).code, "CANNOT_REMOVE_HOST");
+      assert.throws(() => last.kickParticipant(middleId), { code: "HOST_ONLY" });
+      assert.equal(room.host.kickParticipant(middleId).ok, true);
+      assert.equal(middle.snapshot().state, S.DISCONNECTED);
+      assert.equal(room.host.snapshot().participants[middleId], undefined);
+      assert.equal(room.host.snapshot().participants[lastId].guestOrdinal, 3);
+      last.select({ characterId: setup.candidates[2], ...setup.seats[2] });
+      const added = room.host.addParticipant({ connectionId: "new-connection" });
+      assert.equal(added.ok, true);
+      assert.equal(room.host.snapshot().participants[lastId].guestOrdinal, 3);
+      assert.equal(room.host.snapshot().participants[added.participantId].guestOrdinal, 2);
+      assert.notEqual(added.participantId, middleId);
+      assert.equal(room.host.snapshot().currentHumanCount, 4);
+    } finally { room.close(); }
+  });
+
+  test("Network：多人决定逐Guest隔离并拒绝其他Guest和Host席位伪装", async () => {
+    const room = await connectedRoom(3);
+    let game;
+    try {
+      chooseRoom(room); room.host.start();
+      game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: room.host });
+      game.prepareNetworkMatch(room.host.snapshot().matchSetup);
+      room.host.gameReady(); for (const guest of room.guests) guest.gameReady();
+      const [first, second] = room.guests;
+      const actors = room.host.snapshot().matchSetup.players.filter((seat) => seat.controller.type === "GUEST")
+        .map((seat) => game.state.players.find((p) => p.id === seat.playerId));
+      const ownCards = actors.map((actor) => { const card = instance("block"); actor.hand.push(card); return card; });
+      const pending = actors.map((actor, index) => room.host.requestDecision({
+        kind: "response", actorId: actor.id, gameId: game.state.gameId,
+        options: [{ optionId: ownCards[index].id }], constraints: { requiredCount: 1 }, context: {}, canDecline: true
+      }));
+      for (const [index, guest] of room.guests.entries()) {
+        const snapshot = guest.gameChannel.snapshot();
+        assert.equal(snapshot.requests.length, 1);
+        assert.equal(snapshot.requests[0].actorId, actors[index].id);
+        assert.equal(snapshot.projection.viewerId, actors[index].id);
+        assert.ok(!JSON.stringify(snapshot).includes(ownCards[1 - index].id), "另一位Guest的未知牌ID不应泄露");
+      }
+      const request = second.gameChannel.snapshot().requests[0];
+      const payload = { requestId: request.requestId, actorId: request.actorId, gameId: request.gameId,
+        stateVersion: request.stateVersion, status: "selected", selectedIds: [request.options[0].optionId] };
+      assert.equal(room.host.receive({ type: E.DECISION_RESPONSE, sender: R.GUEST,
+        participantId: first.snapshot().participantId, connectionId: "connection-1", roomId: room.roomId, sequence: 100, payload }), false);
+      await assert.rejects(room.host.requestDecision({ kind: "target", actorId: game.controlRouter.humanPlayer().id, gameId: game.state.gameId }));
+      second.gameChannel.respond(request.requestId, { status: "selected", selectedIds: payload.selectedIds });
+      const ownRequest = first.gameChannel.snapshot().requests[0];
+      // 恶意消息消耗该认证连接的序号后，用递增序号提交它自己的合法回答。
+      assert.equal(room.host.receive({ type: E.DECISION_RESPONSE, sender: R.GUEST,
+        participantId: first.snapshot().participantId, connectionId: "connection-1", roomId: room.roomId, sequence: 101,
+        payload: { requestId: ownRequest.requestId, actorId: ownRequest.actorId, gameId: ownRequest.gameId,
+          stateVersion: ownRequest.stateVersion, status: "selected", selectedIds: [ownRequest.options[0].optionId] } }), true);
+      assert.deepEqual(await Promise.all(pending), ownCards.map((card) => ({ status: "selected", selectedIds: [card.id] })));
+    } finally { game?.dispose(); room.close(); }
+  });
+
+  for (const operation of ["markParticipantDisconnected", "kickParticipant"]) {
+    test(`Network：多人对局${operation}只转controller且保留角色全部状态并转交AI弃牌`, async () => {
+      const room = await connectedRoom(3);
+      let game;
+      try {
+        chooseRoom(room); room.host.start();
+        game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: room.host });
+        game.prepareNetworkMatch(room.host.snapshot().matchSetup);
+        room.host.gameReady(); for (const guest of room.guests) guest.gameReady();
+        const participantId = room.guests[0].snapshot().participantId;
+        const seat = room.host.snapshot().matchSetup.players.find((p) => p.controller.participantId === participantId);
+        const actor = game.state.players.find((p) => p.id === seat.playerId);
+        actor.hand.push(instance("block"), instance("assault"));
+        actor.equipment = instance("telescope");
+        actor.hp = 2; actor.shield = 1; actor.energy = 2;
+        actor.statuses.exposeWeakness = { stacks: 2 };
+        actor.turnFlags.momentum = 1;
+        const before = structuredClone(actor), hand = actor.hand, equipment = actor.equipment, version = game.state.stateVersion;
+        game.choiceContexts.set("takeover-discard", { player: actor, count: 1, prompt: "弃一张" });
+        let aiCalls = 0;
+        game.aiController.chooseDiscards = (player, count) => { aiCalls += 1; assert.equal(player, actor); assert.equal(count, 1); return [actor.hand[0]]; };
+        const pending = game.choicePort.request({ kind: "discard", requestId: "takeover-discard",
+          actorId: actor.id, gameId: game.state.gameId, options: actor.hand.map((card) => ({ optionId: card.id })),
+          constraints: { requiredCount: 1 }, context: {} });
+        assert.equal(room.host[operation](participantId).ok, true);
+        assert.equal(game.state.players.find((p) => p.id === actor.id), actor);
+        assert.equal(actor.hand, hand); assert.equal(actor.equipment, equipment);
+        assert.equal(game.state.stateVersion, version);
+        for (const key of Object.keys(before).filter((key) => !["controllerType", "controlType", "networkRole"].includes(key))) {
+          assert.deepEqual(actor[key], before[key], key);
+        }
+        assert.equal(actor.controlType, C.AI); assert.equal(actor.controllerType, "ai"); assert.equal(actor.networkRole, "AI");
+        assert.equal(room.host.snapshot().participants[participantId].connected, false);
+        assert.deepEqual(room.host.snapshot().matchSetup.players[actor.seatIndex].controller, { type: "AI", participantId: null });
+        assert.equal(room.host.snapshot().state, S.IN_GAME);
+        assert.equal(room.guests[1].snapshot().state, S.IN_GAME);
+        assert.equal(room.guests[1].gameChannel.snapshot().projection.players.find((p) => p.playerId === actor.id).networkRole, "AI");
+        assert.deepEqual(await pending, { status: "selected", selectedIds: [hand[0].id], reason: null });
+        assert.equal(aiCalls, 1);
+      } finally { game?.dispose(); room.close(); }
+    });
+  }
+
+
+  test("Network：Action回滚恢复领域状态但不撤销断线接管", async () => {
+    const room = await connectedRoom(2);
+    let game;
+    try {
+      chooseRoom(room); room.host.start();
+      game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: room.host });
+      game.prepareNetworkMatch(room.host.snapshot().matchSetup);
+      room.host.gameReady(); room.guests[0].gameReady();
+      const actor = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
+      const card = instance("telescope");
+      actor.hand.push(card);
+      game.state.phase = "play";
+      game.state.currentPlayerIndex = actor.seatIndex;
+      const hp = actor.hp;
+      const failure = new Error("取消进行中的Action");
+      game.eventDispatcher.on("beforeCardUse", "test:disconnect-during-action", () => {
+        actor.hp -= 1;
+        room.host.markParticipantDisconnected(room.guests[0].snapshot().participantId);
+        throw failure;
+      });
+      await assert.rejects(game.playCard(actor, card), (error) => error === failure);
+      assert.equal(actor.hp, hp);
+      assert.equal(actor.hand[0], card);
+      assert.equal(game.state.players[actor.seatIndex], actor);
+      assert.equal(actor.controllerType, "ai");
+      assert.equal(actor.controlType, C.AI);
+      assert.equal(actor.networkRole, "AI");
+    } finally { game?.dispose(); room.close(); }
+  });
+
+
+  test("Network：加载屏障期间断线仍保留席位且迟到首份锁房快照可被Guest接收", async () => {
+    const room = await connectedRoom(3);
+    let lateGuest;
+    try {
+      chooseRoom(room); room.host.start();
+      const removedId = room.guests[0].snapshot().participantId;
+      const remainingId = room.guests[1].snapshot().participantId;
+      room.host.markParticipantDisconnected(removedId);
+      assert.equal(room.host.snapshot().state, S.LOADING_GAME);
+      lateGuest = new NetworkSession({ capability: { joinRoom: async () => ({ roomId: room.roomId }) } });
+      await lateGuest.open(R.GUEST, { host: "test-room", port: NETWORK_DEFAULT_PORT });
+      const snapshotEvent = room.events.findLast((event) => event.recipientParticipantId === remainingId
+        && event.type === E.SELECTION_CHANGED);
+      assert.ok(snapshotEvent);
+      assert.equal(lateGuest.receive(snapshotEvent), true);
+      assert.equal(lateGuest.snapshot().state, S.LOADING_GAME);
+      assert.equal(lateGuest.snapshot().matchSetup.players.filter((seat) => seat.controller.type === "AI").length, 3);
+      room.host.gameReady(); room.guests[1].gameReady();
+      assert.equal(room.host.snapshot().state, S.IN_GAME);
+    } finally { lateGuest?.close(); room.close(); }
+  });
+
+  test("Network：移除成员的迟到断线通知不会终止Host或其他Guest", async () => {
+    const room = await connectedRoom(3);
+    try {
+      const removed = room.guests[0].snapshot().participantId;
+      room.host.kickParticipant(removed);
+      assert.equal(room.host.receive({ roomId: room.roomId, sender: NETWORK_CAPABILITY_SENDER,
+        type: E.DISCONNECTED, connectionId: "connection-1" }), false);
+      assert.equal(room.host.snapshot().state, S.SELECTING);
+      assert.equal(room.host.snapshot().currentHumanCount, 2);
+      assert.equal(room.guests[1].snapshot().state, S.SELECTING);
+      assert.equal(room.guests[1].receive({ roomId: room.roomId, sender: NETWORK_CAPABILITY_SENDER,
+        type: E.DISCONNECTED, connectionId: "host" }), true);
+      assert.equal(room.guests[1].snapshot().state, S.DISCONNECTED);
+    } finally { room.close(); }
+  });
+
+  test("Network：接管后新选择走AI且私密揭示与卡牌附加选择不打开Host输入", async () => {
+    const actor = { id: "remote", controlType: C.AI };
+    const router = new PlayerControlRouter({ getState: () => ({ gameId: "game", players: [actor] }) });
+    const local = () => { throw Error("AI接管后不可打开Host私密输入"); };
+    const ai = { request: (request) => ({ status: "selected", selectedIds: [request.kind] }) };
+    for (const kind of ["target", "response", "discard", "hiddenCard", "publicCard"]) {
+      assert.deepEqual(await router.request({ kind, actorId: actor.id }, { request: local }, ai),
+        { status: "selected", selectedIds: [kind] });
+    }
+    assert.equal(await router.requestCardFlow(actor, {}, [], local), null);
+    await router.presentPrivateReveal({ viewerId: actor.id, cardIds: [] }, local);
+  });
+
+  test("Network：断线中断当前远端出牌等待后接续同一个AI阶段", async () => {
+    const room = await connectedRoom(2);
+    let game;
+    try {
+      chooseRoom(room); room.host.start();
+      game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: room.host });
+      game.prepareNetworkMatch(room.host.snapshot().matchSetup);
+      room.host.gameReady(); room.guests[0].gameReady();
+      const actor = game.state.players.find((p) => p.controlType === C.REMOTE_HUMAN);
+      game.state.phase = "play"; game.state.currentPlayerIndex = actor.seatIndex;
+      let continued = 0;
+      const pending = game.controlRouter.waitForHumanPlay(actor, game.state.gameId, {
+        waitLocal() { throw Error("不能打开Host输入"); },
+        handleCard() { throw Error("不能执行旧真人意图"); },
+        handleSkill() { throw Error("不能执行旧真人意图"); },
+        runAi(player, gameId) { assert.equal(player, actor); assert.equal(gameId, game.state.gameId); continued += 1; }
+      });
+      room.host.markParticipantDisconnected(room.guests[0].snapshot().participantId);
+      assert.equal(await pending, true);
+      assert.equal(continued, 1);
+    } finally { game?.dispose(); room.close(); }
+  });
+
+  test("Network：无 Transport 可准备Host单真人但不伪造连接或跳过屏障", async () => {
     const session = new NetworkSession();
     await session.open(R.HOST);
-    assert.equal(session.snapshot().state, S.WAITING_PEER);
-    assert.deepEqual(session.snapshot().candidates, []);
+    assert.equal(session.snapshot().state, S.SELECTING);
+    assert.equal(session.snapshot().currentHumanCount, 1);
+    assert.equal(session.snapshot().candidates.length, 8);
     assert.throws(() => session.select({}), /自己的角色/);
     assert.throws(() => session.confirm(), /确认/);
     session.gameReady();
@@ -1373,7 +1760,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     assert.throws(() => transitionNetworkState(S.IDLE, S.IN_GAME), /非法/);
   });
 
-  test("Network：随机角色池4比4互斥且同房间重绘确认重连不重新分配", async () => {
+  test("Network：共享角色池且同房间重绘确认和成员更替不重新分配", async () => {
     let draws = 0;
     const pair = await connectedPair(() => { draws += 1; return 0.25; });
     const count = draws;
@@ -1381,20 +1768,20 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     const g = pair.guest.snapshot();
     assert.equal(h.state, S.SELECTING);
     assert.equal(g.state, S.SELECTING);
-    assert.equal(h.candidates.length, 4);
-    assert.equal(g.candidates.length, 4);
+    assert.equal(h.candidates.length, 8);
+    assert.equal(g.candidates.length, 8);
     assert.equal(new Set([...h.candidates, ...g.candidates]).size, 8);
-    assert.equal(h.candidates.some((id) => g.candidates.includes(id)), false);
+    assert.deepEqual(h.candidates, g.candidates);
     choosePair(pair);
     pair.host.confirm();
     renderNetworkSquadSelectionView(pair.host.snapshot());
-    pair.host.disconnect();
-    pair.guest.disconnect();
-    pair.connect();
+    const guestId = pair.guest.snapshot().participantId;
+    pair.host.markParticipantDisconnected(guestId);
+    pair.host.addParticipant({ connectionId: "replacement" });
     assert.deepEqual(pair.host.snapshot().candidates, h.candidates);
     assert.deepEqual(pair.guest.snapshot().candidates, g.candidates);
     assert.equal(draws, count);
-    assert.notDeepEqual(createNetworkSetup(() => 0).pools, createNetworkSetup(() => 0.99).pools);
+    assert.notDeepEqual(createNetworkSetup(() => 0).candidates, createNetworkSetup(() => 0.99).candidates);
   });
 
   for (const same of [true, false]) {
@@ -1405,7 +1792,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
       assert.equal(pair.host.snapshot().state, S.WAITING_REMOTE);
       assert.equal(pair.host.snapshot().matchSetup, null);
       assert.equal(pair.guest.snapshot().matchSetup, null);
-      pair.guest.confirm();
+      pair.guest.confirm(); pair.host.start();
       const hostSetup = pair.host.snapshot().matchSetup;
       const guestSetup = pair.guest.snapshot().matchSetup;
       assert.deepEqual(hostSetup.players.map((player) => player.playerId), guestSetup.players.map((player) => player.playerId));
@@ -1414,8 +1801,8 @@ export function registerNetworkTests(test, { makeUi, instance }) {
         const snap = session.snapshot();
         assert.equal(snap.state, S.LOADING_GAME);
         assert.deepEqual(snap.matchSetup.players.map((p) => p.controlType).sort(), [C.AI, C.AI, C.AI, C.LOCAL_HUMAN, C.REMOTE_HUMAN].sort());
-        assert.equal(snap.matchSetup.players.find((p) => p.role === localRole).controlType, C.LOCAL_HUMAN);
-        assert.equal(snap.matchSetup.players.find((p) => p.role && p.role !== localRole).controlType, C.REMOTE_HUMAN);
+        assert.equal(snap.matchSetup.players.find((p) => p.controller.type === localRole).controlType, C.LOCAL_HUMAN);
+        assert.equal(snap.matchSetup.players.find((p) => p.controller.type !== "AI" && p.controller.type !== localRole).controlType, C.REMOTE_HUMAN);
         assert.equal(new Set(snap.matchSetup.players.map((p) => p.characterId)).size, 5);
         assert.equal(snap.matchSetup.players.filter((p) => p.teamId === "dawn").length, 2);
         assert.equal(snap.matchSetup.players.filter((p) => p.teamId === "dusk").length, 3);
@@ -1433,11 +1820,11 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     });
   }
 
-  test("Network：拒绝交叉角色池冲突席位越权确认及旧消息", async () => {
+  test("Network：拒绝重复角色冲突席位越权确认及旧消息", async () => {
     const pair = await connectedPair();
     choosePair(pair);
     const snap = pair.host.snapshot();
-    assert.throws(() => pair.host.select({ ...snap.localSelection, characterId: pair.guest.snapshot().candidates[0] }));
+    assert.throws(() => pair.host.select({ ...snap.localSelection, characterId: pair.guest.snapshot().candidates.find((id) => id !== pair.host.snapshot().localSelection?.characterId) }));
     assert.throws(() => pair.guest.select({ ...pair.guest.snapshot().localSelection, seatId: snap.localSelection.seatId, teamId: snap.localSelection.teamId }));
     assert.equal(pair.host.receive({ roomId: "old", sender: R.GUEST, sequence: 900, type: E.GAME_READY }), false);
     assert.equal(pair.host.receive({ roomId: pair.roomId, sender: R.HOST, sequence: 901, type: E.SELECTION_CONFIRMED }), false);
@@ -1447,7 +1834,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     assert.throws(() => pair.host.select(snap.localSelection));
     const copy = pair.host.snapshot();
     copy.candidates.length = 0;
-    assert.equal(pair.host.snapshot().candidates.length, 4);
+    assert.equal(pair.host.snapshot().candidates.length, 8);
     pair.host.close();
     assert.equal(pair.host.receive({ roomId: pair.roomId, sender: NETWORK_CAPABILITY_SENDER, type: E.PEER_CONNECTED }), false);
   });
@@ -1473,10 +1860,10 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     broken.seats[0].teamId = broken.seats[0].teamId === "dawn" ? "dusk" : "dawn";
     assert.equal(isNetworkSetupValid(broken), false);
     const duplicate = structuredClone(setup);
-    duplicate.pools.GUEST[0] = duplicate.pools.HOST[0];
+    duplicate.candidates[1] = duplicate.candidates[0];
     assert.equal(isNetworkSetupValid(duplicate), false);
-    assert.equal(isNetworkSelectionValid(setup, R.HOST, { characterId: setup.pools.GUEST[0], ...setup.seats[0] }), false);
-    assert.equal(finalizeNetworkSetup(setup, {}, { HOST: true, GUEST: false }), null);
+    assert.equal(isNetworkSelectionValid(setup, R.HOST, { characterId: "unknown-character", ...setup.seats[0] }), false);
+    assert.equal(finalizeNetworkSetup(setup, {}), null);
   });
 
   test("Network：所有Choice种类统一路由远端且不调用本地或AI", async () => {
@@ -1512,7 +1899,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     const pair = await connectedPair();
     choosePair(pair);
     pair.host.confirm();
-    pair.guest.confirm();
+    pair.guest.confirm(); pair.host.start();
     const ui = makeUi();
     const game = createGameApplication(ui, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     let loops = 0;
@@ -1535,7 +1922,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     for (const mode of [MATCH_MODE.NETWORK, MATCH_MODE.SINGLEPLAYER]) {
       const pair = await connectedPair();
       choosePair(pair);
-      pair.host.confirm(); pair.guest.confirm();
+      pair.host.confirm(); pair.guest.confirm(); pair.host.start();
       const ui = makeUi();
       let persisted = 0;
       let presented = 0;
@@ -1556,7 +1943,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
   test("Network：隐藏选牌与人物面板保持已知未知混合且未知payload无定义", async () => {
     for (const knownFlags of [[true], [false], [true, false]]) {
       const pair = await connectedPair();
-      choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+      choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
       const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
       game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
       const host = game.controlRouter.humanPlayer();
@@ -1605,7 +1992,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：区域选牌复用正式装备已知基础已知战术未知排序并保持token身份", async () => {
     const pair = await connectedPair();
-    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
     const guest = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
@@ -1637,7 +2024,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
 
   test("Network：private reveal按cardIds顺序走正式UIManager且不泄露未知牌", async () => {
     const pair = await connectedPair();
-    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const hostUi = makeUi();
     const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
     game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
@@ -1716,7 +2103,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
   test("Network：远端隐藏令牌在原选择authority重绑且私密揭示不进入本地UI", async () => {
     const pair = await connectedPair();
     choosePair(pair);
-    pair.host.confirm(); pair.guest.confirm();
+    pair.host.confirm(); pair.guest.confirm(); pair.host.start();
     const requests = [];
     const ui = makeUi();
     const game = createGameApplication(ui, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
@@ -1859,23 +2246,46 @@ export function registerNetworkUiTests(test) {
     assert.match(markup, /创建房间/);
     assert.match(markup, /加入房间/);
     assert.doesNotMatch(markup, /五域纷争 · 双人同行/);
-    assert.match(markup, /两位真人，五个席位。阵营由你选择。/);
+    assert.match(markup, /最多五位真人，五个席位。阵营由你选择。/);
     click("join");
     assert.match(markup, /data-network-form/);
   });
 
-  test("UI·Network：两端DOM各渲染本地四卡且等待页没有候选", async () => {
+
+  test("UI·Network：多人房间人数IP稳定编号和管理权限来自authority", async () => {
+    const room = await connectedRoom(4);
+    try {
+      assert.equal(formatNetworkAddress("::ffff:10.196.91.201"), "10.196.91.201");
+      assert.equal(formatNetworkAddress("2001:db8::1"), "2001:db8::1");
+      assert.equal(formatNetworkAddress(null), "地址未提供");
+      room.host.setMaxHumanCount(4);
+      const hostMarkup = renderNetworkSquadSelectionView(room.host.snapshot());
+      assert.match(hostMarkup, /房间 4 \/ 4/);
+      for (const label of ["Host", "Guest 1", "Guest 2", "Guest 3"]) assert.ok(hostMarkup.includes(label));
+      assert.equal((hostMarkup.match(/data-network-action="kick"/g) ?? []).length, 3);
+      assert.match(hostMarkup, /10\.0\.0\.2/);
+      assert.doesNotMatch(hostMarkup, /::ffff:|双人|等待另一名|两位真人/);
+      const guestMarkup = renderNetworkSquadSelectionView(room.guests[0].snapshot());
+      assert.match(guestMarkup, /房间 4 \/ 4/);
+      assert.doesNotMatch(guestMarkup, /data-network-action="(?:kick|capacity|start)"/);
+      room.host.select({ characterId: room.host.snapshot().candidates[0], ...room.host.snapshot().seats[0] });
+      const updated = renderNetworkSquadSelectionView(room.guests[0].snapshot());
+      assert.match(updated, /disabled[^>]*data-character-id=/);
+    } finally { room.close(); }
+  });
+
+  test("UI·Network：两端DOM显示共享候选且单真人Host可以选择", async () => {
     const pair = await connectedPair();
     for (const [local, remote] of [[pair.host, pair.guest], [pair.guest, pair.host]]) {
       const markup = renderNetworkSquadSelectionView(local.snapshot());
-      assert.equal((markup.match(/data-character-id=/g) ?? []).length, 4);
-      for (const id of remote.snapshot().candidates) assert.ok(!markup.includes(`data-character-id="${id}"`));
+      assert.equal((markup.match(/data-character-id=/g) ?? []).length, 8);
+      for (const id of remote.snapshot().candidates) assert.ok(markup.includes(`data-character-id="${id}"`));
     }
     const waiting = new NetworkSession();
     await waiting.open(R.HOST);
     const markup = renderNetworkSquadSelectionView(waiting.snapshot());
-    assert.match(markup, /等待另一名玩家连接/);
-    assert.ok(!markup.includes("data-character-id"));
+    assert.match(markup, /房间 1 \/ 2/);
+    assert.ok(markup.includes("data-character-id"));
     assert.match(markup, /data-network-action="confirm" disabled/);
   });
 
