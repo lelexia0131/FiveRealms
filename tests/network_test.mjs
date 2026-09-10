@@ -21,6 +21,7 @@ import { InteractionController, orderZoneSelectionSlots } from "../js/ui/Interac
 import { ACTIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js";
 import { TEAM_PRESENTATION } from "../js/adapters/ui/PresentationMetadata.js";
 import { ActionLegality } from "../js/application/action/ActionLegality.js";
+import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js";
 import { renderNetworkSquadSelectionView } from "../js/ui/network/NetworkSquadSelectionView.js";
 
 /*
@@ -414,7 +415,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     } finally { view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
   });
 
-  test("Network：借势复用正式第一目标第二目标和最终确认且只发送有限选项", async () => {
+  test("Network：借势保留最终确认且转移保留分阶段目标并只发送有限选项", async () => {
     const pair = await connectedPair();
     choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
     const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
@@ -481,6 +482,30 @@ export function registerNetworkTests(test, { makeUi, instance }) {
       assert.equal(ui.game, null);
       assert.ok(actor.hand.includes(card));
       assert.ok(first.equipment);
+      const transfer = instance("transfer");
+      actor.hand.push(transfer);
+      const transferPending = game.controlRouter.requestCardFlow(actor, transfer, [], () => { throw Error("不得在Host弹出Guest选择"); });
+      const transferRequest = pair.guest.gameChannel.snapshot().requests[0];
+      const transferOption = transferRequest.options[0];
+      assert.ok(transferOption);
+      const responsesBefore = pair.events.filter((event) => event.type === E.DECISION_RESPONSE).length;
+      for (const [index, id] of transferOption.targetIds.entries()) {
+        assert.match(ui.targetState.prompt, index === 0 ? /牌来源/ : /接收者/);
+        assert.equal(Boolean(ui.targetState.meta.confirmSelection), false);
+        assert.equal(pair.events.filter((event) => event.type === E.DECISION_RESPONSE).length, responsesBefore);
+        UIManager.prototype.handlePlayerClick.call(ui, { target: { closest: (selector) => selector === "[data-player-id]" ? { dataset: { playerId: id } } : null } });
+        await Promise.resolve();
+      }
+      assert.deepEqual(await transferPending, { sourceId: transferOption.targetIds[0], receiverId: transferOption.targetIds[1] });
+      assert.equal(pair.events.filter((event) => event.type === E.DECISION_RESPONSE).length, responsesBefore + 1);
+      for (const flowCard of [card, transfer]) {
+        const cancelled = game.controlRouter.requestCardFlow(actor, flowCard, [], () => { throw Error("不得在Host弹出Guest选择"); });
+        assert.equal(pair.guest.gameChannel.snapshot().requests[0].kind, "card-flow");
+        ui.cancelTarget();
+        assert.equal(await cancelled, null);
+        assert.deepEqual(pair.guest.gameChannel.snapshot().requests, []);
+        assert.ok(actor.hand.includes(flowCard));
+      }
     } finally { unsubscribe(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
   });
 
@@ -566,11 +591,17 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     const view = new NetworkGameView({ ui, submit: (...args) => { sent.push(args); pair.guest.gameChannel.respond(...args); } });
     const unsubscribe = pair.guest.gameChannel.subscribe((snapshot) => view.update(snapshot));
     try {
-      let pending = pair.host.requestDecision({ kind: "target", actorId: actor.id, gameId: game.state.gameId,
-        options: [{ optionId: actor.id }], constraints: { requiredCount: 1 }, canDecline: false, context: { label: "选择本人" } });
-      assert.doesNotMatch(ui.elements.response_panel.innerHTML, /data-target-cancel/);
+      let pending = pair.host.requestDecision(createTargetChoiceRequest({ requestId: "ordinary-target", actorId: actor.id,
+        gameId: game.state.gameId, stateVersion: game.state.stateVersion, targets: [actor], label: "选择本人" }));
+      assert.equal(ui.targetState.meta.canDecline, true);
+      assert.doesNotMatch(ui.elements.response_panel.innerHTML, /data-target-confirm|data-target-cancel|确认选择/);
+      assert.equal(Boolean(ui.targetState.meta.confirmSelection), false);
+      const illegal = game.state.players.find((player) => player.id !== actor.id);
+      UIManager.prototype.handlePlayerClick.call(ui, { target: { closest: (selector) => selector === "[data-player-id]" ? { dataset: { playerId: illegal.id } } : null } });
+      assert.equal(sent.length, 0);
+      assert.ok(ui.targetState);
       UIManager.prototype.handlePlayerClick.call(ui, { target: { closest: (selector) => selector === "[data-player-id]" ? { dataset: { playerId: actor.id } } : null } });
-      UIManager.prototype.confirmTarget.call(ui);
+      assert.equal(ui.targetState, null);
       assert.deepEqual(await pending, { status: "selected", selectedIds: [actor.id] });
       pending = pair.host.requestDecision({ kind: "discard", actorId: actor.id, gameId: game.state.gameId,
         options: actor.hand.map((card) => ({ optionId: card.id })), constraints: { requiredCount: 1 }, context: { label: "弃一张牌" } });
@@ -585,6 +616,167 @@ export function registerNetworkTests(test, { makeUi, instance }) {
       view.answer(old, null);
       assert.equal(sent.length, count);
     } finally { unsubscribe(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：Guest普通目标取消收束Host请求且卡牌技能不提交不耗资源", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    actor.applyCharacter(game.state, CHARACTER_BY_ID["spirit-medic"]);
+    actor.resetTurnFlags(game.state, game.teamRules.getRules(actor));
+    actor.energy = 3; actor.hp = 2;
+    game.state.currentPlayerIndex = actor.seatIndex;
+    game.state.phase = "play";
+    actor.hand.push(instance("assault"), instance("shield"), instance("duel"));
+    pair.host.gameReady(); pair.guest.gameReady();
+    const ui = makeGuestUi();
+    ui.elements.response_panel = { innerHTML: "", classList: { add() {}, remove() {} } };
+    ui.requestTarget = UIManager.prototype.requestTarget;
+    ui.cancelTarget = UIManager.prototype.cancelTarget;
+    let cancelHidden = true;
+    ui.elements.cancel_interaction_button.classList.toggle = (_name, hidden) => { cancelHidden = hidden; };
+    const view = new NetworkGameView({ ui, submit: (...args) => pair.guest.gameChannel.respond(...args) });
+    const unsubscribe = pair.guest.gameChannel.subscribe((snapshot) => view.update(snapshot));
+    try {
+      for (const card of [...actor.hand, null]) {
+        if (card) assert.equal(ActionLegality.canPlayCard(game, actor, card).ok, true);
+        const before = JSON.stringify(game.state);
+        const pending = card ? game.actionWorkflow.handleHumanCard(card.id, actor.id)
+          : game.actionWorkflow.handleHumanSkill(actor.id);
+        await new Promise((resolve) => setImmediate(resolve));
+        const request = pair.guest.gameChannel.snapshot().requests[0];
+        assert.equal(request?.kind, "target");
+        assert.equal(request.canDecline, true);
+        assert.equal(cancelHidden, false);
+        assert.equal(Boolean(ui.targetState.meta.confirmSelection), false);
+        assert.equal(game.actionWorkflow.getActionStateSnapshot().interactionLocked, true);
+        ui.cancelTarget();
+        assert.equal(await pending, false);
+        assert.equal(ui.targetState, null);
+        assert.equal(cancelHidden, true);
+        assert.equal(game.actionWorkflow.getActionStateSnapshot().interactionLocked, false);
+        assert.equal(game.actionWorkflow.getActionStateSnapshot().actionLocked, false);
+        assert.deepEqual(pair.guest.gameChannel.snapshot().requests, []);
+        assert.equal(JSON.stringify(game.state), before, "取消不得进入结算或更改牌、能量、技能次数和状态版本");
+        const response = pair.events.findLast((event) => event.type === E.DECISION_RESPONSE);
+        assert.equal(response.payload.requestId, request.requestId);
+        assert.equal(response.payload.status, "declined");
+        assert.deepEqual(response.payload.selectedIds, []);
+        assert.equal(pair.guest.gameChannel.respond(request.requestId, { status: "declined", selectedIds: [] }), false);
+      }
+      const next = game.controlRouter.requestRemote({ kind: "player-intent", actorId: actor.id, gameId: game.state.gameId });
+      assert.equal(view.request.kind, "player-intent");
+      assert.equal(ui.elements.skill_button.disabled, false);
+      view.intent("end");
+      assert.deepEqual(await next, { kind: "end" });
+      assert.equal(ui.game, null);
+    } finally { unsubscribe(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：Host切换AI速度立即同步Guest只读档位且不写Guest偏好", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const hostUi = makeUi();
+    hostUi.elements = {};
+    hostUi.setAiSpeed = UIManager.prototype.setAiSpeed;
+    const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const ui = makeGuestUi();
+    ui.aiSpeed = 1;
+    ui.setAiSpeed = UIManager.prototype.setAiSpeed;
+    const buttons = [1, 2, 3].map((speed) => ({ dataset: { aiSpeed: String(speed) }, disabled: false,
+      attributes: {}, setAttribute(name, value) { this.attributes[name] = value; } }));
+    ui.elements.ai_speed_control = { querySelectorAll: () => buttons };
+    const view = new NetworkGameView({ ui, submit() { throw Error("速度展示不得发送决定"); } });
+    const previousStorage = globalThis.localStorage;
+    const writes = [];
+    globalThis.localStorage = { setItem: (key, value) => writes.push([key, value]), removeItem() {} };
+    const unsubscribe = pair.guest.gameChannel.subscribe((snapshot) => view.update(snapshot));
+    try {
+      const stateVersion = game.state.stateVersion;
+      for (const speed of [2, 3, 1]) {
+        const snapshotsBefore = pair.events.filter((event) => event.type === E.GAME_SNAPSHOT).length;
+        writes.length = 0;
+        assert.equal(game.setAiSpeed(speed), speed);
+        const snapshot = pair.guest.gameChannel.snapshot();
+        assert.equal(snapshot.projection.display.aiSpeed, speed);
+        assert.equal(snapshot.projection.stateVersion, stateVersion);
+        assert.equal(pair.events.filter((event) => event.type === E.GAME_SNAPSHOT).length, snapshotsBefore + 1);
+        for (const button of buttons) {
+          assert.equal(button.disabled, true);
+          assert.equal(button.attributes["aria-pressed"], String(Number(button.dataset.aiSpeed) === speed));
+        }
+        assert.equal(ui.aiSpeed, 1, "Guest 本地偏好字段保持不变");
+        assert.deepEqual(writes, [["five-realms-ai-speed", String(speed)]], "只有 Host 的 setAiSpeed 写一次偏好");
+        assert.equal(ui.game, null);
+      }
+    } finally {
+      unsubscribe(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close();
+      if (previousStorage === undefined) delete globalThis.localStorage;
+      else globalThis.localStorage = previousStorage;
+    }
+  });
+
+  test("Network：Host濒死在damage和loseHp救援前刷新真实HP人物面板", async () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = {};
+    try {
+      for (const kind of ["damage", "loseHp"]) {
+        const pair = await connectedPair();
+        choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+        const hostUi = makeUi();
+        const panelUi = makeGuestUi();
+        hostUi.elements = panelUi.elements;
+        hostUi.animationController = panelUi.animationController;
+        hostUi.isGameAttached = (game) => game === hostUi.game;
+        hostUi.getDistanceState = UIManager.prototype.getDistanceState;
+        hostUi.renderHand = () => {};
+        hostUi.renderControls = () => {};
+        hostUi.render = UIManager.prototype.render;
+        const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+        hostUi.game = game;
+        game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+        const host = game.state.players.find((player) => player.controlType === C.LOCAL_HUMAN);
+        const source = game.state.players.find((player) => player.battleTeam !== host.battleTeam);
+        host.hp = 1;
+        host.shield = 0;
+        host.hand = [instance("recover")];
+        pair.host.gameReady(); pair.guest.gameReady();
+        hostUi.render(game);
+        assert.match(hostUi.elements.human_panel.innerHTML, /生命1点/);
+        const trace = [];
+        hostUi.showDying = (target, context) => {
+          if (trace.length > 0) return;
+          assert.equal(target, host);
+          assert.equal(context.currentHp, 0);
+          assert.match(hostUi.elements.human_panel.innerHTML, /生命0点/);
+          assert.doesNotMatch(hostUi.elements.human_panel.innerHTML, /life-cell is-full/);
+          trace.push("dying");
+        };
+        hostUi.requestResponse = async (request) => {
+          assert.deepEqual(trace, ["dying"]);
+          assert.equal(host.hp, 0);
+          assert.match(hostUi.elements.human_panel.innerHTML, /生命0点/);
+          trace.push("rescue");
+          return { status: "used", selectedIds: request.legalCardIds.slice(0, request.requiredCount) };
+        };
+        try {
+          const result = kind === "damage"
+            ? await game.damage(source, host, 1, { canBlock: false })
+            : await game.combatWorkflow.loseHp(host, 1, { source });
+          assert.equal(result, 1);
+          assert.deepEqual(trace, ["dying", "rescue"]);
+          assert.equal(host.hp, 1);
+          assert.equal(host.alive, true);
+        } finally { game.dispose(); pair.host.close(); pair.guest.close(); }
+      }
+    } finally {
+      if (previousDocument === undefined) delete globalThis.document;
+      else globalThis.document = previousDocument;
+    }
   });
 
   test("Network：正式战场按Guest旋转且canonical座次、身份、距离和手牌知识属实", async () => {

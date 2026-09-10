@@ -180,10 +180,10 @@ function assembleApplicationBoundary(application) {
     application.ui。
 
     写入状态
-    application.aiSpeed 与 UI 速度状态。
+    application.aiSpeed 与 UI 速度状态；Network Host 主动发布只读展示投影。
 
     调用函数
-    ui.setAiSpeed。
+    ui.setAiSpeed、networkBridge.publish。
 
     边界与不变量
     只改变后续 AI decision 的 wall-clock 时间窗口；不改变搜索算法、价值、合法性或游戏时序。
@@ -191,6 +191,7 @@ function assembleApplicationBoundary(application) {
     setAiSpeed(speed) {
       const normalized = normalizeAiSpeed(speed);
       application.aiSpeed = application.ui.setAiSpeed?.(normalized) ?? normalized;
+      application.networkBridge?.publish();
       return application.aiSpeed;
     },
     startSelection:application.matchWorkflow.startSelection,
@@ -508,7 +509,7 @@ class MatchApplication {
     this.uiManager = ui;
     this.ui = ui.createGameSession?.(this) ?? ui;
     this.networkBridge = options.mode === MATCH_MODE.NETWORK ? createNetworkHostBridge({
-      session: options.networkSession, getState: () => this.state,
+      session: options.networkSession, getState: () => this.state, getAiSpeed: () => this.aiSpeed,
       canPlayCard: (actor, card) => ActionLegality.canPlayCard(this, actor, card),
       describeDistance: (source, target) => ActionLegality.describeDistance(this, source, target),
       isCardKnownTo: (viewer, owner, card) => this.cardKnowledge.isKnownTo(viewer, owner, card),

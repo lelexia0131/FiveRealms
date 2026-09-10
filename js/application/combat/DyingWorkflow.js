@@ -211,7 +211,7 @@ export function createDyingWorkflow(dependencies) {
   dyingContext 投影、phase/hp/alive/statuses 经 Domain transitions。
 
   调用函数
-  emitEvent、setHp、setMatchPhase、requestDyingRescue、heal、kill、setAlive、clearStatuses。
+  emitEvent、setHp、setMatchPhase、presentation.refresh/showDying、requestDyingRescue、heal、kill、setAlive、clearStatuses。
 
   边界与不变量
   beforePlayerDying cancel 恢复到 1 的旧语义不变；每轮只要至少一次成功救援且仍濒死就继续新一轮。
@@ -239,6 +239,8 @@ export function createDyingWorkflow(dependencies) {
     runtime.presentation.log(`${target.name}进入濒死，还需恢复${1 - target.hp}点生命才能脱离濒死。`, "important");
     await runtime.emitEvent("playerDying", { type: "playerDying", target, source, need: 1 - target.hp, context });
     if (!runtime.isSessionValid(gameId)) return false;
+    // damage 与 loseHp 共用此入口；先呈现已提交的生命值，再显示濒死状态并等待救援。
+    runtime.presentation.refresh();
     runtime.presentation.showDying({ playerId: target.id, need: 1 - target.hp, currentHp: target.hp });
 
     while (isDying(target.hp, target.alive) && runtime.isSessionValid(gameId)) {

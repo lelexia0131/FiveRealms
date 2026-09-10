@@ -4468,6 +4468,7 @@ async function frArch9TargetChoicePort() {
     targets: [{ id: "e1", name: "敌人", battleTeam: "dusk" }], label: "选择目标", sourcePlayerId: "human", cardId: "a1"
   });
   assert.equal(request.kind, "target");
+  assert.equal(request.canDecline, true);
   assert.equal(request.options[0].optionId, "e1");
   assert.equal(JSON.stringify(request).includes("hand"), false);
   const human = createUiChoiceAdapter({
@@ -4482,6 +4483,31 @@ async function frArch9TargetChoicePort() {
 }
 
 test("ChoicePort：公开 target facts，Action 返回后 revalidate", frArch9TargetChoicePort);
+
+test("ChoicePort：单机普通目标取消在卡牌技能提交前退出且不耗资源", async () => {
+  const actor = makePlayer("target-cancel-human", 0, "dawn", "human", 2);
+  const { game, ui } = makeGame([actor, makePlayer("target-cancel-enemy", 1, "dusk")]);
+  actor.energy = 3; actor.hp = 2;
+  actor.hand.push(instance("assault"), instance("shield"), instance("duel"));
+  ui.elements = { response_panel: { innerHTML: "", classList: { add() {} } } };
+  ui.requestTarget = UIManager.prototype.requestTarget;
+  ui.cancelTarget = UIManager.prototype.cancelTarget;
+  try {
+    for (const card of [...actor.hand, null]) {
+      const before = JSON.stringify(game.state);
+      const pending = card ? game.handleHumanCard(card.id) : game.handleHumanSkill();
+      assert.ok(ui.targetState);
+      assert.equal(ui.targetState.meta.canDecline, true);
+      assert.equal(Boolean(ui.targetState.meta.confirmSelection), false);
+      ui.cancelTarget();
+      assert.equal(await pending, false);
+      assert.equal(ui.targetState, null);
+      assert.equal(game.actionWorkflow.getActionStateSnapshot().interactionLocked, false);
+      assert.equal(game.actionWorkflow.getActionStateSnapshot().actionLocked, false);
+      assert.equal(JSON.stringify(game.state), before);
+    }
+  } finally { game.dispose(); }
+});
 
 /*
 功能

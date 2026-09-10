@@ -92,7 +92,7 @@ export function createUiChoiceAdapter({
 
     边界与不变量
     response actor 与 effect target 必须分别来自 actorId/context.targetPlayerId；转移只传递排序意图，
-    不携带隐藏牌定义；不改 UI 交互、超时或取消语义。
+    不携带隐藏牌定义；普通目标的取消权限沿用 Choice contract，不改 UI 交互或超时。
     */
     async request(choiceRequest) {
       if (choiceRequest?.kind === "hiddenCard") {
@@ -191,7 +191,9 @@ export function createUiChoiceAdapter({
       if (choiceRequest?.kind === "target") {
         const choiceContext = getChoiceContext(choiceRequest.requestId);
         if (!choiceContext?.players) return createChoiceResult("cancelled");
-        const target = await requestTarget(choiceContext.players, choiceContext.prompt, choiceContext.meta);
+        const target = await requestTarget(choiceContext.players, choiceContext.prompt, {
+          ...choiceContext.meta, canDecline: choiceRequest.canDecline
+        });
         if (!isSessionValid(choiceRequest.gameId)) return createChoiceResult("cancelled");
         return target
           ? createChoiceResult("selected", { selectedIds:[target.id] })

@@ -3,7 +3,7 @@ import { MATCH_PERFORMANCE_DIMENSIONS } from "../ui/results/MatchPerformancePoli
 
   /*
   功能
-  按字段白名单保留 Host 已计算的公开距离与安全日志。
+  按字段白名单保留 Host AI 速度、已计算的公开距离与安全日志。
 
   调用方
   projectNetworkGame。
@@ -15,7 +15,7 @@ import { MATCH_PERFORMANCE_DIMENSIONS } from "../ui/results/MatchPerformancePoli
   仅展示用途的 DTO，缺省为 null。
 
   读取状态
-  Host 计算的距离、射程、可达性说明与经过脱敏的日志片段。
+  Host AI 速度、计算的距离、射程、可达性说明与经过脱敏的日志片段。
 
   写入状态
   无。
@@ -29,6 +29,7 @@ import { MATCH_PERFORMANCE_DIMENSIONS } from "../ui/results/MatchPerformancePoli
 export function projectNetworkDisplay(display) {
   if (!display) return null;
   return {
+    aiSpeed: display.aiSpeed,
     prompt: display.prompt ? { message: display.prompt.message, handHint: display.prompt.handHint, revision: display.prompt.revision } : null,
     distances: Object.fromEntries(Object.entries(display.distances ?? {}).map(([target, value]) => [
       target, {

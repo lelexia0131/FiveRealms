@@ -83,7 +83,7 @@ export class NetworkGameView {
   showGame、render、presentEvent、presentDecision。
 
   边界与不变量
-  切换请求取消旧交互；同一快照不重复反馈，迟到 Promise 不得回答新请求。
+  切换请求取消旧交互；同一快照不重复反馈，迟到 Promise 不得回答新请求；Host 速度只更新按钮展示，不写本地偏好。
   */
 
   update({ projection, projectionRevision, requests }) {
@@ -93,9 +93,13 @@ export class NetworkGameView {
       this.ui.showGame(null);
       this.ui.networkPresentation = this;
       this.ui.matchMvpResultView.reset();
-      for (const button of this.ui.elements.ai_speed_control?.querySelectorAll("[data-ai-speed]") ?? []) button.disabled = true;
     }
     this.projection = projection;
+    // Guest 只展示 Host 档位；UIManager.setAiSpeed 会持久化本地偏好，不能用于投影同步。
+    for (const button of this.ui.elements.ai_speed_control?.querySelectorAll("[data-ai-speed]") ?? []) {
+      button.disabled = true;
+      button.setAttribute("aria-pressed", String(Number(button.dataset.aiSpeed) === projection.display?.aiSpeed));
+    }
     const request = requests[0] ?? null;
     const changed = request?.requestId !== this.request?.requestId;
     if (changed) {
@@ -217,7 +221,7 @@ export class NetworkGameView {
   UIManager requestTarget/requestDiscard/requestResponse、PublicPoolView、InteractionController。
 
   边界与不变量
-  只处理一个 Host 请求，不计算目标或规则，不创建 ActionWorkflow。
+  只处理一个 Host 请求，不计算目标或规则，不创建 ActionWorkflow；普通 target 即点即提交，多阶段确认仍由 card-flow 持有。
   */
 
   async presentDecision(request) {
@@ -227,7 +231,7 @@ export class NetworkGameView {
     let ids = null;
     if (request.kind === "target") {
       const player = await ui.requestTarget(this.players.filter((entry) => allowed.has(entry.id)), request.label,
-        { confirmSelection: true, canDecline: request.canDecline, card: request.card, targetDisplay: request.targetDisplay });
+        { canDecline: request.canDecline, card: request.card, targetDisplay: request.targetDisplay });
       ids = player ? [player.id] : null;
     } else if (request.kind === "discard") {
       const cards = await ui.requestDiscard(this.model.human, request.max, request.label);

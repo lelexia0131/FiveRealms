@@ -14,7 +14,7 @@ import { presentPrompt } from "../ui/PromptPresentation.js";
 MatchApplication composition。
 
 输入
-Session、getState 及既有规则查询 callbacks。
+Session、getState、只读 getAiSpeed 及既有规则查询 callbacks。
 
 输出
 wrapUi、prepareDecision、publish、dispose。
@@ -32,7 +32,7 @@ session.gameChannel、既有 legality queries。
 不创建 RNG、AI、Match 或 workflow；所有规则查询由原 authority 注入。
 */
 export function createNetworkHostBridge({
-  session, getState, canPlayCard, getActiveSkill, canUseSkill,
+  session, getState, getAiSpeed, canPlayCard, getActiveSkill, canUseSkill,
   getLeverageFirstTargets, getAssaultTargets, getTransferSources, getTransferReceivers, describeDistance, isCardKnownTo
 }) {
   const channel = session.gameChannel;
@@ -417,13 +417,13 @@ Reflect.get、channel.publish。
   公开展示 DTO。
 
   读取状态
-  Host 公开玩家、viewerId、距离查询和日志展示字段。
+  Host AI 速度、公开玩家、viewerId、距离查询和日志展示字段。
 
   写入状态
   无。
 
   调用函数
-  describeDistance、presentTargetDistance。
+  getAiSpeed、describeDistance、presentTargetDistance。
 
   边界与不变量
   距离和日志均由 Host 展示边界生成；不发送日志内部事实或其他 viewer 知识。
@@ -433,6 +433,7 @@ Reflect.get、channel.publish。
     const viewerId = session.snapshot().matchSetup?.players.find((player) => player.role === "GUEST")?.playerId;
     const viewer = state.players.find((player) => player.id === viewerId);
     return {
+      aiSpeed: getAiSpeed(),
       prompt: prompt && { ...prompt, revision: promptRevision },
       distances: Object.fromEntries(state.players.filter((target) => viewer?.alive && target.id !== viewer.id)
         .map((target) => {

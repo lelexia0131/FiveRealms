@@ -41,7 +41,7 @@ requestId、actorId、gameId、stateVersion、targets、label 与 source/card fa
 Object.freeze。
 
 边界与不变量
-kind 固定为 target；canDecline false；AI search 不走该 Choice。
+kind 固定为 target；允许在出牌/技能提交前取消目标选择；AI search 不走该 Choice。
 */
 export function createTargetChoiceRequest({
   requestId,
@@ -68,7 +68,7 @@ export function createTargetChoiceRequest({
       battleTeam: target.battleTeam ?? null
     }))),
     constraints: Object.freeze({ requiredCount: 1 }),
-    canDecline: false,
+    canDecline: true,
     context: Object.freeze({
       label: label ?? "",
       sourcePlayerId,
