@@ -293,8 +293,9 @@ normalizeNetworkEndpoint、createNetworkSetup、move、notify。
       this.move(S.WAITING_PEER);
       if (role === R.HOST) {
         d.participantId = crypto.randomUUID();
+        // Host 没有 Transport remoteAddress 时，用创建房间已有的 LAN host 作为成员展示地址；IP 不参与身份认证或权限。
         d.participants[d.participantId] = { participantId: d.participantId, role: R.HOST, guestOrdinal: null,
-          connectionId: null, remoteAddress: result?.remoteAddress ?? null, connected: true, kicked: false,
+          connectionId: null, remoteAddress: result?.remoteAddress ?? d.connectionInfo?.host ?? null, connected: true, kicked: false,
           selection: null, ready: false, gameReady: false };
         d.setup = createNetworkSetup(this.#random);
         this.move(S.SELECTING);

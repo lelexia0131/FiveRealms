@@ -1533,6 +1533,85 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     } finally { room.close(); }
   });
 
+  test("Network：Host显示地址优先Transport remoteAddress并回退connectionInfo.host", async () => {
+    async function openHost(result = {}) {
+      const session = new NetworkSession({ capability: {
+        createRoom: async (room) => ({ ...room, ...result }),
+        subscribe: () => () => {},
+        close: () => {}
+      } });
+      await session.open(R.HOST);
+      return session;
+    }
+    const sessions = [];
+    try {
+      const preferred = await openHost({ remoteAddress: "10.0.0.9",
+        connectionInfo: { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT } });
+      sessions.push(preferred);
+      const preferredSnapshot = preferred.snapshot();
+      assert.equal(preferredSnapshot.participants[preferredSnapshot.participantId].remoteAddress, "10.0.0.9");
+      const preferredMarkup = renderNetworkSquadSelectionView(preferredSnapshot);
+      assert.match(preferredMarkup, /<strong>Host<\/strong>\s*<span>10\.0\.0\.9<\/span>/);
+      assert.doesNotMatch(preferredMarkup, /<strong>Host<\/strong>\s*<span>(?:10\.196\.91\.170|::ffff:10\.196\.91\.170)<\/span>/);
+
+      const fallback = await openHost({ connectionInfo: { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT } });
+      sessions.push(fallback);
+      const fallbackSnapshot = fallback.snapshot();
+      assert.equal(fallbackSnapshot.participants[fallbackSnapshot.participantId].remoteAddress, "10.196.91.170");
+      assert.match(renderNetworkSquadSelectionView(fallbackSnapshot), /<strong>Host<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
+
+      const mapped = await openHost({ connectionInfo: { host: "::ffff:10.196.91.170", port: NETWORK_DEFAULT_PORT } });
+      sessions.push(mapped);
+      const mappedSnapshot = mapped.snapshot();
+      assert.equal(formatNetworkAddress(mappedSnapshot.participants[mappedSnapshot.participantId].remoteAddress), "10.196.91.170");
+      const mappedMarkup = renderNetworkSquadSelectionView(mappedSnapshot);
+      assert.match(mappedMarkup, /<strong>Host<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
+      assert.doesNotMatch(mappedMarkup, /<strong>Host<\/strong>\s*<span>::ffff:/);
+
+      const missing = await openHost();
+      sessions.push(missing);
+      const missingSnapshot = missing.snapshot();
+      assert.equal(missingSnapshot.participants[missingSnapshot.participantId].remoteAddress, null);
+      assert.match(renderNetworkSquadSelectionView(missingSnapshot), /<strong>Host<\/strong>\s*<span>地址未提供<\/span>/);
+    } finally {
+      for (const session of sessions) session.close();
+    }
+  });
+
+  test("Network：Guest显示地址只来自Guest remoteAddress且不继承Host fallback", async () => {
+    let roomId;
+    const receivers = {};
+    const hostResult = { connectionInfo: { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT } };
+    const capability = (role) => ({
+      createRoom: async (room) => { roomId = room.roomId; return { ...room, ...(role === R.HOST ? hostResult : {}) }; },
+      joinRoom: async () => ({ roomId }),
+      subscribe: (receive) => { receivers[role] = receive; return () => { delete receivers[role]; }; },
+      send: (event) => { receivers[event.sender === R.HOST ? R.GUEST : R.HOST]?.(structuredClone(event)); },
+      close: () => {}
+    });
+    const host = new NetworkSession({ capability: capability(R.HOST), random: () => 0.25 });
+    const guest = new NetworkSession({ capability: capability(R.GUEST), random: () => { throw new Error("Guest 不得 shuffle"); } });
+    try {
+      await host.open(R.HOST);
+      await guest.open(R.GUEST, { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT });
+      host.setMaxHumanCount(3);
+      assert.equal(host.addParticipant({ connectionId: "guest-1", remoteAddress: "::ffff:10.0.0.55" }).ok, true);
+      host.addParticipant({ connectionId: "guest-2", remoteAddress: null });
+      const snapshot = guest.snapshot();
+      assert.equal(snapshot.connectionInfo.host, "10.196.91.170");
+      assert.equal(snapshot.participants[snapshot.participantId].role, R.GUEST);
+      const guestMarkup = renderNetworkSquadSelectionView(snapshot);
+      assert.match(guestMarkup, /<strong>Host<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
+      assert.match(guestMarkup, /<strong>Guest 1<\/strong>\s*<span>10\.0\.0\.55<\/span>/);
+      assert.doesNotMatch(guestMarkup, /<strong>Guest 1<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
+      assert.match(guestMarkup, /<strong>Guest 2<\/strong>\s*<span>地址未提供<\/span>/);
+      assert.doesNotMatch(guestMarkup, /<strong>Guest 2<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
+    } finally {
+      host.close();
+      guest.close();
+    }
+  });
+
   test("Network：Lobby踢人释放选择且Guest编号不因中间成员退出重排", async () => {
     const room = await connectedRoom(4);
     try {
