@@ -27,7 +27,7 @@ import { removeStatus, setStatus } from "../../domain/state/transitions/StatusTr
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "damage", "heal", "gainEnergy", "drawCards",
   "equipCard", "moveCardBetweenHands", "moveEquipmentToHand", "discardEquipment",
-  "discardCardFromHand", "rememberPrivateCard", "cardLabelForHuman", "seatOrderFrom",
+  "discardCardFromHand", "rememberPrivateCard", "seatOrderFrom",
   "getEnemies", "responseWorkflow", "publicCardPool", "resolveLeverage",
   "getCardTargets", "getTransferSources", "getTransferReceivers", "diagnostics",
   "random", "createId", "emitEvent", "publishFact"
@@ -388,8 +388,8 @@ runtime/card/skill facts。
       const transferred = await runtime.moveCardBetweenHands(intent.from, intent.receiver, intent.card, "转移");
       if (!runtime.isSessionValid(state.gameId)) return { destination: "discard", resolved: false };
       if (transferred) {
-        const receiverLabel = intent.receiver.id === source.id ? "自己" : intent.receiver.name;
-        runtime.presentation.log(`${source.name}将${intent.from.name}的${runtime.cardLabelForHuman(intent.receiver, intent.card)}转移给了${receiverLabel}。`, "important");
+        runtime.presentation.log({ type: "card-move", action: "transfer", actorId: source.id,
+          fromId: intent.from.id, receiverId: intent.receiver.id, cardId: intent.card.id }, "important");
       }
       return { destination: "discard", resolved: Boolean(transferred) };
     },
@@ -584,7 +584,8 @@ runtime/card/skill facts。
         ? await runtime.moveEquipmentToHand(target, source, chosen.card, "掠夺")
         : await runtime.moveCardBetweenHands(target, source, chosen.card, "掠夺");
       if (!runtime.isSessionValid(gameId)) return { resolved: false };
-      if (plundered) runtime.presentation.log(`${source.name}从${target.name}处掠夺了${runtime.cardLabelForHuman(source, chosen.card)}。`, "important");
+      if (plundered) runtime.presentation.log({ type: "card-move", action: "plunder", actorId: source.id,
+        fromId: target.id, receiverId: source.id, cardId: chosen.card.id }, "important");
       return { resolved: Boolean(plundered) };
     },
 

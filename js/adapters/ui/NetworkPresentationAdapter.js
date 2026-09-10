@@ -75,8 +75,12 @@ export function presentNetworkGame(projection, request, ui) {
       isTargeting: Boolean(ui.targetState),
       isLegalTarget: Boolean(ui.targetState?.legalIds.has(player.id)),
       isSelectedTarget: ui.targetState?.selected?.id === player.id,
-      distanceInfo: human.alive && player.id !== human.id ? p.display?.distances?.[player.id] ?? null : null,
-      distanceState: request?.targetDisplay?.[player.id]?.distanceState ?? p.display?.distances?.[player.id]?.distanceState ?? null,
+      distanceInfo: ui.targetState?.meta?.targetDisplay
+        ? ui.targetState.meta.targetDisplay[player.id] ?? null
+        : human.alive && player.id !== human.id ? p.display?.distances?.[player.id] ?? null : null,
+      distanceState: ui.targetState?.meta?.targetDisplay
+        ? ui.targetState.meta.targetDisplay[player.id]?.distanceState ?? null
+        : request?.targetDisplay?.[player.id]?.distanceState ?? p.display?.distances?.[player.id]?.distanceState ?? null,
       networkRole: player.networkRole,
       opponentHandSlots: player.id === human.id
         ? human.hand.map((card) => ({ ...presentCard(card), known: true }))

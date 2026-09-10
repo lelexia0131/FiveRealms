@@ -305,7 +305,7 @@ export function createTurnWorkflow(dependencies) {
       if (!runtime.isSessionValid(gameId)) return;
       runtime.presentation.refresh();
       if (player.controllerType === "human") {
-        runtime.presentation.setPrompt("你的出牌阶段：选择手牌、发动技能，或结束出牌。", "从手牌中选择可用牌");
+        runtime.presentation.setPrompt("你的出牌阶段：选择手牌、发动技能，或结束出牌。", "从手牌中选择可用牌", player.id);
         const completed = await runtime.waitForHumanPlayEnd(gameId, player);
         if (!completed || !runtime.isSessionValid(gameId)) return;
       } else {

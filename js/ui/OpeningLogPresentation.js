@@ -5,7 +5,7 @@ import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js";
 按目标 viewer 把开局角色与阵营事实渲染成正式日志片段。
 
 调用方
-MatchLogAdapter.add、NetworkHostBridge.projectPublicLog。
+presentLogFact。
 
 输入
 仅含开局可见角色身份的 opening fact 与 viewerId。

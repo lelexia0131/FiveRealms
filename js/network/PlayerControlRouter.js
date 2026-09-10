@@ -183,9 +183,8 @@ requestRemote、handleCard、handleSkill、waitLocal。
 边界与不变量
 远端每条意图重验当前回合；正常卡牌、目标和技能复用原 workflow，不创建第二回合循环。
 */
-  async waitForHumanPlay(actor, gameId, { waitLocal, handleCard, handleSkill, setPrompt }) {
+  async waitForHumanPlay(actor, gameId, { waitLocal, handleCard, handleSkill }) {
     if (getPlayerControl(actor) !== PLAYER_CONTROL.REMOTE_HUMAN) return waitLocal(gameId);
-    setPrompt("等待另一名玩家行动", "对方正在选择手牌或技能");
     while (true) {
       const state = this.getState();
       if (state.isDisposed || state.gameId !== gameId || state.isGameOver || !actor.alive

@@ -213,7 +213,6 @@ function skillPaymentFixture(energy) {
     drawCards: async () => 0,
     moveEquipmentToHand: async () => null,
     moveCardBetweenHands: async () => null,
-    cardLabelForHuman: () => "测试牌",
     getEnemies: () => [enemy],
     random: () => 1,
     emitEvent: (type, payload) => fixture.dispatcher.emit(type, payload)

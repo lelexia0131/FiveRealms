@@ -271,7 +271,6 @@ function assembleApplicationBoundary(application) {
     invalidateCardKnowledge:application.cardKnowledge.invalidate,
     rememberPrivateCard:application.cardKnowledge.remember,
     isCardKnownTo:application.cardKnowledge.isKnownTo,
-    cardLabelForHuman:application.cardKnowledge.labelForHuman,
     chooseHiddenCards:application.hiddenCardChoiceWorkflow.chooseHiddenCards,
     choosePlayerZoneCard:application.hiddenCardChoiceWorkflow.choosePlayerZoneCard,
     /*
@@ -512,6 +511,7 @@ class MatchApplication {
       session: options.networkSession, getState: () => this.state,
       canPlayCard: (actor, card) => ActionLegality.canPlayCard(this, actor, card),
       describeDistance: (source, target) => ActionLegality.describeDistance(this, source, target),
+      isCardKnownTo: (viewer, owner, card) => this.cardKnowledge.isKnownTo(viewer, owner, card),
       getActiveSkill,
       canUseSkill: (actor, skill) => canUseActiveSkill(this, actor, skill),
       getLeverageFirstTargets: (actor) => ActionLegality.getLeverageFirstTargets(this, actor),
@@ -526,7 +526,8 @@ class MatchApplication {
       getState: () => this.state,
       onResult: (viewModel) => deliverMatchResult(this, viewModel)
     });
-    this.matchLogAdapter = new MatchLogAdapter(this.state, this.ui);
+    this.matchLogAdapter = new MatchLogAdapter(this.state, this.ui,
+      (viewer, owner, card) => this.cardKnowledge.isKnownTo(viewer, owner, card));
     this.choiceContexts = new Map();
     this.teamRules = createTeamRuleQueries(() => this.state);
     this.cardKnowledge = createCardKnowledgeAdapter(() => this.state.players);
@@ -586,6 +587,7 @@ class MatchApplication {
       choiceCoordinator:this.choiceCoordinator,
       choiceContexts:this.choiceContexts,
       getState:() => this.state,
+      isCardKnownTo:(viewer, owner, card) => this.cardKnowledge.isKnownTo(viewer, owner, card),
       isSessionValid:(gameId) => this.isSessionValid(gameId),
       pushPendingResponse:(request) => this.state.pendingResponses.push(request),
       removePendingResponse:(id) => {
@@ -619,6 +621,7 @@ class MatchApplication {
     });
     const aiObservation = createRecentAggressorsObservationAdapter();
     this.presentationPort = createGamePresentationAdapter({
+      getViewerId: () => this.controlRouter.humanPlayer()?.id,
       log: (message, kind) => this.log(message, kind),
       getPlayerById: (playerId) => this.state.players.find((player) => player.id === playerId),
       getCardById: (cardId) => findCardEntity(this, cardId),
@@ -823,7 +826,6 @@ class MatchApplication {
       drawCards: (...args) => this.drawCards(...args),
       moveEquipmentToHand: (...args) => this.moveEquipmentToHand(...args),
       moveCardBetweenHands: (...args) => this.moveCardBetweenHands(...args),
-      cardLabelForHuman: (...args) => this.cardLabelForHuman(...args),
       getEnemies: (...args) => this.getEnemies(...args),
       random: () => this.random(),
       emitEvent: (type, payload) => this.eventDispatcher.emit(type, payload)
@@ -842,7 +844,6 @@ class MatchApplication {
       discardEquipment: (...args) => this.discardEquipment(...args),
       discardCardFromHand: (...args) => this.discardCardFromHand(...args),
       rememberPrivateCard: (...args) => this.rememberPrivateCard(...args),
-      cardLabelForHuman: (...args) => this.cardLabelForHuman(...args),
       seatOrderFrom: (...args) => this.seatOrderFrom(...args),
       getEnemies: (...args) => this.getEnemies(...args),
       responseWorkflow: this.responseWorkflow,
@@ -981,8 +982,7 @@ class MatchApplication {
       waitForHumanPlayEnd: (gameId, player) => this.controlRouter.waitForHumanPlay(player, gameId, {
         waitLocal: (id) => this.ui.waitForHumanPlayEnd(id),
         handleCard: (cardId, actorId) => this.actionWorkflow.handleHumanCard(cardId, actorId),
-        handleSkill: (actorId) => this.actionWorkflow.handleHumanSkill(actorId),
-        setPrompt: (...args) => this.ui.setPrompt(...args)
+        handleSkill: (actorId) => this.actionWorkflow.handleHumanSkill(actorId)
       }),
       runAiPlayPhase: (...args) => this.takeAiPlayPhase(...args),
       choiceCoordinator: this.choiceCoordinator,

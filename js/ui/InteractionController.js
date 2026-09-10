@@ -170,37 +170,77 @@ export class InteractionController {
   仅写 UI 的目标选择与确认状态。
 
   调用函数
-  UIManager.requestTarget、requestConfirmation 与 ActionLegality。
+  requestPresentedCardFlow 与 ActionLegality。
 
   边界与不变量
   隐藏手牌/区域选择由后续 HiddenCardChoiceWorkflow 经 ChoicePort 发起；await 后必须复核 session 和实体身份。
   */
   async requestCardFlow(game, actor, card, initialTargets) {
     const gameId = game.state.gameId;
-    if (!game.isSessionValid(gameId)) return null;
+    return this.requestPresentedCardFlow(actor, card, initialTargets, {
+      isActive: () => game.isSessionValid(gameId),
+      firstTargets: () => card.definitionId === "leverage"
+        ? ActionLegality.getLeverageFirstTargets(game, actor)
+        : ActionLegality.getTransferSources(game, actor, card).filter((from) => ActionLegality.getTransferReceivers(game, actor, from, card).length),
+      secondTargets: (first) => card.definitionId === "leverage"
+        ? ActionLegality.getAssaultTargetCandidates(game, first)
+        : ActionLegality.getTransferReceivers(game, actor, first, card)
+    });
+  }
+
+  /*
+  功能
+  统一呈现卡牌的目标阶段与最终确认，收集公开选择结果。
+
+  调用方
+  requestCardFlow 与 NetworkGameView。
+
+  输入
+  安全行动者、卡牌、初始目标，以及候选、会话有效性和可选距离展示 capability。
+
+  输出
+  公开意图对象；取消或请求失效返回 null。
+
+  读取状态
+  候选的公开身份和装备、当前交互会话。
+
+  写入状态
+  UI 目标和确认状态。
+
+  调用函数
+  requestTarget、requestConfirmation、注入的候选与展示 callbacks。
+
+  边界与不变量
+  不调用规则；单人候选来自 authority 查询，Guest 候选只来自 Host 有限选项。
+  各 await 后复核会话与候选身份，最终确认之前不提交意图。
+  */
+  async requestPresentedCardFlow(actor, card, initialTargets, flow) {
+    if (!flow.isActive()) return null;
     if (card.definitionId === "leverage") {
       // 项目当前每人只有一个公开装备槽，故装备阶段可按规则自动选中唯一真实实例。
-      const firstTargets = ActionLegality.getLeverageFirstTargets(game, actor);
+      const firstTargets = flow.firstTargets();
       const firstTarget = await this.ui.requestTarget(firstTargets, "选择一名有装备且有可选第二目标的其他角色", {
-        source:actor, card, confirmSelection:true, stepTitle:"借势 · 第一目标"
+        source:actor, card, confirmSelection:true, stepTitle:"借势 · 第一目标",
+        targetDisplay:flow.targetDisplay?.(actor)
       });
-      if (!game.isSessionValid(gameId) || !firstTarget) return null;
+      if (!flow.isActive() || !firstTarget) return null;
       const equipment = firstTarget.equipment;
-      if (!equipment?.id || !ActionLegality.getLeverageFirstTargets(game, actor).includes(firstTarget)) return null;
+      if (!equipment?.id || !flow.firstTargets().includes(firstTarget)) return null;
 
-      const secondTargets = ActionLegality.getAssaultTargetCandidates(game, firstTarget);
+      const secondTargets = flow.secondTargets(firstTarget);
       const secondTarget = await this.ui.requestTarget(secondTargets, "选择其攻击范围内的一名其他角色", {
-        source:firstTarget, card:CARD_DEFINITIONS.assault, confirmSelection:true, stepTitle:"借势 · 第二目标"
+        source:firstTarget, card:CARD_DEFINITIONS.assault, confirmSelection:true, stepTitle:"借势 · 第二目标",
+        targetDisplay:flow.targetDisplay?.(firstTarget)
       });
-      if (!game.isSessionValid(gameId) || !secondTarget) return null;
+      if (!flow.isActive() || !secondTarget) return null;
       if (firstTarget.equipment !== equipment || equipment.id == null
-        || !ActionLegality.getAssaultTargetCandidates(game, firstTarget).includes(secondTarget)) return null;
+        || !flow.secondTargets(firstTarget).includes(secondTarget)) return null;
 
       const confirmed = await this.requestConfirmation(
         "借势 · 确认",
-        `${actor.name}要求${firstTarget.name}对${secondTarget.name}使用「突袭」；若拒绝，${actor.name}将获得其「${equipment.name}」。`
+        `${actor.name}要求${firstTarget.name}对${secondTarget.name}使用「突袭」；若拒绝，${actor.name}将获得其「${presentCard(equipment).name}」。`
       );
-      if (!confirmed || !game.isSessionValid(gameId)) return null;
+      if (!confirmed || !flow.isActive()) return null;
       return {
         firstTargetId:firstTarget.id,
         equipmentCardId:equipment.id,
@@ -209,22 +249,17 @@ export class InteractionController {
       };
     }
     if (card.definitionId === "transfer") {
-      const sources = ActionLegality.getTransferSources(game, actor, card).filter((from) => ActionLegality.getTransferReceivers(game, actor, from, card).length);
-      const source = await this.ui.requestTarget(sources, "转移：选择距离1内的牌来源", { source:actor, card });
-      if (!game.isSessionValid(gameId)) return null;
+      const sources = flow.firstTargets();
+      const source = await this.ui.requestTarget(sources, "转移：选择距离1内的牌来源", { source:actor, card, targetDisplay:flow.targetDisplay?.(actor) });
+      if (!flow.isActive()) return null;
       if (!source) return null;
-      const receivers = ActionLegality.getTransferReceivers(game, actor, source, card);
-      const receiver = await this.ui.requestTarget(receivers, "转移：选择距离1内的接收者", { source:actor, card });
-      if (!game.isSessionValid(gameId)) return null;
+      const receivers = flow.secondTargets(source);
+      const receiver = await this.ui.requestTarget(receivers, "转移：选择距离1内的接收者", { source:actor, card, targetDisplay:flow.targetDisplay?.(actor) });
+      if (!flow.isActive()) return null;
       if (!receiver) return null;
       return { sourceId:source.id, receiverId:receiver.id };
     }
-    if (["plunder","destroy"].includes(card.definitionId)) {
-      const target = initialTargets[0];
-      if (!target) return null;
-      return {};
-    }
-    if (card.definitionId === "scout") {
+    if (["plunder", "destroy", "scout"].includes(card.definitionId)) {
       const target = initialTargets[0];
       if (!target) return null;
       return {};

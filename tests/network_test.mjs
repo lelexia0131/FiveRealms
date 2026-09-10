@@ -14,7 +14,11 @@ import { MATCH_MODE, isMatchPersistenceEligible } from "../js/application/match/
 import { createGameApplication } from "../js/composition/createGameApplication.js";
 import { createNetworkFlow } from "../js/composition/createNetworkFlow.js";
 import { UIManager } from "../js/ui/UIManager.js";
-import { InteractionController } from "../js/ui/InteractionController.js";
+import { PrivateRevealView } from "../js/ui/PrivateRevealView.js";
+import { CHARACTER_BY_ID } from "../js/domain/definitions/characters/CharacterDefinitions.js";
+import { createActionTransaction } from "../js/application/action/ActionTransaction.js";
+import { InteractionController, orderZoneSelectionSlots } from "../js/ui/InteractionController.js";
+import { ACTIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillDefinitions.js";
 import { TEAM_PRESENTATION } from "../js/adapters/ui/PresentationMetadata.js";
 import { ActionLegality } from "../js/application/action/ActionLegality.js";
 import { renderNetworkSquadSelectionView } from "../js/ui/network/NetworkSquadSelectionView.js";
@@ -166,9 +170,9 @@ function makeGuestUi() {
   const ui = {
     game: null, targetState: null, discardState: null, thinkingPlayerId: null,
     elements: Object.fromEntries(["human_panel", "cpu_grid", "human_hand", "status_metrics", "hand_hint",
-      "skill_button", "end_play_button", "discard_confirm_button", "cancel_interaction_button"].map((id) => [id, element()])),
+      "action_prompt", "skill_button", "end_play_button", "discard_confirm_button", "cancel_interaction_button"].map((id) => [id, element()])),
     showGame(game) { assert.equal(game, null); this.game = game; },
-    showNetworkPage() {}, playSound() {}, setPrompt() {}, setMusicTeam() {},
+    showNetworkPage() {}, playSound() {}, setPrompt: UIManager.prototype.setPrompt, setMusicTeam() {},
     cancelPendingInteractions() { this.targetState = null; this.discardState = null; },
     cancelChoiceInteractions() { this.targetState = null; this.discardState = null; },
     showGameOver() {}, showPublicPool() {}, hidePublicPool() {}, clearLog() {}, appendLog() {},
@@ -181,6 +185,47 @@ function makeGuestUi() {
   };
   ui.resultRoot = element();
   ui.matchMvpResultView = new MatchMvpResultView(ui.resultRoot);
+  return ui;
+}
+
+/*
+功能
+为私密揭示生命周期提供正式 UIManager 与 PrivateRevealView 的小型 DOM fixture。
+
+调用方
+Network 私密揭示测试。
+
+输入
+无。
+
+输出
+可观察显示、关闭和定时清理的 UI。
+
+读取状态
+无。
+
+写入状态
+测试 DOM 与正式 UI 交互状态。
+
+调用函数
+makeGuestUi、PrivateRevealView、UIManager。
+
+边界与不变量
+不创建 Guest 游戏状态；只替换浏览器元素，不替换揭示生命周期。
+*/
+function makeRevealUi() {
+  const ui = makeGuestUi();
+  const root = { innerHTML: "", textContent: "", hidden: true,
+    classList: { add() { root.hidden = true; }, remove() { root.hidden = false; } },
+    querySelector: () => ({ addEventListener() {} }) };
+  ui.privateRevealView = new PrivateRevealView(root);
+  ui.privateRevealTimer = null;
+  ui.showPrivateReveal = UIManager.prototype.showPrivateReveal;
+  ui.cancelChoiceInteractions = UIManager.prototype.cancelChoiceInteractions;
+  ui.cancelPendingInteractions = () => ui.cancelChoiceInteractions();
+  ui.interactionController = { cancel() {} };
+  ui.publicPoolView.cancel = () => {};
+  ui.elements.response_panel = { innerHTML: "", classList: { add() {} } };
   return ui;
 }
 
@@ -243,6 +288,231 @@ test。
 所有随机验证仅证明正确性，不运行平衡或自博弈。
 */
 export function registerNetworkTests(test, { makeUi, instance }) {
+
+  test("Network：正式回合提示按viewer归属且Guest保留主提示与hand hint", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const hostUi = makeUi();
+    const hostPrompts = [];
+    hostUi.setPrompt = (message, hint) => hostPrompts.push([message, hint]);
+    const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const ui = makeGuestUi();
+    const guestPrompts = [];
+    ui.setPrompt = (message, hint) => { guestPrompts.push([message, hint]); UIManager.prototype.setPrompt.call(ui, message, hint); };
+    const view = new NetworkGameView({ ui, submit() {} });
+    const off = pair.guest.gameChannel.subscribe((snapshot) => view.update(snapshot));
+    try {
+      const actors = [game.controlRouter.humanPlayer(), game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN)];
+      game.controlRouter.waitForHumanPlay = async () => false;
+      for (const actor of actors) {
+        game.state.currentPlayerIndex = actor.seatIndex;
+        await game.turnWorkflow.takeTurn(actor, game.state.gameId);
+        const own = ["你的出牌阶段：选择手牌、发动技能，或结束出牌。", "从手牌中选择可用牌"];
+        const waiting = ["等待另一名玩家行动", "对方正在选择手牌或技能"];
+        assert.deepEqual(hostPrompts.at(-1), actor === actors[0] ? own : waiting);
+        assert.deepEqual(guestPrompts.at(-1), actor === actors[1] ? own : waiting);
+        const expected = guestPrompts.at(-1);
+        assert.equal(ui.elements.action_prompt.textContent, expected[0]);
+        assert.equal(ui.elements.hand_hint.textContent, expected[1]);
+        const pending = game.controlRouter.requestRemote({ kind: "player-intent", actorId: actors[1].id, gameId: game.state.gameId });
+        const request = pair.guest.gameChannel.snapshot().requests[0];
+        assert.equal(ui.elements.action_prompt.textContent, expected[0], "请求label不得覆盖正式提示");
+        pair.guest.gameChannel.respond(request.requestId, { status: "selected", selectedIds: [request.options.at(-1).optionId] });
+        await pending;
+      }
+      game.ui.setPrompt("HOST_PRIVATE_PROMPT", "HOST_PRIVATE_HAND");
+      game.networkBridge.publish();
+      assert.doesNotMatch(JSON.stringify(pair.guest.gameChannel.snapshot()), /HOST_PRIVATE/);
+      game.presentationPort.setPrompt("公开阶段结束", "正式阶段提示");
+      assert.deepEqual(guestPrompts.at(-1), ["公开阶段结束", "正式阶段提示"]);
+    } finally { off(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：真实card与skill结算提示归属正确且Guest正式cue各播放一次", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const hostUi = makeUi();
+    const hostPrompts = [];
+    hostUi.setPrompt = (message, hint) => hostPrompts.push([message, hint]);
+    hostUi.playSound = () => {};
+    const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const ui = makeGuestUi(), sounds = [], guestPrompts = [];
+    ui.playSound = (cue) => sounds.push(cue);
+    ui.setPrompt = (message, hint) => guestPrompts.push([message, hint]);
+    ui.setCurrentCard = () => {};
+    const view = new NetworkGameView({ ui, submit() {} });
+    const off = pair.guest.gameChannel.subscribe((snapshot) => {
+      view.update(snapshot);
+      if (snapshot.projection?.presentation?.kind === "action-cue") view.update(snapshot);
+    });
+    try {
+      for (const control of [C.LOCAL_HUMAN, C.REMOTE_HUMAN]) {
+        const actor = game.state.players.find((player) => player.controlType === control);
+        actor.applyCharacter(game.state, CHARACTER_BY_ID["blade-walker"]);
+        game.state.currentPlayerIndex = actor.seatIndex;
+        game.controlRouter.waitForHumanPlay = async () => false;
+        await game.turnWorkflow.takeTurn(actor, game.state.gameId);
+        game.state.phase = "play";
+        actor.energy = 0;
+        const card = instance("charge"); actor.hand.push(card);
+        const start = sounds.length;
+        assert.equal(await game.actionWorkflow.playCard(actor, card), true);
+        const localOwn = control === C.LOCAL_HUMAN;
+        assert.deepEqual((localOwn ? hostPrompts : guestPrompts).at(-1), ["继续出牌，或结束本次出牌阶段。", "选择一张可用手牌"]);
+        assert.deepEqual((localOwn ? guestPrompts : hostPrompts).at(-1), ["等待另一名玩家行动", "对方正在选择手牌或技能"]);
+        actor.energy = 3;
+        assert.equal(await game.actionWorkflow.useActiveSkill(actor, "breakArmy"), true);
+        assert.deepEqual((localOwn ? hostPrompts : guestPrompts).at(-1), ["技能结算完成，继续出牌或结束阶段。", "选择一张可用手牌"]);
+        assert.deepEqual((localOwn ? guestPrompts : hostPrompts).at(-1), ["等待另一名玩家行动", "对方正在选择手牌或技能"]);
+        pair.guest.gameChannel.notify();
+        view.update(pair.guest.gameChannel.snapshot());
+        game.ui.playSound("select");
+        assert.deepEqual(sounds.slice(start), ["playCard", "skill"]);
+        const previous = hostPrompts.length;
+        assert.equal(await game.actionWorkflow.playCard(actor, card), false);
+        assert.equal(hostPrompts.length, previous, "失败行动不产生完成提示");
+        assert.deepEqual(sounds.slice(start), ["playCard", "skill"]);
+      }
+    } finally { off(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：阵亡目标仍有正式distance与target entry且不显示普通不可达", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    const dead = game.state.players.find((player) => player.id !== actor.id);
+    dead.alive = false; dead.hp = 0;
+    const card = instance("assault"); actor.hand.push(card);
+    game.networkBridge.publish();
+    const display = pair.guest.gameChannel.snapshot().projection.display;
+    assert.equal(display.distances[dead.id].distanceState, "已阵亡");
+    assert.equal(display.distances[dead.id].reachable, false);
+    const prepared = game.networkBridge.prepareDecision({ kind: "target", actorId: actor.id,
+      context: { cardId: card.id }, options: game.state.players.filter((player) => player.alive && player.id !== actor.id).map((player) => ({ optionId: player.id })) });
+    const ui = makeGuestUi();
+    const view = new NetworkGameView({ ui, submit() {} });
+    view.update(pair.guest.gameChannel.snapshot());
+    ui.requestTarget = async (_players, _label, meta) => {
+      assert.equal(meta.targetDisplay[dead.id].distanceState, "已阵亡");
+      assert.equal(meta.targetDisplay[dead.id].available, false);
+      for (const target of game.state.players.filter((player) => player.id !== actor.id)) {
+        assert.equal(meta.targetDisplay[target.id].distanceState,
+          UIManager.prototype.getDistanceState.call({ game, targetState: { meta: { card } } }, actor, target));
+      }
+      return null;
+    };
+    try {
+      const deadPanel = view.model.battlefield.opponents.find((panel) => panel.player.id === dead.id);
+      assert.equal(deadPanel.options.distanceState, "已阵亡");
+      await view.presentDecision(prepared.view);
+    } finally { view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：借势复用正式第一目标第二目标和最终确认且只发送有限选项", async () => {
+    const pair = await connectedPair();
+    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    const first = game.state.players[2];
+    first.equipment = instance("energyDevice");
+    const card = instance("leverage");
+    actor.hand.push(card);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const ui = makeGuestUi();
+    ui.elements.response_panel = { innerHTML: "", classList: { add() {}, remove() {} } };
+    ui.requestTarget = UIManager.prototype.requestTarget;
+    ui.cancelTarget = UIManager.prototype.cancelTarget;
+    ui.renderTargetConfirmation = UIManager.prototype.renderTargetConfirmation;
+    ui.interactionController = new InteractionController(ui);
+    const view = new NetworkGameView({ ui, submit: (...args) => pair.guest.gameChannel.respond(...args) });
+    const unsubscribe = pair.guest.gameChannel.subscribe((snapshot) => view.update(snapshot));
+    try {
+      const pending = game.controlRouter.requestCardFlow(actor, card, [], () => { throw Error("不得在Host弹出Guest选择"); });
+      const request = pair.guest.gameChannel.snapshot().requests[0];
+      const option = request.options.find((entry) => entry.targetIds[1] === actor.id);
+      assert.ok(option);
+      const stages = [];
+      for (const [index, id] of option.targetIds.entries()) {
+        const stage = ui.targetState;
+        stages.push({ prompt: stage.prompt, sourceId: stage.meta.source.id, cardId: stage.meta.card.definitionId, stepTitle: stage.meta.stepTitle });
+        assert.equal(stage.meta.source.id, index === 0 ? actor.id : first.id);
+        for (const target of game.state.players.filter((player) => player.id !== stage.meta.source.id)) {
+          const source = index === 0 ? actor : first;
+          const expected = UIManager.prototype.getDistanceState.call({ game, targetState: stage }, source, target);
+          assert.equal(stage.meta.targetDisplay[target.id].distanceState, expected);
+        }
+        if (index === 1) {
+          assert.equal(view.model.battlefield.self.options.distanceState, stage.meta.targetDisplay[actor.id].distanceState);
+          assert.equal(view.model.battlefield.self.options.distanceInfo.distance, ActionLegality.getDistance(game, first, actor));
+        }
+        stage.selected = stage.players.find((player) => player.id === id);
+        UIManager.prototype.confirmTarget.call(ui);
+        await Promise.resolve();
+      }
+      assert.equal(ui.interactionController.pending.type, "confirm");
+      assert.match(ui.elements.response_panel.innerHTML, /借势 · 确认/);
+      assert.ok(ui.elements.response_panel.innerHTML.includes(first.equipment.name));
+      assert.equal(pair.events.filter((event) => event.type === E.DECISION_RESPONSE).length, 0);
+      const localStages = [];
+      const local = new InteractionController({ requestTarget: async (players, prompt, meta) => {
+        localStages.push({ prompt, sourceId: meta.source.id, cardId: meta.card.definitionId, stepTitle: meta.stepTitle });
+        return players.find((player) => player.id === option.targetIds[localStages.length - 1]);
+      } });
+      local.requestConfirmation = async (title, summary) => {
+        assert.equal(title, "借势 · 确认");
+        assert.ok(ui.elements.response_panel.innerHTML.includes(summary));
+        return true;
+      };
+      const expected = await local.requestCardFlow(game, actor, card, []);
+      assert.deepEqual(stages, localStages);
+      ui.interactionController.confirm();
+      assert.deepEqual(await pending, expected);
+      const response = pair.events.findLast((event) => event.type === E.DECISION_RESPONSE);
+      assert.equal(response.payload.status, "selected");
+      assert.deepEqual(response.payload.selectedIds, [option.optionId]);
+      assert.doesNotMatch(JSON.stringify(response.payload), /equipmentDefinitionId|firstTargetId|secondTargetId/);
+      assert.equal(ui.game, null);
+      assert.ok(actor.hand.includes(card));
+      assert.ok(first.equipment);
+    } finally { unsubscribe(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：响应快捷跳过必须被Host和Guest分别合法证明", async () => {
+    const pair = await connectedPair();
+    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+    const hostUi = makeUi();
+    const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const host = game.controlRouter.humanPlayer();
+    const guest = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    const responder = game.state.players[2];
+    const card = instance("charge");
+    responder.hand.push(card);
+    game.cardKnowledge.remember(host, responder, card);
+    let boundaries = 0;
+    game.cleanupManager.delay = async () => { boundaries += 1; return true; };
+    try {
+      for (const guestKnows of [false, true]) {
+        if (guestKnows) game.cardKnowledge.remember(guest, responder, card);
+        boundaries = 0;
+        const eventStart = pair.events.length;
+        const result = await game.responseWorkflow.requestCardResponse(responder, "block", { source: host, target: responder, card: instance("assault") }, 1);
+        assert.equal(result.status, "unavailable");
+        assert.equal(boundaries, guestKnows ? 0 : 1);
+        const thinking = pair.events.slice(eventStart).some((event) => event.payload?.presentation?.kind === "thinking"
+          && event.payload.presentation.playerId === responder.id);
+        assert.equal(thinking, !guestKnows);
+        assert.deepEqual(responder.hand, [card]);
+      }
+    } finally { game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
 
   test("Network：Guest复用正式响应确认支持AssaultDuel救援借势与零卡技能", async () => {
     const pair = await connectedPair();
@@ -356,7 +626,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
       const actual = snapshot.projection.display.distances[player.id];
       assert.deepEqual({ seat: actual.seat, distance: actual.distance, range: actual.range }, expected);
       assert.equal(actual.reachable, expected.distance <= expected.range);
-      assert.match(actual.distanceState, /距离 \d+ · 射程[内外]/);
+      assert.equal(actual.distanceState, UIManager.prototype.getDistanceState.call({ game }, guest, player));
     }
     const hostProjection = snapshot.projection.players.find((player) => player.playerId === host.id);
     assert.equal(hostProjection.observedHand.length, 2);
@@ -501,16 +771,104 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     assert.equal(pair.guest.gameChannel.snapshot().projection.presentation.need, 2);
     game.ui.playLightningHit(target.id);
     assert.equal(pair.guest.gameChannel.snapshot().projection.presentation.view, "playLightningHit");
-    game.log(`${host.name}从${target.name}处掠夺了「反制」。`, "important");
-    game.log(`${host.name}发动「窃取」，从${target.name}处获得「反制」并收入手牌。`, "important");
+    const secret = instance("counter");
+    host.hand.push(secret);
+    for (const action of ["plunder", "steal"]) game.log({ type: "card-move", action,
+      actorId: host.id, fromId: target.id, receiverId: host.id, cardId: secret.id }, "important");
     game.state.logs.push({ id: "untrusted", message: "HOST_PRIVATE_SECRET", fragments: [{ type: "text", text: "HOST_PRIVATE_SECRET" }] });
     pair.host.gameChannel.publish();
     const text = JSON.stringify(pair.guest.gameChannel.snapshot().projection);
     assert.doesNotMatch(text, /HOST_PRIVATE_SECRET|NO_TARGET_SECRET|NO_JUDGMENT_SECRET|反制/);
     const logs = pair.guest.gameChannel.snapshot().projection.display.logs;
-    assert.ok(logs.some((entry) => entry.fragments.some((fragment) => fragment.text.includes("一张牌"))));
+    assert.ok(logs.some((entry) => entry.fragments.some((fragment) => fragment.text.includes("1张手牌"))));
     assert.ok(logs.some((entry) => entry.fragments.some((fragment) => fragment.text.includes("窃取"))));
     game.dispose(); pair.host.close(); pair.guest.close();
+  });
+
+  test("Network：publicLogs随正式rollback删除失效entry并保持后续追加顺序", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const hostUi = makeUi();
+    hostUi.restoreLogBoundary = (count) => { hostUi.logs.length = count; };
+    const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const ui = makeGuestUi(), shown = [];
+    ui.appendLog = (entry) => shown.push(entry);
+    ui.clearLog = () => { shown.length = 0; };
+    const view = new NetworkGameView({ ui, submit() {} });
+    const off = pair.guest.gameChannel.subscribe((snapshot) => view.update(snapshot));
+    try {
+      game.log("保留的日志");
+      const retained = game.state.logs.slice();
+      for (let index = 0; index < 5; index += 1) {
+        const boundary = game.state.logs.length;
+        const transaction = createActionTransaction({ roots: [{}], logs: game.state.logs,
+          randomPort: game.randomPort, restoreLogPresentation: (count) => game.ui.restoreLogBoundary(count) });
+        game.log(`撤销甲${index}`); game.log(`撤销乙${index}`);
+        const staleIds = game.state.logs.slice(boundary).map((entry) => entry.id);
+        assert.ok(shown.some((entry) => staleIds.includes(entry.id)));
+        transaction.rollback();
+        const logs = pair.guest.gameChannel.snapshot().projection.display.logs;
+        assert.equal(logs.length, boundary, "完整publicLogs投影规模等于当前有效边界");
+        assert.ok(logs.every((entry) => !staleIds.includes(entry.id)));
+        assert.deepEqual(shown.map((entry) => entry.id), game.state.logs.map((entry) => entry.id));
+        game.ui.restoreLogBoundary(boundary);
+        game.log(`新的日志${index}`);
+        assert.deepEqual(pair.guest.gameChannel.snapshot().projection.display.logs.map((entry) => entry.id), game.state.logs.map((entry) => entry.id));
+        assert.equal(shown.at(-1).fragments.map((fragment) => fragment.text).join(""), `新的日志${index}`);
+      }
+      for (const [index, entry] of retained.entries()) assert.equal(game.state.logs[index], entry);
+      assert.doesNotMatch(JSON.stringify(shown), /撤销/);
+    } finally { off(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：转移掠夺窃取真实结算日志分别按两端事件时知识渲染", async () => {
+    for (const action of ["transfer", "plunder", "steal"]) {
+      for (const [hostKnows, guestKnows] of [[true, false], [false, true], [true, true], [false, false]]) {
+        const pair = await connectedPair();
+        choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+        const hostEntries = [];
+        const hostUi = makeUi();
+        hostUi.appendLog = (entry) => hostEntries.push(entry);
+        const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+        game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+        const host = game.controlRouter.humanPlayer();
+        const guest = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+        const source = game.state.players[0], owner = game.state.players[4];
+        const moved = instance("counter");
+        owner.hand.push(moved);
+        if (hostKnows) game.cardKnowledge.remember(host, owner, moved);
+        if (guestKnows) game.cardKnowledge.remember(guest, owner, moved);
+        try {
+          if (action === "steal") await game.skillEffectRuntime.execute(ACTIVE_SKILL_DEFINITIONS.stealSkill, source, [owner]);
+          else await game.cardEffectRuntime.resolve(source, instance(action), [owner], action === "transfer"
+            ? { privateTransferIntent: { from: owner, receiver: source, card: moved, zone: "hand" } }
+            : { privateCardSelectionIntent: { owner, cards: [moved], zone: "hand" } });
+          assert.ok(source.hand.includes(moved), `${action} 必须真实移动牌`);
+          const hostLog = hostEntries.find((entry) => entry.presentationFact?.type === "card-move");
+          assert.ok(hostLog, action);
+          const guestLog = pair.guest.gameChannel.snapshot().projection.display.logs.find((entry) => entry.id === hostLog.id);
+          for (const [entry, known] of [[hostLog, hostKnows], [guestLog, guestKnows]]) {
+            const text = entry.fragments.map((fragment) => fragment.text).join("");
+            assert.equal(text.includes("「反制」"), known, `${action}: ${text}`);
+            assert.equal(text.includes("1张手牌"), !known);
+          }
+          const safe = JSON.stringify(guestLog);
+          assert.doesNotMatch(safe, /definitionId|cardId|cardNamesByViewer|presentationFact/);
+          assert.ok(!safe.includes(moved.id));
+          const rendered = [];
+          const ui = makeGuestUi(); ui.appendLog = (entry) => rendered.push(entry);
+          const view = new NetworkGameView({ ui, submit() {} });
+          view.update(pair.guest.gameChannel.snapshot());
+          assert.deepEqual(rendered.find((entry) => entry.id === hostLog.id), guestLog);
+          view.dispose();
+          game.cardKnowledge.invalidate(moved.id, source.id);
+          game.cardKnowledge.remember(guest, source, moved);
+          pair.host.gameChannel.publish();
+          assert.deepEqual(pair.guest.gameChannel.snapshot().projection.display.logs.find((entry) => entry.id === hostLog.id), guestLog);
+        } finally { game.dispose(); pair.host.close(); pair.guest.close(); }
+      }
+    }
   });
 
   test("Network：Guest正式手牌技能END只发送Host选项且重复点击不会修改投影", async () => {
@@ -574,7 +932,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     const finished = await game.controlRouter.waitForHumanPlay(actor, game.state.gameId, {
       waitLocal: () => { throw Error("不应在Host等待Guest本地输入"); },
       handleCard: (...args) => game.actionWorkflow.handleHumanCard(...args),
-      handleSkill: (...args) => game.actionWorkflow.handleHumanSkill(...args), setPrompt: () => {}
+      handleSkill: (...args) => game.actionWorkflow.handleHumanSkill(...args)
     });
     assert.equal(finished, true);
     assert.equal(actor.energy, 1);
@@ -953,7 +1311,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     assert.equal(await router.waitForHumanPlay(actor, "game", {
       waitLocal: () => { throw Error("远端不应打开本地出牌"); },
       handleCard: (...args) => applied.push(["card", ...args]),
-      handleSkill: (...args) => applied.push(["skill", ...args]), setPrompt: () => {}
+      handleSkill: (...args) => applied.push(["skill", ...args])
     }), true);
     assert.deepEqual(applied, [["card", "card", "remote"], ["skill", "remote"]]);
   });
@@ -1051,6 +1409,116 @@ export function registerNetworkTests(test, { makeUi, instance }) {
         unsubscribe(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close();
       }
     }
+  });
+
+  test("Network：区域选牌复用正式装备已知基础已知战术未知排序并保持token身份", async () => {
+    const pair = await connectedPair();
+    choosePairAtSeats(pair, 3, 1); pair.host.confirm(); pair.guest.confirm();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const guest = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    const owner = game.controlRouter.humanPlayer();
+    const unknown = instance("recover"), tactic = instance("counter"), basic = instance("block");
+    owner.hand.push(unknown, tactic, basic);
+    owner.equipment = instance("energyDevice");
+    for (const card of [tactic, basic]) game.cardKnowledge.remember(guest, owner, card);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const ui = makeGuestUi();
+    ui.elements.response_panel = { innerHTML: "", classList: { add() {}, remove() {} } };
+    ui.interactionController = new InteractionController(ui);
+    const view = new NetworkGameView({ ui, submit: (...args) => pair.guest.gameChannel.respond(...args) });
+    const unsubscribe = pair.guest.gameChannel.subscribe((snapshot) => view.update(snapshot));
+    try {
+      const pending = game.hiddenCardChoiceWorkflow.choosePlayerZoneCard(guest, owner, "区域选择");
+      const request = pair.guest.gameChannel.snapshot().requests[0];
+      const slots = request.options.map((option) => ({ ...option.card, known: Boolean(option.card), zone: option.zone, token: option.optionId }));
+      const expected = orderZoneSelectionSlots(slots.filter((slot) => slot.zone === "equipment"), slots.filter((slot) => slot.zone === "hand"));
+      assert.deepEqual(expected.map((slot) => slot.name ?? "未知"), [owner.equipment.name, basic.name, tactic.name, "未知"]);
+      const actualTokens = [...ui.elements.response_panel.innerHTML.matchAll(/data-hidden-token="([^"]+)"/g)].map((match) => match[1]);
+      assert.deepEqual(actualTokens, expected.map((slot) => slot.token));
+      assert.ok(!ui.elements.response_panel.innerHTML.includes(unknown.name));
+      ui.interactionController.settle([actualTokens[1]]);
+      assert.deepEqual(await pending, { card: basic, zone: "hand" });
+      assert.deepEqual(owner.hand, [unknown, tactic, basic]);
+    } finally { unsubscribe(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：private reveal按cardIds顺序走正式UIManager且不泄露未知牌", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm();
+    const hostUi = makeUi();
+    const game = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    const owner = game.controlRouter.humanPlayer();
+    const [a, b, unknown, own] = ["assault", "charge", "counter", "recover"].map(instance);
+    owner.hand.push(a, b, unknown); actor.hand.push(own);
+    for (const card of [a, b]) game.cardKnowledge.remember(actor, owner, card);
+    const ui = makeRevealUi(), calls = [];
+    ui.showPrivateReveal = (title, cards) => {
+      calls.push({ title, cards });
+      return UIManager.prototype.showPrivateReveal.call(ui, title, cards);
+    };
+    const view = new NetworkGameView({ ui, submit: (...args) => pair.guest.gameChannel.respond(...args) });
+    const off = pair.guest.gameChannel.subscribe((snapshot) => view.update(snapshot));
+    try {
+      let settled = false;
+      const pending = game.presentationPort.showPrivateReveal({ viewerId: actor.id, title: "仅你可见",
+        cardIds: [b.id, own.id, a.id, unknown.id, "missing"] }).then(() => { settled = true; });
+      assert.deepEqual(calls[0].cards, [b, own, a].map((card) => ({ definitionId: card.definitionId })));
+      assert.ok(ui.privateRevealView.pending);
+      assert.equal(settled, false);
+      assert.equal(hostUi.reveals.length, 0);
+      const request = pair.guest.gameChannel.snapshot().requests[0];
+      assert.doesNotMatch(JSON.stringify(request), new RegExp(`${unknown.id}|counter|${a.id}|${b.id}`));
+      const html = ui.privateRevealView.element.innerHTML;
+      assert.ok(html.indexOf("聚能") < html.indexOf("调息") && html.indexOf("调息") < html.indexOf("突袭"));
+      pair.guest.gameChannel.notify();
+      assert.equal(calls.length, 1);
+      ui.privateRevealView.hide();
+      await pending;
+      assert.equal(settled, true);
+      assert.equal(ui.privateRevealView.element.innerHTML, "");
+      const source = await readFile(new URL("../js/ui/network/NetworkGameView.js", import.meta.url), "utf8");
+      assert.doesNotMatch(source, /privateRevealView/);
+    } finally { off(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：无牌private reveal不阻塞且单机Guest共用定时与取消生命周期", async () => {
+    const originalSetTimeout = globalThis.setTimeout, originalClearTimeout = globalThis.clearTimeout;
+    const timers = new Map();
+    let serial = 0;
+    globalThis.setTimeout = (callback, ms) => { const id = ++serial; timers.set(id, { callback, ms }); return id; };
+    globalThis.clearTimeout = (id) => timers.delete(id);
+    try {
+      for (const game of [null, {}]) {
+        const ui = makeRevealUi(); ui.game = game;
+        await ui.showPrivateReveal("没有可展示的牌", []);
+        assert.equal(ui.privateRevealView.pending, null);
+        assert.equal(ui.privateRevealView.element.hidden, false);
+        const timer = timers.get(ui.privateRevealTimer);
+        assert.equal(timer.ms, 3200);
+        ui.cancelChoiceInteractions({ preserveEmptyPrivateReveal: true });
+        assert.equal(ui.privateRevealView.element.hidden, false);
+        timers.delete(ui.privateRevealTimer); timer.callback();
+        assert.equal(ui.privateRevealView.element.hidden, true);
+        await ui.showPrivateReveal("另一条空牌提示", []);
+        ui.cancelPendingInteractions();
+        assert.equal(timers.size, 0);
+        assert.equal(ui.privateRevealView.element.innerHTML, "");
+      }
+      const ui = makeRevealUi(), answers = [];
+      const view = new NetworkGameView({ ui, submit: (...args) => answers.push(args) });
+      const request = { kind: "private-reveal", requestId: "empty-reveal", label: "无牌", cards: [], min: 1, max: 1,
+        options: [{ optionId: "close" }] };
+      view.request = request;
+      await view.presentDecision(request);
+      assert.equal(answers.length, 1, "无牌仍通过正式UI入口立即完成协议确认");
+      assert.equal(ui.privateRevealView.element.hidden, false);
+      ui.cancelPendingInteractions();
+      assert.equal(timers.size, 0);
+    } finally { globalThis.setTimeout = originalSetTimeout; globalThis.clearTimeout = originalClearTimeout; }
   });
 
   test("Network：远端隐藏令牌在原选择authority重绑且私密揭示不进入本地UI", async () => {

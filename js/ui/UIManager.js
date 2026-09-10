@@ -25,6 +25,7 @@ import { HistoryArchiveView } from "./history/HistoryArchiveView.js";
 import { GameInfoView } from "./GameInfoView.js";
 import { isMatchPersistenceEligible } from "../application/match/MatchMode.js";
 import { orderPlayersForViewer } from "./PlayerPresentationOrder.js";
+import { presentTargetDistance } from "./TargetPresentation.js";
 
 const TEAM_ASSIGNMENT_PRESENTATION = Object.freeze({
   [TEAM_ASSIGNMENT_MODE.TWO]: Object.freeze({
@@ -225,7 +226,7 @@ export class UIManager {
     this.discardState = null;
     this.responseState = null;
     this.playEndState = null;
-    this.privateRevealToken = 0;
+    this.privateRevealTimer = null;
     this.thinkingPlayerId = null;
     this.thinkingMessage = "正在思考";
     this.skillDetailsTrigger = null;
@@ -1214,7 +1215,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   无。
 
   调用函数
-  ActionLegality.getDistance。
+  ActionLegality.getDistance、presentTargetDistance。
 
   边界与不变量
   提示只描述规则查询结果，不自行决定目标合法性。
@@ -1222,10 +1223,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   getDistanceState(source, target) {
     if (!target.alive) return "已阵亡";
     const distance = ActionLegality.getDistance(this.game, source, target);
-    if (target.battleTeam === source.battleTeam) return `距离 ${distance}`;
-    const card = this.targetState?.meta?.card;
-    if (card?.definitionId === "assault") return distance <= source.attackRange ? `距离 ${distance} · 可突袭` : `距离 ${distance} · 超出攻击范围`;
-    return `距离 ${distance}`;
+    return presentTargetDistance(source, target, this.targetState?.meta?.card, distance, source.attackRange);
   }
 
   /*
@@ -1265,8 +1263,6 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
       return { card, selected, disabled };
     });
     UIManager.prototype.renderPresentedHand.call(this, cards, preserveScroll);
-    if (this.discardState) this.elements.hand_hint.textContent = `已选 ${this.discardState.selectedIds.size} / ${this.discardState.count}`;
-    else if (!this.targetState) this.elements.hand_hint.textContent = `${human.hand.length}张手牌`;
   }
 
   /*
@@ -1286,7 +1282,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   仅卡牌展示字段与手牌 DOM。
 
   写入状态
-  正式手牌 DOM 与滚动位置。
+  正式手牌 DOM、共享的手牌数量/弃牌进度提示与滚动位置。
 
   调用函数
   handCardTemplate、restoreHorizontalCardScroll。
@@ -1299,6 +1295,8 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     const previousScrollLeft = preserveScroll ? hand.scrollLeft : 0;
     hand.innerHTML = cards.map(({ card, selected, disabled }) => handCardTemplate(card, { selected, disabled })).join("") || '<div class="empty-hand"><span aria-hidden="true">◇</span><strong>手牌为空</strong><small>下一次摸牌会从牌堆飞入这里</small></div>';
     restoreHorizontalCardScroll(hand, previousScrollLeft);
+    if (this.discardState) this.elements.hand_hint.textContent = `已选 ${this.discardState.selectedIds.size} / ${this.discardState.count}`;
+    else if (!this.targetState) this.elements.hand_hint.textContent = `${cards.length}张手牌`;
   }
 
   /*
@@ -2444,7 +2442,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   展示私密情报并在有牌时等待真人关闭。
 
   调用方
-  GamePresentationAdapter.showPrivateReveal。
+  GamePresentationAdapter.showPrivateReveal、NetworkGameView。
 
   输入
   标题与仅真人可见的牌实体数组。
@@ -2453,22 +2451,26 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   PrivateRevealView 的等待结果。
 
   读取状态
-  privateRevealView 与当前 game.cleanupManager。
+  privateRevealView 与 UI 自有定时器。
 
   写入状态
   私密展示 DOM；无牌提示登记 3.2 秒自动隐藏。
 
   调用函数
-  PrivateRevealView.show/hide、CleanupManager.delay。
+  PrivateRevealView.show/hide、setTimeout、clearTimeout。
 
   边界与不变量
   无牌提示不阻塞 workflow；有牌时必须由关闭或清理收束。
   */
   showPrivateReveal(title, cards = []) {
+    clearTimeout(this.privateRevealTimer);
+    this.privateRevealTimer = null;
+    this.privateRevealView.hide();
     const shown = this.privateRevealView.show(title, cards);
-    if (!cards.length) this.game?.cleanupManager.delay(3200).then((completed) => {
-      if (completed && !this.privateRevealView.pending) this.privateRevealView.hide();
-    });
+    if (!cards.length) this.privateRevealTimer = setTimeout(() => {
+      this.privateRevealTimer = null;
+      this.privateRevealView.hide();
+    }, 3200);
     return shown;
   }
   /*
@@ -3376,7 +3378,6 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   */
   cancelPendingInteractions() {
     UIManager.prototype.cancelChoiceInteractions.call(this);
-    this.privateRevealToken += 1;
     this.thinkingPlayerId = null;
     this.animationController.clear();
     this.judgmentView.hide();
@@ -3398,7 +3399,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   Network 请求切换和 cancelPendingInteractions。
 
   输入
-  无。
+  preserveEmptyPrivateReveal 允许非阻塞空牌提示继续等待自有定时器；默认全部关闭。
 
   输出
   无返回值。
@@ -3415,14 +3416,19 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   边界与不变量
   切换请求不能抹去当前判定、濒死、Duel、thinking 或动画；这些展示只由 Host 清除。
   */
-  cancelChoiceInteractions() {
+  cancelChoiceInteractions({ preserveEmptyPrivateReveal = false } = {}) {
     if (this.targetState) { const resolve = this.targetState.resolve; this.targetState = null; resolve(null); }
     if (this.discardState) { const resolve = this.discardState.resolve; this.discardState = null; resolve([]); }
     if (this.responseState) this.responseState.resolve({ status:"cancelled" });
     if (this.playEndState) { const resolve = this.playEndState.resolve; this.playEndState = null; resolve(false); }
     this.interactionController.cancel();
     this.publicPoolView.cancel();
-    this.privateRevealView.hide();
+    // 无牌揭示不阻塞行动，后续请求可以并行展示；其计时仍由 UIManager 收束。
+    if (!preserveEmptyPrivateReveal || this.privateRevealView.pending) {
+      clearTimeout(this.privateRevealTimer);
+      this.privateRevealTimer = null;
+      this.privateRevealView.hide();
+    }
     this.elements.response_panel.classList.add("is-hidden");
     this.elements.response_panel.innerHTML = "";
   }

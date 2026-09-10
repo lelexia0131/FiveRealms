@@ -19,6 +19,7 @@ application/ports/PresentationPort 与 UIManager。
 */
 import { presentCard } from "./CardPresentationDefinitions.js";
 import { createPresentationPort } from "../../application/ports/PresentationPort.js";
+import { presentPrompt } from "../../ui/PromptPresentation.js";
 
 const RESOLUTION_VFX_BY_EFFECT_ID = Object.freeze({
   assault: "slash",
@@ -38,7 +39,7 @@ const RESOLUTION_VFX_BY_EFFECT_ID = Object.freeze({
 composition root。
 
 输入
-log、getPlayerById、getCardById、ui 与 renderTarget 能力。
+log、getPlayerById、getCardById、getViewerId、ui 与 renderTarget 能力。
 
 输出
 冻结 PresentationPort。
@@ -50,13 +51,13 @@ getPlayerById、getCardById 与静态卡牌展示定义。
 只写 UIManager 展示状态。
 
 调用函数
-createPresentationPort、UIManager 的语义展示方法与 render。
+createPresentationPort、presentPrompt、UIManager 的语义展示方法与 render。
 
 边界与不变量
 Application 传入 data-only DTO；伤害与减伤从同一 descriptor map 选择平级视觉变体；
 本 adapter 只映射 UI 调用，不决定结算是否生效。
 */
-export function createGamePresentationAdapter({ log, getPlayerById, getCardById, ui, renderTarget, presentPrivateReveal = (_descriptor, presentLocal) => presentLocal() }) {
+export function createGamePresentationAdapter({ log, getPlayerById, getCardById, ui, renderTarget, getViewerId = () => null, presentPrivateReveal = (_descriptor, presentLocal) => presentLocal() }) {
   if (typeof log !== "function" || typeof getPlayerById !== "function"
     || typeof getCardById !== "function" || !ui || !renderTarget) {
     throw new TypeError("GamePresentationAdapter 缺少 log/getPlayerById/getCardById/ui/renderTarget capability");
@@ -107,7 +108,7 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
       ui.setCurrentCard?.(displayCard, sourceLabel, targetLabel ?? "", displayTargets ?? null);
     },
     playActionCue: (kind) => ui.playSound?.(kind === "skill" ? "skill" : "playCard"),
-    setPrompt: (message, handHint = "") => ui.setPrompt?.(message, handHint),
+    setPrompt: setViewerPrompt,
     showThinking: ({ playerId, message }) => {
       const player = getPlayerById(playerId);
       if (!player) return;
@@ -133,4 +134,35 @@ export function createGamePresentationAdapter({ log, getPlayerById, getCardById,
     hidePublicCardPool: () => ui.hidePublicPool?.(),
     refresh: () => ui.render(renderTarget)
   });
+
+  /*
+  功能
+  将正式 workflow 提示按本地 viewer 呈现，并保留受控描述供远端投影。
+
+  调用方
+  PresentationPort.setPrompt。
+
+  输入
+  message、handHint 与可选的提示所属 actorId。
+
+  输出
+  UIManager 的展示结果。
+
+  读取状态
+  本地 viewer ID。
+
+  写入状态
+  UI prompt。
+
+  调用函数
+  presentPrompt、UIManager.setPrompt。
+
+  边界与不变量
+  不以 human 身份推断本地所有权；没有 actorId 的 workflow 文案必须是公开提示。
+  */
+  function setViewerPrompt(message, handHint = "", actorId = null) {
+    const descriptor = { message, handHint, actorId };
+    const local = presentPrompt(descriptor, getViewerId() ?? actorId);
+    return ui.setPrompt?.(local.message, local.handHint, descriptor);
+  }
 }

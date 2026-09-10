@@ -18,7 +18,7 @@ NetworkPresentationAdapter 与 UIManager。
 不创建 Application、GameLoop、AI、Worker 或 ActionWorkflow，不运行规则。
 */
 import { presentNetworkGame } from "../../adapters/ui/NetworkPresentationAdapter.js";
-import { presentCard } from "../../adapters/ui/CardPresentationDefinitions.js";
+import { orderZoneSelectionSlots } from "../InteractionController.js";
 
 export class NetworkGameView {
   /*
@@ -54,6 +54,7 @@ export class NetworkGameView {
     this.players = [];
     this.request = null;
     this.revision = null;
+    this.promptRevision = null;
     this.logIds = [];
     this.submitted = false;
     this.disposed = false;
@@ -100,9 +101,14 @@ export class NetworkGameView {
     if (changed) {
       this.request = request;
       this.submitted = false;
-      this.ui.cancelChoiceInteractions();
+      this.ui.cancelChoiceInteractions({ preserveEmptyPrivateReveal: true });
     }
     this.render();
+    const prompt = projection.display?.prompt;
+    if (prompt && prompt.revision !== this.promptRevision) {
+      this.promptRevision = prompt.revision;
+      this.ui.setPrompt(prompt.message, prompt.handHint);
+    }
     if (first) this.ui.setMusicTeam(this.model.human.battleTeam);
     if (projectionRevision == null || projectionRevision !== this.revision) {
       this.revision = projectionRevision;
@@ -148,10 +154,6 @@ export class NetworkGameView {
     this.ui.renderPresentedHand(this.model.hand, preserve);
     this.ui.renderPresentedControls(this.model.controls);
     this.ui.horizontalCardScrollGameId = this.projection.gameId;
-    this.ui.setPrompt(this.request?.label ?? "等待其他玩家行动");
-    this.ui.elements.hand_hint.textContent = this.ui.discardState
-      ? `已选 ${this.ui.discardState.selectedIds.size} / ${this.ui.discardState.count}`
-      : `${this.model.human.handCount}张手牌`;
     if (!this.ui.publicPoolView.pending) {
       if (this.projection.publicCards.length) this.ui.showPublicPool(this.projection.publicCards);
       else this.ui.hidePublicPool();
@@ -225,7 +227,7 @@ export class NetworkGameView {
     let ids = null;
     if (request.kind === "target") {
       const player = await ui.requestTarget(this.players.filter((entry) => allowed.has(entry.id)), request.label,
-        { confirmSelection: true, canDecline: request.canDecline, card: request.card });
+        { confirmSelection: true, canDecline: request.canDecline, card: request.card, targetDisplay: request.targetDisplay });
       ids = player ? [player.id] : null;
     } else if (request.kind === "discard") {
       const cards = await ui.requestDiscard(this.model.human, request.max, request.label);
@@ -245,29 +247,37 @@ export class NetworkGameView {
       const card = await ui.requestPublicCard(this.model.human, request.options.map((option) => option.card));
       ids = card ? [card.id] : null;
     } else if (request.kind === "hiddenCard") {
-      const slots = request.options.map((option) => option.card
+      const displaySlots = request.options.map((option) => option.card
         ? { ...option.card, known: true, token: option.optionId, zone: option.zone }
-        : { token: option.optionId, known: false });
+        : { token: option.optionId, known: false, zone: option.zone });
+      const slots = orderZoneSelectionSlots(
+        displaySlots.filter((slot) => slot.zone === "equipment"),
+        displaySlots.filter((slot) => slot.zone !== "equipment")
+      );
       ids = await ui.interactionController.requestHiddenCards(
         { tokens: request.options.map((option) => ({ token: option.optionId })) },
         request.max, request.label, { exact: request.min === request.max, slots, canDecline: request.canDecline }
       );
     } else if (request.kind === "private-reveal") {
-      await ui.privateRevealView.show(request.label, request.cards ?? []);
+      await ui.showPrivateReveal(request.label, request.cards ?? []);
       ids = [request.options[0].optionId];
     } else if (request.kind === "card-flow") {
+      const players = this.players;
       const firstIds = new Set(request.options.map((option) => option.targetIds[0]));
-      const first = await ui.requestTarget(this.players.filter((player) => firstIds.has(player.id)), request.label,
-        { confirmSelection: true, canDecline: request.canDecline });
-      if (this.request !== request || this.disposed) return;
-      if (first) {
-        const remaining = request.options.filter((option) => option.targetIds[0] === first.id);
-        const secondIds = new Set(remaining.map((option) => option.targetIds[1]));
-        const second = await ui.requestTarget(this.players.filter((player) => secondIds.has(player.id)), `${request.label} · ${first.name} →`,
-          { confirmSelection: true, canDecline: request.canDecline });
-        const selected = second && remaining.find((option) => option.targetIds[1] === second.id);
-        ids = selected ? [selected.optionId] : null;
-      }
+      const selection = await ui.interactionController.requestPresentedCardFlow(
+        players.find((player) => player.id === request.actorId), request.card, [], {
+          isActive: () => this.request === request && !this.disposed,
+          firstTargets: () => players.filter((player) => firstIds.has(player.id)),
+          secondTargets: (first) => players.filter((player) => request.options.some(
+            (option) => option.targetIds[0] === first.id && option.targetIds[1] === player.id
+          )),
+          targetDisplay: (source) => request.flowDisplay[source.id]
+        }
+      );
+      const selected = selection && request.options.find((option) =>
+        option.targetIds[0] === (selection.firstTargetId ?? selection.sourceId)
+        && option.targetIds[1] === (selection.secondTargetId ?? selection.receiverId));
+      ids = selected ? [selected.optionId] : null;
     }
     this.answer(request, ids);
   }
@@ -339,6 +349,7 @@ export class NetworkGameView {
     const ui = this.ui;
     const player = this.players.find((entry) => entry.id === event.playerId);
     if (event.kind === "feedback") ui.queueFeedback(event.effect, event.playerId, event.amount, event.variant);
+    else if (event.kind === "action-cue") ui.playSound(event.cue);
     else if (event.kind === "action") ui.setCurrentCard(event.skillName ?? event.card, event.source, event.targetLabel, event.displayTargets);
     else if (event.kind === "thinking") { ui.setThinking(Boolean(player), player, event.message); this.render(); }
     else if (event.kind === "judgment" && player) ui.showJudgment(player, event.card, { delayedStatusContext: event.delayedStatus });

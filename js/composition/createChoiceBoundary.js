@@ -105,7 +105,7 @@ export function createChoiceBoundary(dependencies, injectedPort = null) {
     getPlayer: (actorId) => state.players.find((player) => player.id === actorId),
     setThinking: (isThinking, player, message) => ui.setThinking(isThinking, player, message),
     delay: async (options) => cleanupDelay(getAiResponseDelay(options)),
-    setPrompt: (message) => ui.setPrompt(message),
+    setPrompt: (message) => ui.setPrompt(message, "", { message, handHint: "" }),
     isSessionValid,
     now
   }));

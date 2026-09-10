@@ -2,7 +2,9 @@ import { projectNetworkCard, projectNetworkResult } from "./NetworkViewerProject
 import { CARD_DEFINITIONS } from "../domain/definitions/cards/CardDefinitions.js";
 import { createHiddenSelectionView } from "../ui/handVisibility.js";
 import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js";
-import { presentOpeningLog } from "../ui/OpeningLogPresentation.js";
+import { presentLogFact } from "../ui/LogPresentation.js";
+import { presentTargetDistance } from "../ui/TargetPresentation.js";
+import { presentPrompt } from "../ui/PromptPresentation.js";
 
 /*
 功能
@@ -31,10 +33,13 @@ session.gameChannel、既有 legality queries。
 */
 export function createNetworkHostBridge({
   session, getState, canPlayCard, getActiveSkill, canUseSkill,
-  getLeverageFirstTargets, getAssaultTargets, getTransferSources, getTransferReceivers, describeDistance
+  getLeverageFirstTargets, getAssaultTargets, getTransferSources, getTransferReceivers, describeDistance, isCardKnownTo
 }) {
   const channel = session.gameChannel;
   const publicLogs = new Map();
+  const publicLogBoundaries = [];
+  let prompt = null;
+  let promptRevision = 0;
 
   /*
 功能
@@ -101,7 +106,7 @@ Host state、actor 手中牌与合法候选。
 无。
 
 调用函数
-finiteDecision、原规则查询、projectNetworkCard、createHiddenSelectionView。
+finiteDecision、原规则查询、projectNetworkCard、createHiddenSelectionView、isCardKnownTo、presentTargetDistance。
 
 边界与不变量
 不传播 request.context/presentation 任意对象；隐藏 token 仅存在当前请求而不进入状态快照。
@@ -121,12 +126,14 @@ finiteDecision、原规则查询、projectNetworkCard、createHiddenSelectionVie
     }
     if (request.kind === "card-flow") return prepareCardFlow(request, actor);
     if (request.kind === "private-reveal") {
-      const cards = state.players.flatMap((player) => player.hand).filter((card) => request.cardIds.includes(card.id));
       const prepared = finiteDecision(request.kind, request.title, [{ label: "关闭", value: true }], { canonical: false });
       // 只允许 Host 既有私密知识已记录的牌面进入揭示，不回传敌方实体身份。
-      prepared.view.cards = cards.filter((card) => actor.hand.includes(card)
-        || Object.values(actor.aiMemory?.knownCardsByPlayer ?? {}).some((known) => known[card.id] === card.definitionId))
-        .map((card) => ({ definitionId: card.definitionId }));
+      prepared.view.cards = [];
+      for (const id of request.cardIds) {
+        const owner = state.players.find((player) => player.hand.some((card) => card.id === id));
+        const card = owner?.hand.find((entry) => entry.id === id);
+        if (card && isCardKnownTo(actor, owner, card)) prepared.view.cards.push({ definitionId: card.definitionId });
+      }
       return prepared;
     }
     const label = request.context?.label || request.context?.prompt || "请选择";
@@ -160,17 +167,15 @@ finiteDecision、原规则查询、projectNetworkCard、createHiddenSelectionVie
     if (request.kind === "target") {
       const card = actor.hand.find((entry) => entry.id === request.context?.cardId);
       prepared.view.card = projectNetworkCard(card);
-      prepared.view.targetDisplay = Object.fromEntries(state.players.filter((target) => target.alive && target.id !== actor.id).map((target) => {
+      prepared.view.targetDisplay = Object.fromEntries(state.players.filter((target) => target.id !== actor.id).map((target) => {
         const info = describeDistance(actor, target);
         const available = candidates.some((candidate) => candidate.id === target.id);
-        const distanceState = card?.definitionId === "assault" && target.battleTeam !== actor.battleTeam
-          ? `距离 ${info.distance} · ${available ? "可突袭" : info.distance > info.range ? "超出攻击范围" : "不可选"}`
-          : `距离 ${info.distance} · ${available ? "可选" : "不可选"}`;
+        const distanceState = presentTargetDistance(actor, target, card, info.distance, info.range);
         return [target.id, {
           distance: info.distance,
           range: info.range,
           seat: info.seat,
-          reachable: info.distance <= info.range,
+          reachable: target.alive && info.distance <= info.range,
           available,
           distanceState
         }];
@@ -210,7 +215,7 @@ Host 中尚在 actor 手牌的牌及公开资源。
 无。
 
 调用函数
-getTransferSources/getTransferReceivers/getLeverageFirstTargets/getAssaultTargets。
+getTransferSources/getTransferReceivers/getLeverageFirstTargets/getAssaultTargets、describeDistance、presentTargetDistance。
 
 边界与不变量
 只枚举原 authority 允许的组合，不结算；客户端返回序号，实际 selection 由 Host 重绑。
@@ -234,9 +239,18 @@ getTransferSources/getTransferReceivers/getLeverageFirstTargets/getAssaultTarget
         }
       }
     } else return { immediate: {} };
-    return candidates.length
-      ? finiteDecision("card-flow", `${card.name}：选择并确认目标组合`, candidates, { canonical: false, canDecline: true })
-      : { immediate: null };
+    if (!candidates.length) return { immediate: null };
+    const prepared = finiteDecision("card-flow", `${card.name}：选择并确认目标组合`, candidates, { canonical: false, canDecline: true });
+    prepared.view.card = projectNetworkCard(card);
+    const sources = card.definitionId === "leverage" ? [actor, ...getLeverageFirstTargets(actor)] : [actor];
+    prepared.view.flowDisplay = Object.fromEntries(sources.map((source) => [source.id,
+      Object.fromEntries(getState().players.filter((target) => target.id !== source.id).map((target) => {
+        const info = describeDistance(source, target);
+        return [target.id, { ...info, reachable: target.alive && info.distance <= info.range,
+          distanceState: presentTargetDistance(source, target, source === actor ? card : CARD_DEFINITIONS.assault, info.distance, info.range) }];
+      }))
+    ]));
+    return prepared;
   }
 
   /*
@@ -265,6 +279,7 @@ projectNetworkResult、projectNetworkCard。
 不转发原始日志、提示、私密揭示或任意参数对象，防止 Host 私有知识侧漏。
 */
   function projectPresentation(method, args) {
+    if (method === "playSound" && ["playCard", "skill"].includes(args[0])) return { kind: "action-cue", cue: args[0] };
     if (["hideJudgment", "hideDying", "hideDuel", "resetCurrentCard"].includes(method)) return { kind: "clear", view: method };
     if (["playRadarSuccess", "playLightningHit"].includes(method)) return { kind: "vfx", view: method, playerId: args[0] };
     if (method === "showDuel") return { kind: "duel", playerId: args[0]?.id, opponentId: args[1]?.id };
@@ -297,16 +312,16 @@ MatchApplication UI session 装配。
 原 UI 与 Host state。
 
 写入状态
-原 UI 行为和投影消息。
+原 UI 行为、viewer 提示、有效日志缓存及其追加边界和投影消息。
 
 调用函数
-Reflect.get、projectPresentation、channel.publish。
+Reflect.get、presentPrompt、projectPresentation、channel.publish。
 
 边界与不变量
-不包装 input 等待，不复制私密 UI；所有更新仍由 Host workflow 驱动。
+不包装 input 等待；只有正式 prompt 描述和结算音效可投影，私密 UI 不广播；日志按正式尾部边界回滚。
 */
   function wrapUi(ui) {
-    const observed = new Set(["render", "appendLog", "restoreLogBoundary", "queueFeedback", "setCurrentCard", "resetCurrentCard", "showJudgment", "hideJudgment", "setThinking", "showDying", "hideDying", "showDuel", "hideDuel", "playRadarSuccess", "playLightningHit", "showMatchPerformance"]);
+    const observed = new Set(["render", "setPrompt", "playSound", "appendLog", "restoreLogBoundary", "queueFeedback", "setCurrentCard", "resetCurrentCard", "showJudgment", "hideJudgment", "setThinking", "showDying", "hideDying", "showDuel", "hideDuel", "playRadarSuccess", "playLightningHit", "showMatchPerformance"]);
     return new Proxy(ui, {
 /*
 功能
@@ -337,19 +352,60 @@ Reflect.get、channel.publish。
         const value = Reflect.get(target, property);
         if (typeof value !== "function") return value;
         if (!observed.has(property)) return value.bind(target);
-        return (...args) => {
-          const result = value.apply(target, args);
-          if (property === "appendLog") publicLogs.set(args[0].id, projectPublicLog(args[0]));
-          channel.publish(projectPresentation(property, args));
-          return result;
-        };
+        return (...args) => publishUiCall(target, property, value, args);
       }
     });
   }
 
   /*
   功能
-  从 Host 查询公开距离并脱敏正式日志的本地可见牌名。
+  观察正式 UI 展示调用并同步 viewer 提示、结算 cue 与有效日志边界。
+
+  调用方
+  wrapUi 的方法代理。
+
+  输入
+  UI receiver、方法名、原方法与实参。
+
+  输出
+  原方法结果。
+
+  读取状态
+  正式提示描述、Guest viewer 与日志追加数量。
+
+  写入状态
+  原 UI、prompt revision、publicLogs 与其尾部边界。
+
+  调用函数
+  原 UI 方法、presentPrompt、projectPublicLog、projectPresentation、channel.publish。
+
+  边界与不变量
+  不广播本地私密提示或点击音效；rollback 只删除越界尾项，不重扫或重建历史日志。
+  */
+  function publishUiCall(target, property, value, args) {
+    const result = value.apply(target, args);
+    if (property === "setPrompt") {
+      // 只有受控 presentation 描述可投影；本地选牌和私密 UI 文案不广播。
+      if (!args[2]) return result;
+      const viewerId = session.snapshot().matchSetup?.players.find((player) => player.role === "GUEST")?.playerId;
+      prompt = presentPrompt(args[2], viewerId);
+      promptRevision += 1;
+    }
+    if (property === "playSound" && !["playCard", "skill"].includes(args[0])) return result;
+    if (property === "appendLog") {
+      publicLogs.set(args[0].id, projectPublicLog(args[0]));
+      publicLogBoundaries.push({ id: args[0].id, count: args[1] });
+    }
+    if (property === "restoreLogBoundary") {
+      while (publicLogBoundaries.at(-1)?.count > args[0]) publicLogs.delete(publicLogBoundaries.pop().id);
+    }
+    channel.publish(projectPresentation(property, args));
+    return result;
+  }
+
+  /*
+  功能
+  从 Host 查询公开距离并提供已按 Guest 知识渲染的正式日志。
 
   调用方
   NetworkGameChannel.publish。
@@ -367,27 +423,28 @@ Reflect.get、channel.publish。
   无。
 
   调用函数
-  describeDistance。
+  describeDistance、presentTargetDistance。
 
   边界与不变量
-  距离、射程、可达性和说明统一由 Host 生成；窃取、掠夺、转移日志含 Host 本人牌名时必须在广播前去除；不发送日志原始附加字段。
+  距离和日志均由 Host 展示边界生成；不发送日志内部事实或其他 viewer 知识。
   */
   function getDisplay() {
     const state = getState();
     const viewerId = session.snapshot().matchSetup?.players.find((player) => player.role === "GUEST")?.playerId;
     const viewer = state.players.find((player) => player.id === viewerId);
     return {
-      distances: Object.fromEntries(state.players.filter((target) => viewer?.alive && target.alive && target.id !== viewer.id)
+      prompt: prompt && { ...prompt, revision: promptRevision },
+      distances: Object.fromEntries(state.players.filter((target) => viewer?.alive && target.id !== viewer.id)
         .map((target) => {
           const info = describeDistance(viewer, target);
           return [target.id, {
             ...info,
-            reachable: info.distance <= info.range,
-            distanceState: `距离 ${info.distance} · ${info.distance <= info.range ? "射程内" : "射程外"}`
+            reachable: target.alive && info.distance <= info.range,
+            distanceState: presentTargetDistance(viewer, target, null, info.distance, info.range)
           }];
         })),
-      // 只广播经正式日志展示边界确认的条目；state.logs 中其它数据不自动获得公开权限。
-      logs: (state.logs ?? []).filter((entry) => publicLogs.has(entry.id)).map((entry) => publicLogs.get(entry.id))
+      // 缓存随正式追加/回滚边界同步；只发送有效投影，未经过展示入口的日志没有公开权限。
+      logs: [...publicLogs.values()]
     };
   }
 
@@ -405,33 +462,27 @@ Reflect.get、channel.publish。
   白名单日志 DTO。
 
   读取状态
-  公开日志 fragments、结构化开局事实与 Session 的 Guest viewer。
+  公开日志 fragments、结构化日志事实与 Session 的 Guest viewer。
 
   写入状态
   无。
 
   调用函数
-  presentOpeningLog、String.replace。
+  presentLogFact。
 
   边界与不变量
-  三类私有牌转移日志统一隐去牌名，不借当前牌区猜测历史可见性；其它字段不复制。
+  结构化事实按 Guest 的事件时知识渲染；纯字符串必须是调用方确认公开的文本，禁止从 Host 文案推断或替换私密牌名。
   */
   function projectPublicLog(entry) {
-    if (entry.presentationFact?.type === "opening") {
+    if (entry.presentationFact) {
       const viewerId = session.snapshot().matchSetup.players.find((player) => player.role === "GUEST").playerId;
-      return { id: entry.id, kind: entry.kind, fragments: presentOpeningLog(entry.presentationFact, viewerId) };
+      return { id: entry.id, kind: entry.kind, fragments: presentLogFact(entry.presentationFact, viewerId) };
     }
-    const privateTransfer = /转移给了|处掠夺了|并收入手牌/.test(entry.message ?? "");
     return {
       id: entry.id, kind: entry.kind,
-      fragments: (entry.fragments ?? [{ type: "text", text: entry.message ?? "" }]).map((fragment) => {
-        if (fragment.type === "player") return {
-          type: "player", text: fragment.text, playerId: fragment.playerId, battleTeam: fragment.battleTeam
-        };
-        // 窃取是已公开的技能名；牌名在所有 viewer 的日志中保守隐藏。
-        const text = privateTransfer ? fragment.text.replace(/「([^」]+)」/g, (match, name) => name === "窃取" ? match : "一张牌") : fragment.text;
-        return { type: "text", text };
-      })
+      fragments: entry.fragments.map((fragment) => fragment.type === "player"
+        ? { type: "player", text: fragment.text, playerId: fragment.playerId, battleTeam: fragment.battleTeam }
+        : { type: "text", text: fragment.text })
     };
   }
 

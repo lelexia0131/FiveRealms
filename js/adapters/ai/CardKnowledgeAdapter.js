@@ -1,6 +1,6 @@
 /*
 模块职责
-维护真实对局中按卡牌实体 ID 记录的合法私密知识，并提供面向真人的脱敏牌名。
+维护真实对局中按卡牌实体 ID 记录的合法私密知识，并提供指定 viewer 的知识查询。
 
 上游
 资源移动、私密查看与公开牌池 workflows。
@@ -113,7 +113,7 @@ export function createCardKnowledgeAdapter(getPlayers) {
   判断指定观察者是否仍合法知道某实体牌定义。
 
   调用方
-  labelForHuman、AI 知识投影与隐藏手牌展示。
+  ResourceWorkflow、MatchLogAdapter 与 ResponseWorkflow。
 
   输入
   viewer、owner 与待判断 Card 实体。
@@ -138,41 +138,5 @@ export function createCardKnowledgeAdapter(getPlayers) {
     if (viewer.id === owner.id && owner.hand.includes(card)) return true;
     return viewer.aiMemory?.knownCardsByPlayer?.[owner.id]?.[card.id] === card.definitionId;
   };
-  return Object.freeze({
-    invalidate,
-    remember,
-    isKnownTo,
-    /*
-    功能
-    为公开日志生成不会泄露真人未知牌的卡牌标签。
-
-    调用方
-    Application 日志 workflow。
-
-    输入
-    卡牌 owner 与 Card 实体。
-
-    输出
-    已知时返回带牌名标签，未知时返回“1张手牌”。
-
-    读取状态
-    当前玩家列表及本地真人的合法 card knowledge。
-
-    写入状态
-    无。
-
-    调用函数
-    getPlayers、isKnownTo。
-
-    边界与不变量
-    不得用 canonical 第零席或另一名真人代替本地 viewer，也不得为了日志标签读取或揭示本地真人未知的真实 card.name。
-    */
-    labelForHuman(owner, card) {
-      const players = getPlayers();
-      const human = players.find((player) => player.controlType === "LOCAL_HUMAN")
-        ?? players.find((player) => player.controllerType === "human")
-        ?? players[0];
-      return isKnownTo(human, owner, card) ? `「${card.name}」` : "1张手牌";
-    }
-  });
+  return Object.freeze({ invalidate, remember, isKnownTo });
 }

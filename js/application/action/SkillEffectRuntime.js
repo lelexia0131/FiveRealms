@@ -25,7 +25,7 @@ import { decideSkillEffect } from "../../domain/rules/skill/SkillRules.js";
 
 const REQUIRED_DEPENDENCIES = [
   "getState", "isSessionValid", "presentation", "heal", "damage", "drawCards",
-  "moveEquipmentToHand", "moveCardBetweenHands", "cardLabelForHuman",
+  "moveEquipmentToHand", "moveCardBetweenHands",
   "getEnemies", "random", "emitEvent"
 ];
 
@@ -251,7 +251,8 @@ paySkillEnergy、randomChoice 与 zone/presentation collaborator。
       if (!runtime.isSessionValid(gameId)) return;
       if (stolen) {
         context.cardSteals.push(Object.freeze({ target, actualAmount: 1 }));
-        runtime.presentation.log(`${source.name}发动「窃取」，从${target.name}处获得${runtime.cardLabelForHuman(source, chosen.card)}并收入手牌。`, "important");
+        runtime.presentation.log({ type: "card-move", action: "steal", actorId: source.id,
+          fromId: target.id, receiverId: source.id, cardId: chosen.card.id }, "important");
       }
     },
 /*

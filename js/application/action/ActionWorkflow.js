@@ -604,7 +604,7 @@ export function createActionWorkflow(dependencies) {
         flushPendingHumanPlayEnd();
         if (completed && !previousActionLocked && !state.isGameOver && source.alive && source.controllerType === "human"
           && getCurrentActor(state)?.id === source.id && state.phase === "play") {
-          runtime.presentation.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌");
+          runtime.presentation.setPrompt("继续出牌，或结束本次出牌阶段。", "选择一张可用手牌", source.id);
         }
         runtime.presentation.refresh();
       } catch (error) {
@@ -703,7 +703,7 @@ export function createActionWorkflow(dependencies) {
         }
         flushPendingHumanPlayEnd();
         if (completed && !state.isGameOver && source.controllerType === "human" && state.phase === "play") {
-          runtime.presentation.setPrompt("技能结算完成，继续出牌或结束阶段。", "选择一张可用手牌");
+          runtime.presentation.setPrompt("技能结算完成，继续出牌或结束阶段。", "选择一张可用手牌", source.id);
         }
         runtime.presentation.refresh();
       } catch (error) {
@@ -798,7 +798,7 @@ export function createActionWorkflow(dependencies) {
     if (!card || getCurrentActor(state)?.id !== human.id || state.phase !== "play"
       || actionRuntime.actionLocked || actionRuntime.interactionLocked) return false;
     const legality = runtime.canPlayCard(human, card);
-    if (!legality.ok) { runtime.presentation.setPrompt(legality.reason); return false; }
+    if (!legality.ok) { runtime.presentation.setPrompt(legality.reason, "", human.id); return false; }
     actionRuntime.interactionLocked = true;
     runtime.presentation.refresh();
     let propagatingRollbackError = null;

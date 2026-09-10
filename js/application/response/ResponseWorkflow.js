@@ -40,40 +40,41 @@ import { RESPONSE_STATUS, createResponseWorkflowResult, isCancelledResponse } fr
 ResponseWorkflow 的格挡、反制、调息救援与突袭响应入口。
 
 输入
-当前 MatchState、响应者、所需牌定义与当前窗口要求的响应牌数量。
+Host runtime、响应者、所需牌定义与当前窗口要求的响应牌数量。
 
 输出
 已知匹配牌加全部未知牌仍不足时返回 true，否则返回 false。
 
 读取状态
-响应者当前手牌数量与实体 ID，以及本地真人 observer 的 knownCardsByPlayer 合法知识。
+响应者手牌数量、各真人 viewer 的控制身份与 knowledge authority。
 
 写入状态
 无。
 
 调用函数
-无。
+runtime.isCardKnownTo。
 
 边界与不变量
-只能依据本地 observer 已合法获得的公开/已知信息；不得把另一名真人或 canonical 第零席当作 viewer，也不得读取仍隐藏牌的真实 definitionId。
+单人只使用原本地 observer；存在远端真人时必须对所有真人分别证明不可能，包含阵亡观战者。
+只有 knowledge authority 确认可见才读取定义；任一 viewer 仍有未知可能性就保留共享 timing boundary。
 false 不代表实际可响应；只要未知牌仍可能补足要求，就必须继续原有 timing boundary。
 */
-function isCardResponseImpossibleFromPublicInfo(state, responder, definitionId, requiredCount) {
+function isCardResponseImpossibleFromPublicInfo(runtime, responder, definitionId, requiredCount) {
+  const state = runtime.getState();
   const observer = state.players.find((player) => player.controlType === "LOCAL_HUMAN")
     ?? state.players.find((player) => player.controllerType === "human")
     ?? null;
-  const knownCards = observer?.aiMemory?.knownCardsByPlayer?.[responder.id] ?? {};
-  let knownCurrentCards = 0;
-  let knownMatchingCards = 0;
-  for (const card of responder.hand) {
-    const knownDefinitionId = knownCards[card.id];
-    if (!knownDefinitionId) continue;
-    knownCurrentCards += 1;
-    if (knownDefinitionId === definitionId) knownMatchingCards += 1;
+  const observers = state.players.some((player) => player.controlType === "REMOTE_HUMAN")
+    ? state.players.filter((player) => ["LOCAL_HUMAN", "REMOTE_HUMAN"].includes(player.controlType))
+    : [observer];
+  for (const viewer of observers) {
+    let maxPossibleResponse = 0;
+    for (const card of responder.hand) {
+      if (!viewer || !runtime.isCardKnownTo(viewer, responder, card) || card.definitionId === definitionId) maxPossibleResponse += 1;
+    }
+    if (maxPossibleResponse >= Math.max(0, Number(requiredCount) || 0)) return false;
   }
-  const unknownCount = responder.hand.length - knownCurrentCards;
-  const maxPossibleResponse = knownMatchingCards + unknownCount;
-  return maxPossibleResponse < Math.max(0, Number(requiredCount) || 0);
+  return true;
 }
 
 /*
@@ -263,7 +264,7 @@ export function createResponseWorkflow(dependencies) {
     const definitionId = getResponseCardDefinitionId(type);
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { cards:[] });
     if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
-    if (isCardResponseImpossibleFromPublicInfo(runtime.getState(), responder, definitionId, requiredCount)) {
+    if (isCardResponseImpossibleFromPublicInfo(runtime, responder, definitionId, requiredCount)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { cards:[] });
     }
     const availableCards = responder.hand.filter((card) => card.definitionId === definitionId);
@@ -708,7 +709,7 @@ export function createResponseWorkflow(dependencies) {
     if (!isDyingRescueEligible(rescuer, target) || runtime.getState().isGameOver) {
       return responseResult(runtime.getState().isDisposed ? RESPONSE_STATUS.CANCELLED : RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
-    if (isCardResponseImpossibleFromPublicInfo(runtime.getState(), rescuer, "recover", 1)) {
+    if (isCardResponseImpossibleFromPublicInfo(runtime, rescuer, "recover", 1)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
     const availableCards = rescuer.hand.filter((entry) => entry.definitionId === "recover");
@@ -792,7 +793,7 @@ export function createResponseWorkflow(dependencies) {
     const gameId = runtime.getState().gameId;
     if (!runtime.isSessionValid(gameId)) return responseResult(RESPONSE_STATUS.CANCELLED, { card:null });
     if (!isResponderEligible(responder) || runtime.getState().isGameOver) return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
-    if (isCardResponseImpossibleFromPublicInfo(runtime.getState(), responder, "assault", 1)) {
+    if (isCardResponseImpossibleFromPublicInfo(runtime, responder, "assault", 1)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
     const availableCards = responder.hand.filter((entry) => entry.definitionId === "assault");
@@ -872,7 +873,7 @@ export function createResponseWorkflow(dependencies) {
     if (!responder?.alive || !target?.alive || runtime.getState().isGameOver) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
-    if (isCardResponseImpossibleFromPublicInfo(runtime.getState(), responder, "assault", 1)) {
+    if (isCardResponseImpossibleFromPublicInfo(runtime, responder, "assault", 1)) {
       return responseResult(RESPONSE_STATUS.UNAVAILABLE, { card:null });
     }
     const availableCards = runtime.getUsableAssaultCards(responder, target);

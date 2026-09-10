@@ -29,6 +29,7 @@ import { MATCH_PERFORMANCE_DIMENSIONS } from "../ui/results/MatchPerformancePoli
 export function projectNetworkDisplay(display) {
   if (!display) return null;
   return {
+    prompt: display.prompt ? { message: display.prompt.message, handHint: display.prompt.handHint, revision: display.prompt.revision } : null,
     distances: Object.fromEntries(Object.entries(display.distances ?? {}).map(([target, value]) => [
       target, {
         distance: value.distance, range: value.range, seat: value.seat,
@@ -208,6 +209,7 @@ projectNetworkCard、projectNetworkResult。
 export function projectNetworkPresentation(presentation) {
   if (!presentation) return null;
   const p = presentation;
+  if (p.kind === "action-cue" && ["playCard", "skill"].includes(p.cue)) return { kind: p.kind, cue: p.cue };
   if (p.kind === "duel") return { kind: p.kind, playerId: p.playerId, opponentId: p.opponentId };
   if (p.kind === "clear" && ["hideJudgment", "hideDying", "hideDuel", "resetCurrentCard"].includes(p.view)) return { kind: p.kind, view: p.view };
   if (p.kind === "vfx" && ["playRadarSuccess", "playLightningHit"].includes(p.view)) return { kind: p.kind, view: p.view, playerId: p.playerId };
