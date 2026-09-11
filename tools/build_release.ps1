@@ -4,11 +4,18 @@ $ErrorActionPreference = "Stop"
 # The script lives under tools; the project root is its parent directory.
 $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 
-$PackageMetadata = Get-Content -LiteralPath (Join-Path $ProjectRoot "package.json") -Raw | ConvertFrom-Json
-$ReleaseRoot = Join-Path -Path $ProjectRoot -ChildPath ("FiveRealms" + $PackageMetadata.version)
+$PackageMetadata = Get-Content `
+  -LiteralPath (Join-Path $ProjectRoot "package.json") `
+  -Raw | ConvertFrom-Json
 
-if ([IO.Path]::GetFullPath($ReleaseRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) -eq
-  $ProjectRoot.TrimEnd([IO.Path]::DirectorySeparatorChar)) {
+$ReleaseRoot = Join-Path `
+  -Path $ProjectRoot `
+  -ChildPath ("FiveRealms" + $PackageMetadata.version)
+
+if (
+  [IO.Path]::GetFullPath($ReleaseRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) -eq
+  $ProjectRoot.TrimEnd([IO.Path]::DirectorySeparatorChar)
+) {
   throw "Release directory must not be the project root."
 }
 
@@ -18,20 +25,24 @@ if (Test-Path -LiteralPath $ReleaseRoot) {
 
 New-Item -ItemType Directory -Path $ReleaseRoot -Force | Out-Null
 
-# Copy the complete browser runtime.
-Copy-Item -LiteralPath (Join-Path $ProjectRoot "index.html") `
-  -Destination $ReleaseRoot -Force
+# Copy the complete browser and Electron runtime.
+Copy-Item `
+  -LiteralPath (Join-Path $ProjectRoot "index.html") `
+  -Destination $ReleaseRoot `
+  -Force
 
-foreach ($directory in @("css", "js", "assets")) {
+foreach ($directory in @("css", "js", "assets", "electron")) {
   $source = Join-Path $ProjectRoot $directory
 
   if (-not (Test-Path -LiteralPath $source -PathType Container)) {
     throw "Runtime directory not found: $directory"
   }
 
-  Copy-Item -LiteralPath $source `
+  Copy-Item `
+    -LiteralPath $source `
     -Destination (Join-Path $ReleaseRoot $directory) `
-    -Recurse -Force
+    -Recurse `
+    -Force
 }
 
 # Always start a release with a fresh history archive.
@@ -89,4 +100,4 @@ Set-Content `
   -Encoding UTF8
 
 Write-Output "Release directory: $ReleaseRoot"
-Write-Output "Complete runtime copied successfully."
+Write-Output "Complete browser and Electron runtime copied successfully."
