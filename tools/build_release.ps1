@@ -38,6 +38,7 @@ foreach ($directory in @("css", "js", "assets")) {
 $emptyHistoryJson = @'
 {
   "version": 1,
+  "profile": {},
   "summary": {
     "totalMatches": 0,
     "wins": 0,
