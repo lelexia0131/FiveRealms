@@ -880,4 +880,96 @@ export function registerHistoryStatsTests(test) {
     assert.equal(context.usernamePending, true);
   });
 
+  test("UI·历史档案：首次启动用户名提交恢复 saveUsername、setDisplayName 与 showStart 链路", async () => {
+    const mainSource = await readFile(new URL("../js/main.js", import.meta.url), "utf8");
+    const extractFunctionSource = (name) => {
+      const match = mainSource.match(
+        new RegExp(`(?:async\\s+)?function\\s+${name}\\([^)]*\\)\\s*\\{[\\s\\S]*?\\n\\}`)
+      );
+      assert.ok(match, `main.js 缺少 ${name}`);
+      return match[0];
+    };
+    const makeHarness = (manager) => {
+      const uiEvents = [];
+      const displayNames = [];
+      const ui = {
+        setUsernamePending(value) { uiEvents.push(["pending", value]); },
+        setUsernameError(message) { uiEvents.push(["error", message]); },
+        showUsernameSetup() { uiEvents.push(["showSetup"]); },
+        showStart() { uiEvents.push(["showStart"]); }
+      };
+      const networkFlow = { session: { setDisplayName(value) { displayNames.push(value); } } };
+      const debug = { log() {} };
+      const factory = new Function(
+        "networkFlow", "ui", "historyStatsManager", "Debug",
+        `${extractFunctionSource("enterMain")}\n${extractFunctionSource("submitUsername")}\n${extractFunctionSource("bootstrap")}\nreturn { bootstrap, submitUsername };`
+      );
+      const { bootstrap, submitUsername } = factory(networkFlow, ui, manager, debug);
+      return { bootstrap, submitUsername, uiEvents, displayNames };
+    };
+    const legacy = {
+      version: 1,
+      summary: {
+        totalMatches: 1, wins: 1, losses: 0, mvpCount: 0,
+        highestScore: 100, highestRounds: 3, totalScore: 100, totalRounds: 3,
+        currentWinStreak: 1, maxWinStreak: 1
+      },
+      characters: {}, teams: {}, achievements: {},
+      records: [{ timestamp: "2026-09-01T00:00:00.000Z", characterId: "blade-walker", characterName: "刃行者", teamId: "dawn", teammateCharacterIds: [], won: true, score: 100, rounds: 3, isMvp: false }]
+    };
+
+    const fixture = await createHistoryFixture();
+    try {
+      await writeFile(fixture.filePath, JSON.stringify(legacy), "utf8");
+      const manager = new HistoryStatsManager({ storage: fixture.storage });
+      let saveCalls = 0;
+      const originalSaveUsername = manager.saveUsername.bind(manager);
+      manager.saveUsername = async (value) => {
+        saveCalls += 1;
+        return originalSaveUsername(value);
+      };
+      const harness = makeHarness(manager);
+
+      await harness.bootstrap();
+      assert.deepEqual(harness.uiEvents, [["showSetup"]]);
+
+      await harness.submitUsername("lelexia");
+      assert.equal(saveCalls, 1, "submitUsername 不得在 usernamePending 之外提前 return");
+      assert.deepEqual(harness.displayNames, ["lelexia"]);
+      assert.equal(harness.uiEvents.some(([name]) => name === "showStart"), true);
+      assert.equal(harness.uiEvents.at(-1)[0], "showStart");
+      assert.equal(harness.uiEvents.some(([name]) => name === "error"), false);
+      assert.equal(manager.hasUsername(), true);
+      const persisted = JSON.parse(await readFile(fixture.filePath, "utf8"));
+      assert.equal(persisted.profile.username, "lelexia");
+      assert.equal(persisted.summary.totalMatches, 1);
+      assert.equal(persisted.records.length, 1);
+    } finally {
+      await fixture.cleanup();
+    }
+
+    const existing = JSON.stringify({
+      version: 1,
+      summary: {
+        totalMatches: 1, wins: 1, losses: 0, mvpCount: 0,
+        highestScore: 100, highestRounds: 3, totalScore: 100, totalRounds: 3,
+        currentWinStreak: 1, maxWinStreak: 1
+      },
+      characters: {}, teams: {}, achievements: {}, records: []
+    });
+    const failedManager = new HistoryStatsManager({ storage: createUnsupportedWriteStorage(existing) });
+    const failedHarness = makeHarness(failedManager);
+
+    await failedHarness.bootstrap();
+    assert.deepEqual(failedHarness.uiEvents, [["showSetup"]]);
+
+    await failedHarness.submitUsername("lelexia");
+    assert.deepEqual(failedHarness.displayNames, [], "保存失败不得设置 displayName");
+    assert.equal(failedHarness.uiEvents.some(([name]) => name === "showStart"), false, "保存失败不得进入主界面");
+    assert.equal(failedHarness.uiEvents.some(([name, value]) => name === "error" && /HTTP 501/.test(value)), true);
+    assert.equal(failedHarness.uiEvents.at(-1)[0], "pending");
+    assert.equal(failedHarness.uiEvents.at(-1)[1], false);
+    assert.equal(failedManager.hasUsername(), false);
+  });
+
 }

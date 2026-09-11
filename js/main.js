@@ -392,7 +392,6 @@ HistoryStatsManager.saveUsername、UIManager.setUsernamePending/setUsernameError
 必须 await storage 成功；保存失败、内存快照不变且不得提前创建 NetworkFlow 或进入首页。
 */
 async function submitUsername(rawUsername) {
-  if (networkFlow) return;
   ui.setUsernamePending(true);
   try {
     const username = await historyStatsManager.saveUsername(rawUsername);
