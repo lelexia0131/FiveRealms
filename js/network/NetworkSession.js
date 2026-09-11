@@ -588,7 +588,6 @@ connectionId 必须由 capability 注入而非 payload；无元数据的既有 T
         ? Object.values(d.participants).find((entry) => entry.connectionId === connectionId && entry.connected && !entry.kicked) : null;
       if (d.role === R.HOST && (!participant || (event.participantId != null && event.participantId !== participant.participantId))) return false;
       if (d.role === R.GUEST && d.participantId && event.recipientParticipantId && event.recipientParticipantId !== d.participantId) return false;
-      this.#peerSequence.set(connectionId, event.sequence);
       if (event.type === E.DISCONNECTED && d.role === R.GUEST) {
         this.disconnect(event.payload?.message ?? "已离开房间");
         return true;
@@ -601,9 +600,13 @@ connectionId 必须由 capability 注入而非 payload；无元数据的既有 T
         }
         return true;
       }
-      if ([E.GAME_SNAPSHOT, E.DECISION_REQUEST, E.DECISION_RESPONSE, E.DECISION_CANCELLED, E.PLAYER_INTENT].includes(event.type)) {
-        return this.gameChannel.receive({ ...event, participantId: participant?.participantId ?? event.participantId });
+      if ([E.GAME_SNAPSHOT, E.DECISION_REQUEST, E.DECISION_RECEIVED, E.DECISION_RESPONSE, E.DECISION_ACCEPTED, E.DECISION_CANCELLED, E.RESYNC_REQUEST, E.PLAYER_INTENT].includes(event.type)) {
+        const accepted = this.gameChannel.receive({ ...event, participantId: participant?.participantId ?? event.participantId });
+        // 同步 callback 可先完成更高序号的恢复消息；外层返回不得倒退已提交水位。
+        if (accepted) this.#peerSequence.set(connectionId, Math.max(event.sequence, this.#peerSequence.get(connectionId) ?? 0));
+        return accepted;
       }
+      this.#peerSequence.set(connectionId, event.sequence);
       if (d.role === R.GUEST) return this.acceptSnapshot(event);
       if (event.type === E.SELECTION_CHANGED) this.selectFor(participant.participantId, event.payload);
       else if (event.type === E.SELECTION_CONFIRMED) this.confirmFor(participant.participantId, event.payload);

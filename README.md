@@ -350,10 +350,16 @@ FiveRealms/
 │   ├── ui/                       # 模板、交互、牌池、判定、私密层和动画
 │   ├── audio/                    # 浏览器音频实现
 │   └── utils/                    # 可取消延迟、ID 与调试
+├── electron/
+│   ├── main.js                   # Electron 主进程与 history runtime
+│   ├── preload.js                # 安全 renderer capability
+│   └── network/                  # LAN TCP transport 与 IPC bridge
 └── tests/
     ├── run.mjs                   # 快速回归测试
     └── balance.mjs               # 项目所有者专属平衡模拟入口；参数以 test.md 为准
 ```
+
+桌面入口为 `electron/main.js`；renderer 继续使用 ESM，Electron 子目录通过本地 `package.json` 保持 CommonJS 边界。`npm test` 运行 `tests/run.mjs`，`npm start`/`npm run dev` 启动桌面运行时，`npm run dist` 使用 electron-builder 打包。
 
 ## 常用配置修改
 

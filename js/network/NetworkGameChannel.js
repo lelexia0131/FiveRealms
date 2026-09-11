@@ -7,6 +7,7 @@ export class NetworkGameChannel {
   #send;
   #host = null;
   #pending = new Map();
+  #accepted = new Map();
   #requests = new Map();
   #listeners = new Set();
   #projection = null;
@@ -81,7 +82,7 @@ Guest 不能取得真实状态能力；Host 状态本体仍由 MatchApplication 
 Host presentation bridge、请求决策前。
 
 输入
-已白名单处理的 presentation，缺省为空。
+已白名单处理的 presentation，缺省为空；可选 recipientParticipantId 只恢复指定成员。
 
 输出
 无。
@@ -98,7 +99,7 @@ projectNetworkGame、send。
 边界与不变量
   只有已完成选角的 Host 能发布；controller 标签只按 setup.playerId 映射，不允许按数组位置猜；不允许传入或发送 raw MatchState。
 */
-  publish(presentation = null) {
+  publish(presentation = null, recipientParticipantId = null) {
     const session = this.#getSession();
     if (!this.#host || session.role !== R.HOST || ![S.LOADING_GAME, S.IN_GAME].includes(session.state)) return;
     const state = this.#host.getState();
@@ -110,9 +111,23 @@ projectNetworkGame、send。
       if (seat.controller.type !== R.GUEST) continue;
       const participant = session.participants[seat.controller.participantId];
       if (!participant?.connected || participant.kicked) continue;
+      if (recipientParticipantId && participant.participantId !== recipientParticipantId) continue;
       this.#send(E.GAME_SNAPSHOT, projectNetworkGame(
         state, seat.playerId, presentation, this.#host.getDisplay(seat.playerId), networkRoles
       ), participant.participantId);
+      for (const pending of this.#pending.values()) {
+        if (pending.participantId !== participant.participantId) continue;
+        // 恢复时先沿用回答验收的失效规则，否则 Guest 会永远拒绝旧版本请求而 Host 仍等待。
+        const { view } = pending;
+        if (recipientParticipantId && (state.isGameOver || state.gameId !== view.gameId
+          || state.stateVersion !== view.stateVersion || !state.players.find((player) => player.id === view.actorId)?.alive)) {
+          this.#pending.delete(view.requestId);
+          this.#send(E.DECISION_CANCELLED, { requestId: view.requestId }, participant.participantId);
+          pending.resolve(view.kind === "player-intent" ? { kind: "cancelled" } : { status: "cancelled", selectedIds: [] });
+          continue;
+        }
+        this.#send(E.DECISION_REQUEST, view, participant.participantId);
+      }
     }
   }
 
@@ -249,8 +264,8 @@ publish、prepareDecision、send。
     const promise = new Promise((resolve, reject) => {
       this.#pending.set(requestId, { view, participantId: participant.participantId, decode: prepared.decode, resolve, reject });
     });
+    // publish 已发送快照及 pending 请求；同步交付可能在返回前收到 Accepted，不能再次发送已完成请求。
     this.publish();
-    this.#send(E.DECISION_REQUEST, view, participant.participantId);
     return promise;
   }
 
@@ -283,6 +298,17 @@ Guest 无法反向写 snapshot；仅 Host 可发请求，LOADING 只允许接收
     const session = this.#getSession();
     if (![S.LOADING_GAME, S.IN_GAME].includes(session.state)) return false;
     if (session.role === R.HOST) {
+      if (event.type === E.RESYNC_REQUEST) {
+        const participant = session.participants[event.participantId];
+        if (!this.#host || !participant?.connected || participant.kicked || participant.role !== R.GUEST
+          || event.payload?.gameId !== this.#host.getState().gameId) return false;
+        this.publish(null, event.participantId);
+        return true;
+      }
+      if (event.type === E.DECISION_RECEIVED) {
+        const pending = this.#pending.get(event.payload?.requestId);
+        return Boolean(pending && pending.participantId === event.participantId);
+      }
       if (![E.DECISION_RESPONSE, E.PLAYER_INTENT].includes(event.type) || session.state !== S.IN_GAME) return false;
       return this.acceptResponse(event);
     }
@@ -290,7 +316,9 @@ Guest 无法反向写 snapshot；仅 Host 可发请求，LOADING 只允许接收
       const projection = event.payload;
       const viewerId = session.matchSetup?.players.find((player) => player.controller.participantId === session.participantId)?.playerId;
       if (!projection?.gameId || projection.viewerId !== viewerId
-        || (this.#projection && (projection.gameId !== this.#projection.gameId || projection.stateVersion < this.#projection.stateVersion))) return false;
+        || !Number.isSafeInteger(projection.stateVersion) || projection.stateVersion < 0) return false;
+      // 完整旧快照不代表缺失增量；忽略迟到状态，避免恢复请求相互触发。
+      if (this.#projection && (projection.gameId !== this.#projection.gameId || projection.stateVersion < this.#projection.stateVersion)) return false;
       this.#projection = structuredClone(projection);
       this.#projectionRevision += 1;
       this.notify();
@@ -298,13 +326,34 @@ Guest 无法反向写 snapshot；仅 Host 可发请求，LOADING 只允许接收
     }
     if (event.type === E.DECISION_REQUEST && session.state === S.IN_GAME) {
       const request = event.payload;
-      if (request?.gameId !== this.#projection?.gameId || request.actorId !== this.#projection?.viewerId
-        || typeof request.requestId !== "string" || this.#requests.has(request.requestId)) return false;
+      const viewerId = session.matchSetup?.players.find((player) => player.controller.participantId === session.participantId)?.playerId;
+      if (!request || typeof request.gameId !== "string" || !request.gameId || request.actorId !== viewerId
+        || typeof request.requestId !== "string" || !request.requestId || !Number.isSafeInteger(request.stateVersion)
+        || request.stateVersion < 0 || !Array.isArray(request.options)
+        || !Number.isSafeInteger(request.min) || !Number.isSafeInteger(request.max)
+        || request.min < 0 || request.max < request.min || request.options.length < request.min) return false;
+      if (this.#projection && request.gameId !== this.#projection.gameId) return false;
+      if (!this.#projection || request.stateVersion > this.#projection.stateVersion) {
+        this.#send(E.RESYNC_REQUEST, { gameId: request.gameId });
+        return false;
+      }
+      if (request.stateVersion < this.#projection.stateVersion) return false;
+      if (this.#requests.has(request.requestId)) {
+        if (JSON.stringify(this.#requests.get(request.requestId)) !== JSON.stringify(request)) return false;
+        this.#send(E.DECISION_RECEIVED, { requestId: request.requestId });
+        return true;
+      }
       this.#requests.set(request.requestId, structuredClone(request));
+      this.#send(E.DECISION_RECEIVED, { requestId: request.requestId });
       this.notify();
       return true;
     }
     if (event.type === E.DECISION_CANCELLED) {
+      this.#requests.delete(event.payload?.requestId);
+      this.notify();
+      return true;
+    }
+    if (event.type === E.DECISION_ACCEPTED) {
       this.#requests.delete(event.payload?.requestId);
       this.notify();
       return true;
@@ -340,7 +389,14 @@ pending.decode、resolve、send。
   acceptResponse(event) {
     const response = event.payload;
     const pending = this.#pending.get(response?.requestId);
-    if (!pending || !this.#host || event.participantId !== pending.participantId) return false;
+    if (!pending || !this.#host || event.participantId !== pending.participantId) {
+      const prior = this.#accepted.get(response?.requestId);
+      if (prior && prior.type === event.type && prior.participantId === event.participantId && JSON.stringify(prior.payload) === JSON.stringify(response)) {
+        this.#send(E.DECISION_ACCEPTED, { requestId: response.requestId }, event.participantId);
+        return true;
+      }
+      return false;
+    }
     const session = this.#getSession();
     const participant = session.participants[pending.participantId];
     const seat = session.matchSetup.players.find((player) => player.playerId === pending.view.actorId);
@@ -364,9 +420,11 @@ pending.decode、resolve、send。
       if (!view.canDecline || ids.length) return false;
     } else if (response.status !== "selected" || ids.length < view.min || ids.length > view.max
       || ids.some((id) => !view.options.some((option) => option.optionId === id))) return false;
+    const decoded = pending.decode(response);
+    this.#accepted.set(view.requestId, { type: event.type, participantId: pending.participantId, payload: structuredClone(response) });
     this.#pending.delete(view.requestId);
-    this.#send(E.DECISION_CANCELLED, { requestId: view.requestId }, pending.participantId);
-    pending.resolve(pending.decode(response));
+    this.#send(E.DECISION_ACCEPTED, { requestId: view.requestId }, pending.participantId);
+    pending.resolve(decoded);
     return true;
   }
 
@@ -398,7 +456,6 @@ send、notify。
   respond(requestId, result) {
     const request = this.#requests.get(requestId);
     if (this.#getSession().role !== R.GUEST || this.#getSession().state !== S.IN_GAME || !request) return false;
-    this.#requests.delete(requestId);
     this.#send(request.kind === "player-intent" ? E.PLAYER_INTENT : E.DECISION_RESPONSE, {
       requestId, gameId: request.gameId, actorId: request.actorId, stateVersion: request.stateVersion,
       status: result.status, selectedIds: [...(result.selectedIds ?? [])]
@@ -465,6 +522,10 @@ pending.reject。
 */
 
   cancelParticipant(participantId) {
+    // 撤销 ownership 后旧回答不再有补确认权；其他成员的 ledger 保留。
+    for (const [requestId, accepted] of this.#accepted) {
+      if (accepted.participantId === participantId) this.#accepted.delete(requestId);
+    }
     for (const [requestId, pending] of this.#pending) {
       if (pending.participantId !== participantId) continue;
       this.#pending.delete(requestId);
@@ -502,6 +563,7 @@ reject、notify。
       pending.reject(new Error("Network 游戏通道已关闭"));
     }
     this.#pending.clear();
+    this.#accepted.clear();
     this.#requests.clear();
     this.#projection = null;
     this.#host = null;

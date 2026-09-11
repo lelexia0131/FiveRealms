@@ -122,7 +122,7 @@ UI / Audio / Diagnostics / AI adapters
 
 `HistoryStatsManager` 是长期档案入口；`AchievementStore` 管理成就持久化记录与 ViewModel；`AchievementTracker` 只根据最终真实 Match facts 判定。Achievement Presentation 位于 UI/History sidecar；现有 `js/ui/history/**` 物理目录不代表需要迁移或重构。
 
-浏览器开发环境默认使用 `/api/history`。桌面封装应通过注入 `new HistoryStatsManager({ storage })` 的 storage adapter，把历史文件写入可写 user-data 目录，不得依赖 `app.asar` 或安装目录可写；当前架构不引入 Electron runtime。
+浏览器开发环境默认使用 `/api/history`。桌面封装通过 `electron/history-server.js` 注入 storage adapter，把历史文件写入可写 user-data 目录，不依赖 `app.asar` 或安装目录可写。Electron 只提供运行时、历史服务和网络传输，不拥有游戏规则 authority。
 
 ## 5. Definitions and Configuration
 
@@ -179,7 +179,30 @@ There is no `general` domain schema. Internal identifiers and state use `charact
 
 #### Transport 消费契约
 
-本仓库只提供游戏侧 capability，不实现 Electron、Socket 或 IPC 多连接。
+Electron transport 通过 `preload.js → NetworkIpcBridge → LanHostTransport/LanClientTransport → TcpPeer` 提供 capability；游戏侧仍只由 `NetworkSession`、`NetworkGameChannel` 和 Host runtime 拥有会话、Decision 协议与游戏 authority。
+
+Decision 采用 `DECISION_REQUEST → DECISION_RECEIVED → DECISION_RESPONSE → DECISION_ACCEPTED` 生命周期。Guest 在 Accepted 前保留请求；同 requestId 的重复 Request 必须内容一致，重复 Response 必须匹配原消息类型、participantId 和完整回答。Host 只补发 Accepted，不再次 decode 或完成 workflow。IPC ACK 仅确认 renderer callback 投递，不代表 gameplay 登记或接受。
+
+Host 的 accepted ledger 以 requestId 索引，条目绑定 participantId、消息类型及含 gameId 的完整回答。requestId 的通道内 serial 在 reset 时不归零；新 Session 的房间与认证连接另由 NetworkSession 隔离。已接受条目保留至该局 channel reset（Host dispose、session disconnect/close），撤销成员时只清除该 participant 的条目。不存在跨局永久缓存，也不使用 TTL 提前遗忘仍可能重试的回答。
+
+Guest 缺少 projection，或合法 Decision 的 stateVersion 比本地快照新时，发送 RESYNC_REQUEST；Host 验证当前 gameId 和成员身份，仅回复请求者的最新 viewer-safe GAME_SNAPSHOT 及其仍有效 pending Decision。恢复时发现 pending 已过期、角色死亡或终局，则沿用现有回答验收规则发送 DECISION_CANCELLED 并收束原 Promise。完整旧快照不触发恢复。projectionRevision 是 Guest 本地展示通知计数，非网络增量版本；revision 是 Host 完整房间快照版本；stateVersion 是 Domain 提交版本；sequence 仅按认证连接防重放，允许定向发送导致的序号间隙，gameplay 成功后单调提交，不重建 TCP 排序。
+
+| 条件 | 分类与行为 |
+|---|---|
+| projection 缺失、同局 Decision.stateVersion 高于本地 | C：请求定向 Resync，不登记暂不可用的请求 |
+| projection viewerId、gameId 与已绑定身份/游戏冲突 | D：拒绝；旧会话 envelope 也由 roomId/generation 拒绝 |
+| projectionRevision 不一致 | B：本地展示计数，不作为消息拒绝条件 |
+| GAME_SNAPSHOT.stateVersion 低于已接受快照 | A：忽略迟到完整快照 |
+| Decision.stateVersion 低于当前 projection | A：忽略旧请求；Host 收到过期回答时取消 pending 并收束原 workflow |
+| 房间 snapshot revision gap | B：验证后接受完整权威快照；不等待缺失 revision |
+| 房间 snapshot revision 重复或倒退 | A：忽略 |
+| application sequence gap | B：接受通过其余校验的消息，不请求重排 |
+| duplicate/stale sequence | A：拒绝重放；被 gameplay 拒绝的序号不算已提交 |
+| 同 requestId 且内容相同 | A：复用已有请求并补 receipt，不重新开启 UI |
+| participant/connection binding 冲突、越权 Response、同 ID 内容冲突、非法 payload | D：拒绝，不借安全错误触发 Resync |
+| Transport handshake 协议版本错误 | D：由 TcpPeer 拒绝握手 |
+
+Receipt 丢失测试通过显式 Resync 触发原请求重发；Accepted 丢失测试通过显式重发同一回答恢复。当前通道未设置自动 receipt/response 重试计时器，不能把这些测试解释为静默丢失时必然自动恢复的证明；玩家思考也没有 gameplay timeout。
 
 | 入口或字段 | 契约 |
 |---|---|

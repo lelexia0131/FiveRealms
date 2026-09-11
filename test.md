@@ -72,6 +72,8 @@ npm test
 
 修改业务代码后，应先运行与改动直接相关的定点测试，再运行完整测试。
 
+`tests/network_test.mjs` 在 canonical runner 的既有 Network 区域注册联机故障注入回归：真实焚场响应丢 receipt 后经 Resync 完成多目标结算，真实转移隐藏选牌丢 Accepted 后重发回答但只移动一次资源；另覆盖 ledger 生命周期、多人私密恢复、非法身份拒绝及 sequence 提交。注入发生在测试 channel 交付边界，不改变卡牌/技能规则，不模拟 TCP 乱序，不用 sleep 修复时序。故障与恢复边界详见 `docs/architecture/FR_ARCHITECTURE.md` 的 Transport 消费契约。
+
 测试失败时，不应仅删除或放宽断言。必须先确认：
 
 1. 代码行为是否违反正式规则；

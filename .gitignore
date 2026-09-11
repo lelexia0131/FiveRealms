@@ -37,6 +37,10 @@ node_modules/
 # ------------------------------------------------------------
 
 dist/
+release/
+win-unpacked/
+*.exe
+*.blockmap
 build/
 out/
 .output/

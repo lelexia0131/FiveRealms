@@ -1271,6 +1271,36 @@ export function registerNetworkTests(test, { makeUi, instance }) {
   });
 
 
+  test("Network：同步响应完成后初始请求发送不得复活已接受的Decision", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const seen = new Set();
+    const unsubscribe = pair.guest.gameChannel.subscribe(({ requests }) => {
+      for (const request of requests) {
+        if (seen.has(request.requestId)) continue;
+        seen.add(request.requestId);
+        pair.guest.gameChannel.respond(request.requestId, {
+          status: "selected", selectedIds: [request.options[0].optionId]
+        });
+      }
+    });
+    try {
+      const result = await pair.host.requestDecision({ kind: "target", actorId: actor.id, gameId: game.state.gameId,
+        options: [{ optionId: actor.id }], constraints: { requiredCount: 1 }, context: {} });
+      assert.equal(result.status, "selected");
+      assert.equal(seen.size, 1);
+      assert.equal(pair.events.filter((event) => event.type === E.DECISION_ACCEPTED).length, 1);
+      assert.deepEqual(pair.guest.gameChannel.snapshot().requests, [], "Accepted 后不得重新登记已完成请求");
+      assert.equal(pair.events.filter((event) => event.type === E.DECISION_REQUEST).length, 1);
+    } finally {
+      unsubscribe(); game.dispose(); pair.host.close(); pair.guest.close();
+    }
+  });
+
   test("Network：Guest出牌意图经原ActionWorkflow在Host真实结算并同步能量", async () => {
     const pair = await connectedPair();
     choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
@@ -1449,6 +1479,312 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     game.ui.queueFeedback("damage", guest.id, 1);
     assert.equal(pair.guest.gameChannel.snapshot().projection.presentation.kind, "feedback");
     game.dispose();
+  });
+
+  test("Network：焚场丢失首次receipt后同requestId恢复且多目标Action只结算一次", async () => {
+    const pair = await connectedPair();
+    const setup = pair.host.snapshot();
+    pair.host.select({ characterId: "ember-magus", ...setup.seats.find((seat) => seat.teamId === "dawn") });
+    pair.guest.select({ characterId: "blade-walker", ...setup.seats.find((seat) => seat.teamId === "dusk") });
+    pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const host = game.controlRouter.humanPlayer();
+    const guest = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    host.energy = 3;
+    for (const player of game.state.players) player.resetTurnFlags(game.state);
+    game.state.phase = "play"; game.state.currentPlayerIndex = host.seatIndex;
+    guest.hand.push(instance("block"));
+    pair.host.gameReady(); pair.guest.gameReady();
+    const damage = [], facts = [];
+    game.eventDispatcher.on("afterDamage", "network-fire-damage", (event) => damage.push(event.target.id));
+    game.eventDispatcher.on("activeSkillUsed", "network-fire-commit", (event) => facts.push(event.resolutionId));
+    const random = game.randomPort;
+    let commits = 0;
+    game.randomPort = { ...random, commitTransaction: (token) => { commits += 1; return random.commitTransaction(token); } };
+    const receive = pair.host.gameChannel.receive.bind(pair.host.gameChannel);
+    let dropped = false;
+    pair.host.gameChannel.receive = (event) => {
+      if (event.type === E.DECISION_RECEIVED && !dropped) { dropped = true; return false; }
+      return receive(event);
+    };
+    const hp = new Map(game.state.players.map((player) => [player.id, player.hp]));
+    const enemies = game.getEnemies(host);
+    let settled = false;
+    const workflow = game.useActiveSkill(host, "burningField", []).then((result) => { settled = true; return result; });
+    void workflow.catch(() => {});
+    try {
+      await new Promise(setImmediate);
+      assert.equal(dropped, true);
+      assert.equal(settled, false);
+      const request = pair.guest.gameChannel.snapshot().requests[0];
+      assert.equal(request.kind, "response");
+      assert.equal(request.response.type, "block");
+      const before = pair.events.length;
+      pair.guest.send(E.RESYNC_REQUEST, { gameId: game.state.gameId });
+      assert.ok(pair.events.slice(before).some((event) => event.type === E.DECISION_REQUEST && event.payload.requestId === request.requestId), "Host仍持有pending并重发原ID");
+      assert.equal(pair.guest.gameChannel.snapshot().requests.length, 1);
+      assert.equal(receive({ type: E.DECISION_RECEIVED, participantId: pair.guest.snapshot().participantId, payload: { requestId: request.requestId } }), true);
+      pair.guest.gameChannel.respond(request.requestId, { status: "declined", selectedIds: [] });
+      assert.equal(await workflow, true);
+      assert.deepEqual(damage, enemies.map((player) => player.id));
+      for (const player of game.state.players) assert.equal(player.hp, hp.get(player.id) - (enemies.includes(player) ? 1 : 0));
+      assert.equal(commits, 1);
+      assert.equal(facts.length, 1);
+      assert.equal(game.actionLocked, false);
+      assert.deepEqual(pair.guest.gameChannel.snapshot().requests, []);
+      const tail = pair.events.length;
+      pair.guest.send(E.RESYNC_REQUEST, { gameId: game.state.gameId });
+      assert.equal(pair.events.slice(tail).some((event) => event.type === E.DECISION_REQUEST), false);
+      for (const type of [E.DECISION_RECEIVED, E.DECISION_RESPONSE, E.DECISION_ACCEPTED]) {
+        assert.ok(pair.events.some((event) => event.type === type && event.payload.requestId === request.requestId));
+      }
+    } finally { game.dispose(); await workflow.catch(() => {}); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：转移真实隐藏选牌丢失Accepted后重试只补确认且资源统计日志不重复", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    const owner = game.state.players.find((player) => player.controllerType === "ai"
+      && player.battleTeam !== actor.battleTeam && ActionLegality.getDistance(game, actor, player) === 1);
+    const moved = instance("charge"), transfer = instance("transfer");
+    owner.hand.push(moved); actor.hand.push(transfer);
+    const receiver = ActionLegality.getTransferReceivers(game, actor, owner, transfer).find((player) => player !== actor);
+    assert.ok(receiver, "存在独立于出牌者的合法接收者");
+    for (const player of game.state.players) player.resetTurnFlags(game.state);
+    game.state.phase = "play"; game.state.currentPlayerIndex = actor.seatIndex;
+    pair.host.gameReady(); pair.guest.gameReady();
+    const moves = [], uses = [];
+    game.eventDispatcher.on("afterCardMove", "network-transfer-move", (event) => moves.push(event.card.id));
+    game.eventDispatcher.on("cardUsed", "network-transfer-use", (event) => uses.push(event.card.id));
+    const random = game.randomPort;
+    let commits = 0;
+    game.randomPort = { ...random, commitTransaction: (token) => { commits += 1; return random.commitTransaction(token); } };
+    const receive = pair.guest.gameChannel.receive.bind(pair.guest.gameChannel);
+    let dropped = false;
+    pair.guest.gameChannel.receive = (event) => {
+      if (event.type === E.DECISION_ACCEPTED && !dropped) { dropped = true; return false; }
+      return receive(event);
+    };
+    const ownerCount = owner.hand.length, receiverCount = receiver.hand.length;
+    game.matchPerformanceSidecar.tracker.initializeRoster();
+    assert.equal(ActionLegality.canPlayCard(game, actor, transfer).ok, true);
+    assert.ok(ActionLegality.getTransferSources(game, actor, transfer).includes(owner), "来源合法");
+    assert.ok(ActionLegality.getTransferReceivers(game, actor, owner, transfer).includes(receiver), "接收者合法");
+    let opened;
+    const opening = new Promise((resolve) => { opened = resolve; });
+    const unsubscribe = pair.guest.gameChannel.subscribe(({ requests }) => {
+      const request = requests.find((entry) => entry.kind === "hiddenCard");
+      if (request) opened(request);
+    });
+    const workflow = game.playCard(actor, transfer, [], { sourceId: owner.id, receiverId: receiver.id });
+    void workflow.catch(() => {});
+    try {
+      const request = await Promise.race([opening, workflow.then(() => null)]);
+      assert.equal(request?.kind, "hiddenCard");
+      assert.equal(game.actionLocked, true);
+      assert.equal(request.options[0].card, null, "隐藏手牌不得暴露牌面");
+      const result = { status: "selected", selectedIds: [request.options[0].optionId] };
+      pair.guest.gameChannel.respond(request.requestId, result);
+      assert.equal(await workflow, true);
+      assert.equal(dropped, true);
+      assert.equal(pair.guest.gameChannel.snapshot().requests.length, 1);
+      assert.equal(owner.hand.length, ownerCount - 1);
+      assert.equal(receiver.hand.length, receiverCount + 1);
+      assert.deepEqual(moves.filter((id) => id === moved.id), [moved.id]);
+      assert.deepEqual(uses, [transfer.id]);
+      assert.equal(commits, 1);
+      const stateBeforeRetry = JSON.stringify(game.state);
+      const performanceBeforeRetry = game.matchPerformanceSidecar.tracker.captureActionCheckpoint();
+      const movesBefore = [...moves];
+      const tail = pair.events.length;
+      pair.guest.gameChannel.respond(request.requestId, result);
+      assert.deepEqual(pair.events.slice(tail).filter((event) => event.sender === R.HOST).map((event) => event.type), [E.DECISION_ACCEPTED]);
+      assert.equal(JSON.stringify(game.state), stateBeforeRetry, "重试不写stateVersion、统计或日志事实");
+      assert.deepEqual(game.matchPerformanceSidecar.tracker.captureActionCheckpoint(), performanceBeforeRetry);
+      assert.deepEqual(moves, movesBefore);
+      assert.equal(commits, 1);
+      assert.deepEqual(uses, [transfer.id]);
+      assert.equal(game.state.players.flatMap((player) => player.hand).filter((card) => card.id === moved.id).length, 1);
+      assert.ok(receiver.hand.includes(moved));
+      assert.equal(game.state.discardPile.filter((card) => card.id === transfer.id).length, 1);
+      assert.deepEqual(pair.guest.gameChannel.snapshot().requests, []);
+      const finalTail = pair.events.length;
+      pair.guest.send(E.RESYNC_REQUEST, { gameId: game.state.gameId });
+      assert.equal(pair.events.slice(finalTail).some((event) => event.type === E.DECISION_REQUEST), false);
+    } finally { unsubscribe(); game.dispose(); await workflow.catch(() => {}); pair.host.close(); pair.guest.close(); }
+  });
+
+  for (const cleanup of ["reset", "cancelParticipant"]) {
+    test(`Network：accepted ledger在${cleanup}清理且跨身份游戏类型拒绝`, async () => {
+      const pair = await connectedPair();
+      choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+      const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+      game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+      const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+      pair.host.gameReady(); pair.guest.gameReady();
+      try {
+        const waiting = pair.host.requestDecision({ kind: "target", actorId: actor.id, gameId: game.state.gameId,
+          options: [{ optionId: actor.id }], constraints: { requiredCount: 1 }, context: {} });
+        const request = pair.guest.gameChannel.snapshot().requests[0];
+        pair.guest.gameChannel.respond(request.requestId, { status: "selected", selectedIds: [actor.id] });
+        await waiting;
+        const response = pair.events.findLast((event) => event.type === E.DECISION_RESPONSE);
+        assert.equal(pair.host.gameChannel.receive(response), true, "保留已接受回答用于补发确认");
+        assert.equal(pair.host.gameChannel.receive({ ...response, participantId: "forged" }), false);
+        assert.equal(pair.host.gameChannel.receive({ ...response, payload: { ...response.payload, gameId: "old-game" } }), false);
+        assert.equal(pair.host.gameChannel.receive({ ...response, type: E.PLAYER_INTENT }), false);
+        pair.host.gameChannel[cleanup](pair.guest.snapshot().participantId);
+        assert.equal(pair.host.gameChannel.receive(response), false, "生命周期结束后不得命中旧ledger");
+      } finally { game.dispose(); pair.host.close(); pair.guest.close(); }
+    });
+  }
+
+  test("Network：Resync只恢复请求者私人投影和pending且重复请求不重复UI", async () => {
+    const room = await connectedRoom(3);
+    chooseRoom(room); room.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: room.host });
+    game.prepareNetworkMatch(room.host.snapshot().matchSetup);
+    room.host.gameReady(); room.guests.forEach((guest) => guest.gameReady());
+    const [a, b] = room.guests;
+    const players = room.guests.map((guest) => game.state.players.find((player) =>
+      room.host.snapshot().matchSetup.players.find((seat) => seat.playerId === player.id)?.controller.participantId === guest.snapshot().participantId));
+    players[1].hand.push({ ...instance("block"), id: "PRIVATE_B_CARD" });
+    const waits = players.map((actor, index) => room.host.requestDecision({ kind: "target", actorId: actor.id, gameId: game.state.gameId,
+      options: [{ optionId: actor.id }], constraints: { requiredCount: 1 }, context: { label: `PRIVATE_${index}_DECISION` } }));
+    const ui = makeGuestUi();
+    let uiRequests = 0, finishTarget;
+    ui.requestTarget = () => { uiRequests += 1; return new Promise((resolve) => { finishTarget = resolve; }); };
+    const view = new NetworkGameView({ ui, submit: (...args) => a.gameChannel.respond(...args) });
+    const unsubscribe = a.gameChannel.subscribe((snapshot) => view.update(snapshot));
+    try {
+      const request = a.gameChannel.snapshot().requests[0];
+      const before = room.events.length;
+      a.send(E.RESYNC_REQUEST, { gameId: game.state.gameId });
+      const replies = room.events.slice(before).filter((event) => event.sender === R.HOST);
+      assert.deepEqual(replies.map((event) => event.type), [E.GAME_SNAPSHOT, E.DECISION_REQUEST]);
+      assert.ok(replies.every((event) => event.recipientParticipantId === a.snapshot().participantId));
+      assert.equal(replies[0].payload.viewerId, players[0].id);
+      assert.doesNotMatch(JSON.stringify(replies), /PRIVATE_B_CARD|PRIVATE_1_DECISION/);
+      assert.equal(replies[1].payload.requestId, request.requestId);
+      assert.equal(a.gameChannel.snapshot().requests.length, 1);
+      assert.equal(uiRequests, 1, "Resync不重复开启同ID目标面板");
+      assert.ok(room.events.slice(before).some((event) => event.type === E.DECISION_RECEIVED));
+      assert.equal(room.host.gameChannel.receive({ type: E.DECISION_RECEIVED, participantId: b.snapshot().participantId, payload: { requestId: request.requestId } }), false);
+      for (const [index, guest] of room.guests.entries()) guest.gameChannel.respond(guest.gameChannel.snapshot().requests[0].requestId,
+        { status: "selected", selectedIds: [players[index].id] });
+      await Promise.all(waits);
+    } finally { unsubscribe(); view.dispose(); finishTarget?.(null); game.dispose(); await Promise.allSettled(waits); room.close(); }
+  });
+
+  test("Network：sequence拒绝不提交且恢复重试后duplicate与stale仍被拒绝", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    pair.host.gameReady(); pair.guest.gameReady();
+    pair.host.gameChannel.publish();
+    const event = structuredClone(pair.events.findLast((entry) => entry.type === E.GAME_SNAPSHOT));
+    event.sequence += 100;
+    const original = pair.guest.gameChannel.receive.bind(pair.guest.gameChannel);
+    try {
+      pair.guest.gameChannel.receive = () => false;
+      assert.equal(pair.guest.receive(event), false);
+      pair.guest.gameChannel.receive = original;
+      assert.equal(pair.guest.receive(event), true, "相同N在gameplay成功前仍可交付，gap无需重排");
+      assert.equal(pair.guest.receive(event), false);
+      assert.equal(pair.guest.receive({ ...event, sequence: event.sequence - 1 }), false);
+      assert.equal(pair.guest.receive({ ...event, sequence: event.sequence + 1, recipientParticipantId: "other" }), false);
+      const lobby = structuredClone(pair.events.findLast((entry) => entry.type === E.MATCH_START));
+      lobby.sequence = event.sequence + 1; lobby.revision += 20;
+      assert.equal(pair.guest.receive(lobby), true, "房间完整快照允许revision gap");
+      const hostBefore = pair.events.length;
+      assert.equal(pair.host.receive({ type: E.RESYNC_REQUEST, sender: R.GUEST, roomId: pair.roomId, sequence: 10000,
+        connectionId: "forged", participantId: pair.guest.snapshot().participantId, payload: { gameId: game.state.gameId } }), false);
+      assert.equal(pair.host.receive({ type: E.RESYNC_REQUEST, sender: R.GUEST, roomId: pair.roomId, sequence: 10000,
+        participantId: "forged", payload: { gameId: game.state.gameId } }), false);
+      assert.equal(pair.events.length, hostBefore, "身份错误不进入恢复流程");
+    } finally { game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：Decision状态错位触发恢复而非法重复内容和身份不触发恢复", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    const waiting = pair.host.requestDecision({ kind: "target", actorId: actor.id, gameId: game.state.gameId,
+      options: [{ optionId: actor.id }], constraints: { requiredCount: 1 }, context: {} });
+    try {
+      const event = structuredClone(pair.events.findLast((entry) => entry.type === E.DECISION_REQUEST));
+      const before = pair.events.length;
+      assert.equal(pair.guest.gameChannel.receive({ ...event, payload: { ...event.payload, options: [] } }), false);
+      assert.equal(pair.guest.gameChannel.receive({ ...event, payload: { ...event.payload, actorId: "forged" } }), false);
+      assert.equal(pair.events.slice(before).some((entry) => entry.type === E.RESYNC_REQUEST), false);
+      const snapshot = structuredClone(pair.events.findLast((entry) => entry.type === E.GAME_SNAPSHOT));
+      snapshot.payload.stateVersion -= 1;
+      assert.equal(pair.guest.gameChannel.receive(snapshot), false);
+      assert.equal(pair.events.slice(before).some((entry) => entry.type === E.RESYNC_REQUEST), false, "旧完整快照安全忽略");
+      const view = pair.guest.gameChannel.snapshot().projection;
+      pair.guest.gameChannel.reset();
+      assert.equal(pair.guest.gameChannel.receive(event), false, "尚无projection不得登记Decision");
+      assert.ok(pair.events.slice(before).some((entry) => entry.type === E.RESYNC_REQUEST));
+      assert.equal(pair.guest.gameChannel.snapshot().projection.gameId, view.gameId);
+      assert.equal(pair.guest.gameChannel.snapshot().requests.length, 1);
+      const recoveryStart = pair.events.length;
+      assert.equal(pair.guest.gameChannel.receive({ ...event, payload: { ...event.payload,
+        requestId: "future-decision", stateVersion: view.stateVersion + 1 } }), false);
+      assert.ok(pair.events.slice(recoveryStart).some((entry) => entry.type === E.RESYNC_REQUEST), "合法shape的较新Decision请求恢复快照");
+      assert.equal(pair.guest.gameChannel.snapshot().requests.length, 1);
+      assert.equal(pair.guest.gameChannel.receive({ ...snapshot, payload: { ...view, stateVersion: "invalid" } }), false);
+      pair.guest.gameChannel.respond(event.payload.requestId, { status: "selected", selectedIds: [actor.id] });
+      await waiting;
+    } finally { game.dispose(); await Promise.allSettled([waiting]); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：Resync遇到Host已失效的pending时取消并收束原workflow", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    pair.host.gameReady(); pair.guest.gameReady();
+    const actor = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    const waiting = pair.host.requestDecision({ kind: "target", actorId: actor.id, gameId: game.state.gameId,
+      options: [{ optionId: actor.id }], constraints: { requiredCount: 1 }, context: {} });
+    try {
+      const id = pair.guest.gameChannel.snapshot().requests[0].requestId;
+      actor.resetTurnFlags(game.state);
+      const before = pair.events.length;
+      pair.guest.send(E.RESYNC_REQUEST, { gameId: game.state.gameId });
+      assert.ok(pair.events.slice(before).some((event) => event.type === E.DECISION_CANCELLED && event.payload.requestId === id));
+      assert.equal((await waiting).status, "cancelled");
+      assert.deepEqual(pair.guest.gameChannel.snapshot().requests, []);
+      assert.equal(pair.events.slice(before).some((event) => event.type === E.DECISION_REQUEST), false);
+    } finally { game.dispose(); await Promise.allSettled([waiting]); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：同步恢复内层已提交sequence不会被外层旧sequence覆盖", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    pair.host.gameReady(); pair.guest.gameReady(); pair.host.gameChannel.publish();
+    const outer = structuredClone(pair.events.findLast((event) => event.type === E.GAME_SNAPSHOT));
+    outer.sequence += 10;
+    const inner = { ...outer, sequence: outer.sequence + 1 };
+    const receive = pair.guest.gameChannel.receive.bind(pair.guest.gameChannel);
+    pair.guest.gameChannel.receive = (event) => {
+      if (event.sequence === outer.sequence) assert.equal(pair.guest.receive(inner), true);
+      return receive(event);
+    };
+    try {
+      assert.equal(pair.guest.receive(outer), true);
+      assert.equal(pair.guest.receive(inner), false, "已在同步callback中提交的消息不能重放");
+    } finally { game.dispose(); pair.host.close(); pair.guest.close(); }
   });
 
   test("Network：Guest输入经请求关联往返返回Host且不发送任意selection", async () => {
