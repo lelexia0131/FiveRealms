@@ -149,7 +149,7 @@ session.close、onDisposeMatch、showNetworkPage。
 UIManager 根节点 click。
 
 输入
-DOM click event。
+DOM click event；复制按钮通过 dataset 携带自身地址。
 
 输出
 无。
@@ -161,10 +161,10 @@ session snapshot、本地 draft。
 导航、表单 draft；选择仅经 session authority。
 
 调用函数
-show、session.open/select/confirm、callbacks。
+show、session.open/select/confirm、normalizeNetworkEndpoint、callbacks。
 
 边界与不变量
-disabled 元素不提交；候选与席位全部齐备后才向 Host 提交。
+disabled 元素不提交；候选与席位全部齐备后才向 Host 提交；复制地址只读取被点击按钮 dataset。
 */
   function handleClick(event) {
     const button = event.target.closest("button");
@@ -173,14 +173,20 @@ disabled 元素不提交；候选与席位全部齐备后才向 Host 提交。
     const action = button.dataset.networkAction;
     if (action === "copy-address") {
       const snapshot = session.snapshot();
-      const info = snapshot.connectionInfo;
-      if (!info || snapshot.role !== R.HOST) return;
-      const status = button.parentElement.querySelector("[data-network-copy-status]");
-      void Promise.resolve().then(() => navigator.clipboard.writeText(`${info.host}:${info.port}`))
+      if (snapshot.role !== R.HOST || !button.dataset?.networkHost || button.dataset.networkPort == null) return;
+      let endpoint;
+      try {
+        endpoint = normalizeNetworkEndpoint({ host: button.dataset.networkHost, port: Number(button.dataset.networkPort) });
+      } catch {
+        return;
+      }
+      const status = button.parentElement?.querySelector?.("[data-network-copy-status]")
+        ?? button.closest?.(".network-connection-card")?.querySelector?.("[data-network-copy-status]") ?? null;
+      void Promise.resolve().then(() => navigator.clipboard.writeText(`${endpoint.host}:${endpoint.port}`))
         .then(() => {
-          if (button.isConnected && session.snapshot().roomId === snapshot.roomId) status.textContent = "连接地址已复制";
+          if (status && button.isConnected && session.snapshot().roomId === snapshot.roomId) status.textContent = "连接地址已复制";
         }).catch(() => {
-          if (button.isConnected && session.snapshot().roomId === snapshot.roomId) status.textContent = "复制失败，请选中上方地址手动复制。";
+          if (status && button.isConnected && session.snapshot().roomId === snapshot.roomId) status.textContent = "复制失败，请选中上方地址手动复制。";
         });
     } else if (action === MATCH_MODE.SINGLEPLAYER) {
       page = "singleplayer";

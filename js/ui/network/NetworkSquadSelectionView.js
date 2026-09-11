@@ -27,7 +27,7 @@ session snapshot 与本地表单 draft。
 转义后的 HTML。
 
 读取状态
-成员 selection、稳定 ordinal、地址、capacity 和 canStart。
+成员 selection、稳定 ordinal、connectionInfo.addresses、capacity 和 canStart。
 
 写入状态
 无。
@@ -36,7 +36,7 @@ session snapshot 与本地表单 draft。
 candidateCardTemplate、networkParticipantLabel、formatNetworkAddress、escapeHtml。
 
 边界与不变量
-UI 不计算房间人数或决定权限；禁用其他真人已占用的角色及席位。
+UI 不计算房间人数或决定权限；禁用其他真人已占用的角色及席位；地址逐项转义展示。
 */
 
 export function renderNetworkSquadSelectionView(snapshot, draft = {}) {
@@ -46,13 +46,29 @@ export function renderNetworkSquadSelectionView(snapshot, draft = {}) {
   const others = participants.filter((participant) => participant.participantId !== snapshot.participantId);
   const selected = { ...snapshot.localSelection, ...draft };
   const info = snapshot.connectionInfo;
+  const addresses = (Array.isArray(info?.addresses) ? info.addresses : []).filter((address) => address
+    && (address.kind === "lan" || address.kind === "tailscale")
+    && typeof address.host === "string" && address.host.trim()
+    && address.host.trim() !== "0.0.0.0" && address.host.trim() !== "127.0.0.1");
+  const fallbackHost = info?.host;
+  if (!addresses.length && typeof fallbackHost === "string" && fallbackHost.trim()
+    && fallbackHost.trim() !== "0.0.0.0" && fallbackHost.trim() !== "127.0.0.1") {
+    addresses.push({ host: fallbackHost, port: info.port, kind: "lan" });
+  }
+  const addressRows = addresses.map((address) => {
+    const host = String(address.host).trim();
+    const kindLabel = address.kind === "tailscale" ? "Tailscale" : "局域网";
+    return `<div class="network-connection-row">
+      <span class="network-connection-kind">${escapeHtml(kindLabel)}</span>
+      <code class="network-connection-address">${escapeHtml(host)}:${escapeHtml(address.port)}</code>
+      <button class="ghost-button" type="button" data-network-action="copy-address" data-network-host="${escapeHtml(host)}" data-network-port="${escapeHtml(address.port)}" aria-label="复制 ${escapeHtml(kindLabel)}地址">复制</button>
+      <p class="network-copy-status" data-network-copy-status role="status"></p>
+    </div>`;
+  }).join("");
   const connectionCard = isHost && !snapshot.locked ? `<div class="network-connection-card">
     <p class="eyebrow">连接地址</p>
-    ${info ? `<code class="network-connection-address">${escapeHtml(info.host)}:${escapeHtml(info.port)}</code>
-      <p>将此连接地址发送给要加入的玩家。</p>
-      <button class="ghost-button" type="button" data-network-action="copy-address">复制连接地址</button>
-      <p class="network-copy-status" data-network-copy-status role="status"></p>`
-      : "<p>连接地址将在网络服务启动后显示</p>"}
+    ${addressRows ? `<div class="network-connection-addresses">${addressRows}</div>
+      <p>将此连接地址发送给要加入的玩家。</p>` : "<p>连接地址将在网络服务启动后显示</p>"}
   </div>` : "";
   const members = participants.map((participant) => `<div class="network-member">
     <strong>${escapeHtml(networkParticipantLabel(participant))}</strong>

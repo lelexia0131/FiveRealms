@@ -4,7 +4,7 @@ import { projectNetworkGame } from "../js/network/NetworkViewerProjection.js";
 import { NetworkGameView } from "../js/ui/network/NetworkGameView.js";
 import { MatchMvpResultView } from "../js/ui/results/MatchMvpResultView.js";
 import { handleNetworkHostPaste, validateNetworkHost, renderNetworkEntryView } from "../js/ui/network/NetworkEntryView.js";
-import { NETWORK_DEFAULT_PORT, formatNetworkAddress } from "../js/network/NetworkProtocol.js";
+import { NETWORK_DEFAULT_PORT, formatNetworkAddress, normalizeNetworkEndpoint } from "../js/network/NetworkProtocol.js";
 import { NetworkSession } from "../js/network/NetworkSession.js";
 import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER } from "../js/network/NetworkProtocol.js";
 import { NETWORK_STATE as S, transitionNetworkState } from "../js/network/NetworkLobbyState.js";
@@ -1575,6 +1575,146 @@ export function registerNetworkTests(test, { makeUi, instance }) {
       assert.match(renderNetworkSquadSelectionView(missingSnapshot), /<strong>Host<\/strong>\s*<span>地址未提供<\/span>/);
     } finally {
       for (const session of sessions) session.close();
+    }
+  });
+
+  test("Network：Host connectionInfo 多地址进入snapshot且UI逐项展示", async () => {
+    async function openHost(connectionInfo) {
+      const session = new NetworkSession({ capability: {
+        createRoom: async (room) => ({ ...room, connectionInfo }),
+        subscribe: () => () => {},
+        close: () => {}
+      } });
+      await session.open(R.HOST);
+      return session;
+    }
+    const sessions = [];
+    try {
+      const multi = await openHost({
+        host: "100.86.236.89", port: NETWORK_DEFAULT_PORT,
+        addresses: [
+          { host: "100.86.236.89", port: NETWORK_DEFAULT_PORT, interfaceName: "Tailscale", kind: "tailscale" },
+          { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT, interfaceName: "Wi-Fi", kind: "lan" },
+          { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT, interfaceName: "Wi-Fi duplicate", kind: "lan" },
+          { host: "192.168.1.99", port: NETWORK_DEFAULT_PORT, interfaceName: "VPN", kind: "vpn" },
+          { host: "10.19.6.1", port: 0, interfaceName: "bad-port", kind: "lan" }
+        ]
+      });
+      sessions.push(multi);
+      const multiSnapshot = multi.snapshot();
+      assert.deepEqual(multiSnapshot.connectionInfo, {
+        host: "100.86.236.89", port: NETWORK_DEFAULT_PORT,
+        addresses: [
+          { host: "100.86.236.89", port: NETWORK_DEFAULT_PORT, kind: "tailscale" },
+          { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT, kind: "lan" }
+        ]
+      });
+      const multiMarkup = renderNetworkSquadSelectionView(multiSnapshot);
+      assert.match(multiMarkup, /局域网/);
+      assert.match(multiMarkup, /Tailscale/);
+      assert.match(multiMarkup, /100\.86\.236\.89:38520/);
+      assert.match(multiMarkup, /10\.196\.91\.170:38520/);
+      assert.equal((multiMarkup.match(/data-network-action="copy-address"/g) ?? []).length, 2);
+      assert.match(multiMarkup, /data-network-host="100\.86\.236\.89" data-network-port="38520"/);
+      assert.match(multiMarkup, /data-network-host="10\.196\.91\.170" data-network-port="38520"/);
+      assert.doesNotMatch(multiMarkup, /interfaceName|Wi-Fi|VPN|192\.168\.1\.99/);
+
+      const legacy = await openHost({ host: "10.1.2.3", port: NETWORK_DEFAULT_PORT });
+      sessions.push(legacy);
+      const legacySnapshot = legacy.snapshot();
+      assert.deepEqual(legacySnapshot.connectionInfo, {
+        host: "10.1.2.3", port: NETWORK_DEFAULT_PORT,
+        addresses: [{ host: "10.1.2.3", port: NETWORK_DEFAULT_PORT, kind: "lan" }]
+      });
+      const legacyMarkup = renderNetworkSquadSelectionView(legacySnapshot);
+      assert.match(legacyMarkup, /局域网/);
+      assert.match(legacyMarkup, /10\.1\.2\.3:38520/);
+      assert.equal((legacyMarkup.match(/data-network-action="copy-address"/g) ?? []).length, 1);
+
+      const reservedSnapshot = structuredClone(multiSnapshot);
+      reservedSnapshot.connectionInfo = {
+        host: "0.0.0.0", port: NETWORK_DEFAULT_PORT,
+        addresses: [
+          { host: "0.0.0.0", port: NETWORK_DEFAULT_PORT, kind: "lan" },
+          { host: "127.0.0.1", port: NETWORK_DEFAULT_PORT, kind: "tailscale" }
+        ]
+      };
+      const reservedMarkup = renderNetworkSquadSelectionView(reservedSnapshot);
+      assert.doesNotMatch(reservedMarkup, /0\.0\.0\.0|127\.0\.0\.1/);
+      assert.match(reservedMarkup, /连接地址将在网络服务启动后显示/);
+
+      const missing = await openHost(null);
+      sessions.push(missing);
+      assert.equal(missing.snapshot().connectionInfo, null);
+      const missingMarkup = renderNetworkSquadSelectionView(missing.snapshot());
+      assert.match(missingMarkup, /连接地址将在网络服务启动后显示/);
+      assert.doesNotMatch(missingMarkup, /0\.0\.0\.0|127\.0\.0\.1|localhost/);
+
+      let joinedEndpoint = null;
+      const guest = new NetworkSession({ capability: {
+        joinRoom: async (endpoint) => { joinedEndpoint = endpoint; return { roomId: "guest-room" }; },
+        subscribe: () => () => {},
+        close: () => {}
+      } });
+      sessions.push(guest);
+      await guest.open(R.GUEST, normalizeNetworkEndpoint({ host: " 10.1.2.3 ", port: NETWORK_DEFAULT_PORT }));
+      assert.deepEqual(joinedEndpoint, { host: "10.1.2.3", port: NETWORK_DEFAULT_PORT });
+      assert.deepEqual(guest.snapshot().connectionInfo, { host: "10.1.2.3", port: NETWORK_DEFAULT_PORT });
+    } finally {
+      for (const session of sessions) session.close();
+    }
+  });
+
+  test("Network：Host多地址复制按钮各自复制dataset地址且非法dataset安全返回", async () => {
+    const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    const copied = [];
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { clipboard: { writeText: async (text) => { copied.push(text); } } }
+    });
+    const flow = createNetworkFlow({
+      ui: { playSound() {} },
+      capability: {
+        createRoom: async (room) => ({ ...room, connectionInfo: {
+          host: "100.86.236.89", port: NETWORK_DEFAULT_PORT,
+          addresses: [
+            { host: "100.86.236.89", port: NETWORK_DEFAULT_PORT, kind: "tailscale" },
+            { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT, kind: "lan" }
+          ]
+        } }),
+        subscribe: () => () => {},
+        close() {}
+      },
+      onDisposeMatch() {}
+    });
+    try {
+      await flow.session.open(R.HOST);
+      const addresses = flow.session.snapshot().connectionInfo.addresses;
+      const statuses = addresses.map(() => ({ textContent: "" }));
+      const buttons = addresses.map((address, index) => ({
+        disabled: false, isConnected: true,
+        dataset: { networkAction: "copy-address", networkHost: address.host, networkPort: String(address.port) },
+        parentElement: { querySelector: (selector) => selector === "[data-network-copy-status]" ? statuses[index] : null }
+      }));
+      for (const button of buttons) flow.handleClick({ target: { closest: () => button } });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(copied, ["100.86.236.89:38520", "10.196.91.170:38520"]);
+      assert.equal(statuses[0].textContent, "连接地址已复制");
+      assert.equal(statuses[1].textContent, "连接地址已复制");
+
+      copied.length = 0;
+      statuses.forEach((status) => { status.textContent = ""; });
+      flow.handleClick({ target: { closest: () => ({
+        disabled: false, isConnected: true,
+        dataset: { networkAction: "copy-address", networkHost: "10.1.2.3" },
+        parentElement: { querySelector: () => statuses[0] }
+      }) } });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(copied, []);
+      assert.equal(statuses[0].textContent, "");
+    } finally {
+      flow.session.close();
+      Object.defineProperty(globalThis, "navigator", originalNavigator);
     }
   });
 

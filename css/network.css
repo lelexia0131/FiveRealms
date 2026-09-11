@@ -23,7 +23,12 @@ body:has(.network-screen:not(.is-hidden)) { min-width: 0; }
 .network-join > .primary-button { justify-self: center; }
 .network-connection-card { width: min(100%, 510px); padding: 18px 24px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-raised); }
 .network-connection-card .eyebrow { margin: 0 0 10px; }
-.network-connection-address { display: block; padding: 12px 8px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); font: 500 clamp(18px, 2.4vw, 28px)/1.4 ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; user-select: text; }
+.network-connection-addresses { display: grid; gap: 8px; }
+.network-connection-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.network-connection-kind { flex: 0 0 auto; color: var(--text-secondary); font-size: 13px; font-weight: 750; }
+.network-connection-address { flex: 1 1 170px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); font: 500 clamp(15px, 1.8vw, 18px)/1.4 ui-monospace, Consolas, monospace; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; user-select: text; }
+.network-connection-row .ghost-button { flex: 0 0 auto; min-height: 34px; padding: 6px 12px; font-size: 13px; letter-spacing: 0; }
+.network-connection-row .network-copy-status { flex: 1 0 100%; margin: 0; }
 .network-connection-card > p:not(.eyebrow) { margin: 12px 0; font-size: 13px; }
 .network-connection-card .network-copy-status { margin-bottom: 0; }
 .network-copy-status:empty { display: none; }

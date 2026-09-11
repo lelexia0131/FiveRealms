@@ -19,7 +19,8 @@ export const NETWORK_EVENT = Object.freeze({
   ERROR: "ERROR"
 });
 
-// Transport capability: createRoom({roomId}) -> {roomId, connectionInfo: {host, port} | null},
+// Transport capability: createRoom({roomId}) -> {roomId, connectionInfo: {host, port, addresses: [{host, port, kind}]} | null},
+// addresses 为 Host 展示 metadata，可省略；Guest joinRoom 仍只接收顶层 {host, port}。
 // joinRoom({host, port}) -> {roomId}, send(envelope),
 // subscribe(receive) -> unsubscribe, close()。subscribe 只交付经身份认证的对端事件；
 // connectionId 必须由 Transport 按真实连接覆盖注入，不得直接沿用客户端报文中的同名字段。
@@ -67,4 +68,53 @@ export function normalizeNetworkEndpoint({ host, port } = {}) {
   if (typeof host !== "string" || !host.trim()) throw new Error("请输入 IP 地址或主机名");
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("端口须为 1–65535 的整数");
   return { host: host.trim(), port };
+}
+
+/*
+功能
+把 Host 创建房间返回的 connectionInfo 收口为页面可消费的连接地址投影。
+
+调用方
+NetworkSession.open。
+
+输入
+Transport capability 返回的 connectionInfo；顶层 host/port 与可选 addresses。
+
+输出
+只含 host、port、addresses 的 data-only 对象；顶层 host/port 非法时抛错。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+normalizeNetworkEndpoint。
+
+边界与不变量
+Guest join 仍只使用 normalizeNetworkEndpoint；addresses 非法项忽略并按 host:port 去重，
+没有可用 addresses 时回退顶层 {host, port} 为唯一展示地址，兼容旧 capability。
+*/
+export function normalizeConnectionInfo(connectionInfo = {}) {
+  const { host, port, addresses } = connectionInfo ?? {};
+  const endpoint = normalizeNetworkEndpoint({ host, port });
+  const normalizedAddresses = [];
+  const seen = new Set();
+  if (Array.isArray(addresses)) {
+    for (const entry of addresses) {
+      if (!entry || !["lan", "tailscale"].includes(entry.kind)) continue;
+      try {
+        const address = normalizeNetworkEndpoint({ host: entry.host, port: entry.port });
+        const key = `${address.host}:${address.port}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        normalizedAddresses.push({ ...address, kind: entry.kind });
+      } catch {
+        // 单条地址非法不应阻止 Host 建房；旧 capability 继续回退顶层 host/port。
+      }
+    }
+  }
+  if (!normalizedAddresses.length) normalizedAddresses.push({ ...endpoint, kind: "lan" });
+  return { ...endpoint, addresses: normalizedAddresses };
 }

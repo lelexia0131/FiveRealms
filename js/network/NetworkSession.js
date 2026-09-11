@@ -1,6 +1,6 @@
 import { NetworkGameChannel } from "./NetworkGameChannel.js";
 import { MATCH_MODE } from "../application/match/MatchMode.js";
-import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER, normalizeNetworkEndpoint } from "./NetworkProtocol.js";
+import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER, normalizeConnectionInfo, normalizeNetworkEndpoint } from "./NetworkProtocol.js";
 import { NETWORK_STATE as S, transitionNetworkState } from "./NetworkLobbyState.js";
 import { createNetworkSetup, isNetworkSetupValid, isNetworkSelectionValid, finalizeNetworkSetup, projectNetworkMatch } from "./NetworkSetup.js";
 
@@ -265,10 +265,10 @@ capability、generation。
 房间身份、Host 成员、setup、订阅。
 
 调用函数
-normalizeNetworkEndpoint、createNetworkSetup、move、notify。
+normalizeNetworkEndpoint、normalizeConnectionInfo、createNetworkSetup、move、notify。
 
 边界与不变量
-只有 Host 生成候选和席位；未连接的 Guest 不伪造成员。
+只有 Host 生成候选和席位；未连接的 Guest 不伪造成员；Host 连接地址 metadata 完整进入 snapshot。
 */
   async open(role, endpoint = null) {
     if (this.#data.state !== S.IDLE) throw new Error("请先关闭当前房间");
@@ -288,7 +288,7 @@ normalizeNetworkEndpoint、createNetworkSetup、move、notify。
       if (generation !== this.#generation) return;
       if (result?.roomId) d.roomId = result.roomId;
       d.connectionInfo = role === R.HOST
-        ? result?.connectionInfo ? normalizeNetworkEndpoint(result.connectionInfo) : null : connectionInfo;
+        ? result?.connectionInfo ? normalizeConnectionInfo(result.connectionInfo) : null : connectionInfo;
       if (!d.roomId) throw new Error("缺少房间标识");
       this.move(S.WAITING_PEER);
       if (role === R.HOST) {
