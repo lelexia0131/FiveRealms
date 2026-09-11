@@ -2,13 +2,14 @@ import { NetworkGameChannel } from "./NetworkGameChannel.js";
 import { MATCH_MODE } from "../application/match/MatchMode.js";
 import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER, normalizeConnectionInfo, normalizeNetworkEndpoint } from "./NetworkProtocol.js";
 import { NETWORK_STATE as S, transitionNetworkState } from "./NetworkLobbyState.js";
-import { createNetworkSetup, isNetworkSetupValid, isNetworkSelectionValid, finalizeNetworkSetup, projectNetworkMatch } from "./NetworkSetup.js";
+import { createNetworkSetup, isNetworkSetupValid, isNetworkSelectionValid, finalizeNetworkSetup, projectNetworkMatch, normalizeParticipantDisplayName } from "./NetworkSetup.js";
 
 export class NetworkSession {
   #data;
   #listeners = new Set();
   #capability;
   #random;
+  #displayName;
   #generation = 0;
   #sequence = 0;
   #peerSequence = new Map();
@@ -22,7 +23,7 @@ export class NetworkSession {
 NetworkFlow 与测试。
 
 输入
-Transport capability 与 Host RNG。
+Transport capability、Host RNG 与本端 displayName。
 
 输出
 NetworkSession。
@@ -31,17 +32,18 @@ NetworkSession。
 无。
 
 写入状态
-私有会话和通道。
+私有会话、展示名和通道。
 
 调用函数
-reset、NetworkGameChannel。
+normalizeParticipantDisplayName、reset、NetworkGameChannel。
 
 边界与不变量
-Guest 不创建 Match authority。
+Guest 不创建 Match authority；displayName 只作为 participant 展示 metadata。
 */
-  constructor({ capability = null, random = Math.random } = {}) {
+  constructor({ capability = null, random = Math.random, displayName = null } = {}) {
     this.#capability = capability;
     this.#random = random;
+    this.#displayName = normalizeParticipantDisplayName(displayName);
     this.reset();
     this.gameChannel = new NetworkGameChannel({
       getSession: () => this.snapshot(), send: (type, payload, participantId) => this.send(type, payload, participantId)
@@ -79,6 +81,35 @@ data、序号。
       setup: null, finalSetup: null, locked: false, error: null };
     this.#sequence = 0;
     this.#peerSequence.clear();
+  }
+
+  /*
+功能
+在进入房间前设置本端真人 participant 的展示名。
+
+调用方
+main 在用户名持久化成功后装配 NetworkFlow。
+
+输入
+displayName 候选值。
+
+输出
+无。
+
+读取状态
+无。
+
+写入状态
+私有 displayName。
+
+调用函数
+normalizeParticipantDisplayName。
+
+边界与不变量
+只更新后续 participant 展示 metadata，不修改 participantId、connectionId、角色或 ownership。
+  */
+  setDisplayName(displayName) {
+    this.#displayName = normalizeParticipantDisplayName(displayName);
   }
 
   /*
@@ -293,10 +324,10 @@ normalizeNetworkEndpoint、normalizeConnectionInfo、createNetworkSetup、move�
       this.move(S.WAITING_PEER);
       if (role === R.HOST) {
         d.participantId = crypto.randomUUID();
-        // Host 没有 Transport remoteAddress 时，用创建房间已有的 LAN host 作为成员展示地址；IP 不参与身份认证或权限。
+        // Host 没有 Transport remoteAddress 时，用创建房间已有的 LAN host 作为连接来源 metadata；IP 不参与身份认证或权限。
         d.participants[d.participantId] = { participantId: d.participantId, role: R.HOST, guestOrdinal: null,
-          connectionId: null, remoteAddress: result?.remoteAddress ?? d.connectionInfo?.host ?? null, connected: true, kicked: false,
-          selection: null, ready: false, gameReady: false };
+          connectionId: null, remoteAddress: result?.remoteAddress ?? d.connectionInfo?.host ?? null, displayName: this.#displayName,
+          connected: true, kicked: false, selection: null, ready: false, gameReady: false };
         d.setup = createNetworkSetup(this.#random);
         this.move(S.SELECTING);
       }
@@ -315,7 +346,7 @@ normalizeNetworkEndpoint、normalizeConnectionInfo、createNetworkSetup、move�
 Transport capability、receive 的认证连接通知。
 
 输入
-已认证 connectionId 和可选 remoteAddress。
+已认证 connectionId、可选 remoteAddress 与可选 displayName。
 
 输出
 {ok, participantId} 或稳定错误 code。
@@ -324,28 +355,35 @@ Transport capability、receive 的认证连接通知。
 成员、上限、锁房标志。
 
 写入状态
-仅新 Guest 成员与其序号。
+仅新 Guest 成员与其展示 metadata。
 
 调用函数
-assertHost、publish。
+assertHost、publish、normalizeParticipantDisplayName。
 
 边界与不变量
-不采信 Guest 自报 IP；不重编号现存成员，锁房后不再加入。
+身份只由 connectionId 建立，displayName 仅进入展示 metadata；不采信 Guest 自报 IP；不重编号现存成员，锁房后不再加入。
 */
-  addParticipant({ connectionId, remoteAddress = null }) {
+  addParticipant({ connectionId, remoteAddress = null, displayName = null }) {
     this.assertHost();
     const d = this.#data;
     if (d.locked) return { ok: false, code: "ROOM_LOCKED" };
     if (typeof connectionId !== "string" || !connectionId) return { ok: false, code: "INVALID_CONNECTION" };
     const humans = Object.values(d.participants);
+    const normalizedDisplayName = normalizeParticipantDisplayName(displayName);
     const existing = humans.find((participant) => participant.connectionId === connectionId);
-    if (existing) return { ok: true, participantId: existing.participantId };
+    if (existing) {
+      if (normalizedDisplayName && existing.displayName !== normalizedDisplayName) {
+        existing.displayName = normalizedDisplayName;
+        this.publish(E.ROLE_POOL_ASSIGNED);
+      }
+      return { ok: true, participantId: existing.participantId };
+    }
     if (humans.length >= d.maxHumanCount) return { ok: false, code: "ROOM_FULL" };
     let guestOrdinal = 1;
     while (humans.some((participant) => participant.guestOrdinal === guestOrdinal)) guestOrdinal += 1;
     const participantId = crypto.randomUUID();
     d.participants[participantId] = { participantId, role: R.GUEST, guestOrdinal, connectionId,
-      remoteAddress: typeof remoteAddress === "string" ? remoteAddress : null,
+      remoteAddress: typeof remoteAddress === "string" ? remoteAddress : null, displayName: normalizedDisplayName,
       connected: true, kicked: false, selection: null, ready: false, gameReady: false };
     this.#peerSequence.delete(connectionId);
     d.error = null;
@@ -516,10 +554,10 @@ connectionId 映射、成员身份、revision。
 已认证连接序号与经入口提交的房间状态。
 
 调用函数
-addParticipant、selectFor、confirmFor、acceptSnapshot、gameChannel.receive。
+addParticipant、selectFor、confirmFor、acceptSnapshot、gameChannel.receive、publish。
 
 边界与不变量
-connectionId 必须由 capability 注入而非 payload；无元数据的既有 Transport 使用默认连接标识。
+connectionId 必须由 capability 注入而非 payload；无元数据的既有 Transport 使用默认连接标识；PARTICIPANT_HELLO 只按已认证 connectionId 补充 displayName。
 */
   receive(event, generation = this.#generation) {
     const d = this.#data;
@@ -529,7 +567,13 @@ connectionId 必须由 capability 注入而非 payload；无元数据的既有 T
     try {
       if (lifecycle) {
         if (event.type === E.PEER_CONNECTED) {
-          return d.role === R.HOST ? this.addParticipant({ connectionId, remoteAddress: event.payload?.remoteAddress }) : true;
+          return d.role === R.HOST
+            ? this.addParticipant({
+              connectionId,
+              remoteAddress: event.payload?.remoteAddress,
+              displayName: event.payload?.displayName
+            })
+            : true;
         }
         const participant = Object.values(d.participants).find((entry) => entry.connectionId === connectionId);
         if (d.role === R.HOST && event.type === E.DISCONNECTED) {
@@ -547,6 +591,14 @@ connectionId 必须由 capability 注入而非 payload；无元数据的既有 T
       this.#peerSequence.set(connectionId, event.sequence);
       if (event.type === E.DISCONNECTED && d.role === R.GUEST) {
         this.disconnect(event.payload?.message ?? "已离开房间");
+        return true;
+      }
+      if (event.type === E.PARTICIPANT_HELLO && d.role === R.HOST) {
+        const displayName = normalizeParticipantDisplayName(event.payload?.displayName);
+        if (displayName && participant.displayName !== displayName) {
+          participant.displayName = displayName;
+          this.publish(E.ROLE_POOL_ASSIGNED);
+        }
         return true;
       }
       if ([E.GAME_SNAPSHOT, E.DECISION_REQUEST, E.DECISION_RESPONSE, E.DECISION_CANCELLED, E.PLAYER_INTENT].includes(event.type)) {
@@ -587,10 +639,10 @@ Guest receive。
 Guest 房间只读副本。
 
 调用函数
-isNetworkSetupValid、finalizeNetworkSetup、move、notify。
+isNetworkSetupValid、finalizeNetworkSetup、send、move、notify。
 
 边界与不变量
-不合并 Guest 自有状态；锁房后固定角色与席位，只允许 Guest controller 转 AI。
+不合并 Guest 自有状态；锁房后固定角色与席位，只允许 Guest controller 转 AI；displayName 差异只触发认证连接上的补报。
 */
   acceptSnapshot(event) {
     const d = this.#data;
@@ -621,6 +673,10 @@ isNetworkSetupValid、finalizeNetworkSetup、move、notify。
     if (event.type === E.MATCH_START && (!p.locked || !allGameReady)) return false;
     Object.assign(d, { participantId: localId, setup: p.setup, participants: p.participants,
       maxHumanCount: p.maxHumanCount, locked: p.locked, finalSetup: p.finalSetup, revision: event.revision, error: null });
+    // 无元数据旧 Transport 可在首次成员快照后按已认证 connectionId 补报 displayName；到齐后不会再重发。
+    if (this.#displayName && d.participants[localId]?.displayName !== this.#displayName) {
+      this.send(E.PARTICIPANT_HELLO, { displayName: this.#displayName });
+    }
     if (d.state === S.WAITING_PEER) this.move(S.SELECTING);
     this.move(event.type === E.MATCH_START ? S.IN_GAME : d.locked ? S.LOADING_GAME
       : d.participants[localId].ready ? S.WAITING_REMOTE : S.SELECTING);
@@ -928,7 +984,7 @@ assertHost、gameChannel.syncControllers/cancelParticipant、publish。
     if (d.locked) {
       d.finalSetup = { ...d.finalSetup, players: d.finalSetup.players.map((player) =>
         player.controller.participantId === participantId
-          ? { ...player, controller: { type: "AI", participantId: null } } : player) };
+          ? { ...player, controller: { type: "AI", participantId: null, displayName: null } } : player) };
       this.gameChannel.syncControllers();
       this.gameChannel.cancelParticipant(participantId);
     } else delete d.participants[participantId];

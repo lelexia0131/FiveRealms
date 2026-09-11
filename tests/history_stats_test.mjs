@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HistoryArchiveView } from "../js/ui/history/HistoryArchiveView.js";
-import { HistoryStatsManager } from "../js/ui/history/HistoryStatsManager.js";
+import { UIManager } from "../js/ui/UIManager.js";
+import { HistoryStatsManager, isValidUsername, normalizeUsername } from "../js/ui/history/HistoryStatsManager.js";
 
 /*
 功能
@@ -297,6 +298,7 @@ export function registerHistoryStatsTests(test) {
         highestSingleMatchDamageTaken: persisted.achievements.highestSingleMatchDamageTaken
       } }, {
         version: 1,
+        profile: { username: "" },
         summary: {
           totalMatches: 0, wins: 0, losses: 0, mvpCount: 0,
           highestScore: 0, highestRounds: 0, totalScore: 0, totalRounds: 0,
@@ -691,4 +693,191 @@ export function registerHistoryStatsTests(test) {
       await fixture.cleanup();
     }
   });
+
+  test("UI·历史档案：旧档无 profile 时判定需要填写用户名而合法 username 直接读取", async () => {
+    const fixture = await createHistoryFixture();
+    try {
+      const legacy = {
+        version: 1,
+        summary: {
+          totalMatches: 3, wins: 2, losses: 1, mvpCount: 1,
+          highestScore: 200, highestRounds: 5, totalScore: 400, totalRounds: 12,
+          currentWinStreak: 1, maxWinStreak: 2
+        },
+        characters: { "blade-walker": { matches: 3, wins: 2, winRate: 66.7, mvpCount: 1, highestScore: 200, totalScore: 400 } },
+        teams: { dawn: { matches: 3, wins: 2, winRate: 66.7 } },
+        achievements: {},
+        records: [{ timestamp: "2026-09-01T00:00:00.000Z", characterId: "blade-walker", characterName: "刃行者", teamId: "dawn", teammateCharacterIds: [], won: true, score: 200, rounds: 5, isMvp: true }]
+      };
+      await writeFile(fixture.filePath, JSON.stringify(legacy), "utf8");
+      const legacyManager = new HistoryStatsManager({ storage: fixture.storage });
+      await legacyManager.initialize();
+      assert.equal(legacyManager.getUsername(), null);
+      assert.equal(legacyManager.hasUsername(), false);
+
+      await writeFile(fixture.filePath, JSON.stringify({ ...legacy, profile: { username: "lelexia" } }), "utf8");
+      const existingManager = new HistoryStatsManager({ storage: fixture.storage });
+      await existingManager.initialize();
+      assert.equal(existingManager.getUsername(), "lelexia");
+      assert.equal(existingManager.hasUsername(), true);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("UI·历史档案：保存 username 保留 records、stats 与 achievements", async () => {
+    const fixture = await createHistoryFixture();
+    try {
+      let minute = 0;
+      const manager = new HistoryStatsManager({
+        storage: fixture.storage,
+        now: () => new Date(Date.UTC(2026, 8, 1, 8, minute++, 0))
+      });
+      await manager.recordMatchResult(matchResult({ isMvp: true }), "human");
+      const before = JSON.parse(await readFile(fixture.filePath, "utf8"));
+
+      assert.equal(await manager.saveUsername("  lelexia  "), "lelexia");
+      const persisted = JSON.parse(await readFile(fixture.filePath, "utf8"));
+      assert.deepEqual(persisted.profile, { username: "lelexia" });
+      for (const key of ["version", "summary", "characters", "teams", "achievements", "records"]) {
+        assert.deepEqual(persisted[key], before[key], `${key} 不得被 username 保存覆盖`);
+      }
+
+      await manager.recordMatchResult(matchResult({ gameId: "history-after-username" }), "human");
+      const afterMatch = JSON.parse(await readFile(fixture.filePath, "utf8"));
+      assert.equal(afterMatch.profile.username, "lelexia");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("UI·历史档案：保存 username 失败不进入主界面且内存 username 保持未设置", async () => {
+    const existing = JSON.stringify({
+      version: 1,
+      summary: {
+        totalMatches: 0, wins: 0, losses: 0, mvpCount: 0,
+        highestScore: 0, highestRounds: 0, totalScore: 0, totalRounds: 0
+      },
+      characters: {}, teams: {}, records: []
+    });
+    const storage = createUnsupportedWriteStorage(existing);
+    const manager = new HistoryStatsManager({ storage });
+    await manager.initialize();
+    await assert.rejects(manager.saveUsername("lelexia"), /HTTP 501/);
+    assert.equal(manager.hasUsername(), false);
+    assert.equal(manager.getUsername(), null);
+    assert.equal(await storage.read(), existing);
+
+    let enteredMain = false;
+    try {
+      await manager.saveUsername("lelexia");
+      enteredMain = true;
+    } catch {
+      // 保存失败必须停留在填写页，主界面入口不能执行。
+    }
+    assert.equal(enteredMain, false);
+  });
+
+  test("UI·历史档案：username 校验 trim 长度空白与控制字符且不写非法值", async () => {
+    assert.equal(normalizeUsername("  lelexia  "), "lelexia");
+    assert.equal(normalizeUsername("a".repeat(20)), "a".repeat(20));
+    assert.equal(normalizeUsername("a".repeat(21)), "");
+    assert.equal(normalizeUsername("　　"), "");
+    assert.equal(normalizeUsername("alice\n"), "alice");
+    assert.equal(normalizeUsername("ali\u0000ce"), "");
+    assert.equal(normalizeUsername("ali\u009Fce"), "");
+    assert.equal(isValidUsername(" "), false);
+    assert.equal(isValidUsername(null), false);
+
+    const fixture = await createHistoryFixture();
+    try {
+      const manager = new HistoryStatsManager({ storage: fixture.storage });
+      await manager.initialize();
+      await assert.rejects(manager.saveUsername("   "), /用户名/);
+      await assert.rejects(manager.saveUsername("bad\u0000name"), /用户名/);
+      const persisted = JSON.parse(await readFile(fixture.filePath, "utf8"));
+      assert.equal(persisted.profile.username, "");
+      assert.equal(manager.hasUsername(), false);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  test("UI·历史档案：保存 username 等待真实落盘完成前不更新内存", async () => {
+    const fixture = await createHistoryFixture();
+    try {
+      const manager = new HistoryStatsManager({ storage: fixture.storage });
+      await manager.initialize();
+
+      let releaseWrite;
+      let writeStarted = false;
+      const originalStorage = manager.storage;
+      manager.storage = {
+        read: (...args) => originalStorage.read(...args),
+        write: async (json) => {
+          writeStarted = true;
+          await new Promise((resolve) => { releaseWrite = resolve; });
+          await originalStorage.write(json);
+        }
+      };
+
+      const pending = manager.saveUsername("lelexia");
+      assert.equal(writeStarted, true);
+      assert.equal(manager.hasUsername(), false);
+      releaseWrite();
+      assert.equal(await pending, "lelexia");
+      assert.equal(manager.hasUsername(), true);
+      assert.equal(JSON.parse(await readFile(fixture.filePath, "utf8")).profile.username, "lelexia");
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+
+  test("UI·历史档案：无合法 username 展示用户名填写页且不泄露历史内容", () => {
+    const makeClassList = () => {
+      const values = new Set();
+      return {
+        add: (...names) => names.forEach((name) => values.add(name)),
+        remove: (...names) => names.forEach((name) => values.delete(name)),
+        contains: (name) => values.has(name)
+      };
+    };
+    const usernameScreen = { classList: makeClassList() };
+    const startScreen = { classList: makeClassList() };
+    const usernameError = { textContent: "", classList: { toggle: (name, value) => {
+      if (name === "is-hidden" && value) usernameError.hidden = true;
+      if (name === "is-hidden" && !value) usernameError.hidden = false;
+    } } };
+    let focused = false;
+    const usernameInput = { disabled: false, focus: () => { focused = true; } };
+    const usernameSubmit = { disabled: false, textContent: "继续" };
+    const context = {
+      usernamePending: false,
+      elements: {
+        username_screen: usernameScreen, start_screen: startScreen,
+        username_error: usernameError, username_input: usernameInput, username_submit: usernameSubmit,
+        username_form: { reset() {} }
+      },
+      sound: { playMenuMusic() {} },
+      setUsernameError: UIManager.prototype.setUsernameError,
+      setUsernamePending: UIManager.prototype.setUsernamePending
+    };
+
+    UIManager.prototype.showUsernameSetup.call(context);
+    assert.equal(usernameScreen.classList.contains("is-hidden"), false);
+    assert.equal(startScreen.classList.contains("is-hidden"), true);
+    assert.equal(focused, true);
+    assert.equal(context.usernamePending, false);
+    assert.equal(usernameError.textContent, "");
+
+    UIManager.prototype.setUsernameError.call(context, "用户名保存失败，请重试。");
+    assert.equal(usernameError.textContent, "用户名保存失败，请重试。");
+    assert.equal(usernameError.hidden, false);
+    UIManager.prototype.setUsernamePending.call(context, true);
+    assert.equal(usernameInput.disabled, true);
+    assert.equal(usernameSubmit.disabled, true);
+    assert.equal(context.usernamePending, true);
+  });
+
 }

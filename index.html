@@ -28,7 +28,7 @@
   <div class="ambient ambient-two" aria-hidden="true"></div>
 
   <main id="app" class="app-shell">
-    <section id="start-screen" class="screen start-screen" aria-labelledby="game-title">
+    <section id="start-screen" class="screen start-screen is-hidden" aria-labelledby="game-title">
       <div class="start-copy">
         <p class="eyebrow start-brand-title">FiveRealms</p>
         <h1 id="game-title"><span>五域</span>纷争</h1>
@@ -79,6 +79,21 @@
           </button>
         </div>
       </aside>
+    </section>
+
+    <section id="username-screen" class="screen username-screen is-hidden" aria-labelledby="username-title">
+      <form id="username-form" class="username-card" novalidate>
+        <p class="eyebrow">FiveRealms</p>
+        <h2 id="username-title">创建你的旅者名</h2>
+        <p class="username-copy">这个名字只用于展示。它不会参与联机身份、权限、席位或控制权判断。</p>
+        <label class="username-field" for="username-input">
+          <span>用户名</span>
+          <input id="username-input" name="username" type="text" maxlength="20" autocomplete="nickname"
+            spellcheck="false" required />
+        </label>
+        <p id="username-error" class="username-error is-hidden" role="alert"></p>
+        <button id="username-submit" class="primary-button username-submit" type="submit">继续</button>
+      </form>
     </section>
 
     <section id="history-archive-screen" class="screen history-archive-screen is-hidden" aria-label="历史档案馆"></section>

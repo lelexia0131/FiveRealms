@@ -15,7 +15,7 @@ import { renderNetworkSquadSelectionView } from "../ui/network/NetworkSquadSelec
 main.js。
 
 输入
-UI、可选 Transport capability、单人/首页/准备/开始/清理 callbacks。
+UI、可选 Transport capability、本端 displayName、单人/首页/准备/开始/清理 callbacks。
 
 输出
 冻结 navigation handle。
@@ -30,10 +30,10 @@ NetworkSession snapshot 与页面表单 draft。
 NetworkSession、三种页面 renderer、注入 Match callbacks。
 
 边界与不变量
-Game UI 准备完成后才发 GAME_READY；本模块不拥有 GameLoop、规则或持久化。
+Game UI 准备完成后才发 GAME_READY；本模块不拥有 GameLoop、规则或持久化；displayName 只交给 participant metadata。
 */
-export function createNetworkFlow({ ui, capability = null, onSingleplayer, onHome, onPrepareMatch, onStartMatch, onDisposeMatch }) {
-  const session = new NetworkSession({ capability });
+export function createNetworkFlow({ ui, capability = null, displayName = null, onSingleplayer, onHome, onPrepareMatch, onStartMatch, onDisposeMatch }) {
+  const session = new NetworkSession({ capability, displayName });
   let page = "mode";
   let draft = {};
   let prepared = false;

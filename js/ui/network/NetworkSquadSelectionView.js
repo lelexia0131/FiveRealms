@@ -27,7 +27,7 @@ session snapshot 与本地表单 draft。
 转义后的 HTML。
 
 读取状态
-成员 selection、稳定 ordinal、connectionInfo.addresses、capacity 和 canStart。
+成员 selection、displayName、connectionInfo.addresses、capacity 和 canStart。
 
 写入状态
 无。
@@ -36,7 +36,7 @@ session snapshot 与本地表单 draft。
 candidateCardTemplate、networkParticipantLabel、formatNetworkAddress、escapeHtml。
 
 边界与不变量
-UI 不计算房间人数或决定权限；禁用其他真人已占用的角色及席位；地址逐项转义展示。
+UI 不计算房间人数或决定权限；玩家身份展示 displayName，连接地址仍逐项展示 LAN/Tailscale IP；禁用其他真人已占用的角色及席位。
 */
 
 export function renderNetworkSquadSelectionView(snapshot, draft = {}) {
@@ -56,7 +56,7 @@ export function renderNetworkSquadSelectionView(snapshot, draft = {}) {
     addresses.push({ host: fallbackHost, port: info.port, kind: "lan" });
   }
   const addressRows = addresses.map((address) => {
-    const host = String(address.host).trim();
+    const host = formatNetworkAddress(address.host);
     const kindLabel = address.kind === "tailscale" ? "Tailscale" : "局域网";
     return `<div class="network-connection-row">
       <span class="network-connection-kind">${escapeHtml(kindLabel)}</span>
@@ -72,7 +72,6 @@ export function renderNetworkSquadSelectionView(snapshot, draft = {}) {
   </div>` : "";
   const members = participants.map((participant) => `<div class="network-member">
     <strong>${escapeHtml(networkParticipantLabel(participant))}</strong>
-    <span>${escapeHtml(formatNetworkAddress(participant.remoteAddress))}</span>
     <small>${participant.connected ? participant.ready ? "已确认" : "选择中" : "已离线"}</small>
     ${isHost && participant.role === "GUEST" && participant.connected ? `<button class="ghost-button" type="button" data-network-action="kick" data-participant-id="${escapeHtml(participant.participantId)}">踢出</button>` : ""}
   </div>`).join("");

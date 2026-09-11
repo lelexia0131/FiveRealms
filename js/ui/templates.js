@@ -180,15 +180,15 @@ export function skillDetailsTemplate(player) {
   presentCharacter、equipmentSlotTemplate、opponentHandStripTemplate。
 
   边界与不变量
-  手牌数量可以独立于牌实体提供；Host、Guest 编号和 AI 标签只接受 controller ownership 投影；不得为未知手牌创建虚假实体。
+  手牌数量可以独立于牌实体提供；真人 badge 只接受 controller 投影的 displayName，AI 标签保持原控制权语义；不得为未知手牌创建虚假实体。
   */
 export function playerPanelTemplate(player, options = {}) {
   const handCount = player.handCount ?? player.hand.length;
   const character = presentCharacter(player.character) ?? {};
   const { humanTeam = player.battleTeam, isHuman = false, isViewer = isHuman, isCurrent = false, isLegalTarget = false, isSelectedTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null, opponentHandSlots = null } = options;
-  const networkRole = options.networkRole ?? player.networkRole;
+  const networkRole = options.displayName ?? player.displayName ?? options.networkRole ?? player.networkRole;
   const networkRoleBadge = networkRole
-    ? `<span class="network-role-badge" aria-label="联机身份 ${escapeHtml(networkRole)}">${escapeHtml(networkRole)}</span>`
+    ? `<span class="network-role-badge" aria-label="联机玩家 ${escapeHtml(networkRole)}">${escapeHtml(networkRole)}</span>`
     : "";
   const relationship = isViewer ? "is-self" : player.battleTeam === humanTeam ? "is-ally" : "is-enemy";
   const statuses = player.alive ? [

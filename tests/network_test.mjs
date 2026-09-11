@@ -22,7 +22,9 @@ import { ACTIVE_SKILL_DEFINITIONS } from "../js/domain/definitions/skills/SkillD
 import { TEAM_PRESENTATION } from "../js/adapters/ui/PresentationMetadata.js";
 import { ActionLegality } from "../js/application/action/ActionLegality.js";
 import { createTargetChoiceRequest } from "../js/application/choice/TargetChoiceRequest.js";
+import { Player } from "../js/application/match/Player.js";
 import { renderNetworkSquadSelectionView } from "../js/ui/network/NetworkSquadSelectionView.js";
+import { playerPanelTemplate } from "../js/ui/templates.js";
 
 /*
 功能
@@ -49,7 +51,7 @@ NetworkSession.open/receive。
 边界与不变量
 不创建生产 FakeTransport，不进行网络访问。
 */
-async function connectedPair(random = () => 0.25) {
+async function connectedPair(random = () => 0.25, names = {}) {
   const receivers = {};
   const events = [];
   let roomId;
@@ -60,8 +62,8 @@ async function connectedPair(random = () => 0.25) {
     send: (event) => { events.push(event); receivers[role === R.HOST ? R.GUEST : R.HOST]?.(structuredClone(event)); },
     close: () => {}
   });
-  const host = new NetworkSession({ capability: capability(R.HOST), random });
-  const guest = new NetworkSession({ capability: capability(R.GUEST), random: () => { throw Error("Guest 不得 shuffle"); } });
+  const host = new NetworkSession({ capability: capability(R.HOST), random, displayName: names.host ?? null });
+  const guest = new NetworkSession({ capability: capability(R.GUEST), random: () => { throw Error("Guest 不得 shuffle"); }, displayName: names.guest ?? null });
   await host.open(R.HOST);
   await guest.open(R.GUEST, { host: "test-room", port: NETWORK_DEFAULT_PORT });
   const connect = () => {
@@ -952,6 +954,86 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     view.dispose(); game.dispose(); pair.host.close(); pair.guest.close();
   });
 
+  test("Network：Host与Guest snapshot 保留双方displayName且对局内真人标签使用displayName", async () => {
+    const pair = await connectedPair(undefined, { host: "lelexia", guest: "炎术士" });
+    const beforeHost = pair.host.snapshot();
+    const beforeGuest = pair.guest.snapshot();
+    const hostId = beforeHost.participantId;
+    const guestId = beforeGuest.participantId;
+    assert.notEqual(hostId, guestId);
+    assert.equal(beforeHost.participants[hostId].displayName, "lelexia");
+    assert.equal(beforeHost.participants[guestId].displayName, "炎术士");
+    assert.equal(beforeGuest.participants[hostId].displayName, "lelexia");
+    assert.equal(beforeGuest.participants[guestId].displayName, "炎术士");
+
+    choosePair(pair);
+    pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+    const setup = pair.host.snapshot().matchSetup;
+    const guestSetup = pair.guest.snapshot().matchSetup;
+    const humans = setup.players.filter((seat) => seat.controller.type !== "AI");
+    assert.equal(humans.length, 2);
+    assert.deepEqual(humans.map((seat) => seat.displayName).sort(), ["lelexia", "炎术士"]);
+    assert.deepEqual(humans.map((seat) => seat.networkRole).sort(), ["lelexia", "炎术士"]);
+    assert.deepEqual(humans.map((seat) => seat.controller.displayName).sort(), ["lelexia", "炎术士"]);
+    assert.equal(new Set(humans.map((seat) => seat.controller.participantId)).size, 2);
+    assert.deepEqual(
+      guestSetup.players.map((seat) => [seat.playerId, seat.controller.participantId, seat.networkRole]),
+      setup.players.map((seat) => [seat.playerId, seat.controller.participantId, seat.networkRole])
+    );
+
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(setup);
+    const local = game.state.players.find((player) => player.controlType === C.LOCAL_HUMAN);
+    const remote = game.state.players.find((player) => player.controlType === C.REMOTE_HUMAN);
+    assert.equal(local.networkRole, "lelexia");
+    assert.equal(remote.networkRole, "炎术士");
+    const localMarkup = playerPanelTemplate(local, { networkRole: local.networkRole, isHuman: true, isViewer: true });
+    const remoteMarkup = playerPanelTemplate(remote, { networkRole: remote.networkRole, humanTeam: local.battleTeam });
+    assert.match(localMarkup, /network-role-badge[^>]*>lelexia</);
+    assert.match(remoteMarkup, /network-role-badge[^>]*>炎术士</);
+    assert.doesNotMatch(remoteMarkup, /<strong>Host<\/strong>|<strong>Guest 1<\/strong>/);
+    game.dispose();
+  });
+
+  test("Network：displayName重名不影响participantId、席位与控制权ownership", async () => {
+    const pair = await connectedPair(undefined, { host: "同名人", guest: "同名人" });
+    const hostId = pair.host.snapshot().participantId;
+    const guestId = pair.guest.snapshot().participantId;
+    assert.notEqual(hostId, guestId);
+    assert.equal(pair.host.snapshot().participants[hostId].displayName, "同名人");
+    assert.equal(pair.host.snapshot().participants[guestId].displayName, "同名人");
+    assert.equal(pair.guest.snapshot().participants[guestId].displayName, "同名人");
+
+    choosePair(pair);
+    const hostSelection = pair.host.snapshot().localSelection;
+    pair.host.confirm(); pair.guest.confirm();
+    assert.equal(pair.host.snapshot().canStart, true);
+    assert.equal(pair.host.start().ok, true);
+    const setup = pair.host.snapshot().matchSetup;
+    const humanControllers = setup.players
+      .filter((seat) => seat.controller.type !== "AI")
+      .map((seat) => seat.controller);
+    assert.deepEqual(humanControllers.map((controller) => controller.displayName), ["同名人", "同名人"]);
+    assert.equal(new Set(humanControllers.map((controller) => controller.participantId)).size, 2);
+    assert.equal(setup.players.filter((seat) => seat.controller.participantId === hostId).length, 1);
+    assert.equal(setup.players.filter((seat) => seat.controller.participantId === guestId).length, 1);
+    const hostSeat = setup.players.find((seat) => seat.controller.participantId === hostId);
+    assert.equal(hostSeat.characterId, hostSelection.characterId);
+    assert.equal(hostSeat.controlType, C.LOCAL_HUMAN);
+    assert.equal(setup.players.find((seat) => seat.controller.participantId === guestId).controlType, C.REMOTE_HUMAN);
+  });
+
+  test("Network：单人模式Player不注入联机displayName且UI不显示联机badge", () => {
+    const single = new Player({
+      id: "single-player", seatIndex: 0, controllerType: "human",
+      controlType: C.LOCAL_HUMAN, battleTeam: "dawn"
+    });
+    assert.equal(single.networkRole, null);
+    assert.equal(single.displayName, undefined);
+    const markup = playerPanelTemplate(single, { isHuman: true, isViewer: true });
+    assert.doesNotMatch(markup, /network-role-badge|联机玩家/);
+  });
+
   test("Network：真人不在第零席时Match仍保持canonical并显式区分本地与远端", async () => {
     const pair = await connectedPair();
     choosePairAtSeats(pair, 3, 1);
@@ -1533,9 +1615,9 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     } finally { room.close(); }
   });
 
-  test("Network：Host显示地址优先Transport remoteAddress并回退connectionInfo.host", async () => {
+  test("Network：Lobby成员展示displayName且Host连接地址保留IP并优先Transport地址", async () => {
     async function openHost(result = {}) {
-      const session = new NetworkSession({ capability: {
+      const session = new NetworkSession({ displayName: "主机旅者", capability: {
         createRoom: async (room) => ({ ...room, ...result }),
         subscribe: () => () => {},
         close: () => {}
@@ -1551,28 +1633,33 @@ export function registerNetworkTests(test, { makeUi, instance }) {
       const preferredSnapshot = preferred.snapshot();
       assert.equal(preferredSnapshot.participants[preferredSnapshot.participantId].remoteAddress, "10.0.0.9");
       const preferredMarkup = renderNetworkSquadSelectionView(preferredSnapshot);
-      assert.match(preferredMarkup, /<strong>Host<\/strong>\s*<span>10\.0\.0\.9<\/span>/);
-      assert.doesNotMatch(preferredMarkup, /<strong>Host<\/strong>\s*<span>(?:10\.196\.91\.170|::ffff:10\.196\.91\.170)<\/span>/);
+      assert.match(preferredMarkup, /<strong>主机旅者<\/strong>/);
+      assert.match(preferredMarkup, /10\.196\.91\.170:38520/);
+      assert.doesNotMatch(preferredMarkup, /10\.0\.0\.9/);
 
       const fallback = await openHost({ connectionInfo: { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT } });
       sessions.push(fallback);
       const fallbackSnapshot = fallback.snapshot();
       assert.equal(fallbackSnapshot.participants[fallbackSnapshot.participantId].remoteAddress, "10.196.91.170");
-      assert.match(renderNetworkSquadSelectionView(fallbackSnapshot), /<strong>Host<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
+      const fallbackMarkup = renderNetworkSquadSelectionView(fallbackSnapshot);
+      assert.match(fallbackMarkup, /<strong>主机旅者<\/strong>/);
+      assert.match(fallbackMarkup, /10\.196\.91\.170:38520/);
 
       const mapped = await openHost({ connectionInfo: { host: "::ffff:10.196.91.170", port: NETWORK_DEFAULT_PORT } });
       sessions.push(mapped);
-      const mappedSnapshot = mapped.snapshot();
-      assert.equal(formatNetworkAddress(mappedSnapshot.participants[mappedSnapshot.participantId].remoteAddress), "10.196.91.170");
-      const mappedMarkup = renderNetworkSquadSelectionView(mappedSnapshot);
-      assert.match(mappedMarkup, /<strong>Host<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
-      assert.doesNotMatch(mappedMarkup, /<strong>Host<\/strong>\s*<span>::ffff:/);
+      const mappedMarkup = renderNetworkSquadSelectionView(mapped.snapshot());
+      assert.match(mappedMarkup, /<strong>主机旅者<\/strong>/);
+      assert.match(mappedMarkup, /10\.196\.91\.170:38520/);
+      assert.doesNotMatch(mappedMarkup, /::ffff:/);
 
       const missing = await openHost();
       sessions.push(missing);
       const missingSnapshot = missing.snapshot();
       assert.equal(missingSnapshot.participants[missingSnapshot.participantId].remoteAddress, null);
-      assert.match(renderNetworkSquadSelectionView(missingSnapshot), /<strong>Host<\/strong>\s*<span>地址未提供<\/span>/);
+      const missingMarkup = renderNetworkSquadSelectionView(missingSnapshot);
+      assert.match(missingMarkup, /<strong>主机旅者<\/strong>/);
+      assert.doesNotMatch(missingMarkup, /地址未提供/);
+      assert.match(missingMarkup, /连接地址将在网络服务启动后显示/);
     } finally {
       for (const session of sessions) session.close();
     }
@@ -1718,34 +1805,58 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     }
   });
 
-  test("Network：Guest显示地址只来自Guest remoteAddress且不继承Host fallback", async () => {
+  test("Network：Lobby身份显示displayName而LAN与Tailscale连接地址仍保留IP", async () => {
     let roomId;
     const receivers = {};
-    const hostResult = { connectionInfo: { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT } };
     const capability = (role) => ({
-      createRoom: async (room) => { roomId = room.roomId; return { ...room, ...(role === R.HOST ? hostResult : {}) }; },
+      createRoom: async (room) => {
+        roomId = room.roomId;
+        return { ...room, connectionInfo: {
+          host: "100.86.236.89", port: NETWORK_DEFAULT_PORT,
+          addresses: [
+            { host: "100.86.236.89", port: NETWORK_DEFAULT_PORT, kind: "tailscale" },
+            { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT, kind: "lan" }
+          ]
+        } };
+      },
       joinRoom: async () => ({ roomId }),
       subscribe: (receive) => { receivers[role] = receive; return () => { delete receivers[role]; }; },
       send: (event) => { receivers[event.sender === R.HOST ? R.GUEST : R.HOST]?.(structuredClone(event)); },
       close: () => {}
     });
-    const host = new NetworkSession({ capability: capability(R.HOST), random: () => 0.25 });
-    const guest = new NetworkSession({ capability: capability(R.GUEST), random: () => { throw new Error("Guest 不得 shuffle"); } });
+    const host = new NetworkSession({ capability: capability(R.HOST), random: () => 0.25, displayName: "主控者" });
+    const guest = new NetworkSession({ capability: capability(R.GUEST), random: () => { throw new Error("Guest 不得 shuffle"); }, displayName: "旅人甲" });
     try {
       await host.open(R.HOST);
-      await guest.open(R.GUEST, { host: "10.196.91.170", port: NETWORK_DEFAULT_PORT });
+      await guest.open(R.GUEST, { host: "100.86.236.89", port: NETWORK_DEFAULT_PORT });
       host.setMaxHumanCount(3);
-      assert.equal(host.addParticipant({ connectionId: "guest-1", remoteAddress: "::ffff:10.0.0.55" }).ok, true);
-      host.addParticipant({ connectionId: "guest-2", remoteAddress: null });
-      const snapshot = guest.snapshot();
-      assert.equal(snapshot.connectionInfo.host, "10.196.91.170");
-      assert.equal(snapshot.participants[snapshot.participantId].role, R.GUEST);
-      const guestMarkup = renderNetworkSquadSelectionView(snapshot);
-      assert.match(guestMarkup, /<strong>Host<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
-      assert.match(guestMarkup, /<strong>Guest 1<\/strong>\s*<span>10\.0\.0\.55<\/span>/);
-      assert.doesNotMatch(guestMarkup, /<strong>Guest 1<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
-      assert.match(guestMarkup, /<strong>Guest 2<\/strong>\s*<span>地址未提供<\/span>/);
-      assert.doesNotMatch(guestMarkup, /<strong>Guest 2<\/strong>\s*<span>10\.196\.91\.170<\/span>/);
+      assert.equal(host.addParticipant({ connectionId: "guest-1", remoteAddress: "10.0.0.55", displayName: "旅人甲" }).ok, true);
+      assert.equal(host.addParticipant({ connectionId: "guest-2", remoteAddress: null }).ok, true);
+
+      const hostSnapshot = host.snapshot();
+      const guestSnapshot = guest.snapshot();
+      const hostId = hostSnapshot.participantId;
+      const guestOneId = Object.values(hostSnapshot.participants).find((participant) => participant.connectionId === "guest-1").participantId;
+      assert.equal(hostSnapshot.participants[hostId].displayName, "主控者");
+      assert.equal(hostSnapshot.participants[guestOneId].displayName, "旅人甲");
+      assert.equal(guestSnapshot.participants[hostId].displayName, "主控者");
+      assert.equal(guestSnapshot.participants[guestOneId].displayName, "旅人甲");
+
+      const hostMarkup = renderNetworkSquadSelectionView(hostSnapshot);
+      assert.match(hostMarkup, /<strong>主控者<\/strong>/);
+      assert.match(hostMarkup, /<strong>旅人甲<\/strong>/);
+      assert.equal((hostMarkup.match(/data-network-action="copy-address"/g) ?? []).length, 2);
+      assert.match(hostMarkup, /100\.86\.236\.89:38520/);
+      assert.match(hostMarkup, /10\.196\.91\.170:38520/);
+      assert.doesNotMatch(hostMarkup, /<strong>(?:Host|Guest 1)<\/strong>/);
+      assert.doesNotMatch(hostMarkup, /10\.0\.0\.55/);
+
+      const guestMarkup = renderNetworkSquadSelectionView(guestSnapshot);
+      assert.match(guestMarkup, /<strong>主控者<\/strong>/);
+      assert.match(guestMarkup, /<strong>旅人甲<\/strong>/);
+      assert.match(guestMarkup, /<strong>Guest 2<\/strong>/);
+      assert.doesNotMatch(guestMarkup, /10\.0\.0\.55/);
+      assert.doesNotMatch(guestMarkup, /data-network-action="copy-address"/);
     } finally {
       host.close();
       guest.close();
@@ -1848,7 +1959,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
         }
         assert.equal(actor.controlType, C.AI); assert.equal(actor.controllerType, "ai"); assert.equal(actor.networkRole, "AI");
         assert.equal(room.host.snapshot().participants[participantId].connected, false);
-        assert.deepEqual(room.host.snapshot().matchSetup.players[actor.seatIndex].controller, { type: "AI", participantId: null });
+        assert.deepEqual(room.host.snapshot().matchSetup.players[actor.seatIndex].controller, { type: "AI", participantId: null, displayName: null });
         assert.equal(room.host.snapshot().state, S.IN_GAME);
         assert.equal(room.guests[1].snapshot().state, S.IN_GAME);
         assert.equal(room.guests[1].gameChannel.snapshot().projection.players.find((p) => p.playerId === actor.id).networkRole, "AI");
@@ -2471,21 +2582,30 @@ export function registerNetworkUiTests(test) {
   });
 
 
-  test("UI·Network：多人房间人数IP稳定编号和管理权限来自authority", async () => {
+  test("UI·Network：Lobby身份展示displayName且管理权限来自authority", async () => {
     const room = await connectedRoom(4);
     try {
       assert.equal(formatNetworkAddress("::ffff:10.196.91.201"), "10.196.91.201");
       assert.equal(formatNetworkAddress("2001:db8::1"), "2001:db8::1");
       assert.equal(formatNetworkAddress(null), "地址未提供");
       room.host.setMaxHumanCount(4);
-      const hostMarkup = renderNetworkSquadSelectionView(room.host.snapshot());
+      const renderNamed = (snapshot) => {
+        const named = structuredClone(snapshot);
+        for (const participant of Object.values(named.participants)) {
+          participant.displayName = participant.role === R.HOST ? "主控玩家" : `访客 ${participant.guestOrdinal}`;
+        }
+        return renderNetworkSquadSelectionView(named);
+      };
+      const hostMarkup = renderNamed(room.host.snapshot());
       assert.match(hostMarkup, /房间 4 \/ 4/);
-      for (const label of ["Host", "Guest 1", "Guest 2", "Guest 3"]) assert.ok(hostMarkup.includes(label));
+      for (const label of ["主控玩家", "访客 1", "访客 2", "访客 3"]) assert.ok(hostMarkup.includes(label));
       assert.equal((hostMarkup.match(/data-network-action="kick"/g) ?? []).length, 3);
-      assert.match(hostMarkup, /10\.0\.0\.2/);
+      assert.doesNotMatch(hostMarkup, /10\.0\.0\.2|<strong>Host<\/strong>|<strong>Guest [123]<\/strong>/);
       assert.doesNotMatch(hostMarkup, /::ffff:|双人|等待另一名|两位真人/);
-      const guestMarkup = renderNetworkSquadSelectionView(room.guests[0].snapshot());
+      const guestMarkup = renderNamed(room.guests[0].snapshot());
       assert.match(guestMarkup, /房间 4 \/ 4/);
+      assert.match(guestMarkup, /<strong>主控玩家<\/strong>/);
+      assert.match(guestMarkup, /<strong>访客 1<\/strong>/);
       assert.doesNotMatch(guestMarkup, /data-network-action="(?:kick|capacity|start)"/);
       room.host.select({ characterId: room.host.snapshot().candidates[0], ...room.host.snapshot().seats[0] });
       const updated = renderNetworkSquadSelectionView(room.guests[0].snapshot());

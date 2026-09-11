@@ -206,6 +206,7 @@ export class UIManager {
   */
   constructor({ historyStatsManager = null } = {}) {
     this.elements = Object.fromEntries([
+      "username-screen", "username-form", "username-input", "username-error", "username-submit",
       "network-screen", "start-screen", "history-archive-screen", "game-info-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "game-info-button", "rules-button",
       "squad-mode-grid", "back-to-start-button", "back-to-squad-button", "candidate-grid", "selection-eyebrow", "selection-title", "selection-copy", "team-preview",
       "status-metrics", "restart-button", "cpu-grid", "human-panel", "human-hand", "hand-hint",
@@ -231,6 +232,7 @@ export class UIManager {
     this.thinkingMessage = "正在思考";
     this.skillDetailsTrigger = null;
     this.aiSpeed = readAiSpeedPreference();
+    this.usernamePending = false;
     this.logCollapsed = false;
     this.logFollowingBottom = true;
     this.horizontalCardDragRoot = null;
@@ -514,6 +516,12 @@ export class UIManager {
     this.elements.network_screen?.addEventListener("submit", (event) => this.callbacks.onNetworkSubmit?.(event));
     this.elements.network_screen?.addEventListener("paste", (event) => this.callbacks.onNetworkPaste?.(event));
     this.elements.network_screen?.addEventListener("input", (event) => this.callbacks.onNetworkInput?.(event));
+    this.elements.username_form?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (this.usernamePending) return;
+      this.playSound("select");
+      this.callbacks.onSubmitUsername?.(this.elements.username_input?.value ?? "");
+    });
     this.elements.candidate_grid.addEventListener("click", (event) => this.handleCharacterCandidateClick(event));
     this.bindHorizontalCardDrag(this.elements.game_screen);
     this.elements.human_hand.addEventListener("click", (event) => this.handleHandClick(event));
@@ -628,6 +636,111 @@ export class UIManager {
 
   /*
   功能
+  展示首次用户名填写页，并清空上一次错误与提交状态。
+
+  调用方
+  main bootstrap 与用户名保存失败回流。
+
+  输入
+  无。
+
+  输出
+  无返回值。
+
+  读取状态
+  页面元素。
+
+  写入状态
+  切换顶层 screen、消息与提交态。
+
+  调用函数
+  SoundManager.playMenuMusic、setUsernameError、setUsernamePending。
+
+  边界与不变量
+  只负责页面展示，不校验、不保存用户名；保存 authority 始终在 HistoryStatsManager。
+  */
+  showUsernameSetup() {
+    for (const name of [
+      "network_screen", "start_screen", "history_archive_screen", "game_info_screen",
+      "squad_selection_screen", "selection_screen", "game_screen"
+    ]) {
+      this.elements[name]?.classList.add("is-hidden");
+    }
+    this.elements.game_over_overlay?.classList.add("is-hidden");
+    this.elements.username_screen?.classList.remove("is-hidden");
+    this.elements.username_form?.reset?.();
+    this.setUsernameError("");
+    this.setUsernamePending(false);
+    this.elements.username_input?.focus?.();
+  }
+
+  /*
+  功能
+  更新用户名填写页错误提示。
+
+  调用方
+  main 用户名校验或持久化失败处理。
+
+  输入
+  可展示错误文本；空字符串清除提示。
+
+  输出
+  无返回值。
+
+  读取状态
+  username_error 元素。
+
+  写入状态
+  错误文本与 is-hidden class。
+
+  调用函数
+  classList.toggle。
+
+  边界与不变量
+  只展示调用方给出的可读错误，不在此处决定错误内容。
+  */
+  setUsernameError(message = "") {
+    if (!this.elements.username_error) return;
+    this.elements.username_error.textContent = message;
+    this.elements.username_error.classList?.toggle?.("is-hidden", !message);
+  }
+
+  /*
+  功能
+  切换用户名保存进行态，避免重复提交。
+
+  调用方
+  main 用户名提交入口。
+
+  输入
+  是否正在保存。
+
+  输出
+  无返回值。
+
+  读取状态
+  username_input 与 username_submit 元素。
+
+  写入状态
+  disabled 与提交按钮文案。
+
+  调用函数
+  Boolean。
+
+  边界与不变量
+  仅控制表单可用性；真实完成与否仍由注入的保存 Promise 决定。
+  */
+  setUsernamePending(pending) {
+    this.usernamePending = Boolean(pending);
+    if (this.elements.username_input) this.elements.username_input.disabled = this.usernamePending;
+    if (this.elements.username_submit) {
+      this.elements.username_submit.disabled = this.usernamePending;
+      this.elements.username_submit.textContent = this.usernamePending ? "保存中…" : "继续";
+    }
+  }
+
+  /*
+  功能
   返回开始屏幕并清理上一局可见记录。
 
   调用方
@@ -653,6 +766,7 @@ export class UIManager {
   */
   showStart() {
     this.elements.network_screen?.classList.add("is-hidden");
+    this.elements.username_screen?.classList.add("is-hidden");
     this.sound.playMenuMusic();
     this.clearLog();
     this.elements.start_screen.classList.remove("is-hidden");
@@ -690,6 +804,7 @@ export class UIManager {
   */
   async showHistoryArchive() {
     this.sound.playMenuMusic();
+    this.elements.username_screen?.classList.add("is-hidden");
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.game_info_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
@@ -757,6 +872,7 @@ export class UIManager {
   async showGameInfo() {
     this.sound.playMenuMusic();
     await this.gameInfoView.show();
+    this.elements.username_screen?.classList.add("is-hidden");
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
     this.elements.squad_selection_screen.classList.add("is-hidden");
@@ -822,7 +938,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   showNetworkPage(markup, layout = "menu") {
     this.cancelPendingInteractions();
     this.sound.playSquadSelectionMusic();
-    for (const name of ["start_screen", "history_archive_screen", "game_info_screen", "squad_selection_screen", "selection_screen", "game_screen"]) {
+    for (const name of ["username_screen", "start_screen", "history_archive_screen", "game_info_screen", "squad_selection_screen", "selection_screen", "game_screen"]) {
       this.elements[name]?.classList.add("is-hidden");
     }
     this.elements.game_over_overlay.classList.add("is-hidden");
@@ -857,6 +973,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   */
   showSquadSelection() {
     this.elements.network_screen?.classList.add("is-hidden");
+    this.elements.username_screen?.classList.add("is-hidden");
     this.sound.playSquadSelectionMusic();
     this.cancelPendingInteractions();
     this.resetCurrentCard();
@@ -904,6 +1021,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     this.cancelPendingInteractions();
     this.resetCurrentCard();
     this.clearLog();
+    this.elements.username_screen?.classList.add("is-hidden");
     this.elements.start_screen.classList.add("is-hidden");
     this.elements.history_archive_screen?.classList.add("is-hidden");
     this.elements.game_info_screen?.classList.add("is-hidden");
@@ -945,6 +1063,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   */
   showGame(game) {
     this.elements.network_screen?.classList.add("is-hidden");
+    this.elements.username_screen?.classList.add("is-hidden");
     this.sound.stopMusic();
     this.attachGame(game);
     this.resetCurrentCard();

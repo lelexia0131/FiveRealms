@@ -30,10 +30,75 @@ const HISTORY_VERSION = 1;
 const HISTORY_ENDPOINT = "/api/history";
 const HISTORY_HTTP_TIMEOUT_MS = 5000;
 const RECENT_RECORD_LIMIT = 10;
+const USERNAME_MAX_CHARACTERS = 20;
+const USERNAME_CONTROL_PATTERN = /[\u0000-\u001F\u007F-\u009F]/u;
+const USERNAME_INVALID_MESSAGE = "用户名需为 1–20 个字符，且不能仅包含空白或控制字符。";
 const TEAM_DEFINITIONS = Object.freeze([
   Object.freeze({ id: "dawn", name: "晨星" }),
   Object.freeze({ id: "dusk", name: "暮影" })
 ]);
+
+/*
+功能
+把用户输入收敛为可持久化的用户名。
+
+调用方
+main 用户名提交入口、saveUsername、getUsername 与历史测试。
+
+输入
+任意用户名候选值。
+
+输出
+trim 后合法返回 1–20 字符用户名，否则返回空字符串。
+
+读取状态
+USERNAME_MAX_CHARACTERS 与 USERNAME_CONTROL_PATTERN。
+
+写入状态
+无。
+
+调用函数
+String、Array.from、RegExp.test。
+
+边界与不变量
+仅处理展示名，不校验唯一性；控制字符或空白输入不得进入持久化 profile。
+*/
+export function normalizeUsername(value) {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim();
+  if (!normalized || USERNAME_CONTROL_PATTERN.test(normalized)) return "";
+  if (Array.from(normalized).length > USERNAME_MAX_CHARACTERS) return "";
+  return normalized;
+}
+
+/*
+功能
+判断用户名候选值是否满足本地展示名规则。
+
+调用方
+main 与历史测试。
+
+输入
+任意用户名候选值。
+
+输出
+合法时返回 true，否则返回 false。
+
+读取状态
+normalizeUsername。
+
+写入状态
+无。
+
+调用函数
+normalizeUsername。
+
+边界与不变量
+合法性只使用 normalizeUsername 的同一规则，不判断唯一性。
+*/
+export function isValidUsername(value) {
+  return normalizeUsername(value) !== "";
+}
 
 /*
 功能
@@ -63,6 +128,7 @@ HistoryStatsManager 初始化与历史测试。
 export function createEmptyHistoryData() {
   return {
     version: HISTORY_VERSION,
+    profile: { username: "" },
     summary: {
       totalMatches: 0,
       wins: 0,
@@ -202,7 +268,7 @@ HistoryStatsManager.loadData。
 无。
 
 调用函数
-createEmptyHistoryData、normalizeAchievementData、nonNegativeNumber、calculateWinRate。
+createEmptyHistoryData、normalizeUsername、normalizeAchievementData、nonNegativeNumber、calculateWinRate。
 
 边界与不变量
 高于当前版本的数据拒绝读取；缺失字段补默认值，未知角色键原样保留以免丢档。
@@ -212,6 +278,10 @@ function normalizeHistoryData(source) {
   const version = nonNegativeNumber(source.version, true) || HISTORY_VERSION;
   if (version > HISTORY_VERSION) throw new Error(`历史档案版本 ${version} 高于当前支持版本 ${HISTORY_VERSION}`);
   const empty = createEmptyHistoryData();
+  const profileSource = source.profile && typeof source.profile === "object" && !Array.isArray(source.profile)
+    ? source.profile
+    : {};
+  empty.profile = { username: normalizeUsername(profileSource.username) };
   const summarySource = source.summary && typeof source.summary === "object" ? source.summary : {};
   for (const key of Object.keys(empty.summary)) {
     empty.summary[key] = nonNegativeNumber(summarySource[key], key !== "highestScore" && key !== "totalScore");
@@ -696,6 +766,103 @@ export class HistoryStatsManager {
     }
     await this.initializationPromise;
     return buildArchiveData(this.data);
+  }
+
+  /*
+  功能
+  返回当前已初始化的合法用户名。
+
+  调用方
+  main 启动分流与历史测试。
+
+  输入
+  无。
+
+  输出
+  合法用户名；未初始化、无 profile 或 username 非法时返回 null。
+
+  读取状态
+  this.data.profile.username。
+
+  写入状态
+  无。
+
+  调用函数
+  normalizeUsername。
+
+  边界与不变量
+  只读内存快照，不把非法旧值当作可进入主界面的用户名。
+  */
+  getUsername() {
+    return normalizeUsername(this.data?.profile?.username) || null;
+  }
+
+  /*
+  功能
+  判断本次启动是否已有合法用户名可跳过填写页。
+
+  调用方
+  main 启动分流与历史测试。
+
+  输入
+  无。
+
+  输出
+  已有合法用户名返回 true，否则返回 false。
+
+  读取状态
+  getUsername。
+
+  写入状态
+  无。
+
+  调用函数
+  getUsername。
+
+  边界与不变量
+  不校验唯一性；空 username 仍视为需要首次填写。
+  */
+  hasUsername() {
+    return this.getUsername() !== null;
+  }
+
+  /*
+  功能
+  把合法用户名写入 profile，并等待真实持久化完成。
+
+  调用方
+  main 的用户名提交入口与历史测试。
+
+  输入
+  用户名字符串。
+
+  输出
+  trim 后的用户名。
+
+  读取状态
+  this.data 当前历史快照与 storage。
+
+  写入状态
+  仅在 storage.write 成功后更新内存快照并提交完整 history_data.json。
+
+  调用函数
+  normalizeUsername、initialize、structuredClone、storage.write、normalizeHistoryData。
+
+  边界与不变量
+  保存前先规范化，非法输入不得写入；只覆盖 profile.username，不得覆盖 records、summary、achievements 等既有历史字段；写入失败时内存 username 保持原样。
+  */
+  async saveUsername(username) {
+    const normalized = normalizeUsername(username);
+    if (!normalized) throw new RangeError(USERNAME_INVALID_MESSAGE);
+    if (!this.data) await this.initialize();
+    const next = structuredClone(this.data);
+    const currentProfile = next.profile && typeof next.profile === "object" && !Array.isArray(next.profile)
+      ? next.profile
+      : {};
+    next.profile = { ...currentProfile, username: normalized };
+    await this.storage.write(`${JSON.stringify(next, null, 2)}\n`);
+    this.data = normalizeHistoryData(next);
+    return normalized;
   }
 
   /*

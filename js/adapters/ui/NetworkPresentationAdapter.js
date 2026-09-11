@@ -54,6 +54,7 @@ export function presentNetworkGame(projection, request, ui) {
   const orderedProjectionPlayers = orderPlayersForViewer(p.players, p.viewerId);
   const players = orderedProjectionPlayers.map((entry) => ({
     id: entry.playerId, seatIndex: entry.seatIndex, battleTeam: entry.teamId,
+    displayName: entry.displayName ?? entry.networkRole,
     networkRole: entry.networkRole,
     character: CHARACTER_BY_ID[entry.characterId], name: entry.name,
     loreFaction: CHARACTER_BY_ID[entry.characterId]?.loreFaction ?? "",
@@ -81,6 +82,7 @@ export function presentNetworkGame(projection, request, ui) {
       distanceState: ui.targetState?.meta?.targetDisplay
         ? ui.targetState.meta.targetDisplay[player.id]?.distanceState ?? null
         : request?.targetDisplay?.[player.id]?.distanceState ?? p.display?.distances?.[player.id]?.distanceState ?? null,
+      displayName: player.displayName,
       networkRole: player.networkRole,
       opponentHandSlots: player.id === human.id
         ? human.hand.map((card) => ({ ...presentCard(card), known: true }))

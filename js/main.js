@@ -11,6 +11,7 @@ import { Debug } from "./utils/debug.js";
 const historyStatsManager = new HistoryStatsManager();
 const ui = new UIManager({ historyStatsManager });
 let game = null;
+let networkFlow = null;
 
 /*
 功能
@@ -114,7 +115,6 @@ function returnToStart() {
   ui.showStart();
 }
 
-
 /*
 功能
 把已确认的 Network setup 装入现有 Match 并初始化本地 UI。
@@ -203,7 +203,7 @@ networkFlow。
 networkFlow.show。
 
 边界与不变量
-单人入口仍由 startRecruitment 接管。
+NetworkFlow 在模块装配时创建，但首页在用户名持久化成功前保持隐藏；该入口只切换既有流程页面。
 */
 function showPlayModeSelection() {
   networkFlow.show();
@@ -239,7 +239,7 @@ function restartRecruitment() {
   else startRecruitment();
 }
 
-const networkFlow = createNetworkFlow({
+networkFlow = createNetworkFlow({
   ui,
   capability: globalThis.fiveRealmsNetworkCapability ?? null,
   onSingleplayer: startRecruitment,
@@ -252,10 +252,11 @@ const networkFlow = createNetworkFlow({
 ui.setCallbacks({
   onStart: showPlayModeSelection,
   onRestart: restartRecruitment,
-  onNetworkClick: networkFlow.handleClick,
-  onNetworkSubmit: networkFlow.handleSubmit,
-  onNetworkPaste: networkFlow.handlePaste,
-  onNetworkInput: networkFlow.handleInput,
+  onNetworkClick: (event) => networkFlow?.handleClick?.(event),
+  onNetworkSubmit: (event) => networkFlow?.handleSubmit?.(event),
+  onNetworkPaste: (event) => networkFlow?.handlePaste?.(event),
+  onNetworkInput: (event) => networkFlow?.handleInput?.(event),
+  onSubmitUsername: submitUsername,
   onBackToStart: showPlayModeSelection,
   onBackToSquadSelection: startRecruitment,
   /*
@@ -329,11 +330,122 @@ ui.setCallbacks({
       }
     }
   },
-  onCard: (cardId) => ui.networkPresentation ? networkFlow.guestIntent("card", cardId) : game?.handleHumanCard(cardId),
-  onSkill: () => ui.networkPresentation ? networkFlow.guestIntent("skill") : game?.handleHumanSkill(),
-  onEndPlay: () => ui.networkPresentation ? networkFlow.guestIntent("end") : game?.requestEndHumanPlay(),
+  onCard: (cardId) => ui.networkPresentation ? networkFlow?.guestIntent?.("card", cardId) : game?.handleHumanCard(cardId),
+  onSkill: () => ui.networkPresentation ? networkFlow?.guestIntent?.("skill") : game?.handleHumanSkill(),
+  onEndPlay: () => ui.networkPresentation ? networkFlow?.guestIntent?.("end") : game?.requestEndHumanPlay(),
   onChangeAiSpeed: (speed) => game?.setAiSpeed(speed)
 });
 
-ui.showStart();
-void historyStatsManager.initialize().catch((error) => Debug.log("History", "历史档案初始化失败", error));
+/*
+功能
+把已持久化的本地用户名作为 displayName 交给 NetworkFlow，并进入主界面。
+
+调用方
+bootstrap 的已有档案分支与 submitUsername 的保存成功分支。
+
+输入
+已通过 HistoryStatsManager 校验并落盘的用户名。
+
+输出
+无返回值。
+
+读取状态
+networkFlow.session。
+
+写入状态
+NetworkSession displayName 与首页。
+
+调用函数
+NetworkSession.setDisplayName、UIManager.showStart。
+
+边界与不变量
+username 只在此处转换为 displayName 并进入 participant metadata；不得参与身份、权限或路由；NetworkFlow 仍只创建一次。
+*/
+function enterMain(username) {
+  networkFlow.session.setDisplayName(username);
+  ui.showStart();
+}
+
+/*
+功能
+校验并等待用户名真实落盘，成功后才进入主界面。
+
+调用方
+UIManager 用户名表单 submit callback。
+
+输入
+表单原始用户名字符串。
+
+输出
+保存与界面切换完成的 Promise。
+
+读取状态
+HistoryStatsManager 当前历史快照与 storage。
+
+写入状态
+成功时仅写 profile.username 并进入主界面；失败时保留在填写页并展示错误。
+
+调用函数
+HistoryStatsManager.saveUsername、UIManager.setUsernamePending/setUsernameError、enterMain、Debug.log。
+
+边界与不变量
+必须 await storage 成功；保存失败、内存快照不变且不得提前创建 NetworkFlow 或进入首页。
+*/
+async function submitUsername(rawUsername) {
+  if (networkFlow) return;
+  ui.setUsernamePending(true);
+  try {
+    const username = await historyStatsManager.saveUsername(rawUsername);
+    ui.setUsernamePending(false);
+    enterMain(username);
+  } catch (error) {
+    Debug.log("Profile", "用户名保存失败", error);
+    ui.setUsernameError(error?.message || "用户名保存失败，请重试。");
+    ui.setUsernamePending(false);
+  }
+}
+
+/*
+功能
+读取历史档案并按 profile.username 决定首次填写还是直接进入主界面。
+
+调用方
+模块底部 bootstrap 启动。
+
+输入
+无。
+
+输出
+无返回值；异步完成启动分流。
+
+读取状态
+HistoryStatsManager 初始化结果与 profile.username。
+
+写入状态
+缺失档案时由 HistoryStatsManager 条件创建空档；UI 切换填写页或首页。
+
+调用函数
+UIManager.setCallbacks/showUsernameSetup/setUsernameError、HistoryStatsManager.initialize/hasUsername/getUsername、enterMain、Debug.log。
+
+边界与不变量
+旧档案没有合法 profile.username 时必须停留在填写页；已有合法 username 时不得询问；初始化失败只展示错误，不伪造主界面。
+*/
+async function bootstrap() {
+  try {
+    await historyStatsManager.initialize();
+  } catch (error) {
+    Debug.log("History", "历史档案初始化失败", error);
+    ui.showUsernameSetup();
+    ui.setUsernameError("无法读取历史档案，请确认本地服务正常后重试。");
+    return;
+  }
+
+  if (!historyStatsManager.hasUsername()) {
+    ui.showUsernameSetup();
+    return;
+  }
+
+  enterMain(historyStatsManager.getUsername());
+}
+
+void bootstrap();

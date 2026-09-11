@@ -3,6 +3,7 @@ export const NETWORK_ROLE = Object.freeze({ HOST: "HOST", GUEST: "GUEST" });
 export const NETWORK_EVENT = Object.freeze({
   ROOM_CREATED: "ROOM_CREATED",
   PEER_CONNECTED: "PEER_CONNECTED",
+  PARTICIPANT_HELLO: "PARTICIPANT_HELLO",
   ROLE_POOL_ASSIGNED: "ROLE_POOL_ASSIGNED",
   SELECTION_CHANGED: "SELECTION_CHANGED",
   SELECTION_CONFIRMED: "SELECTION_CONFIRMED",
@@ -26,7 +27,8 @@ export const NETWORK_EVENT = Object.freeze({
 // connectionId 必须由 Transport 按真实连接覆盖注入，不得直接沿用客户端报文中的同名字段。
 // roomId + connectionId + sequence 标识消息；participantId 必须匹配 Host 保存的连接映射。
 // Host 的 recipientParticipantId 指定唯一接收成员；Transport 不可把私有消息广播给其他 Guest。
-// PEER_CONNECTED 的 remoteAddress 由 Transport 注入；无元数据的既有连接使用 default 标识。
+// PEER_CONNECTED 的 remoteAddress/displayName 由 Transport 注入；无元数据的既有连接使用 default 标识。
+// PARTICIPANT_HELLO 只允许 Guest 通过已认证 connectionId 补充 displayName，不得携带或改写 participantId。
 // revision 是 Host 房间快照版本；Guest 身份由首个定向房间快照的接收人确定。
 // GAME_SNAPSHOT 仅携带 viewer-safe projection；DECISION_REQUEST/RESPONSE 与 PLAYER_INTENT
 // 由游戏侧关联并验证，Transport 不解释决定，也不得把消息 sender 覆盖为 CAPABILITY。
@@ -64,6 +66,32 @@ export function formatNetworkAddress(remoteAddress) {
 }
 
 // Shared UI/Transport boundary; hostnames are resolved by the Transport.
+
+/*
+功能
+收束 Guest 加入房间所需的 host/port endpoint。
+
+调用方
+NetworkSession.open、normalizeConnectionInfo 与 Network UI 表单测试。
+
+输入
+含 host 与 port 的候选对象。
+
+输出
+trim 后 {host, port}。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+String.trim、Number.isInteger。
+
+边界与不变量
+只解析 endpoint，不承担连接或身份校验；非法 host/port 必须抛错。
+*/
 export function normalizeNetworkEndpoint({ host, port } = {}) {
   if (typeof host !== "string" || !host.trim()) throw new Error("请输入 IP 地址或主机名");
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("端口须为 1–65535 的整数");

@@ -79,6 +79,39 @@ export function isNetworkSelectionValid(setup, participantId, selection, partici
 
 /*
 功能
+把 participant 自报展示名收束为安全 metadata。
+
+调用方
+NetworkSession 成员建立与 HELLO 握手、networkParticipantLabel。
+
+输入
+任意 displayName 候选值。
+
+输出
+trim 后合法返回 1–20 字符，否则返回 null。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+String、Array.from、RegExp.test。
+
+边界与不变量
+displayName 只是展示 metadata，不参与 participantId、connectionId 或 controller ownership 判断；重名允许。
+*/
+export function normalizeParticipantDisplayName(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (!normalized || /[\u0000-\u001F\u007F-\u009F]/u.test(normalized)) return null;
+  if (Array.from(normalized).length > 20) return null;
+  return normalized;
+}
+
+/*
+功能
 从已确认真人选择合成五席及唯一 controller ownership。
 
 调用方
@@ -119,7 +152,11 @@ export function finalizeNetworkSetup(setup, participants) {
     const humanControlled = owner?.connected && !owner.kicked;
     return Object.freeze({
       ...seat, playerId: `network-${seat.seatId}`,
-      controller: Object.freeze({ type: humanControlled ? owner.role : "AI", participantId: humanControlled ? owner.participantId : null }),
+      controller: Object.freeze({
+        type: humanControlled ? owner.role : "AI",
+        participantId: humanControlled ? owner.participantId : null,
+        displayName: humanControlled ? (owner.displayName ?? null) : null
+      }),
       characterId: owner ? owner.selection.characterId : unused.shift()
     });
   });
@@ -137,10 +174,10 @@ NetworkSession.snapshot。
 最终 setup、本地 participantId 与真人成员。
 
 输出
-冻结 Match setup。
+冻结 Match setup，每席同时携带 displayName 展示 alias。
 
 读取状态
-seat controller ownership 与 guestOrdinal。
+seat controller ownership、displayName 与 guestOrdinal。
 
 写入状态
 无。
@@ -155,18 +192,22 @@ canonical 席序不变；本地身份从 participantId 读取，AI 不冒充真�
 export function projectNetworkMatch(setup, localParticipantId, participants) {
   return Object.freeze({
     mode: MATCH_MODE.NETWORK,
-    players: Object.freeze(setup.players.map((player, seatIndex) => Object.freeze({
-      ...player, seatIndex,
-      networkRole: player.controller.type === "AI" ? "AI" : networkParticipantLabel(participants[player.controller.participantId]),
-      controlType: player.controller.type === "AI" ? PLAYER_CONTROL.AI
-        : player.controller.participantId === localParticipantId ? PLAYER_CONTROL.LOCAL_HUMAN : PLAYER_CONTROL.REMOTE_HUMAN
-    })))
+    players: Object.freeze(setup.players.map((player, seatIndex) => {
+      const displayName = player.controller.type === "AI"
+        ? "AI"
+        : networkParticipantLabel(participants[player.controller.participantId]);
+      return Object.freeze({
+        ...player, seatIndex, displayName, networkRole: displayName,
+        controlType: player.controller.type === "AI" ? PLAYER_CONTROL.AI
+          : player.controller.participantId === localParticipantId ? PLAYER_CONTROL.LOCAL_HUMAN : PLAYER_CONTROL.REMOTE_HUMAN
+      });
+    }))
   });
 }
 
 /*
 功能
-将真人身份转换为稳定的房间标签。
+把真人成员转换为 Lobby 与 controller 的展示标签。
 
 调用方
 Lobby 与 controller 投影。
@@ -175,22 +216,24 @@ Lobby 与 controller 投影。
 authority participant。
 
 输出
-Host 或 Guest ordinal 标签。
+优先 displayName；旧连接缺少 displayName 时回退 Host 或 Guest ordinal。
 
 读取状态
-role 与 guestOrdinal。
+displayName、role 与 guestOrdinal。
 
 写入状态
 无。
 
 调用函数
-无。
+normalizeParticipantDisplayName。
 
 边界与不变量
-不从角色位置或阵营猜测身份。
+只用于展示，不反向解析身份；displayName 重名不影响 participantId 或 controller ownership。
 */
 
 export function networkParticipantLabel(participant) {
+  const displayName = normalizeParticipantDisplayName(participant?.displayName);
+  if (displayName) return displayName;
   return participant?.role === "HOST" ? "Host" : `Guest ${participant?.guestOrdinal ?? "?"}`;
 }
 
