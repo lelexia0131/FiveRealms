@@ -178,7 +178,7 @@ function makeGuestUi() {
     showNetworkPage() {}, playSound() {}, setPrompt: UIManager.prototype.setPrompt, setMusicTeam() {},
     cancelPendingInteractions() { this.targetState = null; this.discardState = null; },
     cancelChoiceInteractions() { this.targetState = null; this.discardState = null; },
-    showGameOver() {}, showPublicPool() {}, hidePublicPool() {}, clearLog() {}, appendLog() {},
+    showGameOver() {}, showPublicPool() {}, hidePublicPool() {}, clearLog() {}, appendLog() {}, restoreLogBoundary() {},
     publicPoolView: { pending: null }, animationController: { flush() {} },
     renderBattlefield: UIManager.prototype.renderBattlefield,
     renderPresentedHand: UIManager.prototype.renderPresentedHand,
@@ -1152,6 +1152,69 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     game.dispose(); pair.host.close(); pair.guest.close();
   });
 
+  test("Network：长局日志按增量传输且RESYNC有界分块恢复完整顺序", async () => {
+    const pair = await connectedPair();
+    choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: pair.host });
+    game.prepareNetworkMatch(pair.host.snapshot().matchSetup);
+    const shown = [], notices = [];
+    const ui = makeGuestUi();
+    ui.appendLog = (entry) => shown.push(entry);
+    ui.restoreLogBoundary = (count) => { shown.length = count; };
+    const view = new NetworkGameView({ ui, submit() {} });
+    const off = pair.guest.gameChannel.subscribe((snapshot) => { notices.push(snapshot); view.update(snapshot); });
+    try {
+      const start = pair.events.length;
+      for (let index = 0; index < 160; index += 1) {
+        game.log(`${index}: ${"长日志".repeat(1200)}`);
+        game.ui.render();
+        game.ui.queueFeedback("heal", game.state.players[0], 1);
+        game.ui.setCurrentCard("技能", game.state.players[0].id, "目标");
+      }
+      const updates = pair.events.slice(start).filter((event) => event.type === E.GAME_SNAPSHOT);
+      assert.equal(updates.flatMap((event) => event.payload.display.logSync.entries).length, 160);
+      assert.ok(updates.every((event) => !Object.hasOwn(event.payload.display, "logs")));
+      assert.ok(updates.every((event) => event.payload.display.logSync.entries.length <= 1));
+      assert.ok(updates.every((event) => Buffer.byteLength(JSON.stringify(event)) < 30000), "历史增长不能放大单消息");
+      assert.ok(notices.slice(1).every((notice) => !Object.hasOwn(notice.projection.display, "logs")), "日常通知不clone累计日志");
+      const expected = game.state.logs.map((entry) => entry.id);
+      assert.deepEqual(shown.map((entry) => entry.id), expected);
+      const beforeRecovery = pair.events.length;
+      pair.guest.send(E.RESYNC_REQUEST, { gameId: game.state.gameId });
+      const recoveryDeadline = performance.now() + 3000;
+      while (shown.length < expected.length && performance.now() < recoveryDeadline) await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(shown.map((entry) => entry.id), expected);
+      assert.deepEqual(pair.guest.gameChannel.snapshot().projection.display.logs.map((entry) => entry.id), expected);
+      const recovery = pair.events.slice(beforeRecovery).filter((event) => event.type === E.GAME_SNAPSHOT);
+      assert.ok(recovery.length > 1);
+      assert.ok(recovery.every((event) => event.payload.display.logSync.entries.length <= 32));
+      assert.ok(recovery.every((event) => Buffer.byteLength(JSON.stringify(event.payload.display.logSync.entries)) < 65536));
+      const beforeRender = pair.events.length;
+      game.ui.render();
+      assert.equal(pair.events.slice(beforeRender).find((event) => event.type === E.GAME_SNAPSHOT).payload.display.logSync.entries.length, 0);
+    } finally { off(); view.dispose(); game.dispose(); pair.host.close(); pair.guest.close(); }
+  });
+
+  test("Network：RESYNC按成员合并频率且正常第二次恢复最终到达", async () => {
+    const room = await connectedRoom(3);
+    chooseRoom(room); room.host.start();
+    const game = createGameApplication(makeUi(), () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: room.host });
+    game.prepareNetworkMatch(room.host.snapshot().matchSetup);
+    const [a, b] = room.guests;
+    try {
+      const start = room.events.length;
+      for (let index = 0; index < 100; index += 1) a.send(E.RESYNC_REQUEST, { gameId: game.state.gameId });
+      b.send(E.RESYNC_REQUEST, { gameId: game.state.gameId });
+      const snapshots = () => room.events.slice(start).filter((event) => event.type === E.GAME_SNAPSHOT);
+      assert.equal(snapshots().filter((event) => event.recipientParticipantId === a.snapshot().participantId).length, 1);
+      assert.equal(snapshots().filter((event) => event.recipientParticipantId === b.snapshot().participantId).length, 1);
+      const end = performance.now() + 2000;
+      while (snapshots().length < 3 && performance.now() < end) await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(snapshots().length, 3, "合并后补发，不能吞掉正常恢复");
+      assert.equal(room.host.snapshot().state, S.LOADING_GAME);
+    } finally { game.dispose(); room.close(); }
+  });
+
   test("Network：publicLogs随正式rollback删除失效entry并保持后续追加顺序", async () => {
     const pair = await connectedPair();
     choosePair(pair); pair.host.confirm(); pair.guest.confirm(); pair.host.start();
@@ -1162,6 +1225,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     const ui = makeGuestUi(), shown = [];
     ui.appendLog = (entry) => shown.push(entry);
     ui.clearLog = () => { shown.length = 0; };
+    ui.restoreLogBoundary = (count) => { shown.length = count; };
     const view = new NetworkGameView({ ui, submit() {} });
     const off = pair.guest.gameChannel.subscribe((snapshot) => view.update(snapshot));
     try {
@@ -1169,15 +1233,19 @@ export function registerNetworkTests(test, { makeUi, instance }) {
       const retained = game.state.logs.slice();
       for (let index = 0; index < 5; index += 1) {
         const boundary = game.state.logs.length;
-        const transaction = createActionTransaction({ roots: [{}], logs: game.state.logs,
+        const transaction = createActionTransaction({ roots: [game.state], logs: game.state.logs,
           randomPort: game.randomPort, restoreLogPresentation: (count) => game.ui.restoreLogBoundary(count) });
+        game.state.stateVersion += 1;
         game.log(`撤销甲${index}`); game.log(`撤销乙${index}`);
         const staleIds = game.state.logs.slice(boundary).map((entry) => entry.id);
         assert.ok(shown.some((entry) => staleIds.includes(entry.id)));
+        const beforeRollback = pair.guest.gameChannel.snapshot().projection;
         transaction.rollback();
         const logs = pair.guest.gameChannel.snapshot().projection.display.logs;
         assert.equal(logs.length, boundary, "完整publicLogs投影规模等于当前有效边界");
         assert.ok(logs.every((entry) => !staleIds.includes(entry.id)));
+        assert.equal(pair.guest.gameChannel.snapshot().projection.stateVersion, game.state.stateVersion);
+        assert.equal(pair.guest.gameChannel.receive({ type: E.GAME_SNAPSHOT, payload: beforeRollback }), false, "旧回滚epoch不能复活尾部日志");
         assert.deepEqual(shown.map((entry) => entry.id), game.state.logs.map((entry) => entry.id));
         game.ui.restoreLogBoundary(boundary);
         game.log(`新的日志${index}`);

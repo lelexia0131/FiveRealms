@@ -5,6 +5,7 @@ import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js";
 import { presentLogFact } from "../ui/LogPresentation.js";
 import { presentTargetDistance } from "../ui/TargetPresentation.js";
 import { presentPrompt } from "../ui/PromptPresentation.js";
+import { NETWORK_LOG_CHUNK_ENTRIES, NETWORK_LOG_CHUNK_BYTES } from "./NetworkProtocol.js";
 
 /*
 功能
@@ -38,6 +39,8 @@ export function createNetworkHostBridge({
   const channel = session.gameChannel;
   const publicLogs = new Map();
   const publicLogBoundaries = [];
+  const logOffsets = new Map();
+  let logRollbackRevision = 0;
   let prompt = null;
   let promptRevision = 0;
   let hostUi = null;
@@ -402,7 +405,9 @@ Reflect.get、channel.publish。
       publicLogBoundaries.push({ id: args[0].id, count: args[1] });
     }
     if (property === "restoreLogBoundary") {
+      logRollbackRevision += 1;
       while (publicLogBoundaries.at(-1)?.count > args[0]) publicLogs.delete(publicLogBoundaries.pop().id);
+      for (const [viewerId, offset] of logOffsets) logOffsets.set(viewerId, Math.min(offset, publicLogBoundaries.length));
     }
     channel.publish(projectPresentation(property, args));
     return result;
@@ -416,7 +421,7 @@ Reflect.get、channel.publish。
   NetworkGameChannel.publish。
 
   输入
-  当前 Guest viewerId。
+  当前 Guest viewerId；resetLogs 仅用于显式恢复。
 
   输出
   公开展示 DTO。
@@ -425,7 +430,7 @@ Reflect.get、channel.publish。
   Host AI 速度、公开玩家、viewerId、距离查询和日志展示字段。
 
   写入状态
-  无。
+  当前 viewer 的日志发送位置。
 
   调用函数
   getAiSpeed、describeDistance、presentTargetDistance。
@@ -433,7 +438,7 @@ Reflect.get、channel.publish。
   边界与不变量
   距离和日志均由 Host 展示边界生成；不发送日志内部事实或其他 viewer 知识。
   */
-  function getDisplay(viewerId) {
+  function getDisplay(viewerId, resetLogs = false) {
     const state = getState();
     const viewer = state.players.find((player) => player.id === viewerId);
     return {
@@ -448,9 +453,48 @@ Reflect.get、channel.publish。
             distanceState: presentTargetDistance(viewer, target, null, info.distance, info.range)
           }];
         })),
-      // 缓存随正式追加/回滚边界同步；只发送有效投影，未经过展示入口的日志没有公开权限。
-      logs: [...publicLogs.values()].map((projections) => projections.get(viewerId)).filter(Boolean)
+      logSync: getLogChunk(viewerId, resetLogs)
     };
+  }
+
+  /*
+  功能
+  从既有 viewer-safe 日志缓存提取有界的下一块。
+
+  调用方
+  getDisplay。
+
+  输入
+  viewerId 与是否从头恢复。
+
+  输出
+  起点、有效总边界及日志条目。
+
+  读取状态
+  publicLogs、正式日志边界和该 viewer 的发送位置。
+
+  写入状态
+  仅 viewer 发送位置；不改变正式日志。
+
+  调用函数
+  TextEncoder.encode、JSON.stringify。
+
+  边界与不变量
+  普通更新不扫描历史；回滚先收缩发送位置，恢复按需继续拉取。单条正式日志仍受原 Transport payload 上限约束。
+  */
+  function getLogChunk(viewerId, resetLogs) {
+    const start = resetLogs ? 0 : (logOffsets.get(viewerId) ?? 0);
+    const entries = [];
+    let bytes = 2;
+    for (let index = start; index < publicLogBoundaries.length && entries.length < NETWORK_LOG_CHUNK_ENTRIES; index += 1) {
+      const entry = publicLogs.get(publicLogBoundaries[index].id).get(viewerId);
+      const size = new TextEncoder().encode(JSON.stringify(entry)).length + Number(entries.length > 0);
+      if (entries.length && bytes + size > NETWORK_LOG_CHUNK_BYTES) break;
+      entries.push(entry);
+      bytes += size;
+    }
+    logOffsets.set(viewerId, start + entries.length);
+    return { start, total: publicLogBoundaries.length, rollbackRevision: logRollbackRevision, entries };
   }
 
   /*

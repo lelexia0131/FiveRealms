@@ -1,9 +1,34 @@
 const { randomUUID } = require("node:crypto");
 const { performance } = require("node:perf_hooks");
 const { PROTOCOL_VERSION, MAX_QUEUE_BYTES, HANDSHAKE_TIMEOUT_MS, HEARTBEAT_INTERVAL_MS,
-  HEARTBEAT_TIMEOUT_MS, isIdentity, encodeFrame, FrameDecoder } = require("./TransportProtocol");
+  HEARTBEAT_TIMEOUT_MS, ENVELOPE_BURST, ENVELOPES_PER_SECOND, isIdentity, encodeFrame, FrameDecoder } = require("./TransportProtocol");
 
 class TcpPeer {
+  /*
+  功能
+  绑定 TCP framing、握手、心跳及每连接 envelope 预算。
+
+  调用方
+  LanHostTransport、LanClientTransport。
+
+  输入
+  socket、角色、房间、回调与毫秒计时配置。
+
+  输出
+  TcpPeer 实例。
+
+  读取状态
+  role。
+
+  写入状态
+  peer 状态、decoder、事件监听和握手计时器。
+
+  调用函数
+  FrameDecoder、socket.on、setTimeout、performance.now。
+
+  边界与不变量
+  每个 socket 独立预算和生命周期；Host 独占 sessionId 生成。
+  */
   constructor(socket, { role, roomId = null, onConnected, onEnvelope, onClosed,
     handshakeTimeout = HANDSHAKE_TIMEOUT_MS, heartbeatInterval = HEARTBEAT_INTERVAL_MS,
     heartbeatTimeout = HEARTBEAT_TIMEOUT_MS }) {
@@ -24,6 +49,8 @@ class TcpPeer {
     this.pendingPing = null;
     this.heartbeatTimer = null;
     this.rejectTimer = null;
+    this.envelopeTokens = ENVELOPE_BURST;
+    this.envelopeUpdatedAt = performance.now();
     this.closed = new Promise((resolve) => { this.resolveClosed = resolve; });
     this.decoder = new FrameDecoder((value) => this.receive(value));
     this.onData = (chunk) => {
@@ -71,6 +98,31 @@ class TcpPeer {
     this.rejectTimer.unref();
   }
 
+  /*
+  功能
+  验证握手和 session 后处理心跳或限速交付 envelope。
+
+  调用方
+  FrameDecoder。
+
+  输入
+  单个已解码 frame。
+
+  输出
+  无；非法协议抛错，速率超限关闭当前 peer。
+
+  读取状态
+  role、session、握手状态和 token bucket。
+
+  写入状态
+  握手状态、心跳标记和该连接 tokens。
+
+  调用函数
+  write、activate、reject、close、onEnvelope。
+
+  边界与不变量
+  Host 只限入站 Guest envelope；ping/pong 不消耗 tokens；socket 方向覆盖 sender。
+  */
   receive(frame) {
     if (this.closing) return;
     if (!frame || typeof frame !== "object" || Array.isArray(frame)) throw new Error("非法 Transport frame");
@@ -109,6 +161,14 @@ class TcpPeer {
     } else if (frame.kind === "pong" && this.pendingPing !== null && frame.nonce === this.pendingPing) {
       this.pendingPing = null;
     } else if (frame.kind === "envelope" && frame.envelope && typeof frame.envelope === "object" && !Array.isArray(frame.envelope)) {
+      if (this.role === "HOST") {
+        const now = performance.now();
+        this.envelopeTokens = Math.min(ENVELOPE_BURST,
+          this.envelopeTokens + (now - this.envelopeUpdatedAt) * ENVELOPES_PER_SECOND / 1000);
+        this.envelopeUpdatedAt = now;
+        if (this.envelopeTokens < 1) { void this.close("Transport envelope 速率超过上限"); return; }
+        this.envelopeTokens -= 1;
+      }
       // Socket direction owns identity. Leave all other envelope fields opaque.
       this.onEnvelope({ ...frame.envelope, sender: this.role === "HOST" ? "GUEST" : "HOST" });
     } else throw new Error("非法 Transport 消息");

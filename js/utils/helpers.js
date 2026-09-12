@@ -126,32 +126,3 @@ Math.min、Math.max。
 export function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
-
-/*
-功能
-返回两阵营规则中与给定阵营相对的一方。
-
-调用方
-组队规则、角色分配与测试 fixture。
-
-输入
-阵营 ID。
-
-输出
-dawn 对应 dusk；其余输入对应 dawn。
-
-读取状态
-无。
-
-写入状态
-无。
-
-调用函数
-无。
-
-边界与不变量
-仅适用于当前 dawn/dusk 双阵营契约；合法性由调用方保证。
-*/
-export function opposingTeam(teamId) {
-  return teamId === "dawn" ? "dusk" : "dawn";
-}

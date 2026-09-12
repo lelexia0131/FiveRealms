@@ -600,7 +600,7 @@ connectionId 必须由 capability 注入而非 payload；无元数据的既有 T
         }
         return true;
       }
-      if ([E.GAME_SNAPSHOT, E.DECISION_REQUEST, E.DECISION_RECEIVED, E.DECISION_RESPONSE, E.DECISION_ACCEPTED, E.DECISION_CANCELLED, E.RESYNC_REQUEST, E.PLAYER_INTENT].includes(event.type)) {
+      if ([E.GAME_SNAPSHOT, E.LOG_REQUEST, E.DECISION_REQUEST, E.DECISION_RECEIVED, E.DECISION_RESPONSE, E.DECISION_ACCEPTED, E.DECISION_CANCELLED, E.RESYNC_REQUEST, E.PLAYER_INTENT].includes(event.type)) {
         const accepted = this.gameChannel.receive({ ...event, participantId: participant?.participantId ?? event.participantId });
         // 同步 callback 可先完成更高序号的恢复消息；外层返回不得倒退已提交水位。
         if (accepted) this.#peerSequence.set(connectionId, Math.max(event.sequence, this.#peerSequence.get(connectionId) ?? 0));

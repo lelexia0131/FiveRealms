@@ -565,38 +565,6 @@ export function removeSpyGapPendingTarget(state, player, targetId) {
 
 /*
 功能
-替换 trackingTargetIds 集合引用。
-
-调用方
-tracking reset 路径。
-
-输入
-state、Player 与 Set。
-
-输出
-新 Set。
-
-读取状态
-state.stateVersion 与 trackingTargetIds。
-
-写入状态
-trackingTargetIds；引用变化时 bump。
-
-调用函数
-bumpStateVersion。
-
-边界与不变量
-不解释追踪规则。
-*/
-export function setTrackingTargetIds(state, player, value) {
-  if (player.turnFlags.trackingTargetIds === value) return value;
-  player.turnFlags.trackingTargetIds = value;
-  bumpStateVersion(state);
-  return value;
-}
-
-/*
-功能
 向 trackingTargetIds 添加目标。
 
 调用方

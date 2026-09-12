@@ -388,20 +388,33 @@ export class NetworkGameView {
   无返回值。
 
   读取状态
-  display.logs 与已显示 ID。
+  display.logSync 增量或新订阅的 display.logs，与已显示 ID。
 
   写入状态
   日志 DOM 和本地 ID。
 
   调用函数
-  clearLog、appendLog。
+  clearLog、restoreLogBoundary、appendLog。
 
   边界与不变量
-  回滚时重建，同一快照不重复追加。
+  回滚仅裁掉尾部；普通 snapshot 不重扫历史，同一快照不重复追加。
   */
 
   syncLogs() {
-    const logs = this.projection.display?.logs ?? [];
+    const display = this.projection.display;
+    if (display?.logSync && !display.logs) {
+      const { start, entries } = display.logSync;
+      if (start < this.logIds.length) {
+        this.ui.restoreLogBoundary(start);
+        this.logIds.length = start;
+      }
+      for (const entry of entries) {
+        this.logIds.push(entry.id);
+        this.ui.appendLog(entry, this.logIds.length);
+      }
+      return;
+    }
+    const logs = display?.logs ?? [];
     if (this.logIds.some((id, index) => logs[index]?.id !== id)) {
       this.ui.clearLog();
       this.logIds = [];

@@ -1,4 +1,4 @@
-import { NETWORK_EVENT as E, NETWORK_ROLE as R } from "./NetworkProtocol.js";
+import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_RESYNC_INTERVAL_MS, NETWORK_LOG_REQUEST_INTERVAL_MS } from "./NetworkProtocol.js";
 import { NETWORK_STATE as S } from "./NetworkLobbyState.js";
 import { projectNetworkGame } from "./NetworkViewerProjection.js";
 
@@ -13,6 +13,12 @@ export class NetworkGameChannel {
   #projection = null;
   #serial = 0;
   #projectionRevision = 0;
+  #logs = [];
+  #logContinuations = new Map();
+  #resyncTimes = new Map();
+  #resyncTimers = new Map();
+  #logRequestTimer = null;
+  #logRollbackRevision = 0;
 
   /*
 功能
@@ -82,7 +88,7 @@ Guest 不能取得真实状态能力；Host 状态本体仍由 MatchApplication 
 Host presentation bridge、请求决策前。
 
 输入
-已白名单处理的 presentation，缺省为空；可选 recipientParticipantId 只恢复指定成员。
+已白名单处理的 presentation；recipientParticipantId 限定成员，resetLogs 从头恢复，logContinuation 只补日志块。
 
 输出
 无。
@@ -91,7 +97,7 @@ Host presentation bridge、请求决策前。
   唯一 Host 状态、五席 controller ownership 与真人成员。
 
 写入状态
-只发送消息，不写游戏状态。
+记录每成员唯一可继续拉取的位置；不写游戏状态。
 
 调用函数
 projectNetworkGame、send。
@@ -99,7 +105,7 @@ projectNetworkGame、send。
 边界与不变量
   只有已完成选角的 Host 能发布；controller 标签只按 setup.playerId 映射，不允许按数组位置猜；不允许传入或发送 raw MatchState。
 */
-  publish(presentation = null, recipientParticipantId = null) {
+  publish(presentation = null, recipientParticipantId = null, resetLogs = false, logContinuation = false) {
     const session = this.#getSession();
     if (!this.#host || session.role !== R.HOST || ![S.LOADING_GAME, S.IN_GAME].includes(session.state)) return;
     const state = this.#host.getState();
@@ -112,9 +118,16 @@ projectNetworkGame、send。
       const participant = session.participants[seat.controller.participantId];
       if (!participant?.connected || participant.kicked) continue;
       if (recipientParticipantId && participant.participantId !== recipientParticipantId) continue;
-      this.#send(E.GAME_SNAPSHOT, projectNetworkGame(
-        state, seat.playerId, presentation, this.#host.getDisplay(seat.playerId), networkRoles
-      ), participant.participantId);
+      const projection = projectNetworkGame(
+        state, seat.playerId, presentation, this.#host.getDisplay(seat.playerId, resetLogs), networkRoles
+      );
+      const sync = projection.display?.logSync;
+      const next = sync ? sync.start + sync.entries.length : 0;
+      // 先登记再投递，内存 capability 可以同步交付下一块请求。
+      if (sync && next < sync.total) this.#logContinuations.set(participant.participantId, next);
+      else this.#logContinuations.delete(participant.participantId);
+      this.#send(E.GAME_SNAPSHOT, projection, participant.participantId);
+      if (logContinuation) continue;
       for (const pending of this.#pending.values()) {
         if (pending.participantId !== participant.participantId) continue;
         // 恢复时先沿用回答验收的失效规则，否则 Guest 会永远拒绝旧版本请求而 Host 仍等待。
@@ -170,7 +183,7 @@ notify。
 NetworkFlow 与测试。
 
 输入
-无。
+includeLogs 决定是否附上本地累计展示副本，日常通知传 false。
 
 输出
 data-only projection/request snapshot。
@@ -187,8 +200,11 @@ structuredClone。
 边界与不变量
 不持有或暴露 Host 真实状态。
 */
-  snapshot() {
-    return structuredClone({ projection: this.#projection, projectionRevision: this.#projectionRevision, requests: [...this.#requests.values()] });
+  snapshot(includeLogs = true) {
+    const result = structuredClone({ projection: this.#projection, projectionRevision: this.#projectionRevision, requests: [...this.#requests.values()] });
+    // 只有新订阅/显式本地读取需要展示副本；日常通知不复制累计历史。
+    if (includeLogs && result.projection?.display) result.projection.display.logs = structuredClone(this.#logs);
+    return result;
   }
 
   /*
@@ -218,7 +234,7 @@ snapshot。
 */
   notify() {
     for (const listener of this.#listeners) {
-      listener(this.snapshot());
+      listener(this.snapshot(false));
     }
   }
 
@@ -286,7 +302,7 @@ protocol envelope。
 role、phase、pending 与 client projection。
 
 写入状态
-Guest projection/requests，或 Host pending Promise。
+Guest projection/日志展示副本/requests，Host pending Promise、恢复预算及单次拉取位置。
 
 调用函数
 acceptResponse、notify。
@@ -298,11 +314,26 @@ Guest 无法反向写 snapshot；仅 Host 可发请求，LOADING 只允许接收
     const session = this.#getSession();
     if (![S.LOADING_GAME, S.IN_GAME].includes(session.state)) return false;
     if (session.role === R.HOST) {
-      if (event.type === E.RESYNC_REQUEST) {
+      if ([E.RESYNC_REQUEST, E.LOG_REQUEST].includes(event.type)) {
         const participant = session.participants[event.participantId];
         if (!this.#host || !participant?.connected || participant.kicked || participant.role !== R.GUEST
           || event.payload?.gameId !== this.#host.getState().gameId) return false;
-        this.publish(null, event.participantId);
+        if (event.type === E.LOG_REQUEST) {
+          if (!this.#logContinuations.has(event.participantId)
+            || event.payload.offset !== this.#logContinuations.get(event.participantId)) return false;
+          this.#logContinuations.delete(event.participantId);
+        } else {
+          const now = performance.now();
+          const remaining = NETWORK_RESYNC_INTERVAL_MS - (now - (this.#resyncTimes.get(event.participantId) ?? -Infinity));
+          if (remaining > 0) {
+            this.deferResync(event.participantId, remaining);
+            return true;
+          }
+          clearTimeout(this.#resyncTimers.get(event.participantId));
+          this.#resyncTimers.delete(event.participantId);
+          this.#resyncTimes.set(event.participantId, now);
+        }
+        this.publish(null, event.participantId, event.type === E.RESYNC_REQUEST, event.type === E.LOG_REQUEST);
         return true;
       }
       if (event.type === E.DECISION_RECEIVED) {
@@ -317,11 +348,32 @@ Guest 无法反向写 snapshot；仅 Host 可发请求，LOADING 只允许接收
       const viewerId = session.matchSetup?.players.find((player) => player.controller.participantId === session.participantId)?.playerId;
       if (!projection?.gameId || projection.viewerId !== viewerId
         || !Number.isSafeInteger(projection.stateVersion) || projection.stateVersion < 0) return false;
-      // 完整旧快照不代表缺失增量；忽略迟到状态，避免恢复请求相互触发。
-      if (this.#projection && (projection.gameId !== this.#projection.gameId || projection.stateVersion < this.#projection.stateVersion)) return false;
+      const sync = projection.display?.logSync;
+      if (sync) {
+        if (!Number.isSafeInteger(sync.start) || sync.start < 0 || !Number.isSafeInteger(sync.total)
+          || !Number.isSafeInteger(sync.rollbackRevision) || sync.rollbackRevision < this.#logRollbackRevision
+          || !Array.isArray(sync.entries) || sync.total < sync.start + sync.entries.length) return false;
+      }
+      // 正式 Action 会原位恢复 stateVersion；只有 Host 新的回滚边界可同时恢复该投影。
+      // 普通迟到快照及旧回滚 epoch 仍拒绝，Guest 不更改任何领域版本。
+      if (this.#projection && (projection.gameId !== this.#projection.gameId
+        || (projection.stateVersion < this.#projection.stateVersion
+          && !(sync?.rollbackRevision > this.#logRollbackRevision)))) return false;
+      if (sync) {
+        if (sync.start > this.#logs.length) {
+          this.#send(E.RESYNC_REQUEST, { gameId: projection.gameId });
+          return false;
+        }
+        this.#logs.length = sync.start;
+        this.#logs.push(...structuredClone(sync.entries));
+        this.#logRollbackRevision = sync.rollbackRevision;
+      }
       this.#projection = structuredClone(projection);
       this.#projectionRevision += 1;
       this.notify();
+      if (sync && sync.start + sync.entries.length < sync.total && this.#logRequestTimer === null) {
+        this.#logRequestTimer = setTimeout(() => this.requestNextLogs(), NETWORK_LOG_REQUEST_INTERVAL_MS);
+      }
       return true;
     }
     if (event.type === E.DECISION_REQUEST && session.state === S.IN_GAME) {
@@ -359,6 +411,98 @@ Guest 无法反向写 snapshot；仅 Host 可发请求，LOADING 只允许接收
       return true;
     }
     return false;
+  }
+
+  /*
+  功能
+  按展示恢复节奏拉取下一块历史。
+
+  调用方
+  receive 的日志恢复计时器。
+
+  输入
+  无。
+
+  输出
+  无。
+
+  读取状态
+  最新 projection 的总边界和本地展示副本长度。
+
+  写入状态
+  清除本次计时器。
+
+  调用函数
+  send。
+
+  边界与不变量
+  普通更新可以提前补齐历史；届时不再请求。节奏保证长历史恢复不会触发 Guest envelope 限速。
+  */
+  requestNextLogs() {
+    this.#logRequestTimer = null;
+    if (!this.#projection || this.#logs.length >= this.#projection.display?.logSync?.total) return;
+    this.#send(E.LOG_REQUEST, { gameId: this.#projection.gameId, offset: this.#logs.length });
+  }
+
+  /*
+  功能
+  合并窗口内恢复请求，在预算恢复后发送最新投影。
+
+  调用方
+  receive 的 RESYNC_REQUEST 分支。
+
+  输入
+  已认证 participantId、剩余等待毫秒。
+
+  输出
+  无。
+
+  读取状态
+  当前成员的恢复计时器。
+
+  写入状态
+  每成员最多一个计时器。
+
+  调用函数
+  finishResync、setTimeout。
+
+  边界与不变量
+  限流只合并恢复构造；不永久丢掉正常的第二次恢复，不影响其它成员。
+  */
+  deferResync(participantId, delay) {
+    if (this.#resyncTimers.has(participantId)) return;
+    this.#resyncTimers.set(participantId, setTimeout(() => this.finishResync(participantId), delay));
+  }
+
+  /*
+  功能
+  完成被合并的恢复请求并更新时间水位。
+
+  调用方
+  deferResync 计时器。
+
+  输入
+  participantId。
+
+  输出
+  无。
+
+  读取状态
+  当前 Host capability 与成员有效性，经 publish 再检查。
+
+  写入状态
+  该成员恢复计时器和时间水位。
+
+  调用函数
+  publish、performance.now。
+
+  边界与不变量
+  reset 和成员撤销会取消计时器，不能向旧房间恢复。
+  */
+  finishResync(participantId) {
+    this.#resyncTimers.delete(participantId);
+    this.#resyncTimes.set(participantId, performance.now());
+    this.publish(null, participantId, true);
   }
 
   /*
@@ -512,7 +656,7 @@ participantId。
 pending 的 participantId。
 
 写入状态
-删除对应 pending。
+删除该成员 pending、accepted ledger、日志拉取位置及恢复计时器。
 
 调用函数
 pending.reject。
@@ -522,6 +666,10 @@ pending.reject。
 */
 
   cancelParticipant(participantId) {
+    clearTimeout(this.#resyncTimers.get(participantId));
+    this.#resyncTimers.delete(participantId);
+    this.#resyncTimes.delete(participantId);
+    this.#logContinuations.delete(participantId);
     // 撤销 ownership 后旧回答不再有补确认权；其他成员的 ledger 保留。
     for (const [requestId, accepted] of this.#accepted) {
       if (accepted.participantId === participantId) this.#accepted.delete(requestId);
@@ -565,6 +713,14 @@ reject、notify。
     this.#pending.clear();
     this.#accepted.clear();
     this.#requests.clear();
+    this.#logs = [];
+    this.#logRollbackRevision = 0;
+    this.#resyncTimes.clear();
+    for (const timer of this.#resyncTimers.values()) clearTimeout(timer);
+    this.#resyncTimers.clear();
+    clearTimeout(this.#logRequestTimer);
+    this.#logRequestTimer = null;
+    this.#logContinuations.clear();
     this.#projection = null;
     this.#host = null;
     this.notify();

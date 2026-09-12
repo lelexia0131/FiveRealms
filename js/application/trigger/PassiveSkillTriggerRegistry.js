@@ -89,17 +89,41 @@ const PASSIVE_SKILLS = {
   触发顺序与日志不变。
   */
   momentum(game, owner) {
-    runtime.onEvent("cardUsed", `${owner.id}:momentum:category`, (event) => {
+    runtime.onEvent("cardUsed", `${owner.id}:momentum:category`, trackMomentumCategory);
+    /*
+    功能
+    对本回合首次使用的牌类别累计连势并发布原提示。
+
+    调用方
+    cardUsed 监听器。
+
+    输入
+    已结算的用牌事件。
+
+    输出
+    无。
+
+    读取状态
+    owner 存活、已用类别和连势。
+
+    写入状态
+    经既有 transition 更新类别和层数。
+
+    调用函数
+    canTriggerMomentumCategory、markCategoryUsed、setMomentum、presentation.log。
+
+    边界与不变量
+    纯 predicate 仅判断一次；提交与日志顺序不变。
+    */
+    function trackMomentumCategory(event) {
       if (!canTriggerMomentumCategory(owner, event)) return;
-      if (canTriggerMomentumCategory(owner, event)) {
-        markCategoryUsed(runtime.getState(), owner, event.card.category);
-        const previousMomentum = owner.turnFlags.momentum;
-        setMomentum(runtime.getState(), owner, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, previousMomentum + PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain));
-        if (owner.turnFlags.momentum > previousMomentum) {
-          runtime.presentation.log(`${owner.name}触发「连势」，现有${owner.turnFlags.momentum}层「连势」。`);
-        }
+      markCategoryUsed(runtime.getState(), owner, event.card.category);
+      const previousMomentum = owner.turnFlags.momentum;
+      setMomentum(runtime.getState(), owner, Math.min(PASSIVE_SKILL_DEFINITIONS.momentum.maxStacks, previousMomentum + PASSIVE_SKILL_DEFINITIONS.momentum.stacksGain));
+      if (owner.turnFlags.momentum > previousMomentum) {
+        runtime.presentation.log(`${owner.name}触发「连势」，现有${owner.turnFlags.momentum}层「连势」。`);
       }
-    });
+    }
     runtime.onEvent("beforeDamage", `${owner.id}:momentum:damage`, (event) => {
       if (!shouldAddMomentumDamage(owner, event)) return;
       const bonus = owner.turnFlags.momentum;
@@ -109,14 +133,38 @@ const PASSIVE_SKILLS = {
         event.metadata.momentumBonus = bonus;
       }
     });
-    runtime.onEvent("afterDamage", `${owner.id}:momentum:consume`, (event) => {
+    runtime.onEvent("afterDamage", `${owner.id}:momentum:consume`, consumeMomentum);
+    /*
+    功能
+    实际造成伤害后按既有标记消耗连势。
+
+    调用方
+    afterDamage 监听器。
+
+    输入
+    伤害结算事件。
+
+    输出
+    无。
+
+    读取状态
+    事件 source、实际伤害与消耗标记。
+
+    写入状态
+    经 setMomentum 清空层数，随后写原日志。
+
+    调用函数
+    shouldConsumeMomentum、setMomentum、presentation.log。
+
+    边界与不变量
+    纯 predicate 仅判断一次；不改变伤害、触发时机或事件顺序。
+    */
+    function consumeMomentum(event) {
       if (!shouldConsumeMomentum(owner, event)) return;
-      if (shouldConsumeMomentum(owner, event)) {
-        const consumed = event.metadata.momentumBonus;
-        setMomentum(runtime.getState(), owner, 0);
-        runtime.presentation.log(`${owner.name}消耗${consumed}层「连势」，本次「突袭」伤害+${consumed}。`, "important");
-      }
-    });
+      const consumed = event.metadata.momentumBonus;
+      setMomentum(runtime.getState(), owner, 0);
+      runtime.presentation.log(`${owner.name}消耗${consumed}层「连势」，本次「突袭」伤害+${consumed}。`, "important");
+    }
     runtime.onEvent("turnEnd", `${owner.id}:momentum:turnEnd`, () => {
       // 「回合结束后清空连势」指任意行动角色的全局回合结束，而非只清空刃行者自己的回合。
       // 回合外借势等路径产生的 momentum 必须在当前全局回合 turnEnd 立即归零。

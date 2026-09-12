@@ -187,12 +187,20 @@ Host 的 accepted ledger 以 requestId 索引，条目绑定 participantId、消
 
 Guest 缺少 projection，或合法 Decision 的 stateVersion 比本地快照新时，发送 RESYNC_REQUEST；Host 验证当前 gameId 和成员身份，仅回复请求者的最新 viewer-safe GAME_SNAPSHOT 及其仍有效 pending Decision。恢复时发现 pending 已过期、角色死亡或终局，则沿用现有回答验收规则发送 DECISION_CANCELLED 并收束原 Promise。完整旧快照不触发恢复。projectionRevision 是 Guest 本地展示通知计数，非网络增量版本；revision 是 Host 完整房间快照版本；stateVersion 是 Domain 提交版本；sequence 仅按认证连接防重放，允许定向发送导致的序号间隙，gameplay 成功后单调提交，不重建 TCP 排序。
 
+公开日志仍由原 MatchLogAdapter 产生，NetworkHostBridge 只缓存事件发生时各 viewer 的安全展示。GAME_SNAPSHOT 的 `display.logSync = { start, total, rollbackRevision, entries }` 表示保留前 `start` 条并追加本块；普通 render/feedback/currentCard 更新只发送尚未交付条目，已同步时 entries 为空。正式 rollback 同时裁掉 Host 缓存和发送位置，Guest 用原 `restoreLogBoundary` 裁尾，不改变日志内容、顺序或领域回滚。Host 仅在正式 restoreLogBoundary 入口增加 rollbackRevision：新的回滚边界允许接受同时恢复的较低 stateVersion；普通旧快照和回滚前 epoch 仍拒绝，Guest 不生成或修改领域版本。Guest Channel 保存唯一网络展示副本；日常通知只 clone 增量，新订阅/显式本地 snapshot 才附上累计副本。
+
+初始同步或显式 RESYNC 从起点恢复，按最多 32 条、聚合 64 KiB 分块，不截断历史。超出聚合预算的单条日志独占一块，仍受原 1 MiB Transport frame 上限约束。Host 为每个 participant 只保留一个可继续的 offset；`LOG_REQUEST` 必须匹配当前 gameId、认证成员和该 offset，消费后不可重放。Guest 每 50 ms 最多拉一块，续块不重复发送 Decision。每成员的 RESYNC 构造间隔至少 1000 ms；窗口内请求合并为一个延迟恢复，执行时读最新状态，离房/reset 会取消计时器。正常 Decision/stateVersion 校验保持原语义。
+
+Electron 接收队列保持单 flight/ACK 串行消费。Host 的排队和 flight 都保留 Transport 注入的 connectionId；每连接最多待处理 32 条或 1 MiB，原整端 128 条/4 MiB 上限不变，普通事件预留 12 条/12 KiB 给离房通知。超限只丢弃该来源未交付事件并关闭其 TcpPeer，已投递 flight 仍等待原 ACK。未投递入房的连接关闭时一并撤销入房事件；已投递入房则必须交付 DISCONNECTED，继续原 participant 离线/AI 接管流程。迟到定向回复与目标 socket 写入失败不能升级为整端 ERROR。renderer 消失、IPC send 失败或 10 秒不消费仍是 endpoint 故障，可以关闭整个 transport。
+
+Host admission 在构造 TcpPeer 前执行：总连接最多 12、未完成 TCP handshake 最多 8、相同 remote 最多 6；IPv4-mapped IPv6 与对应 IPv4 按同一地址计数。包含关闭尚未完成的连接，socket close 后释放名额；超限只 destroy 当前新 socket。Host 每个已握手 Guest 的 envelope token bucket 容量 128、每秒补充 32；ping/pong 不计入，超限只关闭该 Guest。以上均为网络资源预算，不是游戏平衡值；游戏侧仍按原房间容量、ROOM_FULL/ROOM_LOCKED、身份与 ownership 验证决定是否入房。
+
 | 条件 | 分类与行为 |
 |---|---|
 | projection 缺失、同局 Decision.stateVersion 高于本地 | C：请求定向 Resync，不登记暂不可用的请求 |
 | projection viewerId、gameId 与已绑定身份/游戏冲突 | D：拒绝；旧会话 envelope 也由 roomId/generation 拒绝 |
 | projectionRevision 不一致 | B：本地展示计数，不作为消息拒绝条件 |
-| GAME_SNAPSHOT.stateVersion 低于已接受快照 | A：忽略迟到完整快照 |
+| GAME_SNAPSHOT.stateVersion 低于已接受快照 | A：忽略迟到完整快照；Host 正式回滚产生的新 rollbackRevision 允许恢复同步的状态与日志边界 |
 | Decision.stateVersion 低于当前 projection | A：忽略旧请求；Host 收到过期回答时取消 pending 并收束原 workflow |
 | 房间 snapshot revision gap | B：验证后接受完整权威快照；不等待缺失 revision |
 | 房间 snapshot revision 重复或倒退 | A：忽略 |

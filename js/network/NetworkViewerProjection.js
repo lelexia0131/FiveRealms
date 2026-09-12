@@ -38,12 +38,15 @@ export function projectNetworkDisplay(display) {
         distanceState: typeof value.distanceState === "string" ? value.distanceState : ""
       }
     ])),
-    logs: (display.logs ?? []).map((entry) => ({
-      id: entry.id, kind: entry.kind,
-      fragments: entry.fragments.map((fragment) => fragment.type === "player"
-        ? { type: "player", text: fragment.text, playerId: fragment.playerId, battleTeam: fragment.battleTeam }
-        : { type: "text", text: fragment.text })
-    }))
+    logSync: display.logSync ? {
+      start: display.logSync.start, total: display.logSync.total, rollbackRevision: display.logSync.rollbackRevision,
+      entries: display.logSync.entries.map((entry) => ({
+        id: entry.id, kind: entry.kind,
+        fragments: entry.fragments.map((fragment) => fragment.type === "player"
+          ? { type: "player", text: fragment.text, playerId: fragment.playerId, battleTeam: fragment.battleTeam }
+          : { type: "text", text: fragment.text })
+      }))
+    } : null
   };
 }
 

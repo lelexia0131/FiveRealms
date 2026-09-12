@@ -11,6 +11,7 @@ export const NETWORK_EVENT = Object.freeze({
   GAME_READY: "GAME_READY",
   MATCH_START: "MATCH_START",
   GAME_SNAPSHOT: "GAME_SNAPSHOT",
+  LOG_REQUEST: "LOG_REQUEST",
   DECISION_REQUEST: "DECISION_REQUEST",
   DECISION_RECEIVED: "DECISION_RECEIVED",
   DECISION_RESPONSE: "DECISION_RESPONSE",
@@ -37,6 +38,12 @@ export const NETWORK_EVENT = Object.freeze({
 // 由游戏侧关联并验证，Transport 不解释决定，也不得把消息 sender 覆盖为 CAPABILITY。
 // 无 capability 时可由 Host 准备单真人房间，但不伪造远端连接或决定。
 export const NETWORK_DEFAULT_PORT = 38520;
+// 展示传输预算，不属于游戏规则；恢复按块消费，避免把历史一次压入 IPC。
+export const NETWORK_LOG_CHUNK_ENTRIES = 32;
+export const NETWORK_LOG_CHUNK_BYTES = 64 * 1024;
+export const NETWORK_RESYNC_INTERVAL_MS = 1000;
+// 恢复拉取最多每秒 20 块，给 Guest envelope 预算留下输入与 receipt 余量。
+export const NETWORK_LOG_REQUEST_INTERVAL_MS = 50;
 
 /*
 功能

@@ -74,6 +74,8 @@ npm test
 
 `tests/network_test.mjs` 在 canonical runner 的既有 Network 区域注册联机故障注入回归：真实焚场响应丢 receipt 后经 Resync 完成多目标结算，真实转移隐藏选牌丢 Accepted 后重发回答但只移动一次资源；另覆盖 ledger 生命周期、多人私密恢复、非法身份拒绝及 sequence 提交。注入发生在测试 channel 交付边界，不改变卡牌/技能规则，不模拟 TCP 乱序，不用 sleep 修复时序。故障与恢复边界详见 `docs/architecture/FR_ARCHITECTURE.md` 的 Transport 消费契约。
 
+同一区域注册 `tests/network_transport_test.mjs`，使用临时端口真实 TCP 验证定向收发、身份覆盖、单 Guest IPC/速率故障隔离，并用 socket 生命周期替身确定性检查 admission 计数、心跳预算和帧边界。Network 日志回归覆盖长历史增量、普通通知不复制累计日志、分块恢复及正式 rollback。定向运行可设置 `TEST_PATTERN=Network`；Electron 专项使用 `TEST_PATTERN=Network·Transport`，均由 `node tests/run.mjs` 执行并包含在 `npm test`。
+
 测试失败时，不应仅删除或放宽断言。必须先确认：
 
 1. 代码行为是否违反正式规则；
