@@ -436,6 +436,7 @@ class NetworkIpcBridge {
 
   边界与不变量
   移到 flight 不释放预算；发送失败或一直不 ACK 是 endpoint 故障。
+  只有 Host 入站连接需要 admission，Guest 的连接完成通知仅确认消费。
   */
   flush(owner) {
     if (!owner.token || (!owner.queue.length && !owner.flight)) return;
@@ -450,7 +451,8 @@ class NetworkIpcBridge {
     if (!owner.subscribed || owner.flight || !owner.queue.length) return;
     const item = owner.queue.shift();
     owner.flight = { id: ++owner.serial, bytes: item.bytes, connectionId: item.connectionId,
-      admission: item.value.sender === "CAPABILITY" && item.value.type === "PEER_CONNECTED" };
+      admission: owner.transport instanceof LanHostTransport
+        && item.value.sender === "CAPABILITY" && item.value.type === "PEER_CONNECTED" };
     if (owner.flight.admission) owner.admissions.add(item.connectionId);
     try {
       owner.webContents.send(EVENT_CHANNEL, { token: owner.token, id: owner.flight.id, event: item.value });

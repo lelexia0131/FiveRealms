@@ -179,6 +179,10 @@ There is no `general` domain schema. Internal identifiers and state use `charact
 
 #### Transport 消费契约
 
+多人聊天使用同一个 envelope 和 participant 路由：`CHAT_SEND` 上行 payload 仅含 `scope: all | team` 与 `text`，Host `NetworkSession` 从已认证 connectionId 解析 participant，再从 `finalSetup.players.controller` 查正式角色与 teamId，昵称使用 participant 当前 displayName authority。Host 本端进入相同验收函数，按 participantId 的单调时钟冷却每秒最多接受一条；原始正文最多 50 个 UTF-16 code unit（与 HTML maxlength 一致），trim 后为空或附加身份字段均拒绝。`CHAT_MESSAGE` 仅定向给仍连接且未移除的真人；all 为所有真人，team 再筛选同队席位，发送者包含在内。`CHAT_REJECTED` 只返回发送者并在输入栏提示，不写游戏日志。
+
+`NetworkChatView` 唯一拥有当前会话的本地屏蔽偏好，按 participantId 过滤后续收到的聊天，始终保留自己；不发送屏蔽设置，不影响 Host 路由。正文用 textContent，姓名复用正式 player 日志 fragment 与队伍颜色。聊天直接追加为 UI 日志容器中的 `is-chat` 节点，不进入 MatchState、GameChannel 快照或历史统计。UIManager 仅索引游戏日志 DOM；Action rollback 和 Guest 日志恢复只删除游戏节点，保留交错聊天。会话关闭重置屏蔽，页面离局清空展示。
+
 Electron transport 通过 `preload.js → NetworkIpcBridge → LanHostTransport/LanClientTransport → TcpPeer` 提供 capability；游戏侧仍只由 `NetworkSession`、`NetworkGameChannel` 和 Host runtime 拥有会话、Decision 协议与游戏 authority。
 
 Decision 采用 `DECISION_REQUEST → DECISION_RECEIVED → DECISION_RESPONSE → DECISION_ACCEPTED` 生命周期。Guest 在 Accepted 前保留请求；同 requestId 的重复 Request 必须内容一致，重复 Response 必须匹配原消息类型、participantId 和完整回答。Host 只补发 Accepted，不再次 decode 或完成 workflow。IPC ACK 仅确认 renderer callback 投递，不代表 gameplay 登记或接受。

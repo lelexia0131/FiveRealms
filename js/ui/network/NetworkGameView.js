@@ -394,10 +394,10 @@ export class NetworkGameView {
   日志 DOM 和本地 ID。
 
   调用函数
-  clearLog、restoreLogBoundary、appendLog。
+  restoreLogBoundary、appendLog。
 
   边界与不变量
-  回滚仅裁掉尾部；普通 snapshot 不重扫历史，同一快照不重复追加。
+  回滚仅裁掉游戏记录，完整恢复也保留聊天；普通 snapshot 不重扫历史，同一快照不重复追加。
   */
 
   syncLogs() {
@@ -416,7 +416,7 @@ export class NetworkGameView {
     }
     const logs = display?.logs ?? [];
     if (this.logIds.some((id, index) => logs[index]?.id !== id)) {
-      this.ui.clearLog();
+      this.ui.restoreLogBoundary(0);
       this.logIds = [];
     }
     for (let index = this.logIds.length; index < logs.length; index += 1) this.ui.appendLog(logs[index], index + 1);

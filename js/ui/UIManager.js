@@ -2847,7 +2847,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   entry.kind/fragments、log_list 与滚动事件维护的 logFollowingBottom。
 
   写入状态
-  追加日志 DOM、更新计数；跟随模式下只写最大 scrollTop 请求。
+  追加日志 DOM 与游戏节点索引、更新计数；跟随模式下只写最大 scrollTop 请求。
 
   调用函数
   formatLogEntry、updateLogCount。
@@ -2862,6 +2862,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     node.className = `log-entry ${entry.kind === "normal" ? "" : `is-${entry.kind}`}`;
     node.innerHTML = formatLogEntry(entry);
     list.append(node);
+    (this.gameLogNodes ??= []).push(node);
     this.updateLogCount(count);
     if (this.logFollowingBottom !== false) list.scrollTop = Number.MAX_SAFE_INTEGER;
   }
@@ -2880,20 +2881,20 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   无返回值。
 
   读取状态
-  log_list 当前尾部节点数量。
+  gameLogNodes 中的游戏日志 DOM 引用。
 
   写入状态
-  仅删除超出边界的日志尾部 DOM 节点，并更新 log_count。
+  仅删除超出边界的游戏日志节点，并更新 log_count。
 
   调用函数
   DOM removeChild、updateLogCount。
 
   边界与不变量
-  不重建或替换边界内节点，历史日志的内容、顺序和 DOM 对象身份保持不变。
+  游戏节点索引不包含聊天；不扫描历史，聊天及边界内 DOM 的内容、顺序和对象身份保持不变。
   */
   restoreLogBoundary(count) {
     const list = this.elements.log_list;
-    while (list.children.length > count) list.removeChild(list.lastElementChild);
+    while (this.gameLogNodes?.length > count) list.removeChild(this.gameLogNodes.pop());
     this.updateLogCount(count);
   }
 
@@ -2945,7 +2946,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   log_list。
 
   写入状态
-  清空日志 DOM、滚动位置与计数展示。
+  清空游戏与聊天 DOM、游戏节点索引、滚动位置与计数展示。
 
   调用函数
   updateLogCount。
@@ -2955,9 +2956,49 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   */
   clearLog() {
     this.elements.log_list.innerHTML = "";
+    this.gameLogNodes = [];
     this.elements.log_list.scrollTop = 0;
     this.logFollowingBottom = true;
     this.updateLogCount(0);
+  }
+
+  /*
+  功能
+  将已通过本地屏蔽过滤的聊天追加到共享日志容器。
+
+  调用方
+  NetworkChatView.receive。
+
+  输入
+  Host canonical message 与角色定义的 display name。
+
+  输出
+  无。
+
+  读取状态
+  log_list、logFollowingBottom。
+
+  写入状态
+  仅聊天 DOM；不增加正式对局记录计数或游戏节点索引。
+
+  调用函数
+  formatLogEntry、document.createElement。
+
+  边界与不变量
+  名称复用 player fragment 着色及转义；正文仅写 textContent，不经过战斗日志关键字格式化。
+  */
+  appendChatLog(message, characterName) {
+    const node = document.createElement("div");
+    node.className = "log-entry is-chat";
+    const sender = document.createElement("span");
+    sender.innerHTML = formatLogEntry({ fragments: [{ type: "player", playerId: message.playerId,
+      battleTeam: message.teamId, text: `${characterName}（${message.senderNickname}）` }] });
+    const body = document.createElement("span");
+    body.className = "log-chat-text";
+    body.textContent = `：${message.text}`;
+    node.append(sender, body);
+    this.elements.log_list.append(node);
+    if (this.logFollowingBottom !== false) this.elements.log_list.scrollTop = Number.MAX_SAFE_INTEGER;
   }
 
   /*

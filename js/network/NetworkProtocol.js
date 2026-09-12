@@ -12,6 +12,9 @@ export const NETWORK_EVENT = Object.freeze({
   MATCH_START: "MATCH_START",
   GAME_SNAPSHOT: "GAME_SNAPSHOT",
   LOG_REQUEST: "LOG_REQUEST",
+  CHAT_SEND: "CHAT_SEND",
+  CHAT_MESSAGE: "CHAT_MESSAGE",
+  CHAT_REJECTED: "CHAT_REJECTED",
   DECISION_REQUEST: "DECISION_REQUEST",
   DECISION_RECEIVED: "DECISION_RECEIVED",
   DECISION_RESPONSE: "DECISION_RESPONSE",
@@ -34,10 +37,15 @@ export const NETWORK_EVENT = Object.freeze({
 // PEER_CONNECTED 的 remoteAddress/displayName 由 Transport 注入；无元数据的既有连接使用 default 标识。
 // PARTICIPANT_HELLO 只允许 Guest 通过已认证 connectionId 补充 displayName，不得携带或改写 participantId。
 // revision 是 Host 房间快照版本；Guest 身份由首个定向房间快照的接收人确定。
+// CHAT_SEND 的 payload 仅含 scope/text，身份取自认证连接；CHAT_MESSAGE/CHAT_REJECTED 仅由 Host 定向发送。
+// 聊天是独立展示事件，不进入 GAME_SNAPSHOT、MatchState 或 Action transaction。
 // GAME_SNAPSHOT 仅携带 viewer-safe projection；DECISION_REQUEST/RESPONSE 与 PLAYER_INTENT
 // 由游戏侧关联并验证，Transport 不解释决定，也不得把消息 sender 覆盖为 CAPABILITY。
 // 无 capability 时可由 Host 准备单真人房间，但不伪造远端连接或决定。
 export const NETWORK_DEFAULT_PORT = 38520;
+// 与 HTML maxlength 一致，按 UTF-16 code unit 计数；冷却单位为毫秒。
+export const NETWORK_CHAT_MAX_LENGTH = 50;
+export const NETWORK_CHAT_INTERVAL_MS = 1000;
 // 展示传输预算，不属于游戏规则；恢复按块消费，避免把历史一次压入 IPC。
 export const NETWORK_LOG_CHUNK_ENTRIES = 32;
 export const NETWORK_LOG_CHUNK_BYTES = 64 * 1024;

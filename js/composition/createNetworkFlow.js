@@ -1,4 +1,5 @@
 import { NetworkGameView } from "../ui/network/NetworkGameView.js";
+import { NetworkChatView } from "../ui/network/NetworkChatView.js";
 import { NetworkSession } from "../network/NetworkSession.js";
 import { NETWORK_ROLE as R, normalizeNetworkEndpoint } from "../network/NetworkProtocol.js";
 import { NETWORK_STATE as S } from "../network/NetworkLobbyState.js";
@@ -27,7 +28,7 @@ NetworkSession snapshot 与页面表单 draft。
 仅导航会话，不写领域状态。
 
 调用函数
-NetworkSession、三种页面 renderer、注入 Match callbacks。
+NetworkSession、NetworkChatView、三种页面 renderer、注入 Match callbacks。
 
 边界与不变量
 Game UI 准备完成后才发 GAME_READY；本模块不拥有 GameLoop、规则或持久化；displayName 只交给 participant metadata。
@@ -102,6 +103,7 @@ onPrepareMatch、gameReady、onStartMatch、showNetworkPage。
     ui.showNetworkPage(renderNetworkSquadSelectionView(snapshot, draft), "squad");
   }
   session.subscribe(update);
+  new NetworkChatView({ ui, session });
   session.gameChannel.subscribe((snapshot) => guestView?.update(snapshot));
 
   /*

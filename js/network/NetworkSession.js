@@ -1,8 +1,8 @@
 import { NetworkGameChannel } from "./NetworkGameChannel.js";
 import { MATCH_MODE } from "../application/match/MatchMode.js";
-import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER, normalizeConnectionInfo, normalizeNetworkEndpoint } from "./NetworkProtocol.js";
+import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER, NETWORK_CHAT_MAX_LENGTH, NETWORK_CHAT_INTERVAL_MS, normalizeConnectionInfo, normalizeNetworkEndpoint } from "./NetworkProtocol.js";
 import { NETWORK_STATE as S, transitionNetworkState } from "./NetworkLobbyState.js";
-import { createNetworkSetup, isNetworkSetupValid, isNetworkSelectionValid, finalizeNetworkSetup, projectNetworkMatch, normalizeParticipantDisplayName } from "./NetworkSetup.js";
+import { createNetworkSetup, isNetworkSetupValid, isNetworkSelectionValid, finalizeNetworkSetup, projectNetworkMatch, normalizeParticipantDisplayName, networkParticipantLabel } from "./NetworkSetup.js";
 
 export class NetworkSession {
   #data;
@@ -14,6 +14,8 @@ export class NetworkSession {
   #sequence = 0;
   #peerSequence = new Map();
   #unsubscribe = null;
+  #chatListeners = new Set();
+  #chatLastSent = new Map();
 
   /*
 功能
@@ -67,7 +69,7 @@ constructor、close。
 无。
 
 写入状态
-data、序号。
+data、序号与聊天冷却；聊天订阅随 NetworkFlow 生命周期保留。
 
 调用函数
 无。
@@ -81,6 +83,7 @@ data、序号。
       setup: null, finalSetup: null, locked: false, error: null };
     this.#sequence = 0;
     this.#peerSequence.clear();
+    this.#chatLastSent.clear();
   }
 
   /*
@@ -456,6 +459,8 @@ capability.send、markParticipantDisconnected、disconnect。
     const d = this.#data;
     const envelope = { type, roomId: d.roomId, sender: d.role, participantId: d.participantId,
       recipientParticipantId, sequence: ++this.#sequence, revision: d.revision, payload: structuredClone(payload) };
+    // 聊天上行只表达 scope/text；成员身份完全由接收连接映射确定。
+    if (type === E.CHAT_SEND) delete envelope.participantId;
 /*
 功能
 收束当前房间的发送错误。
@@ -554,7 +559,7 @@ connectionId 映射、成员身份、revision。
 已认证连接序号与经入口提交的房间状态。
 
 调用函数
-addParticipant、selectFor、confirmFor、acceptSnapshot、gameChannel.receive、publish。
+addParticipant、selectFor、confirmFor、acceptSnapshot、gameChannel.receive、acceptChat、emitChat、publish。
 
 边界与不变量
 connectionId 必须由 capability 注入而非 payload；无元数据的既有 Transport 使用默认连接标识；PARTICIPANT_HELLO 只按已认证 connectionId 补充 displayName。
@@ -598,6 +603,13 @@ connectionId 必须由 capability 注入而非 payload；无元数据的既有 T
           participant.displayName = displayName;
           this.publish(E.ROLE_POOL_ASSIGNED);
         }
+        return true;
+      }
+      if ([E.CHAT_SEND, E.CHAT_MESSAGE, E.CHAT_REJECTED].includes(event.type)) {
+        if (d.role === R.HOST ? event.type !== E.CHAT_SEND : event.type === E.CHAT_SEND) return false;
+        this.#peerSequence.set(connectionId, event.sequence);
+        if (d.role === R.HOST) this.#acceptChat(participant.participantId, event.payload);
+        else this.#emitChat(event.type, event.payload);
         return true;
       }
       if ([E.GAME_SNAPSHOT, E.LOG_REQUEST, E.DECISION_REQUEST, E.DECISION_RECEIVED, E.DECISION_RESPONSE, E.DECISION_ACCEPTED, E.DECISION_CANCELLED, E.RESYNC_REQUEST, E.PLAYER_INTENT].includes(event.type)) {
@@ -685,6 +697,158 @@ isNetworkSetupValid、finalizeNetworkSetup、send、move、notify。
       : d.participants[localId].ready ? S.WAITING_REMOTE : S.SELECTING);
     this.notify();
     return true;
+  }
+
+  /*
+功能
+订阅独立于游戏快照的聊天展示事件。
+
+调用方
+NetworkChatView。
+
+输入
+接收 type/payload 的 listener。
+
+输出
+取消订阅函数。
+
+读取状态
+无。
+
+写入状态
+会话聊天订阅集合。
+
+调用函数
+Set.add/delete。
+
+边界与不变量
+不保存聊天历史，不写 MatchState 或 GameChannel。
+*/
+  subscribeChat(listener) {
+    this.#chatListeners.add(listener);
+    return () => this.#chatListeners.delete(listener);
+  }
+
+  /*
+功能
+向本端展示层交付 Host 确认或拒绝的聊天。
+
+调用方
+receive、acceptChat。
+
+输入
+聊天事件类型和 Host payload。
+
+输出
+无。
+
+读取状态
+聊天订阅集合。
+
+写入状态
+无。
+
+调用函数
+订阅回调、structuredClone。
+
+边界与不变量
+每个消费者获得独立副本；不通过游戏日志或事务转发。
+*/
+  #emitChat(type, payload) {
+    for (const listener of this.#chatListeners) listener({ type, payload: structuredClone(payload) });
+  }
+
+  /*
+功能
+提交本地真人的聊天意图，Host 与 Guest 共享权威验收。
+
+调用方
+NetworkChatView.send。
+
+输入
+scope 为 all/team，text 为待 trim 的正文。
+
+输出
+本地拒绝结果或已提交结果；实际成功以 CHAT_MESSAGE 为准。
+
+读取状态
+会话连接与本地 participant。
+
+写入状态
+经 send 或 acceptChat 提交意图。
+
+调用函数
+send、acceptChat。
+
+边界与不变量
+断线或未进入对局不发送；UI 校验不替代 Host 校验。
+*/
+  sendChat(scope, text) {
+    const d = this.#data;
+    if (d.state !== S.IN_GAME || !d.participants[d.participantId]?.connected) return { ok: false, code: "CHAT_UNAVAILABLE" };
+    if (!["all", "team"].includes(scope) || typeof text !== "string"
+      || text.length > NETWORK_CHAT_MAX_LENGTH || !text.trim()) return { ok: false, code: "CHAT_INVALID" };
+    const payload = { scope, text: text.trim() };
+    if (d.role === R.HOST) this.#acceptChat(d.participantId, payload);
+    else this.send(E.CHAT_SEND, payload);
+    return { ok: true };
+  }
+
+  /*
+功能
+由 Host 校验聊天并按正式席位阵营定向交付真人。
+
+调用方
+认证后的 receive CHAT_SEND 与 Host 本地 sendChat。
+
+输入
+由连接或 Host 本端确定的 participantId，以及仅含 scope/text 的意图。
+
+输出
+无；拒绝只交付发送者，成功包含发送者自身。
+
+读取状态
+正式 participants、finalSetup controller/character/team、单调时钟。
+
+写入状态
+仅聊天冷却 Map，key 为稳定 participantId。
+
+调用函数
+networkParticipantLabel、performance.now、send、emitChat。
+
+边界与不变量
+Guest 附加身份字段直接拒绝；Host 本端也通过同一冷却和收件人集合。
+聊天不参与 MatchState、Action、回合或历史统计；不按存活状态排除真人。
+*/
+  #acceptChat(participantId, payload) {
+    const d = this.#data;
+    const participant = d.participants[participantId];
+    const player = d.finalSetup?.players.find((entry) => entry.controller.participantId === participantId && entry.controller.type !== "AI");
+    const now = performance.now();
+    let code = null;
+    if (d.role !== R.HOST || d.state !== S.IN_GAME || !participant?.connected || participant.kicked || !player) code = "CHAT_UNAVAILABLE";
+    else if (!payload || Object.keys(payload).some((key) => !["scope", "text"].includes(key))
+      || !["all", "team"].includes(payload.scope) || typeof payload.text !== "string"
+      || payload.text.length > NETWORK_CHAT_MAX_LENGTH || !payload.text.trim()) code = "CHAT_INVALID";
+    else if (now - (this.#chatLastSent.get(participantId) ?? -Infinity) < NETWORK_CHAT_INTERVAL_MS) code = "CHAT_RATE_LIMITED";
+    if (code) {
+      if (participantId === d.participantId) this.#emitChat(E.CHAT_REJECTED, { code });
+      else this.send(E.CHAT_REJECTED, { code }, participantId);
+      return;
+    }
+    this.#chatLastSent.set(participantId, now);
+    const message = { senderParticipantId: participantId, senderNickname: networkParticipantLabel(participant),
+      playerId: player.playerId, characterId: player.characterId, teamId: player.teamId,
+      scope: payload.scope, text: payload.text.trim() };
+    // 从唯一 controller ownership 求收件人；Host 只在自身属于该集合时本地交付。
+    for (const seat of d.finalSetup.players) {
+      const recipientId = seat.controller.participantId;
+      const recipient = d.participants[recipientId];
+      if (seat.controller.type === "AI" || !recipient?.connected || recipient.kicked
+        || (message.scope === "team" && seat.teamId !== player.teamId)) continue;
+      if (recipientId === d.participantId) this.#emitChat(E.CHAT_MESSAGE, message);
+      else this.send(E.CHAT_MESSAGE, message, recipientId);
+    }
   }
 
   /*

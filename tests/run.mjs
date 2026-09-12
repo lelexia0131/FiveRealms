@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { registerNetworkTests, registerNetworkUiTests } from "./network_test.mjs";
 import { registerNetworkTransportTests } from "./network_transport_test.mjs";
+import { registerNetworkChatTests, registerNetworkChatUiTests } from "./network_chat_test.mjs";
 import { createHash } from "node:crypto";
 import { access, readFile, readdir } from "node:fs/promises";
 import * as nodePath from "node:path";
@@ -4167,6 +4168,7 @@ test("Application 架构：公开牌池只跨边界传 ID 并由 adapter 重绑�
 
 registerNetworkTests(test, { makeUi, instance });
 registerNetworkTransportTests(test);
+registerNetworkChatTests(test);
 
 /*
 功能
@@ -44302,6 +44304,8 @@ test("UI·装备槽：回收站和备用弹夹保留三档计数且 Tooltip 不�
 });
 
 // ---- UI·日志 ----
+
+registerNetworkChatUiTests(test);
 
 test("UI·日志：位于底部时新日志继续自动跟随", () => {
   const previousDocument = globalThis.document;
