@@ -1436,20 +1436,24 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     game.dispose();
   });
 
-  test("Network：Host唯一创建并启动Match而Guest只初始化投影UI", async () => {
+  test("Network：Host唯一启动Match且双方下一局保留房间并复用选角Ready链", async () => {
     let roomId, hostGame, startPromise, hostCreated = 0, guestCreated = 0, hostLoops = 0, guestLoops = 0;
+    let opened = 0, closed = 0, unsubscribed = 0;
+    const pages = {};
     const receivers = {};
     const capabilities = (role) => ({
-      createRoom: async (room) => { roomId = room.roomId; return room; },
-      joinRoom: async () => ({ roomId }),
-      subscribe: (receive) => { receivers[role] = receive; return () => {}; },
+      createRoom: async (room) => { opened += 1; roomId = room.roomId; return room; },
+      joinRoom: async () => { opened += 1; return { roomId }; },
+      subscribe: (receive) => { receivers[role] = receive; return () => { unsubscribed += 1; }; },
       send: (event) => receivers[role === R.HOST ? R.GUEST : R.HOST]?.(structuredClone(event)),
-      close: () => {}
+      close: () => { closed += 1; }
     });
-    const hostUi = { ...makeUi(), showNetworkPage: () => {}, playSound: () => {} };
+    const hostUi = { ...makeUi(), showNetworkPage: (_markup, layout) => { pages.HOST = layout; }, playSound: () => {},
+      clearLog() { this.logs = []; } };
     const guestUi = makeGuestUi();
+    guestUi.showNetworkPage = (_markup, layout) => { pages.GUEST = layout; };
     const hostFlow = createNetworkFlow({
-      ui: hostUi, capability: capabilities(R.HOST), onDisposeMatch: () => hostGame?.dispose(),
+      ui: hostUi, capability: capabilities(R.HOST), displayName: "房主昵称", onDisposeMatch: () => hostGame?.dispose(),
       onPrepareMatch: (setup, session) => {
         hostCreated += 1;
         hostGame = createGameApplication(hostUi, () => 0.25, { mode: MATCH_MODE.NETWORK, networkSession: session });
@@ -1459,7 +1463,7 @@ export function registerNetworkTests(test, { makeUi, instance }) {
       onStartMatch: () => (startPromise = hostGame.startPreparedMatch())
     });
     const guestFlow = createNetworkFlow({
-      ui: guestUi, capability: capabilities(R.GUEST), onDisposeMatch: () => {},
+      ui: guestUi, capability: capabilities(R.GUEST), displayName: "访客昵称", onDisposeMatch: () => {},
       onPrepareMatch: () => { guestCreated += 1; throw Error("Guest 创建了 Match"); },
       onStartMatch: () => { guestLoops += 1; throw Error("Guest 启动了 GameLoop"); }
     });
@@ -1489,6 +1493,61 @@ export function registerNetworkTests(test, { makeUi, instance }) {
     assert.match(guestUi.elements.human_panel.innerHTML, /human-seat/);
     assert.match(guestUi.elements.human_hand.innerHTML, /hand-card/);
     assert.ok(pair.guest.gameChannel.snapshot().projection.players.every((p) => p.handCount > 0));
+    const initial = pair.host.snapshot();
+    const initialGuest = pair.guest.snapshot();
+    const guestId = pair.guest.snapshot().participantId;
+    const transportCounts = { opened, closed, unsubscribed };
+    // 两种点击来源都必须经同一个 Host；只置终局条件，不执行自博弈。
+    for (const requester of [pair.guest, pair.host]) {
+      assert.equal(requester.nextMatch().ok, false, "未结束不能回组");
+      const oldGame = hostGame;
+      const oldGameId = oldGame.state.gameId;
+      pair.guest.send(E.MATCH_RESTART, { gameId: oldGameId });
+      assert.equal(pair.host.snapshot().state, S.IN_GAME, "Host 拒绝未终局的远端回组意图");
+      assert.equal(oldGame.state.isDisposed, false);
+      const oldGuestView = guestUi.networkPresentation;
+      oldGame.state.isGameOver = true;
+      oldGame.state.winnerTeam = "dawn";
+      pair.host.gameChannel.publish();
+      assert.equal(requester.nextMatch("wrong-game").ok, false);
+      assert.equal(requester.nextMatch().ok, true);
+      assert.equal(oldGame.state.isDisposed, true);
+      assert.equal(oldGuestView.disposed, true);
+      assert.equal(guestUi.networkPresentation, null);
+      assert.deepEqual(pages, { HOST: "squad", GUEST: "squad" });
+      for (const session of [pair.host, pair.guest]) {
+        const snapshot = session.snapshot();
+        assert.equal(snapshot.state, S.SELECTING);
+        assert.equal(snapshot.roomId, initial.roomId);
+        assert.deepEqual(snapshot.connectionInfo, session === pair.host ? initial.connectionInfo : initialGuest.connectionInfo);
+        assert.equal(snapshot.participantId, session === pair.host ? initial.participantId : guestId);
+        assert.equal(snapshot.matchSetup, null);
+        assert.equal(snapshot.locked, false);
+        assert.equal(snapshot.canStart, false);
+        assert.deepEqual(snapshot.candidates, initial.candidates);
+        assert.deepEqual(snapshot.participants, Object.fromEntries(Object.entries(initial.participants).map(([id, participant]) =>
+          [id, { ...participant, selection: null, ready: false, gameReady: false }])));
+        assert.equal(session.gameChannel.snapshot().projection, null);
+        assert.deepEqual(session.gameChannel.snapshot().requests, []);
+      }
+      assert.deepEqual({ opened, closed, unsubscribed }, transportCounts, "下一局不得关闭或重连 Transport");
+      assert.equal(requester.nextMatch(oldGameId).ok, false, "重复请求不再回组");
+      choosePair(pair, false);
+      pair.host.confirm();
+      assert.equal(pair.host.start().ok, false, "Guest 必须重新 Ready");
+      pair.guest.confirm();
+      assert.equal(pair.host.start().ok, true);
+      await startPromise;
+      assert.notEqual(hostGame.state.gameId, oldGameId);
+      assert.equal(pair.host.nextMatch(oldGameId).ok, false, "旧局请求不得影响新局");
+      assert.equal(pair.host.snapshot().state, S.IN_GAME);
+      assert.equal(pair.guest.snapshot().state, S.IN_GAME);
+      assert.ok(Object.values(pair.host.snapshot().participants).every((participant) => participant.ready && participant.gameReady));
+      assert.equal(guestCreated, 0);
+      assert.equal(guestLoops, 0);
+    }
+    assert.equal(hostCreated, 3);
+    assert.equal(hostLoops, 3);
     hostGame.dispose();
     pair.host.close(); pair.guest.close();
   });
@@ -2888,6 +2947,44 @@ test。
 只测试页面行为与标记，不更改生产 capability。
 */
 export function registerNetworkUiTests(test) {
+
+  test("UI·Network：多人退出房间只改文案且下一局使用独立callback", async () => {
+    const previousWindow = globalThis.window, previousDocument = globalThis.document;
+    globalThis.window = { innerWidth: 1400, addEventListener() {} };
+    globalThis.document = { addEventListener() {} };
+    let exits = 0, nextMatches = 0;
+    const elements = new Proxy({}, { get(target, name) {
+      return target[name] ??= { textContent: "", listeners: {}, classList: { add() {}, remove() {} },
+        addEventListener(type, listener) { this.listeners[type] = listener; } };
+    } });
+    const ui = { elements, audioButtons: [], musicVolumeInputs: [], sfxVolumeInputs: [],
+      updateAudioButtons() {}, bindHorizontalCardDrag() {}, interactionController: { bind() {} },
+      playSound() {}, sound: { stopMusic() {} }, attachGame() {}, resetCurrentCard() {}, clearLog() {}, setLogCollapsed() {},
+      callbacks: { onRestart: () => { exits += 1; }, onPlayAgain: () => { nextMatches += 1; } } };
+    try {
+      UIManager.prototype.bindEvents.call(ui);
+      const exitHandler = elements.restart_button.listeners.click;
+      for (const game of [{ mode: MATCH_MODE.NETWORK, state: { players: [] } }, null]) {
+        UIManager.prototype.showGame.call(ui, game);
+        assert.equal(elements.restart_button.textContent, "退出房间");
+        assert.equal(elements.restart_button.listeners.click, exitHandler);
+      }
+      elements.play_again_button.listeners.click();
+      assert.equal(nextMatches, 1);
+      assert.equal(exits, 0);
+      exitHandler();
+      assert.equal(exits, 1);
+      UIManager.prototype.showGame.call(ui, { mode: MATCH_MODE.SINGLEPLAYER, state: { players: [] } });
+      assert.equal(elements.restart_button.textContent, "重新征召");
+      const main = await readFile(new URL("../js/main.js", import.meta.url), "utf8");
+      assert.match(main, /onPlayAgain: playAgain/);
+      assert.match(main, /function playAgain\(\) \{\s*if \(game\?\.mode === MATCH_MODE.NETWORK \|\| ui.networkPresentation\) networkFlow.session.nextMatch\(\);\s*else startRecruitment\(\);/);
+      assert.match(main, /function restartRecruitment\(\) \{\s*if \(game\?\.mode === MATCH_MODE.NETWORK \|\| ui.networkPresentation\) showPlayModeSelection\(\);\s*else startRecruitment\(\);/);
+    } finally {
+      if (previousWindow === undefined) delete globalThis.window; else globalThis.window = previousWindow;
+      if (previousDocument === undefined) delete globalThis.document; else globalThis.document = previousDocument;
+    }
+  });
 
   test("UI·Network：对局只复用正式game-screen与控件且旧renderer和CSS已删除", async () => {
     const [view, adapter, css] = await Promise.all([

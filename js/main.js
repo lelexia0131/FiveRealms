@@ -239,6 +239,36 @@ function restartRecruitment() {
   else startRecruitment();
 }
 
+/*
+功能
+在结算后进入对应模式的下一局选角。
+
+调用方
+UI 下一局按钮。
+
+输入
+无。
+
+输出
+无。
+
+读取状态
+game.mode 与 Guest 展示会话。
+
+写入状态
+经既有模式入口更新 Match 生命周期。
+
+调用函数
+NetworkSession.nextMatch、startRecruitment。
+
+边界与不变量
+多人只提交回组选角意图，不调用离房导航；单人沿用重新征召。
+*/
+function playAgain() {
+  if (game?.mode === MATCH_MODE.NETWORK || ui.networkPresentation) networkFlow.session.nextMatch();
+  else startRecruitment();
+}
+
 networkFlow = createNetworkFlow({
   ui,
   capability: globalThis.fiveRealmsNetworkCapability ?? null,
@@ -252,6 +282,7 @@ networkFlow = createNetworkFlow({
 ui.setCallbacks({
   onStart: showPlayModeSelection,
   onRestart: restartRecruitment,
+  onPlayAgain: playAgain,
   onNetworkClick: (event) => networkFlow?.handleClick?.(event),
   onNetworkSubmit: (event) => networkFlow?.handleSubmit?.(event),
   onNetworkPaste: (event) => networkFlow?.handlePaste?.(event),

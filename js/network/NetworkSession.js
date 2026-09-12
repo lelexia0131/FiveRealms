@@ -620,6 +620,7 @@ connectionId 必须由 capability 注入而非 payload；无元数据的既有 T
       }
       this.#peerSequence.set(connectionId, event.sequence);
       if (d.role === R.GUEST) return this.acceptSnapshot(event);
+      if (event.type === E.MATCH_RESTART) return this.nextMatch(event.payload?.gameId ?? null).ok;
       if (event.type === E.SELECTION_CHANGED) this.selectFor(participant.participantId, event.payload);
       else if (event.type === E.SELECTION_CONFIRMED) this.confirmFor(participant.participantId, event.payload);
       else if (event.type === E.GAME_READY && d.locked && !participant.gameReady) {
@@ -657,11 +658,11 @@ Guest 房间只读副本。
 isNetworkSetupValid、finalizeNetworkSetup、send、move、notify。
 
 边界与不变量
-不合并 Guest 自有状态；锁房后固定角色与席位，只允许 Guest controller 转 AI；displayName 差异只触发认证连接上的补报。
+不合并 Guest 自有状态；锁房后固定角色与席位，只允许 Guest controller 转 AI；仅 Host 的回组快照可解锁并清空本局选择；displayName 差异只触发认证连接上的补报。
 */
   acceptSnapshot(event) {
     const d = this.#data;
-    if (![E.ROLE_POOL_ASSIGNED, E.SELECTION_CHANGED, E.PEER_READY, E.GAME_READY, E.MATCH_START].includes(event.type)
+    if (![E.ROLE_POOL_ASSIGNED, E.SELECTION_CHANGED, E.PEER_READY, E.GAME_READY, E.MATCH_START, E.MATCH_RESTART].includes(event.type)
       || !Number.isSafeInteger(event.revision) || event.revision <= d.revision) return false;
     const p = structuredClone(event.payload);
     const localId = d.participantId ?? event.recipientParticipantId;
@@ -670,11 +671,14 @@ isNetworkSetupValid、finalizeNetworkSetup、send、move、notify。
       || p.participants[localId].role !== R.GUEST || ![2, 3, 4, 5].includes(p.maxHumanCount)
       || humans.length > p.maxHumanCount || humans.filter((entry) => entry.role === R.HOST).length !== 1
       || !isNetworkSetupValid(p.setup) || (d.setup && JSON.stringify(d.setup) !== JSON.stringify(p.setup))) return false;
-    if (d.locked && !p.locked) return false;
+    const restarting = event.type === E.MATCH_RESTART;
+    if (restarting && (d.state !== S.IN_GAME || !d.locked || p.locked || p.finalSetup != null
+      || humans.some((entry) => entry.selection != null || entry.ready || entry.gameReady))) return false;
+    if (d.locked && !p.locked && !restarting) return false;
     if (p.locked && !d.locked) {
       const expected = finalizeNetworkSetup(p.setup, p.participants);
       if (!expected || JSON.stringify(expected) !== JSON.stringify(p.finalSetup)) return false;
-    } else if (d.locked) {
+    } else if (d.locked && !restarting) {
       if (p.finalSetup?.players?.length !== d.finalSetup.players.length) return false;
       for (let index = 0; index < d.finalSetup.players.length; index += 1) {
         const old = d.finalSetup.players[index], next = p.finalSetup.players[index];
@@ -686,6 +690,7 @@ isNetworkSetupValid、finalizeNetworkSetup、send、move、notify。
     } else if (p.finalSetup != null) return false;
     const allGameReady = humans.filter((entry) => entry.connected && !entry.kicked).every((entry) => entry.gameReady);
     if (event.type === E.MATCH_START && (!p.locked || !allGameReady)) return false;
+    if (restarting) this.gameChannel.reset();
     Object.assign(d, { participantId: localId, setup: p.setup, participants: p.participants,
       maxHumanCount: p.maxHumanCount, locked: p.locked, finalSetup: p.finalSetup, revision: event.revision, error: null });
     // 无元数据旧 Transport 可在首次成员快照后按已认证 connectionId 补报 displayName；到齐后不会再重发。
@@ -1016,6 +1021,54 @@ assertHost、finalizeNetworkSetup、publish。
     this.#data.finalSetup = finalizeNetworkSetup(this.#data.setup, this.#data.participants);
     this.#data.locked = true;
     this.publish(E.PEER_READY);
+    return { ok: true };
+  }
+
+  /*
+功能
+由 Host 确认已结束对局并让当前房间重新选角。
+
+调用方
+下一局按钮与已认证 Guest MATCH_RESTART 意图。
+
+输入
+请求结束局的 gameId；本端默认读取当前游戏通道。
+
+输出
+操作结果；Guest 成功仅代表意图已发送。
+
+读取状态
+当前房间阶段、成员及正式终局标识。
+
+写入状态
+仅清除 selection、ready/gameReady、finalSetup、锁定标记和游戏通道。
+
+调用函数
+gameChannel.completedGameId/reset、send、publish。
+
+边界与不变量
+保留房间、身份、连接、序号和共享候选池；未终局、重复或跨局请求不能重开。Guest 只接受 Host 快照后回组。
+*/
+  nextMatch(gameId = this.gameChannel.completedGameId()) {
+    const d = this.#data;
+    if (d.state !== S.IN_GAME || !gameId || gameId !== this.gameChannel.completedGameId()) {
+      return { ok: false, code: "MATCH_NOT_FINISHED" };
+    }
+    if (d.role === R.GUEST) {
+      this.send(E.MATCH_RESTART, { gameId });
+      return { ok: true };
+    }
+    // 先解绑旧 Match 通道，再广播解锁快照，避免控制元数据同步访问已清空的 finalSetup。
+    this.gameChannel.reset();
+    for (const participant of Object.values(d.participants)) {
+      participant.selection = null;
+      participant.ready = false;
+      participant.gameReady = false;
+    }
+    d.finalSetup = null;
+    d.locked = false;
+    d.error = null;
+    this.publish(E.MATCH_RESTART);
     return { ok: true };
   }
 

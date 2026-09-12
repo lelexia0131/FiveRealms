@@ -14,7 +14,8 @@ body:has(.network-screen:not(.is-hidden)) { min-width: 0; }
 .network-chat-status { color: var(--text-secondary); font-size: 11px; padding-top: 4px; }
 .network-chat-status:empty { display: none; }
 .log-entry.is-chat { overflow-wrap: anywhere; }
-.log-chat-text { color: var(--text-secondary); font-family: "KaiTi", "STKaiti", var(--serif); font-size: 14px; font-weight: 500; letter-spacing: .2px; white-space: pre-wrap; }
+.log-chat-scope { margin-right: 5px; color: #777268; }
+.log-chat-text { color: #49443e; font-family: "KaiTi", "STKaiti", var(--serif); font-size: 14px; font-weight: 600; letter-spacing: .2px; white-space: pre-wrap; }
 .network-screen { min-height: 100dvh; padding: clamp(20px, 4vh, 44px) clamp(24px, 5vw, 86px); }
 .network-layout-menu { display: grid; place-items: center; }
 .network-menu { width: min(100%, 1000px); text-align: center; }

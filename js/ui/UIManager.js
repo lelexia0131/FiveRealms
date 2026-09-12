@@ -23,7 +23,7 @@ import { MatchMvpResultView } from "./results/MatchMvpResultView.js";
 import { RulebookView } from "./RulebookView.js";
 import { HistoryArchiveView } from "./history/HistoryArchiveView.js";
 import { GameInfoView } from "./GameInfoView.js";
-import { isMatchPersistenceEligible } from "../application/match/MatchMode.js";
+import { MATCH_MODE, isMatchPersistenceEligible } from "../application/match/MatchMode.js";
 import { orderPlayersForViewer } from "./PlayerPresentationOrder.js";
 import { presentTargetDistance } from "./TargetPresentation.js";
 
@@ -510,7 +510,7 @@ export class UIManager {
     this.elements.back_to_start_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToStart?.(); });
     this.elements.back_to_squad_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onBackToSquadSelection?.(); });
     this.elements.restart_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
-    this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onRestart?.(); });
+    this.elements.play_again_button.addEventListener("click", () => { this.playSound("select"); this.callbacks.onPlayAgain?.(); });
     this.elements.squad_mode_grid.addEventListener("click", (event) => this.handleSquadModeClick(event));
     this.elements.network_screen?.addEventListener("click", (event) => this.callbacks.onNetworkClick?.(event));
     this.elements.network_screen?.addEventListener("submit", (event) => this.callbacks.onNetworkSubmit?.(event));
@@ -1062,6 +1062,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   仅全部角色已确认后执行首帧 render；Guest 的 NetworkPresentation 不绑定伪 Match。
   */
   showGame(game) {
+    if (this.elements.restart_button) this.elements.restart_button.textContent = !game || game.mode === MATCH_MODE.NETWORK ? "退出房间" : "重新征召";
     this.elements.network_screen?.classList.add("is-hidden");
     this.elements.username_screen?.classList.add("is-hidden");
     this.sound.stopMusic();
@@ -2985,18 +2986,24 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   formatLogEntry、document.createElement。
 
   边界与不变量
-  名称复用 player fragment 着色及转义；正文仅写 textContent，不经过战斗日志关键字格式化。
+  名称和队伍标签复用 player fragment 着色；范围只读本条消息，正文仅写 textContent，不经过战斗日志关键字格式化。
   */
   appendChatLog(message, characterName) {
     const node = document.createElement("div");
     node.className = "log-entry is-chat";
+    const scope = document.createElement("span");
+    scope.className = "log-chat-scope";
+    if (message.scope === "team") {
+      scope.innerHTML = formatLogEntry({ fragments: [{ type: "player", playerId: message.playerId,
+        battleTeam: message.teamId, text: "[队伍]" }] });
+    } else scope.textContent = "[全体]";
     const sender = document.createElement("span");
     sender.innerHTML = formatLogEntry({ fragments: [{ type: "player", playerId: message.playerId,
       battleTeam: message.teamId, text: `${characterName}（${message.senderNickname}）` }] });
     const body = document.createElement("span");
     body.className = "log-chat-text";
     body.textContent = `：${message.text}`;
-    node.append(sender, body);
+    node.append(scope, sender, body);
     this.elements.log_list.append(node);
     if (this.logFollowingBottom !== false) this.elements.log_list.scrollTop = Number.MAX_SAFE_INTEGER;
   }

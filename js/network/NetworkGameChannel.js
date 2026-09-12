@@ -683,6 +683,36 @@ pending.reject。
 
   /*
 功能
+读取当前已结束对局的标识，供房间确认下一局请求。
+
+调用方
+NetworkSession.nextMatch。
+
+输入
+无。
+
+输出
+已结束的 gameId，未结束时为 null。
+
+读取状态
+Host 正式 Match 或 Guest 安全投影。
+
+写入状态
+无。
+
+调用函数
+Host getState。
+
+边界与不变量
+不保存第二套终局状态；Host 最终校验只依赖真实 Match。
+*/
+  completedGameId() {
+    const state = this.#host ? this.#host.getState() : this.#projection;
+    return state?.isGameOver && !state.isDisposed ? state.gameId : null;
+  }
+
+  /*
+功能
 清理当前游戏通道和所有待处理决定。
 
 调用方

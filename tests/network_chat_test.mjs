@@ -574,8 +574,9 @@ export function registerNetworkChatUiTests(test) {
     const css = await readFile(new URL("../css/network.css", import.meta.url), "utf8");
     assert.match(html, /id="network-chat"[^>]*hidden/);
     assert.match(html, /data-chat-input[^>]*maxlength="50"/);
-    assert.match(html, /value="all">ALL/);
-    assert.match(html, /value="team">队内/);
+    assert.match(html, /value="all">全体/);
+    assert.match(html, /value="team">队伍/);
+    assert.match(css, /\.log-chat-text \{ color: #49443e; font-family: "KaiTi", "STKaiti", var\(--serif\); font-size: 14px; font-weight: 600;/);
     assert.match(css, /\.network-chat\[hidden\], \.log-panel\.is-collapsed \.network-chat \{ display: none/);
     await withChatUi((_room, host) => assert.equal(host.root.hidden, false));
   });
@@ -588,7 +589,7 @@ export function registerNetworkChatUiTests(test) {
     room.sessions[3].sendChat("all", "隐藏D");
     host.ui.appendLog({ kind: "normal", message: "系统消息" }, 1);
     assert.equal(host.list.children.length, 2);
-    assert.equal(host.list.children[0].children[1].textContent, "：显示C");
+    assert.equal(host.list.children[0].children[2].textContent, "：显示C");
     assert.equal(host.list.children[1].innerHTML, "系统消息");
     assert.equal(room.received[0].length, 3, "屏蔽不影响网络交付");
     assert.equal(room.events.filter((event) => event.type === E.CHAT_MESSAGE).length, 9);
@@ -605,7 +606,7 @@ export function registerNetworkChatUiTests(test) {
     room.sessions[1].sendChat("all", "别人的话");
     room.sessions[0].sendChat("all", "自己的话");
     assert.equal(host.list.children.length, 1);
-    assert.equal(host.list.children[0].children[1].textContent, "：自己的话");
+    assert.equal(host.list.children[0].children[2].textContent, "：自己的话");
   }));
 
   test("UI·聊天：名单只含其它真人并按离开与新会话更新", () => withChatUi((room, host) => {
@@ -630,7 +631,7 @@ export function registerNetworkChatUiTests(test) {
     session.send(E.PARTICIPANT_HELLO, { displayName: "<img src=x>" });
     const text = "<script>alert(1)</script>「突袭」1点伤害";
     session.sendChat("all", text);
-    const [sender, body] = host.list.children[0].children;
+    const [, sender, body] = host.list.children[0].children;
     const character = CHARACTER_BY_ID[session.snapshot().localSelection.characterId].name;
     assert.ok(sender.innerHTML.includes(`${character}（&lt;img src=x&gt;）`));
     assert.match(sender.innerHTML, /log-player-name team-dawn/);
@@ -639,7 +640,26 @@ export function registerNetworkChatUiTests(test) {
     assert.equal(body.innerHTML, "");
     assert.equal(body.children.length, 0);
     room.sessions[2].sendChat("all", "暮影");
-    assert.match(host.list.children[1].children[0].innerHTML, /log-player-name team-dusk/);
+    assert.match(host.list.children[1].children[1].innerHTML, /log-player-name team-dusk/);
+  }));
+
+  test("UI·聊天：每条范围标签取自all或team回显且不随输入范围变化", () => withChatUi((room, host) => {
+    const selector = host.root.querySelector("[data-chat-scope]");
+    selector.value = "team";
+    room.sessions[1].sendChat("all", "全体消息");
+    const all = host.list.children[0].children[0];
+    assert.equal(all.className, "log-chat-scope");
+    assert.equal(all.textContent, "[全体]");
+    assert.equal(all.innerHTML, "");
+    selector.value = "all";
+    room.sessions[0].sendChat("team", "队伍消息");
+    const team = host.list.children[1].children[0];
+    assert.match(team.innerHTML, /log-player-name team-dawn/);
+    assert.match(team.innerHTML, /\[队伍\]/);
+    selector.value = "team";
+    assert.equal(all.textContent, "[全体]");
+    assert.match(team.innerHTML, /\[队伍\]/);
+    assert.deepEqual([...new Set(room.events.filter((event) => event.type === E.CHAT_MESSAGE).map((event) => event.payload.scope))], ["all", "team"]);
   }));
 
   test("UI·聊天：Enter仅发送聊天并成功后清空，限流保留输入而提示不进日志", () => withChatUi((room, host, guest) => {
@@ -675,7 +695,7 @@ export function registerNetworkChatUiTests(test) {
     host.input.value = "字".repeat(50);
     host.root.listeners.keydown(event);
     assert.equal(host.input.value, "");
-    assert.equal(host.list.children[0].children[1].textContent, `：${"字".repeat(50)}`);
+    assert.equal(host.list.children[0].children[2].textContent, `：${"字".repeat(50)}`);
   }));
 
   test("UI·聊天：Guest断线和Host关闭后禁止继续发送且输入disabled", () => withChatUi((room, host, guest) => {

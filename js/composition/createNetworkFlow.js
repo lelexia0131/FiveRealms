@@ -64,15 +64,20 @@ page、prepared、started。
 onPrepareMatch、gameReady、onStartMatch、showNetworkPage。
 
 边界与不变量
-准备与启动各调用一次；断线立即销毁已准备的 Match。
+每局准备与启动各调用一次；断线或 Host 回组选角时销毁旧 Match，回组不关闭房间。
 */
   function update(snapshot) {
     if (page !== "squad") return;
-    if (snapshot.state === S.DISCONNECTED && prepared) {
+    if ([S.DISCONNECTED, S.SELECTING].includes(snapshot.state) && prepared) {
       if (snapshot.role === R.HOST) onDisposeMatch();
       guestView?.dispose();
       guestView = null;
       prepared = false;
+      started = false;
+      if (snapshot.state === S.SELECTING) {
+        draft = {};
+        ui.clearLog();
+      }
     }
     if (snapshot.state === S.LOADING_GAME || snapshot.state === S.IN_GAME) {
       if (!prepared) {
