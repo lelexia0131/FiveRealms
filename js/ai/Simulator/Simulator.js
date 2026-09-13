@@ -51,6 +51,7 @@ import {
   independentUnionProbability,
   intersectProbabilityStateBranchesCooperatively,
   mergeProbabilityStateBranchesCooperatively,
+  marginalizeProbabilityStateBranchesCooperatively,
   probabilityEventPartition,
   projectProbabilityStateBranchesCooperatively,
   queryCurrentCardCounts,
@@ -193,7 +194,7 @@ class SimulatorCore {
   在同一 SearchBudget 下原子执行一次概率操作并记录纯数字 timing/count 诊断。
 
   调用方
-  intersectProbabilityWork、projectProbabilityWork、mergeProbabilityWork 与 rawProbabilityWork。
+  intersectProbabilityWork、projectProbabilityWork、mergeProbabilityWork、marginalizeProbabilityWork 与 rawProbabilityWork。
 
   输入
   operation 名称、输入世界数、cooperative/raw 模式与返回完整分支数组的 work。
@@ -354,6 +355,47 @@ class SimulatorCore {
       "cooperative",
       () => mergeProbabilityStateBranchesCooperatively(
         branches,
+        checkpoint
+      )
+    );
+  }
+
+  /*
+  功能
+  在现有概率操作诊断与 checkpoint 下消去调用方明确声明已死亡的条件。
+
+  调用方
+  gateEventWorlds、simulateTracking 与局部身份选择消费者。
+
+  输入
+  概率状态分支数组、死亡条件键数组与诊断 operation 名称。
+
+  输出
+  完整边缘化分区；预算中断时继续传播 SearchBudget signal。
+
+  读取状态
+  注入的 SearchBudget 与只读概率分支。
+
+  写入状态
+  只更新 SearchBudget probability work 诊断。
+
+  调用函数
+  marginalizeProbabilityStateBranchesCooperatively、checkpointSearchWork、runProbabilityOperation。
+
+  边界与不变量
+  不自行推断死亡条件；只委托 Probability authority，未完成结果不能用于业务结算。
+  */
+  marginalizeProbabilityWork(branches, deadConditionKeys, operation = "Simulation.marginalize") {
+    const checkpoint = (branches?.length ?? 0) >= 32
+      ? () => this.checkpointSearchWork()
+      : null;
+    return this.runProbabilityOperation(
+      operation,
+      Array.isArray(branches) ? branches.length : 0,
+      "cooperative",
+      () => marginalizeProbabilityStateBranchesCooperatively(
+        branches,
+        deadConditionKeys,
         checkpoint
       )
     );
@@ -1025,7 +1067,7 @@ class SimulatorCore {
 
   /*
   功能
-  将已有事件世界与额外触发门相交，保留联合条件和完整概率质量。
+  将已有事件世界与额外触发门相交，并在发生结果物化后消去本次新建的门条件。
 
   调用方
   反制、技能与资源效果：在既有条件世界上追加一个独立触发门。
@@ -1034,7 +1076,7 @@ class SimulatorCore {
   World、已有事件分支、零到一的附加 chance 与门标签。
 
   输出
-  保留原条件并追加门条件的 occurs 分支数组。
+  保留全部输入条件与完整概率质量的 occurs 分支数组。
 
   读取状态
   只读已有分支与当前 ProbabilityState。
@@ -1043,10 +1085,12 @@ class SimulatorCore {
   无。
 
   调用函数
-  intersectProbabilityStateBranches、probabilityEventPartition、currentProbabilityEventKey。
+  intersectProbabilityWork、projectProbabilityWork、marginalizeProbabilityWork、
+  probabilityEventPartition、currentProbabilityEventKey。
 
   边界与不变量
   chance 为零或一时不得额外创建随机条件；原事件为 false 的世界不能被门重新激活。
+  输入已含同名门键时必须保留其相关性；只有本次新建且已物化为 occurs 的门键可被消去。
   */
   gateEventWorlds(state, eventWorlds, chance, label = "gate") {
     const probability = clampProbability(chance);
@@ -1058,17 +1102,26 @@ class SimulatorCore {
         "Simulator.gateEventWorlds:closed"
       );
     }
-    const gate = probabilityEventPartition(
-      this.currentProbabilityEventKey(state, label), probability, "gateOccurs"
+    const gateKey = this.currentProbabilityEventKey(state, label);
+    const gateKeyWasSupplied = eventWorlds.some(
+      (branch) => Object.hasOwn(branch.conditions ?? {}, gateKey)
     );
+    const gate = probabilityEventPartition(gateKey, probability, "gateOccurs");
     const intersection = this.intersectProbabilityWork(
       [eventWorlds, gate],
       "Simulator.gateEventWorlds:intersect"
     );
-    return this.projectProbabilityWork(
+    const projected = this.projectProbabilityWork(
       intersection,
       (branch) => ({ occurs:Boolean(branch.occurs && branch.gateOccurs) }),
       "Simulator.gateEventWorlds:project"
+    );
+    // 新门的全部影响已进入 occurs，gateOccurs 不再向外暴露；输入原有条件仍可能被后续分区共享。
+    if (gateKeyWasSupplied) return projected;
+    return this.marginalizeProbabilityWork(
+      projected,
+      [gateKey],
+      "Simulator.gateEventWorlds:marginalize"
     );
   }
 
@@ -1489,6 +1542,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
   使用者 recycleDeviceUses、hand/knownCards、ProbabilityState 与响应容量摘要。
 
   调用函数
+  marginalizeProbabilityWork；
   getSimulatedEquipmentProbability、getEventWorlds、gainUnknownCardsWithCounterState。
 
   边界与不变量
@@ -1505,11 +1559,16 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
     const triggerProbability = Math.min(recycleProbability, remainingUses);
     player.recycleDeviceUses = (player.recycleDeviceUses ?? 0) + triggerProbability;
     if (triggerProbability <= PROBABILITY_EPSILON) return 0;
-    const recycleWorlds = this.getEventWorlds(
+    let recycleWorlds = this.getEventWorlds(
       state,
       triggerProbability,
       null,
       `recycle-draw:${label}`
+    );
+    // 此标量入口独占触发条件；occurs 已完整表达摸牌事件，下游不再配对该随机变量。
+    recycleWorlds = this.marginalizeProbabilityWork(
+      recycleWorlds, [this.currentProbabilityEventKey(state, `recycle-draw:${label}`)],
+      "Simulator.triggerRecycleDeviceUse:marginalize"
     );
     this.gainUnknownCardsWithCounterState(
       state,
@@ -1733,6 +1792,7 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
   依次委托 Resource 支付、Damage HP/shield commit、伤后状态与 fatal/rescue 编排。
 
   调用函数
+  marginalizeProbabilityWork；
   consumeBlockResponseWorlds、simulateGuardianAid、applyResolvedDamage、resolveFatal 与伤后钩子。
 
   边界与不变量
@@ -1952,22 +2012,31 @@ const withSimulatorOrchestration = (Base) => class SimulatorOrchestration extend
       conditions:{},
       shieldAmount:Number(target.shield) || 0
     }];
+    const aidPassKey = this.currentProbabilityEventKey(
+      state, `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`
+    );
+    const aidPassKeyWasSupplied = [...eventWorlds, ...amountState].some(
+      (branch) => Object.hasOwn(branch.conditions ?? {}, aidPassKey)
+    );
     const aidPassWorlds = attackOutcomeWorlds
       ?? this.intersectProbabilityWork([
         eventWorlds,
         probabilityEventPartition(
-          this.currentProbabilityEventKey(
-            state,
-            `damage-pass-aid:${attacker?.id ?? "unknown"}:${target.id}`
-          ),
+          aidPassKey,
           passChance,
           "passes"
         )
       ], "Damage.applyDamage:aid-pass");
-    const preAidDamageWorlds = this.intersectProbabilityWork(
+    let preAidDamageWorlds = this.intersectProbabilityWork(
       [aidPassWorlds, shieldState, amountState],
       "Damage.applyDamage:pre-aid"
     );
+    // 援护分区已联合 occurs/passes、护盾和伤害量；此后仅积分，不向最终伤害分区回连。
+    if (!attackOutcomeWorlds && !aidPassKeyWasSupplied) {
+      preAidDamageWorlds = this.marginalizeProbabilityWork(
+        preAidDamageWorlds, [aidPassKey], "Damage.applyDamage:aid-marginalize"
+      );
+    }
     /*
     功能
     读取护援前真正会穿过护盾落到生命值的伤害量。
@@ -3646,6 +3715,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   momentum、categoryUsedProbabilities 与 categoriesUsed。
 
   调用函数
+  marginalizeProbabilityWork；
   initializeMomentumState、getEventWorlds、intersectProbabilityWork、projectProbabilityWork、
   expectedBranchValue、totalBranchProbability、syncMomentumSummary、syncCategoryUsedSummary。
 
@@ -3675,7 +3745,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
       conditions: branch.conditions,
       categoryUsed: Boolean(branch.used)
     }));
-    const joined = this.intersectProbabilityWork(
+    let joined = this.intersectProbabilityWork(
       [momentumState, categoryState, useWorlds.map((branch) => ({
         probability: branch.probability,
         conditions: branch.conditions,
@@ -3688,6 +3758,23 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
       }))],
       "Simulator.simulateCategoryUse:join"
     );
+    const useKey = this.currentProbabilityEventKey(state, `momentum-use:${player.id}:${category}`);
+    const lifeDamageKey = this.currentProbabilityEventKey(state, `momentum-life-damage:${player.id}:${category}`);
+    const suppliedWorlds = [
+      ...(Array.isArray(useResolution) ? useResolution : []),
+      ...(Array.isArray(lifeDamageResolution) ? lifeDamageResolution : [])
+    ];
+    const deadKeys = [];
+    if (!Array.isArray(useResolution) && !suppliedWorlds.some(
+      (branch) => Object.hasOwn(branch.conditions ?? {}, useKey)
+    )) deadKeys.push(useKey);
+    if (!Array.isArray(lifeDamageResolution) && !suppliedWorlds.some(
+      (branch) => Object.hasOwn(branch.conditions ?? {}, lifeDamageKey)
+    )) deadKeys.push(lifeDamageKey);
+    // 使用与伤害已在同一 payload 中配对，后续两份摘要只消费这些字段，不再 join。
+    if (deadKeys.length) {
+      joined = this.marginalizeProbabilityWork(joined, deadKeys, "Simulator.simulateCategoryUse:marginalize");
+    }
     const firstUseProbability = totalBranchProbability(
       joined.filter((branch) => branch.cardUsed && !branch.categoryUsed)
     );
@@ -3733,6 +3820,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   手牌/响应摘要、gambleTriggeredProbability 与 gambleTriggered。
   
   调用函数
+  marginalizeProbabilityWork；
   getEventWorlds、gateEventWorlds、gainUnknownCardsWithCounterState。
   
   边界与不变量
@@ -3755,11 +3843,16 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
         null,
         "gamble-trigger"
       );
-      const gambleSuccessWorlds = this.gateEventWorlds(
+      let gambleSuccessWorlds = this.gateEventWorlds(
         state,
         gambleWorlds,
         PASSIVE_SKILL_DEFINITIONS.gamble.drawChance,
         "gamble-success"
+      );
+      // 首次触发资格与成功门已经合入 occurs；仅回收本方法从标量新建的资格条件。
+      gambleSuccessWorlds = this.marginalizeProbabilityWork(
+        gambleSuccessWorlds, [this.currentProbabilityEventKey(state, "gamble-trigger")],
+        "Simulator.simulateGamble:marginalize"
       );
       this.gainUnknownCardsWithCounterState(
         state,
@@ -3792,6 +3885,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   调律师和唯一触发队友的手牌/响应摘要，以及协调触发字段。
 
   调用函数
+  marginalizeProbabilityWork；
   gainUnknownCardsWithCounterState、changeEnergy。
 
   边界与不变量
@@ -3809,7 +3903,12 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
     actor.coordinationTriggeredProbability = newProbability;
     actor.coordinationTriggered = newProbability >= 1 - PROBABILITY_EPSILON;
     if (triggerProbability > PROBABILITY_EPSILON) {
-      const coordinationWorlds = this.getEventWorlds(state, triggerProbability, null, "coordination-draw");
+      const coordinationWorlds = this.marginalizeProbabilityWork(
+        this.getEventWorlds(state, triggerProbability, null, "coordination-draw"),
+        [this.currentProbabilityEventKey(state, "coordination-draw")],
+        "Simulator.simulateCoordination:marginalize"
+      );
+      // 两次摸牌共用完整 occurs 分区；消费者只积分资源增量，没有 sibling 分区回连。
       this.gainUnknownCardsWithCounterState(
         state, actor, triggerProbability, coordinationWorlds, "coordination-draw"
       );
@@ -3840,7 +3939,8 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   huntMarkProbabilities、huntMarkProbability、huntMarkSourceId 与 statuses。
 
   调用函数
-  probabilityEventPartition、gateEventWorlds、intersectProbabilityWork、projectProbabilityWork、totalBranchProbability。
+  probabilityEventPartition、gateEventWorlds、intersectProbabilityWork、projectProbabilityWork、
+  marginalizeProbabilityWork、totalBranchProbability。
 
   边界与不变量
   不同来源的概率分别记账；临时 Probability branches 只存在于当前调用栈，
@@ -3863,8 +3963,12 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
       ? eventWorlds
       : this.gateEventWorlds(state, eventWorlds,
         remainingUses / this.eventProbability(eventWorlds), `tracking-limit:${source.id}:${target.id}`);
+    const existingKey = this.currentProbabilityEventKey(state, `hunt-mark-existing:${source.id}:${target.id}`);
+    const existingKeyWasSupplied = limitedEventWorlds.some(
+      (branch) => Object.hasOwn(branch.conditions ?? {}, existingKey)
+    );
     const existingBranches = probabilityEventPartition(
-      this.currentProbabilityEventKey(state, `hunt-mark-existing:${source.id}:${target.id}`),
+      existingKey,
       oldProbability,
       "marked"
     );
@@ -3872,9 +3976,15 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
       [existingBranches, limitedEventWorlds],
       "Simulator.simulateTracking:join"
     );
-    const markState = this.projectProbabilityWork(joined, (branch) => ({
+    let markState = this.projectProbabilityWork(joined, (branch) => ({
       marked: Boolean(branch.marked || branch.occurs)
     }), "Simulator.simulateTracking:project");
+    // 原标记与命中结果已合入 marked；后续只汇总标记质量，输入携带的同名条件仍归输入所有。
+    if (!existingKeyWasSupplied) {
+      markState = this.marginalizeProbabilityWork(
+        markState, [existingKey], "Simulator.simulateTracking:marginalize"
+      );
+    }
     const markProbability = totalBranchProbability(markState.filter((branch) => branch.marked));
     const gainedProbability = Math.max(0, markProbability - oldProbability);
     target.huntMarkProbabilities[source.id] = markProbability;
@@ -3907,6 +4017,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   角色被动对应的手牌、能量、标记、势能或一次性触发字段。
 
   调用函数
+  marginalizeProbabilityWork；
   simulateSpyGapAfterLifeDamage 及资源/概率辅助函数。
 
   边界与不变量
@@ -3928,10 +4039,12 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
         amount:Number(source.energy) || 0
       }];
       if (newProbability > oldProbability + PROBABILITY_EPSILON) {
-        const triggerWorlds = oldProbability <= PROBABILITY_EPSILON && lifeDamageBranches
+        const emberKey = this.currentProbabilityEventKey(state, `ember-resolution:${source.id}`);
+        const suppliedTrigger = oldProbability <= PROBABILITY_EPSILON && lifeDamageBranches;
+        const triggerWorlds = suppliedTrigger
           ? lifeDamageBranches
           : probabilityEventPartition(
-            this.currentProbabilityEventKey(state, `ember-resolution:${source.id}`),
+            emberKey,
             newProbability,
             "occurs"
           );
@@ -3944,12 +4057,20 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
           [baseEnergy, triggerWorlds],
           "Simulator.simulateAfterLifeDamage:ember-join"
         );
-        const energyOutcomes = this.projectProbabilityWork(joined, (branch) => ({
+        let energyOutcomes = this.projectProbabilityWork(joined, (branch) => ({
           amount: Math.max(0, Math.min(source.maxEnergy ?? Infinity,
             branch.baseEnergyAmount + (branch.occurs
               ? PASSIVE_SKILL_DEFINITIONS.ember.energyGain
               : 0)))
         }), "Simulator.simulateAfterLifeDamage:ember-project");
+        // 累计触发的能量结果已完整物化；缓存的初始能量若共享此键，仍由调用方拥有。
+        if (!suppliedTrigger && ![...baseEnergy, ...(lifeDamageBranches ?? [])].some(
+          (branch) => Object.hasOwn(branch.conditions ?? {}, emberKey)
+        )) {
+          energyOutcomes = this.marginalizeProbabilityWork(
+            energyOutcomes, [emberKey], "Simulator.simulateAfterLifeDamage:ember-marginalize"
+          );
+        }
         source.energy = expectedBranchValue(energyOutcomes);
       }
     }
@@ -4016,6 +4137,7 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
   spyGapInformationEvents 与 spyGapRevealedCountsByTarget。
 
   调用函数
+  marginalizeProbabilityWork；
   recordSimulatedPrivatePeek。
 
   边界与不变量
@@ -4046,10 +4168,11 @@ const withStatusTransition = (Base) => class StatusTransition extends Base {
       Math.max(0, (Number(target.handCount) || 0) - knownOccupancy - alreadyRevealed)
     );
     if (maxRevealCount <= PROBABILITY_EPSILON) return;
-    const triggerWorlds = lifeDamageBranches ?? probabilityEventPartition(
-      this.currentProbabilityEventKey(state, `spy-gap:${source.id}:${target.id}`),
-      chance,
-      "occurs"
+    const spyKey = this.currentProbabilityEventKey(state, `spy-gap:${source.id}:${target.id}`);
+    // fallback 的随机结果只由 occurs 表达，窥视计算仅积分该字段；外部伤害分区保持原样。
+    const triggerWorlds = lifeDamageBranches ?? this.marginalizeProbabilityWork(
+      probabilityEventPartition(spyKey, chance, "occurs"),
+      [spyKey], "Simulator.simulateSpyGapAfterLifeDamage:marginalize"
     );
     const actualNewRevealCount = this.recordSimulatedPrivatePeek(
       state, source, target, maxRevealCount, triggerWorlds

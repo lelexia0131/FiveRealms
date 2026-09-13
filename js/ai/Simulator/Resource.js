@@ -127,6 +127,7 @@ export const withResource = (Base) => class Resource extends Base {
   handCount、remainingCardCounts 与 card probability estimates。
 
   调用函数
+  marginalizeProbabilityWork；
   Probability ADD、事件分区与 SimulatorCore 概率运行时 primitive。
 
   边界与不变量
@@ -161,8 +162,9 @@ export const withResource = (Base) => class Resource extends Base {
           if (cardProbability >= 1 - PROBABILITY_EPSILON) {
             cardWorlds.push({ ...branch, occurs: true });
           } else {
+            const gateKey = this.currentProbabilityEventKey(state, `${label}:branch-card`);
             const gate = probabilityEventPartition(
-              this.currentProbabilityEventKey(state, `${label}:branch-card`),
+              gateKey,
               cardProbability,
               "gateOccurs"
             );
@@ -171,9 +173,14 @@ export const withResource = (Base) => class Resource extends Base {
               3,
               () => intersectProbabilityStateBranches([branch], gate)
             );
-            for (const gated of gatedWorlds) {
-              cardWorlds.push({ ...gated, occurs: Boolean(gated.gateOccurs) });
-            }
+            const materialized = gatedWorlds.map((gated) => ({ ...gated, occurs: Boolean(gated.gateOccurs) }));
+            // 单分支尾数门已物化，后续只累加 cardGain；输入同名变量不属于本次新门。
+            const completed = Object.hasOwn(branch.conditions ?? {}, gateKey)
+              ? materialized
+              : this.marginalizeProbabilityWork(
+                materialized, [gateKey], "Resource.gainUnknownCardsWithCounterState:card-marginalize"
+              );
+            cardWorlds.push(...completed);
           }
         }
         const cardGain = this.eventProbability(cardWorlds);
@@ -1168,6 +1175,7 @@ export const withResource = (Base) => class Resource extends Base {
 牌 availability 标量，并在质量归零时移出 hand。
 
   调用函数
+  marginalizeProbabilityWork；
   getEventWorlds、join/project Probability 辅助函数。
 
   边界与不变量
@@ -1187,15 +1195,22 @@ export const withResource = (Base) => class Resource extends Base {
       );
       if (availableProbability <= PROBABILITY_EPSILON) continue;
       const spendProbability = Math.min(availableProbability, remaining);
+      const spendKey = this.currentProbabilityEventKey(state, `response-card:${player.id}:${card.id}`);
       const spendWorlds = this.getEventWorlds(state, spendProbability / availableProbability, null,
         `response-card:${player.id}:${card.id}`);
       const joined = this.intersectProbabilityWork(
         [availabilityState, spendWorlds],
         "Simulator.consumeKnownCardsFromHand:join"
       );
-      const remainingState = this.projectProbabilityWork(joined, (branch) => ({
+      let remainingState = this.projectProbabilityWork(joined, (branch) => ({
         available: Boolean(branch.available && !branch.occurs)
       }), "Simulator.consumeKnownCardsFromHand:remaining");
+      // 支付与存在性已完成配对；剩余 availability 是此条件的最后业务结果。
+      if (!availabilityState.some((branch) => Object.hasOwn(branch.conditions ?? {}, spendKey))) {
+        remainingState = this.marginalizeProbabilityWork(
+          remainingState, [spendKey], "Simulator.consumeKnownCardsFromHand:marginalize"
+        );
+      }
       card.availability = totalBranchProbability(
         remainingState.filter((branch) => branch.available)
       );
@@ -1316,7 +1331,8 @@ export const withResource = (Base) => class Resource extends Base {
   牌/匿名 availability、响应数量分布、handCount 与可选结果世界。
 
   调用函数
-  queryAnonymousSlotDistribution、Probability 连接/投影/合并、mutateHandProbability 与 SearchBudget checkpoint。
+  queryAnonymousSlotDistribution、Probability 连接/投影/合并、marginalizeProbabilityWork、
+  mutateHandProbability 与 SearchBudget checkpoint。
 
   边界与不变量
   W 个触发/匿名数量世界与 H 个当前身份直接生成至多 W×(H+1) 个选择结果，
@@ -1370,7 +1386,9 @@ export const withResource = (Base) => class Resource extends Base {
           anonymousCount: branch.count
         }));
 
-    const removalWorlds = Array.isArray(options.eventWorlds) && options.eventWorlds.length
+    const removalKey = this.currentProbabilityEventKey(state, "random-hand-removal");
+    const suppliedRemovalWorlds = Array.isArray(options.eventWorlds) && options.eventWorlds.length;
+    const removalWorlds = suppliedRemovalWorlds
       ? this.gateEventWorlds(
         state,
         options.eventWorlds,
@@ -1378,7 +1396,7 @@ export const withResource = (Base) => class Resource extends Base {
         "random-hand-removal"
       )
       : probabilityEventPartition(
-        this.currentProbabilityEventKey(state, "random-hand-removal"),
+        removalKey,
         Math.min(1, amount),
         "occurs"
       );
@@ -1392,6 +1410,9 @@ export const withResource = (Base) => class Resource extends Base {
       anonymousPartition
     ], "Simulator.removeOneRandomCardFromHand:candidate-worlds");
     const selectionKey = this.currentProbabilityEventKey(state, "random-hand-selection");
+    const selectionKeyWasSupplied = joined.some(
+      (branch) => Object.hasOwn(branch.conditions ?? {}, selectionKey)
+    );
     const outcomes = [];
     const knownWeights = candidates.map((candidate) => cardAvailability(candidate.card));
     const knownCount = knownWeights.reduce((sum, weight) => sum + weight, 0);
@@ -1431,7 +1452,21 @@ export const withResource = (Base) => class Resource extends Base {
       });
     }
 
-    const selectionPartition = this.mergeProbabilityWork(outcomes);
+    let materializedSelection = this.mergeProbabilityWork(outcomes);
+    // 标量移除门已转为完整的互斥选择；输入路径的门仍由 gateEventWorlds 管理。
+    if (!suppliedRemovalWorlds && !anonymousPartition.some(
+      (branch) => Object.hasOwn(branch.conditions ?? {}, removalKey)
+    )) {
+      materializedSelection = this.marginalizeProbabilityWork(
+        materializedSelection, [removalKey], "Simulator.removeOneRandomCardFromHand:removal-marginalize"
+      );
+    }
+    // 支付只读取已物化的选择索引与匿名标志，不再连接身份分区；不得消去输入原有的同名条件。
+    const selectionPartition = selectionKeyWasSupplied
+      ? materializedSelection
+      : this.marginalizeProbabilityWork(
+        materializedSelection, [selectionKey], "Simulator.removeOneRandomCardFromHand:marginalize"
+      );
     for (let index = 0; index < candidates.length; index += 1) {
       this.checkpointSearchWork();
       const candidate = candidates[index];
@@ -1646,6 +1681,7 @@ export const withResource = (Base) => class Resource extends Base {
   牌 availability、hand/handCount 与 block/counter/assault/recover 摘要。
 
   调用函数
+  marginalizeProbabilityWork；
   响应容量移除与 availability 辅助函数。
 
   边界与不变量
@@ -1673,6 +1709,9 @@ export const withResource = (Base) => class Resource extends Base {
       selectedIndex += 1;
       const availableProbability = cardAvailability(chosen);
       const spent = Math.min(1, remaining, availableProbability);
+      const spendKey = this.currentProbabilityEventKey(
+        state, `${options.label ?? "guardian-aid-discard"}:${player.id}:${chosen.id}`
+      );
       const spendWorlds = this.getEventWorlds(
         state,
         Math.min(1, spent / availableProbability),
@@ -1696,9 +1735,15 @@ export const withResource = (Base) => class Resource extends Base {
         [availabilityState, removalPartition],
         "Simulator.consumeChosenHandCard:join"
       );
-      const remainingState = this.projectProbabilityWork(joinedAvailability, (branch) => ({
+      let remainingState = this.projectProbabilityWork(joinedAvailability, (branch) => ({
         available: Boolean(branch.available && !branch.removed)
       }), "Simulator.consumeChosenHandCard:remaining");
+      // 已选实体的支付结果完整进入 available，后续只写回该实体与手牌数量。
+      if (!availabilityState.some((branch) => Object.hasOwn(branch.conditions ?? {}, spendKey))) {
+        remainingState = this.marginalizeProbabilityWork(
+          remainingState, [spendKey], "Simulator.consumeChosenHandCard:marginalize"
+        );
+      }
       chosen.availability = totalBranchProbability(
         remainingState.filter((branch) => branch.available)
       );
@@ -2009,10 +2054,11 @@ export const withResource = (Base) => class Resource extends Base {
   双方 hand/knownCards、handCount、目标装备与 block/counter 摘要。
 
   调用函数
+  marginalizeProbabilityWork；
   buildSimulatedKnownCards、transferKnownCardIdentity、consumeRandomHandCards、addAnonymousStolenIdentityToHand、addStolenIdentityToHand、setSimulatedEquipment。
 
   边界与不变量
-  装备、每张确定已知手牌与匿名手牌聚合必须共享同一个互斥选择条件；实际所得身份与来源损失不得由根先验独立重抽。
+  装备、每张确定已知手牌与匿名手牌聚合必须来自同一份完整互斥选择 payload；实际所得身份与来源损失不得由根先验独立重抽。
   */
   stealResourceToHand(state, actor, target, scale = 1) {
     const chance = clampProbability(scale);
@@ -2056,9 +2102,10 @@ export const withResource = (Base) => class Resource extends Base {
       conditions: { [selectionKey]: "none" },
       outcome: "none"
     });
-    const selectionPartition = this.mergeProbabilityWork(
-      outcomeBranches,
-      "Simulator.stealResourceToHand:selection"
+    // 该标量入口不接收外部条件；outcome/cardId/definitionId 完整保存唯一选择。
+    // 后续仅按字段派生各资源转移，不将 sibling 选择分区相互连接。
+    const selectionPartition = this.marginalizeProbabilityWork(
+      outcomeBranches, [selectionKey], "Simulator.stealResourceToHand:selection-marginalize"
     );
     if (equipmentLossProbability > PROBABILITY_EPSILON && target.equipmentDefinitionId) {
       const stolenEquipmentDefinitionId = target.equipmentDefinitionId;

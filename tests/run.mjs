@@ -77,6 +77,8 @@ import {
   intersectProbabilityStateBranches as joinStateProbabilityBranches,
   intersectProbabilityStateBranches,
   mergeProbabilityStateBranches as mergeStateProbabilityBranches,
+  marginalizeProbabilityStateBranches,
+  marginalizeProbabilityStateBranchesCooperatively,
   mutateProbability,
   probabilityEventPartition,
   projectProbabilityStateBranches as projectStateProbabilityBranches,
@@ -16674,6 +16676,731 @@ test("AI·概率：join 与 merge 保持完整字段、规范化和输出顺序"
   }]));
 });
 
+test("AI·概率：显式 marginalization 只删除 dead keys 并复用完整状态合并", () => {
+  const branches = [
+    { probability: .125, conditions: { live: "yes", dead: "yes", other: 1 }, amount: 2 },
+    { probability: .125, conditions: { other: 1, dead: "no", live: "yes" }, amount: 2 },
+    { probability: .25, conditions: { live: "yes", dead: "no", other: 1 }, amount: 3 },
+    { probability: .125, conditions: { live: "no", dead: "yes", other: 1 }, amount: 2 },
+    { probability: .125, conditions: { live: "no", dead: "yes", other: 2 }, amount: 2 }
+  ];
+  const snapshot = structuredClone(branches);
+  const expected = mergeStateProbabilityBranches([
+    { probability: .25, conditions: { live: "yes", other: 1 }, amount: 2 },
+    { probability: .25, conditions: { live: "yes", other: 1 }, amount: 3 },
+    { probability: .125, conditions: { live: "no", other: 1 }, amount: 2 },
+    { probability: .125, conditions: { live: "no", other: 2 }, amount: 2 }
+  ]);
+  assert.deepEqual(marginalizeProbabilityStateBranches(branches, ["dead", "missing"]), expected);
+  assert.deepEqual(marginalizeProbabilityStateBranchesCooperatively(branches, ["dead"]), expected);
+  assert.equal(totalBranchProbability(expected), .75, "不得归一化部分质量");
+  assert.deepEqual(marginalizeProbabilityStateBranches(branches), mergeStateProbabilityBranches(branches));
+  assert.deepEqual(marginalizeProbabilityStateBranches([], ["dead"]), []);
+  assert.deepEqual(branches, snapshot);
+});
+
+/*
+功能
+为局部条件寿命测试建立只在指定 key 上禁用消元的对照实例，并记录实际分支边界。
+
+调用方
+猎印、随机失牌与反制选择的局部条件寿命 fixture。
+
+输入
+初始测试 World 与局部 condition label。
+
+输出
+独立状态、模拟器、完整 key 和消元前后分区记录。
+
+读取状态
+初始 World 与 ProbabilityState。
+
+写入状态
+仅创建测试副本、实例级方法替身与 observation 数组。
+
+调用函数
+Simulator、structuredClone、currentProbabilityEventKey、marginalizeProbabilityWork。
+
+边界与不变量
+其他 key 的消元保持正式实现；不修改生产原型或输入 fixture。
+*/
+function createConditionLifetimeComparison(initialState, label) {
+  const state = structuredClone(initialState);
+  const baselineState = structuredClone(initialState);
+  const simulator = new Simulator(state);
+  const baseline = new Simulator(baselineState);
+  const key = simulator.currentProbabilityEventKey(state, label);
+  const observations = [];
+  const marginalize = simulator.marginalizeProbabilityWork.bind(simulator);
+  const baselineMarginalize = baseline.marginalizeProbabilityWork.bind(baseline);
+
+  /*
+  功能
+  记录指定条件消元的完整输入输出并确认 primitive 不修改输入。
+
+  调用方
+  当前 fixture 模拟器的局部消元消费者。
+
+  输入
+  完整业务分区、死亡 key 列表与诊断 operation。
+
+  输出
+  正式 primitive 的结果。
+
+  读取状态
+  当前 fixture 的 key 与分区。
+
+  写入状态
+  observations。
+
+  调用函数
+  marginalize、structuredClone、assert.deepEqual。
+
+  边界与不变量
+  仅观察指定 key，不改变其他门或输入分区。
+  */
+  function observeMarginalization(branches, keys, operation) {
+    if (!keys.includes(key)) return marginalize(branches, keys, operation);
+    assert.deepEqual(keys, [key]);
+    const before = structuredClone(branches);
+    const after = marginalize(branches, keys, operation);
+    assert.deepEqual(branches, before);
+    observations.push({ before, after: structuredClone(after) });
+    return after;
+  }
+  simulator.marginalizeProbabilityWork = observeMarginalization;
+  baseline.marginalizeProbabilityWork = (branches, keys, operation) => (
+    keys.includes(key) ? branches : baselineMarginalize(branches, keys, operation)
+  );
+  return { state, baselineState, simulator, baseline, key, observations };
+}
+
+/*
+功能
+验证局部消元的完整 payload、总质量、继承条件和后续共享条件 join，并输出真实分支数。
+
+调用方
+三个局部条件寿命 fixture。
+
+输入
+fixture 的消元记录与预期分支数量。
+
+输出
+无；不满足不变量时断言失败。
+
+读取状态
+消元前后分区。
+
+写入状态
+仅输出 fixture branchCount。
+
+调用函数
+marginalizeProbabilityStateBranches、joinStateProbabilityBranches、totalBranchProbability。
+
+边界与不变量
+共享 live key 必须约束同一 witness；独立对照的业务状态由各 fixture 另行断言。
+*/
+function assertConditionLifetimeObservation(comparison, counts) {
+  const { key, observations } = comparison;
+  assert.equal(observations.length, 1);
+  const { before, after } = observations[0];
+  assert.deepEqual([before.length, after.length], counts);
+  assert.equal(totalBranchProbability(before), 1);
+  assert.equal(totalBranchProbability(after), totalBranchProbability(before));
+  assert.ok(before.every((branch) => Object.hasOwn(branch.conditions, key)));
+  assert.ok(after.every((branch) => !Object.hasOwn(branch.conditions, key)));
+  assert.ok(after.every((branch) => branch.conditions.input === "retained"));
+  assert.deepEqual(after, marginalizeProbabilityStateBranches(before, [key]));
+  const shared = [
+    { probability: .5, conditions: { live: "yes" }, witness: 1 },
+    { probability: .5, conditions: { live: "no" }, witness: 0 }
+  ];
+  const correlated = joinStateProbabilityBranches(after, shared);
+  assert.deepEqual(correlated, marginalizeProbabilityStateBranches(
+    joinStateProbabilityBranches(before, shared), [key]
+  ));
+  assert.equal(totalBranchProbability(correlated), 1);
+  assert.ok(correlated.every((branch) => branch.witness === (branch.conditions.live === "yes" ? 1 : 0)));
+  process.stdout.write(`  ${key.split(":").slice(0, 2).join(":")}: branchCount=${before.length}->${after.length}, mass=1\n`);
+}
+
+test("AI·概率：hunt-mark-existing 物化后消元保留业务结果与 live correlation", () => {
+  for (const reuseKey of [false, true]) {
+    const comparison = createConditionLifetimeComparison({
+      players: [
+        { id: "hunter", characterId: "trail-hunter", battleTeam: "dawn", alive: true,
+          handCount: 0, trackingTargetIds: [], trackingUses: 0 },
+        { id: "target", battleTeam: "dusk", alive: true, handCount: 0,
+          huntMarkProbabilities: { hunter: .5 }, statuses: [] }
+      ]
+    }, "hunt-mark-existing:hunter:target");
+    const { simulator, baseline, state, baselineState, key, observations } = comparison;
+    const events = [
+      { probability: .5, conditions: { live: "yes", input: "retained", ...(reuseKey ? { [key]: "yes" } : {}) }, occurs: true },
+      { probability: .5, conditions: { live: "no", input: "retained", ...(reuseKey ? { [key]: "no" } : {}) }, occurs: false }
+    ];
+    const snapshot = structuredClone(events);
+    simulator.simulateTracking(state, state.players[0], state.players[1], events);
+    baseline.simulateTracking(baselineState, baselineState.players[0], baselineState.players[1], events);
+    assert.deepEqual(state, baselineState);
+    assert.deepEqual(events, snapshot);
+    assert.equal(state.players[1].huntMarkProbabilities.hunter, reuseKey ? .5 : .75);
+    assert.equal(state.players[0].trackingUses, reuseKey ? 0 : .25);
+    if (reuseKey) assert.equal(observations.length, 0, "输入同名 key 不得进入死亡列表");
+    else {
+      assertConditionLifetimeObservation(comparison, [4, 3]);
+      assert.ok(observations[0].after.every((branch) => typeof branch.marked === "boolean"));
+    }
+  }
+});
+
+test("AI·概率：random-hand-selection 物化后消元保留支付结果与 live correlation", () => {
+  for (const reuseKey of [false, true]) {
+    const comparison = createConditionLifetimeComparison({
+      remainingCardCounts: { counter: 2, block: 2 },
+      players: [{ id: "payer", handCount: reuseKey ? 1 : 4, knownCards: [
+        { cardId: "known-counter", definitionId: "counter", availability: 1 },
+        ...(!reuseKey ? [{ cardId: "known-block", definitionId: "block", availability: 1 }] : [])
+      ] }]
+    }, "random-hand-selection");
+    const { simulator, baseline, state, baselineState, key, observations } = comparison;
+    const events = [
+      { probability: .5, conditions: { live: "yes", input: "retained", ...(reuseKey ? { [key]: "known:known:known-counter" } : {}) }, occurs: true },
+      { probability: .5, conditions: { live: "no", input: "retained", ...(reuseKey ? { [key]: "none" } : {}) }, occurs: false }
+    ];
+    const snapshot = structuredClone(events);
+    const spent = simulator.removeOneRandomCardFromHand(state, state.players[0], .5, { eventWorlds: events });
+    const referenceSpent = baseline.removeOneRandomCardFromHand(baselineState, baselineState.players[0], .5, { eventWorlds: events });
+    assert.equal(spent, referenceSpent);
+    assert.equal(spent, .5);
+    assert.deepEqual(state, baselineState);
+    assert.deepEqual(events, snapshot);
+    assert.equal(state.players[0].knownCards[0].availability, reuseKey ? .5 : .875);
+    if (reuseKey) assert.equal(observations.length, 0, "输入同名 key 不得进入死亡列表");
+    else {
+      assertConditionLifetimeObservation(comparison, [4, 4]);
+      assert.ok(observations[0].after.some((branch) => branch.anonymousSelected));
+      assert.ok(observations[0].after.every((branch) => Number.isInteger(branch.selectedIndex)
+        && typeof branch.anonymousSelected === "boolean" && Number.isFinite(branch.anonymousCount)));
+    }
+  }
+});
+
+test("AI·概率：counter-selection 物化后消元保留支付结果与 live correlation", () => {
+  for (const reuseKey of [false, true]) {
+    const comparison = createConditionLifetimeComparison({
+      remainingCardCounts: { counter: 2 },
+      players: [{ id: "payer", handCount: reuseKey ? 1 : 2, knownCards: [
+        { cardId: "known-counter", definitionId: "counter", availability: 1 }
+      ] }]
+    }, "counter-selection:payer");
+    const { simulator, baseline, state, baselineState, key, observations } = comparison;
+    const events = [
+      { probability: .5, conditions: { live: "yes", input: "retained", ...(reuseKey ? { [key]: "known:known:known-counter" } : {}) }, occurs: true },
+      { probability: .5, conditions: { live: "no", input: "retained", ...(reuseKey ? { [key]: "none" } : {}) }, occurs: false }
+    ];
+    const snapshot = structuredClone(events);
+    const response = simulator.resolveTargetCounterResponseWorlds(state, state.players[0], events, true);
+    const reference = baseline.resolveTargetCounterResponseWorlds(baselineState, baselineState.players[0], events, true);
+    const expected = structuredClone(reference);
+    if (!reuseKey) expected.payment.selectionPartition = marginalizeProbabilityStateBranches(expected.payment.selectionPartition, [key]);
+    assert.deepEqual(response, expected);
+    assert.deepEqual(events, snapshot);
+    assert.equal(simulator.consumeCounterPayment(state, state.players[0], response.payment), .5);
+    assert.equal(baseline.consumeCounterPayment(baselineState, baselineState.players[0], reference.payment), .5);
+    assert.deepEqual(state, baselineState);
+    assert.equal(state.players[0].knownCards[0].availability, reuseKey ? .5 : .75);
+    if (reuseKey) {
+      assert.equal(observations.length, 0, "输入同名 key 不得进入死亡列表");
+      assert.ok(response.payment.selectionPartition.every((branch) => Object.hasOwn(branch.conditions, key)));
+    } else {
+      assertConditionLifetimeObservation(comparison, [3, 3]);
+      assert.ok(observations[0].after.some((branch) => branch.anonymousSelected));
+      assert.ok(observations[0].after.every((branch) => Number.isInteger(branch.selectedIndex)
+        && typeof branch.anonymousSelected === "boolean"));
+    }
+  }
+});
+
+/*
+功能
+构造剩余局部条件寿命测试的小型资源与角色状态。
+
+调用方
+remainingConditionLifetimeFixture。
+
+输入
+无。
+
+输出
+两个敌对玩家与一个队友的测试 World。
+
+读取状态
+无。
+
+写入状态
+仅新建测试对象。
+
+调用函数
+无。
+
+边界与不变量
+不启动游戏、Worker 或搜索；所有匿名槽由测试 Simulator 的 canonical fixture 构造。
+*/
+function remainingLifetimeWorld() {
+  return {
+    viewerId: "source", remainingCardCounts: { block: 4, counter: 4, assault: 4, recover: 4 },
+    players: [
+      { id: "source", seatIndex: 0, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4,
+        energy: 2, maxEnergy: 5, shield: 0, handCount: 1,
+        hand: [{ id: "owned", definitionId: "counter", availability: 1 }],
+        knownCards: [], statuses: [], categoriesUsed: [], categoryUsedProbabilities: {} },
+      { id: "target", seatIndex: 1, battleTeam: "dusk", alive: true, hp: 4, maxHp: 4,
+        energy: 0, maxEnergy: 5, shield: 0, handCount: 1, knownCards: [], statuses: [] },
+      { id: "ally", seatIndex: 2, battleTeam: "dawn", alive: true, hp: 4, maxHp: 4,
+        energy: 0, maxEnergy: 5, shield: 0, handCount: 0, knownCards: [], statuses: [] }
+    ]
+  };
+}
+
+/*
+功能
+沿真实消费者执行单个剩余条件或连续三个局部消费者。
+
+调用方
+remainingConditionLifetimeFixture。
+
+输入
+模拟器、独立 World、场景标签和是否提供外部同名条件。
+
+输出
+直接业务返回值与局部结果。
+
+读取状态
+fixture 的玩家、ProbabilityState 和 label。
+
+写入状态
+仅当前测试 World 与局部上下文。
+
+调用函数
+Simulator 的伤害、资源支付、摸牌、势能、余烬和信息消费者。
+
+边界与不变量
+只在正式支持外部分区的入口测试同名 key；标量独占入口不存在外部同名分区。
+*/
+function executeRemainingLifetimeScenario(simulator, state, label, reuseKey = false) {
+  const [source, target, ally] = state.players;
+  const key = simulator.currentProbabilityEventKey(state, label);
+  const events = [
+    { probability: .5, conditions: { live: "yes", input: "retained", ...(reuseKey ? { [key]: "yes" } : {}) }, occurs: true },
+    { probability: .5, conditions: { live: "no", input: "retained", ...(reuseKey ? { [key]: "no" } : {}) }, occurs: false }
+  ];
+  const snapshot = structuredClone(events);
+  let result;
+  if (label === "damage-pass-aid:source:target") {
+    const outcome = {};
+    result = simulator.applyDamage(state, source, target, 1, {
+      canBlock: true, eventBranches: events, outcome
+    });
+    result = { damage: result, outcome };
+  } else if (label === "ember-resolution:source") {
+    source.characterId = "ember-magus";
+    source.energy = source.maxEnergy;
+    const context = {
+      cardDamage: true,
+      emberBaseEnergyBranches: { source: events.map((branch) => ({
+        probability: branch.probability, conditions: branch.conditions, amount: source.energy
+      })) }
+    };
+    simulator.simulateAfterLifeDamage(state, source, target, .5, null, context);
+    result = context;
+  } else if (label === "spy-gap:source:target") {
+    source.characterId = "shade-agent";
+    result = simulator.simulateSpyGapAfterLifeDamage(state, source, target, .5, reuseKey ? events : null);
+  } else if (label.startsWith("momentum-")) {
+    source.characterId = "blade-walker";
+    source.momentum = 2;
+    result = simulator.simulateCategoryUse(state, source, "basic",
+      label.startsWith("momentum-use") ? .5 : events,
+      label.startsWith("momentum-use") ? events : .5);
+  } else if (label === "recycle-draw:fixture") {
+    source.equipmentDefinitionId = "recycleDevice";
+    source.equipmentRetentionProbability = 1;
+    result = simulator.triggerRecycleDeviceUse(state, source, .5, "fixture");
+  } else if (label === "gamble-trigger") {
+    source.characterId = "fate-gambler";
+    result = simulator.simulateGamble(state, source, { category: "tactic" }, .5);
+  } else if (label === "coordination-draw") {
+    source.characterId = "resonance-tuner";
+    result = simulator.simulateCoordination(state, source, [ally], .5);
+  } else if (label === "fractional-draw:branch-card") {
+    result = simulator.gainUnknownCardsWithCounterState(state, source, () => .5, events, "fractional-draw");
+  } else if (label === "random-hand-removal") {
+    result = simulator.removeOneRandomCardFromHand(state, target, .5, reuseKey ? { eventWorlds: events } : {});
+  } else if (label === "response-card:source:owned") {
+    result = simulator.consumeKnownCardsFromHand(state, source, "counter", .5);
+  } else if (label === "guardian-aid-discard:source:owned") {
+    result = { guardianAidDiscards: [] };
+    simulator.consumeChosenHandCard(state, source, .5, { selectedCardId: "owned", result });
+  } else if (label === "steal-resource:source:target") {
+    result = simulator.stealResourceToHand(state, source, target, .5);
+  } else if (label === "combined") {
+    // 同一调用顺序依次经过独占资源门、余烬终端投影与势能使用条件。
+    result = [
+      executeRemainingLifetimeScenario(simulator, state, "recycle-draw:fixture"),
+      executeRemainingLifetimeScenario(simulator, state, "ember-resolution:source"),
+      executeRemainingLifetimeScenario(simulator, state, "momentum-use:source:basic")
+    ];
+  } else throw new Error("未知局部寿命 fixture：" + label);
+  assert.deepEqual(events, snapshot);
+  return result;
+}
+
+/*
+功能
+严格比较分布与业务对象结构，仅允许浮点运算重排的绝对舍入误差。
+
+调用方
+剩余条件寿命 fixture。
+
+输入
+实际值、参考值与当前属性路径。
+
+输出
+无；结构、字符串、布尔值或超界数值差异时断言失败。
+
+读取状态
+测试结果对象。
+
+写入状态
+无。
+
+调用函数
+assertClose、assert.deepEqual、assertLifetimeNumericEquality。
+
+边界与不变量
+数值误差上限固定为 1e-12，不对生产数据舍入，不忽略字段或条件身份。
+*/
+function assertLifetimeNumericEquality(actual, expected, path = "result") {
+  if (typeof actual === "number" && typeof expected === "number") {
+    assert.ok(Number.isFinite(actual) && Number.isFinite(expected), path);
+    assertClose(actual, expected, 1e-12);
+  } else if (actual !== null && expected !== null && typeof actual === "object" && typeof expected === "object") {
+    assert.equal(Array.isArray(actual), Array.isArray(expected), path);
+    assert.deepEqual(Object.keys(actual), Object.keys(expected), path);
+    for (const key of Object.keys(actual)) assertLifetimeNumericEquality(actual[key], expected[key], path + "." + key);
+  } else assert.deepEqual(actual, expected, path);
+}
+
+/*
+功能
+比较局部消元与旧条件表示的业务状态、完整结果分布、质量和外部相关性。
+
+调用方
+剩余条件的独立 fixture 与组合 fixture。
+
+输入
+场景标签与是否有可测试的外部同名输入路径。
+
+输出
+无；任何不变量破坏则断言失败，并打印实际 branchCount 与概率质量。
+
+读取状态
+生产消费者生成的分区与测试 World。
+
+写入状态
+仅测试实例、观测记录和标准输出。
+
+调用函数
+executeRemainingLifetimeScenario、Simulator、canonical merge/marginalization/join、Evaluator.stateUtility。
+
+边界与不变量
+基线仅禁用本轮新增 operation 的消元；Phase 1/2A 保持开启。局部子分区不强行归一化。
+*/
+function remainingConditionLifetimeFixture(label, supportsSuppliedKey = false) {
+  const operations = new Set([
+    "Simulator.triggerRecycleDeviceUse:marginalize", "Damage.applyDamage:aid-marginalize",
+    "Simulator.simulateCategoryUse:marginalize", "Simulator.simulateGamble:marginalize",
+    "Simulator.simulateCoordination:marginalize", "Simulator.simulateAfterLifeDamage:ember-marginalize",
+    "Simulator.simulateSpyGapAfterLifeDamage:marginalize",
+    "Resource.gainUnknownCardsWithCounterState:card-marginalize",
+    "Simulator.consumeKnownCardsFromHand:marginalize",
+    "Simulator.removeOneRandomCardFromHand:removal-marginalize",
+    "Simulator.consumeChosenHandCard:marginalize", "Simulator.stealResourceToHand:selection-marginalize"
+  ]);
+  for (const reuseKey of supportsSuppliedKey ? [false, true] : [false]) {
+    const state = remainingLifetimeWorld();
+    if (label.startsWith("damage-pass-aid")) {
+      state.players[1].handCount = .5;
+      state.players[1].knownCards = [{ cardId: "block", definitionId: "block", availability: .5 }];
+    }
+    if (label.startsWith("steal-resource")) {
+      state.players[1].handCount = 2;
+      state.players[1].knownCards = [{ cardId: "known", definitionId: "block", availability: 1 }];
+      state.players[1].equipmentDefinitionId = "telescope";
+      state.players[1].equipmentRetentionProbability = 1;
+    }
+    const baselineState = structuredClone(state);
+    const simulator = new Simulator(state, { decideBlock: () => true });
+    const baseline = new Simulator(baselineState, { decideBlock: () => true });
+    const observations = [];
+    const referenceObservations = [];
+    const marginalize = simulator.marginalizeProbabilityWork.bind(simulator);
+    const baselineMarginalize = baseline.marginalizeProbabilityWork.bind(baseline);
+
+    /*
+    功能
+    在真实局部消元边界记录不变的输入与完整结果。
+
+    调用方
+    当前测试 Simulator 的新增消元点。
+
+    输入
+    完整分区、显式 dead keys、operation。
+
+    输出
+    正式 primitive 输出。
+
+    读取状态
+    本 fixture operation 白名单。
+
+    写入状态
+    observations。
+
+    调用函数
+    marginalize、structuredClone、assert.deepEqual。
+
+    边界与不变量
+    不改变消费者分区或向 World 注入人工条件。
+    */
+    function observe(branches, keys, operation) {
+      const snapshot = structuredClone(branches);
+      const result = marginalize(branches, keys, operation);
+      if (operations.has(operation)) observations.push({
+        before: snapshot, after: structuredClone(result), keys, operation
+      });
+      assert.deepEqual(branches, snapshot);
+      return result;
+    }
+    simulator.marginalizeProbabilityWork = observe;
+    baseline.marginalizeProbabilityWork = (branches, keys, operation) => {
+      if (!operations.has(operation)) return baselineMarginalize(branches, keys, operation);
+      const result = mergeStateProbabilityBranches(branches);
+      referenceObservations.push({ branches: structuredClone(result), keys, operation });
+      return result;
+    };
+    const actual = executeRemainingLifetimeScenario(simulator, state, label, reuseKey);
+    const expected = executeRemainingLifetimeScenario(baseline, baselineState, label, reuseKey);
+    assertLifetimeNumericEquality(state, baselineState);
+    assertLifetimeNumericEquality(actual, expected);
+    const utility = new Evaluator({ world: state }).stateUtility(state, "source");
+    const referenceUtility = new Evaluator({ world: baselineState }).stateUtility(baselineState, "source");
+    assert.ok(Number.isFinite(utility) && Number.isFinite(referenceUtility));
+    assertClose(utility, referenceUtility, 1e-12);
+    assert.equal(observations.length, referenceObservations.length);
+    if (reuseKey) {
+      assert.equal(observations.length, 0, "外部同名 key 不得消元");
+      continue;
+    }
+    assert.ok(observations.length > 0, "必须实际经过被测消元点");
+    const inheritedKeys = new Set();
+    for (let index = 0; index < observations.length; index += 1) {
+      const { before, after, keys, operation } = observations[index];
+      assert.equal(operation, referenceObservations[index].operation);
+      assert.ok(after.length <= mergeStateProbabilityBranches(before).length);
+      const mass = totalBranchProbability(before);
+      assertClose(totalBranchProbability(after), mass, 1e-12);
+      assertLifetimeNumericEquality(after, marginalizeProbabilityStateBranches(referenceObservations[index].branches, keys));
+      assert.ok(after.every((branch) => keys.every((key) => !Object.hasOwn(branch.conditions, key))));
+      for (const branch of before) {
+        for (const key of Object.keys(branch.conditions ?? {})) {
+          if (!keys.includes(key)) inheritedKeys.add(key);
+        }
+      }
+      // 给真实边界的完整 payload 附加外部变量作为代数探针；不注入生产执行。
+      const withExternal = before.flatMap((branch) => [
+        { ...branch, probability: branch.probability / 2, conditions: { ...branch.conditions, external: "yes", input: "retained" } },
+        { ...branch, probability: branch.probability / 2, conditions: { ...branch.conditions, external: "no", input: "retained" } }
+      ]);
+      const shared = [
+        { probability: .5, conditions: { external: "yes" }, witness: 1 },
+        { probability: .5, conditions: { external: "no" }, witness: 0 }
+      ];
+      const retained = marginalizeProbabilityStateBranches(withExternal, keys);
+      const correlated = joinStateProbabilityBranches(retained, shared);
+      assertLifetimeNumericEquality(correlated, marginalizeProbabilityStateBranches(joinStateProbabilityBranches(withExternal, shared), keys));
+      assertClose(totalBranchProbability(correlated), mass, 1e-12);
+      assert.ok(correlated.every((branch) => branch.conditions.input === "retained"
+        && branch.witness === (branch.conditions.external === "yes" ? 1 : 0)));
+      process.stdout.write("  " + label + ": " + operation + " branchCount=" + before.length + "->" + after.length + ", mass=" + mass + "\n");
+    }
+    if (["combined", "ember-resolution:source", "momentum-use:source:basic", "momentum-life-damage:source:basic",
+      "damage-pass-aid:source:target", "fractional-draw:branch-card"].includes(label)) {
+      assert.ok(inheritedKeys.has("live") && inheritedKeys.has("input"), "实际消费链保留外部条件");
+    }
+    if (label === "combined") {
+      assert.equal(new Set(observations.map((entry) => entry.operation)).size, 3);
+      assert.equal(utility, referenceUtility);
+      // 为各终端 payload 命名后组合真实观测分区；保留同一 live 条件的跨步骤配对。
+      const currentPartitions = observations.map(({ after }, index) => after.map((branch) => ({
+        probability: branch.probability, conditions: branch.conditions,
+        ["result" + index]: Object.fromEntries(Object.entries(branch).filter(([name]) => !["probability", "conditions"].includes(name)))
+      })));
+      const referencePartitions = referenceObservations.map(({ branches }, index) => branches.map((branch) => ({
+        probability: branch.probability, conditions: branch.conditions,
+        ["result" + index]: Object.fromEntries(Object.entries(branch).filter(([name]) => !["probability", "conditions"].includes(name)))
+      })));
+      const witness = [
+        { probability: .5, conditions: { live: "yes" }, witness: 1 },
+        { probability: .5, conditions: { live: "no" }, witness: 0 }
+      ];
+      const joint = joinStateProbabilityBranches(...currentPartitions, witness);
+      const referenceJoint = joinStateProbabilityBranches(...referencePartitions, witness);
+      const deadKeys = observations.flatMap((entry) => entry.keys);
+      assertLifetimeNumericEquality(joint, marginalizeProbabilityStateBranches(referenceJoint, deadKeys));
+      assert.equal(totalBranchProbability(joint), 1);
+      assert.ok(joint.length <= referenceJoint.length);
+      assert.ok(joint.every((branch) => branch.witness === (branch.conditions.live === "yes" ? 1 : 0)));
+      const distribution = [{ probability: 1, conditions: {}, world: state }];
+      assert.deepEqual(distribution, [{ probability: 1, conditions: {}, world: baselineState }]);
+      assert.equal(totalBranchProbability(distribution), 1);
+      process.stdout.write("  combined: jointBranchCount=" + referenceJoint.length + "->" + joint.length
+        + ", finalWorldCount=1->1, mass=1, utility=" + utility + "\n");
+    }
+  }
+}
+
+// 主要被测对象是局部 condition contract；不重新定义角色、资源或响应业务规则。
+test("AI·概率：剩余寿命 damage-pass-aid", () => remainingConditionLifetimeFixture("damage-pass-aid:source:target", true));
+test("AI·概率：剩余寿命 ember-resolution", () => remainingConditionLifetimeFixture("ember-resolution:source", true));
+test("AI·概率：剩余寿命 spy-gap", () => remainingConditionLifetimeFixture("spy-gap:source:target", true));
+test("AI·概率：剩余寿命 momentum-use", () => remainingConditionLifetimeFixture("momentum-use:source:basic", true));
+test("AI·概率：剩余寿命 momentum-life-damage", () => remainingConditionLifetimeFixture("momentum-life-damage:source:basic", true));
+test("AI·概率：剩余寿命 recycle-draw", () => remainingConditionLifetimeFixture("recycle-draw:fixture"));
+test("AI·概率：剩余寿命 gamble-trigger", () => remainingConditionLifetimeFixture("gamble-trigger"));
+test("AI·概率：剩余寿命 coordination-draw", () => remainingConditionLifetimeFixture("coordination-draw"));
+test("AI·概率：剩余寿命 branch-card", () => remainingConditionLifetimeFixture("fractional-draw:branch-card", true));
+test("AI·概率：剩余寿命 random-hand-removal", () => remainingConditionLifetimeFixture("random-hand-removal", true));
+test("AI·概率：剩余寿命 response-card", () => remainingConditionLifetimeFixture("response-card:source:owned"));
+test("AI·概率：剩余寿命 chosen-discard", () => remainingConditionLifetimeFixture("guardian-aid-discard:source:owned"));
+test("AI·概率：剩余寿命 steal-resource", () => remainingConditionLifetimeFixture("steal-resource:source:target"));
+test("AI·概率：剩余寿命连续资源余烬势能组合", () => remainingConditionLifetimeFixture("combined"));
+
+test("AI·概率：cooperative marginalization 在复制及 canonical merge 中断均不返回部分结果", () => {
+  const branches = Array.from({ length: 65 }, (_, index) => ({
+    probability: 1 / 128, conditions: { dead: index, live: "yes" }, amount: 2
+  }));
+  const snapshot = structuredClone(branches);
+  const expected = marginalizeProbabilityStateBranches(branches, ["dead"]);
+  assert.deepEqual(
+    marginalizeProbabilityStateBranchesCooperatively(branches, ["dead"], () => true),
+    expected
+  );
+  // 复制和既有 merge 各在 0、32、64 检查，逐点拒绝以覆盖两段操作的原子性。
+  for (let stopAt = 1; stopAt <= 6; stopAt += 1) {
+    let checkpoints = 0;
+    const result = marginalizeProbabilityStateBranchesCooperatively(
+      branches, ["dead"], () => ++checkpoints < stopAt
+    );
+    assert.equal(result, null);
+    assert.equal(checkpoints, stopAt);
+  }
+  assert.deepEqual(branches, snapshot);
+});
+
+test("AI·概率：连续 20 个独立半概率 gate 保持两分支及完整精确分布", () => {
+  const state = { players: [] };
+  const simulator = new Simulator(state);
+  let worlds = [{ probability: 1, conditions: {}, occurs: true }];
+  const counts = [worlds.length];
+  for (let index = 1; index <= 20; index += 1) {
+    const input = worlds;
+    const snapshot = structuredClone(worlds);
+    worlds = simulator.gateEventWorlds(state, worlds, .5, `independent-gate-${index}`);
+    counts.push(worlds.length);
+    assert.equal(worlds.length, 2);
+    assert.equal(totalBranchProbability(worlds), 1);
+    assert.equal(totalBranchProbability(worlds.filter((branch) => branch.occurs)), .5 ** index);
+    assert.ok(worlds.every((branch) => Object.keys(branch.conditions).length === 0));
+    assert.deepEqual(input, snapshot);
+  }
+  // 穷举独立二元门的所有赋值作为分布 oracle，无需保存百万份完整条件对象。
+  const assignmentCount = 2 ** 20;
+  let referenceTrue = 0;
+  let referenceFalse = 0;
+  for (let assignment = 0; assignment < assignmentCount; assignment += 1) {
+    if (assignment === assignmentCount - 1) referenceTrue += 1 / assignmentCount;
+    else referenceFalse += 1 / assignmentCount;
+  }
+  assert.equal(totalBranchProbability(worlds.filter((branch) => branch.occurs)), referenceTrue);
+  assert.equal(totalBranchProbability(worlds.filter((branch) => !branch.occurs)), referenceFalse);
+  assert.equal(referenceTrue + referenceFalse, 1);
+  process.stdout.write(`  gate oracle: assignments=${assignmentCount}, mass=${referenceTrue + referenceFalse}; optimized counts=${counts.join(",")}, mass=${totalBranchProbability(worlds)}, occurs=${referenceTrue}\n`);
+});
+
+test("AI·概率：gate marginalization 保留共享 live key 且禁止跨 partition 组合", () => {
+  const state = { players: [] };
+  const simulator = new Simulator(state);
+  const left = [
+    { probability: .25, conditions: { live: "yes" }, occurs: true },
+    { probability: .75, conditions: { live: "no" }, occurs: false }
+  ];
+  const right = [
+    { probability: .25, conditions: { live: "yes" }, amount: 7 },
+    { probability: .75, conditions: { live: "no" }, amount: 11 }
+  ];
+  const snapshot = structuredClone(left);
+  const gated = simulator.gateEventWorlds(state, left, .5, "private-gate");
+  const joined = joinStateProbabilityBranches(gated, right);
+  assert.deepEqual(joined, mergeStateProbabilityBranches([
+    { probability: .125, conditions: { live: "yes" }, occurs: true, amount: 7 },
+    { probability: .125, conditions: { live: "yes" }, occurs: false, amount: 7 },
+    { probability: .75, conditions: { live: "no" }, occurs: false, amount: 11 }
+  ]));
+  assert.equal(totalBranchProbability(joined), 1);
+  assert.deepEqual(left, snapshot);
+
+  const sharedKey = simulator.currentProbabilityEventKey(state, "shared-gate");
+  const supplied = probabilityEventPartition(sharedKey, .5, "occurs");
+  const reused = simulator.gateEventWorlds(state, supplied, .5, "shared-gate");
+  assert.deepEqual(reused, supplied, "输入已有同名键不能被当作本地 dead key 删除");
+  const correlated = joinStateProbabilityBranches(
+    reused, probabilityEventPartition(sharedKey, .5, "retained")
+  );
+  assert.equal(correlated.length, 2);
+  assert.ok(correlated.every((branch) => branch.occurs === branch.retained));
+  assert.equal(totalBranchProbability(correlated), 1);
+});
+
+test("AI·概率：gate 回收前后所有剩余条件与 occurs 分布一致且确定性门保持原契约", () => {
+  const state = { players: [] };
+  const simulator = new Simulator(state);
+  const legacy = new Simulator(state);
+  // 只在对照实例禁用新 primitive，保留原来的 intersection → projection 路径。
+  legacy.marginalizeProbabilityWork = (branches) => branches;
+  let current = probabilityEventPartition("live", .25, "occurs");
+  let reference = structuredClone(current);
+  const deadKeys = [];
+  for (let index = 0; index < 8; index += 1) {
+    const label = `reference-gate-${index}`;
+    const chance = index % 2 === 0 ? .5 : .25;
+    deadKeys.push(simulator.currentProbabilityEventKey(state, label));
+    current = simulator.gateEventWorlds(state, current, chance, label);
+    reference = legacy.gateEventWorlds(state, reference, chance, label);
+    assert.deepEqual(current, marginalizeProbabilityStateBranches(reference, deadKeys));
+    assert.equal(totalBranchProbability(current), totalBranchProbability(reference));
+  }
+  assert.equal(reference.length, 512);
+  assert.equal(current.length, 3);
+  for (const chance of [0, 1]) {
+    const actual = simulator.gateEventWorlds(state, current, chance, "deterministic");
+    const expected = legacy.gateEventWorlds(state, reference, chance, "deterministic");
+    assert.deepEqual(actual, marginalizeProbabilityStateBranches(expected, deadKeys));
+    if (chance === 1) assert.equal(actual, current);
+    else assert.ok(actual.every((branch) => !branch.occurs));
+  }
+});
+
 // ---- AI·World ----
 
 test("AI·World：隐藏手牌换位不改变 ProbabilityState、团队反制或 ordered responder", () => {
@@ -18450,7 +19177,7 @@ test("AI·搜索：多步序列保持诊断且完整未来价值选择 root", as
     assert.equal(stats.stopReason, "COMPLETE");
     assert.equal(stats.simulationCalls, 105);
     assert.equal(stats.cloneCalls, 105);
-    assert.equal(stats.probabilityOperations, 941);
+    assert.equal(stats.probabilityOperations, 984);
     assert.equal(stats.rootCandidateCount, 9);
     assert.equal(stats.completedRootCandidateCount, 9);
     assert.equal(stats.timeoutObserved, false);

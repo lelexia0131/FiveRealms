@@ -458,7 +458,7 @@ export const withResponse = (Base) => class Response extends Base {
   无。
 
   调用函数
-  queryPlayerHandProbability 与 Probability 连接/投影 primitive。
+  queryPlayerHandProbability、Probability 连接/投影 primitive 与 marginalizeProbabilityWork。
 
   边界与不变量
   Evaluator willingness heuristic 不得在这里转成随机事件；W 个效果/count 世界与 H 个当前反制身份
@@ -512,6 +512,9 @@ export const withResponse = (Base) => class Response extends Base {
       counterState
     ], "Response.consumeTargetCounterResponseWorlds:candidate-worlds");
     const selectionKey = this.currentProbabilityEventKey(state, `counter-selection:${target.id ?? "unknown"}`);
+    const selectionKeyWasSupplied = joined.some(
+      (branch) => Object.hasOwn(branch.conditions ?? {}, selectionKey)
+    );
     const outcomes = [];
     for (let branchIndex = 0; branchIndex < joined.length; branchIndex += 1) {
       if (branchIndex % 32 === 0) this.checkpointSearchWork();
@@ -555,7 +558,13 @@ export const withResponse = (Base) => class Response extends Base {
       }
     }
 
-    const selectionPartition = this.mergeProbabilityWork(outcomes);
+    const materializedSelection = this.mergeProbabilityWork(outcomes);
+    // Resource 支付直接消费选择索引；完整 payload 已保留身份，输入原有的同名条件不能随之删除。
+    const selectionPartition = selectionKeyWasSupplied
+      ? materializedSelection
+      : this.marginalizeProbabilityWork(
+        materializedSelection, [selectionKey], "Response.resolveTargetCounterResponseWorlds:marginalize"
+      );
     // 数量支付只在 counterAttempted 世界发生；身份选择只描述具体应删哪张。
     const attemptedPartition = this.projectProbabilityWork(joined, (branch) => ({
       occurs:Boolean(

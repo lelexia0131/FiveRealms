@@ -440,6 +440,78 @@ export function mergeProbabilityStateBranchesCooperatively(branches = [], checkp
 
 /*
 功能
+仅消去调用方明确声明已死亡的条件键，并按剩余条件与完整状态合并概率质量。
+
+调用方
+Probability facade 的当前事件生命周期消费者与测试。
+
+输入
+概率状态分支数组与已确认不再参与后续相关性配对的条件键数组。
+
+输出
+保留全部状态字段及未指定条件的新分区。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+marginalizeProbabilityStateBranchesCooperatively。
+
+边界与不变量
+不推断条件寿命、不归一化或近似；沿用 canonical merge 的签名、质量阈值与累加顺序。
+调用方必须确保删除的条件已完成所有业务投影与相关性消费。
+*/
+export function marginalizeProbabilityStateBranches(branches = [], deadConditionKeys = []) {
+  return marginalizeProbabilityStateBranchesCooperatively(branches, deadConditionKeys);
+}
+
+/*
+功能
+在 cooperative checkpoint 保护下消去明确指定的死亡条件并复用 canonical 状态合并。
+
+调用方
+marginalizeProbabilityStateBranches、Simulator 的概率能力入口。
+
+输入
+概率状态分支数组、死亡条件键数组与返回 false 表示中断的 checkpoint。
+
+输出
+完整边缘化分区；中断返回 null，绝不返回部分结果。
+
+读取状态
+无。
+
+写入状态
+仅修改本次操作复制的条件对象；输入分支及其状态保持只读。
+
+调用函数
+mergeProbabilityStateBranchesWithCheckpoint、checkpoint。
+
+边界与不变量
+每 32 个输入世界检查一次；只删除列出的键，不改变 payload 或其他条件。
+合并唯一依据仍为剩余 conditions 与完整 state，不引入第二套等价关系。
+*/
+export function marginalizeProbabilityStateBranchesCooperatively(
+  branches = [],
+  deadConditionKeys = [],
+  checkpoint = null
+) {
+  const marginalized = [];
+  for (let index = 0; index < branches.length; index += 1) {
+    if (index % 32 === 0 && checkpoint?.() === false) return null;
+    const branch = branches[index];
+    const conditions = { ...branch.conditions };
+    for (const key of deadConditionKeys) delete conditions[key];
+    marginalized.push({ ...branch, conditions });
+  }
+  return mergeProbabilityStateBranchesWithCheckpoint(marginalized, checkpoint);
+}
+
+/*
+功能
 为一个当前事件分区建立按 condition/state 键和值索引的冲突表。
 
 调用方
