@@ -18,7 +18,7 @@ HistoryStatsManager 查询接口与公开角色展示素材。
 不得访问 history_data.json、计算胜率、累计统计或参与对局流程。
 */
 import { CHARACTER_PRESENTATION } from "../../adapters/ui/CharacterPresentationDefinitions.js";
-import { escapeHtml } from "../templates.js";
+import { escapeHtml, experienceProgressTemplate } from "../templates.js";
 import { AchievementView } from "./achievements/AchievementView.js";
 
 /*
@@ -432,10 +432,11 @@ export class HistoryArchiveView {
   root.innerHTML。
 
   调用函数
-  renderCharacterCard、renderTeamCard、renderRecordCard、escapeHtml。
+  renderCharacterCard、renderTeamCard、renderRecordCard、escapeHtml、experienceProgressTemplate。
 
   边界与不变量
-  不出现 table，不计算胜率；最近征途直接消费 Manager 已按新到旧限制为十条的记录。
+  不出现 table，不计算胜率或经验；经验行属于总览，徽章区间只由共享模板消费 PresentationMetadata 的唯一徽章区间。
+  最近征途直接消费 Manager 已按新到旧限制为十条的记录。
   */
   render(archive) {
     const recentRecords = archive.records;
@@ -488,6 +489,7 @@ export class HistoryArchiveView {
           <article><i>Ⅳ</i><span>最高评分</span><strong>${formatHighestScore(archive.summary.highestScore)}</strong></article>
           <article><i>Ⅴ</i><span>最长战斗</span><strong>${archive.summary.highestRounds}<small>回合</small></strong></article>
         </div>
+        ${experienceProgressTemplate({ afterExp: archive.experience, overview: true })}
       </section>
 
       ${achievementSection}
@@ -503,7 +505,7 @@ export class HistoryArchiveView {
       </section>
 
       <section class="history-section" aria-labelledby="history-legends-title">
-        <div class="history-section-heading"><small>LEGENDARY HONORS</small><h2 id="history-legends-title">传奇记录</h2><span>同行者与每一场终局留下的真实战果</span></div>
+        <div class="history-section-heading"><small>HONORS</small><h2 id="history-legends-title">荣誉记录</h2><span>同行者与每一场终局留下的真实战果</span></div>
         <div class="history-honor-grid">${achievementItems.map(renderAchievementCard).join("")}</div>
       </section>
 

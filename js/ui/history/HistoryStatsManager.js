@@ -18,6 +18,8 @@ main 的对局结束回调与 HistoryArchiveView。
 不得读取 GameState、MatchPerformanceTracker 或 AI；View 不得绕过本模块访问文件接口。
 */
 import { CHARACTER_DEFINITIONS } from "../../domain/definitions/characters/CharacterDefinitions.js";
+import { MATCH_MODE } from "../../application/match/MatchMode.js";
+import { normalizeExperience } from "../../adapters/ui/PresentationMetadata.js";
 import {
   buildAchievementViewModels,
   createEmptyAchievementData,
@@ -128,7 +130,7 @@ HistoryStatsManager 初始化与历史测试。
 export function createEmptyHistoryData() {
   return {
     version: HISTORY_VERSION,
-    profile: { username: "" },
+    profile: { username: "", experience: 0, experienceSettlements: [], experienceMigrationVersion: 1 },
     summary: {
       totalMatches: 0,
       wins: 0,
@@ -281,7 +283,15 @@ function normalizeHistoryData(source) {
   const profileSource = source.profile && typeof source.profile === "object" && !Array.isArray(source.profile)
     ? source.profile
     : {};
-  empty.profile = { username: normalizeUsername(profileSource.username) };
+  empty.profile = {
+    ...structuredClone(profileSource),
+    username: normalizeUsername(profileSource.username),
+    experience: normalizeExperience(profileSource.experience),
+    experienceMigrationVersion: nonNegativeNumber(profileSource.experienceMigrationVersion, true),
+    experienceSettlements: Array.isArray(profileSource.experienceSettlements)
+      ? profileSource.experienceSettlements.filter((entry) => typeof entry?.gameId === "string" && entry.gameId
+        && [5, 10, 15, 20].includes(entry.gained)).map((entry) => ({ gameId: entry.gameId, gained: entry.gained })) : []
+  };
   const summarySource = source.summary && typeof source.summary === "object" ? source.summary : {};
   for (const key of Object.keys(empty.summary)) {
     empty.summary[key] = nonNegativeNumber(summarySource[key], key !== "highestScore" && key !== "totalScore");
@@ -633,7 +643,7 @@ HistoryStatsManager.getArchiveData。
 规范化历史数据。
 
 输出
-含总体胜率、全部角色/阵营与五项传奇纪录的冻结查询对象。
+含已持久化经验、总体胜率、全部角色/阵营与五项荣誉纪录的冻结查询对象。
 
 读取状态
 角色定义、阵营定义与历史累计。
@@ -672,6 +682,7 @@ function buildArchiveData(data) {
   const mostFrequentCompanion = findMostFrequentCompanion(data.achievements.companions);
   return Object.freeze({
     version: data.version,
+    experience: data.profile.experience,
     summary: Object.freeze({
       ...data.summary,
       winRate: calculateWinRate(data.summary.wins, data.summary.totalMatches)
@@ -698,6 +709,36 @@ function buildArchiveData(data) {
         : null
     })))
   });
+}
+
+/*
+功能
+由正式胜负与 MVP 事实计算单人本局经验。
+
+调用方
+HistoryStatsManager。
+
+输入
+正式模式与真人终局结果行。
+
+输出
+本局经验整数。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+无。
+
+边界与不变量
+仅单人胜利加十、失败加五，MVP 另加十；多人及未知模式为零。
+*/
+export function calculateMatchExperience(mode, player) {
+  if (mode !== MATCH_MODE.SINGLEPLAYER) return 0;
+  return (player.won ? 10 : 5) + (player.isMvp ? 10 : 0);
 }
 
 export class HistoryStatsManager {
@@ -732,6 +773,7 @@ export class HistoryStatsManager {
     this.now = now;
     this.data = null;
     this.initializationPromise = null;
+    this.matchWriteQueue = Promise.resolve();
   }
 
   /*
@@ -882,10 +924,10 @@ export class HistoryStatsManager {
   storage。
 
   写入状态
-  this.data 与可能的新 history_data.json。
+  this.data 与可能的新 history_data.json，旧档迁移成功后才更新内存。
 
   调用函数
-  storage.read/create/write、normalizeHistoryData、createEmptyHistoryData、JSON.stringify。
+  storage.read/create/write、acceptStoredData、createEmptyHistoryData、JSON.stringify。
 
   边界与不变量
   只有确认为不存在且条件创建成功时才提交空档；并发出现的已有文件必须重新读取，任何写入失败不得伪装为内存成功。
@@ -907,11 +949,55 @@ export class HistoryStatsManager {
         throw new Error("历史档案条件创建冲突后仍无法读取文件");
       }
       const concurrentParsed = typeof concurrent === "string" ? JSON.parse(concurrent) : concurrent;
-      this.data = normalizeHistoryData(concurrentParsed);
+      await this.acceptStoredData(concurrentParsed);
       return;
     }
     const parsed = typeof stored === "string" ? JSON.parse(stored) : stored;
-    this.data = normalizeHistoryData(parsed);
+    await this.acceptStoredData(parsed);
+  }
+
+  /*
+  功能
+  加载档案时一次性将累计历史转换为经验，成功落盘后才发布内存快照。
+
+  调用方
+  loadData 的已有档案与条件创建冲突分支。
+
+  输入
+  从同一历史存储读取的完整 JSON 对象。
+
+  输出
+  异步完成表示迁移与内存提交成功；保存失败抛错。
+
+  读取状态
+  canonical summary.totalMatches、summary.mvpCount、teams.dawn.wins、teams.dusk.wins。
+
+  写入状态
+  profile.experience、experienceMigrationVersion 与成功后的 this.data。
+
+  调用函数
+  normalizeHistoryData、structuredClone、storage.write。
+
+  边界与不变量
+  版本小于一时直接赋值，不按经验零值判断；累计历史已含新局时不再叠加 settlements。
+  迁移只写两个 profile 字段，保留其他原始档案字段及已有去重凭据。
+  */
+  async acceptStoredData(source) {
+    const next = normalizeHistoryData(source);
+    if (next.profile.experienceMigrationVersion < 1) {
+      const wins = (next.teams.dawn?.wins ?? 0) + (next.teams.dusk?.wins ?? 0);
+      // 每场已有五点基础经验；胜场补五点，MVP 另加十点，均使用累计整数事实。
+      next.profile.experience = next.summary.totalMatches * 5 + wins * 5 + next.summary.mvpCount * 10;
+      next.profile.experienceMigrationVersion = 1;
+      const migrated = structuredClone(source);
+      migrated.profile = {
+        ...(source.profile && typeof source.profile === "object" && !Array.isArray(source.profile) ? source.profile : {}),
+        experience: next.profile.experience,
+        experienceMigrationVersion: 1
+      };
+      await this.storage.write(`${JSON.stringify(migrated, null, 2)}\n`);
+    }
+    this.data = next;
   }
 
   /*
@@ -953,7 +1039,7 @@ export class HistoryStatsManager {
   main 的 MVP 结算完成回调与历史测试。
 
   输入
-  已完成评分/MVP 排名的 MatchResult 与真人 playerId。
+  已完成评分/MVP 排名的 MatchResult、真人 playerId 与正式模式，既有调用默认为单人。
 
   输出
   保存完成后的冻结历史查询对象，并附带本次真正新增的运行时成就记录。
@@ -965,20 +1051,93 @@ export class HistoryStatsManager {
   summary、真人角色、真人阵营、分模式成就连续记录、同行/传奇累计、最近 records、history_data.json 与成功后的内存档案；返回值临时携带本局新增成就。
 
   调用函数
-  initialize、normalizeHistoryData、evaluateMatchAchievements、recordAchievementUnlock、calculateWinRate、optionalNonNegativeNumber、storage.write、buildArchiveData。
+  persistMatchResult 与串行 Promise 队列。
 
   边界与不变量
-  只接受存在于最终结果中的真人；不重算评分、胜负、MVP、队友身份或战斗统计；
+  只接受存在于最终结果中的真人；经验以 gameId 持久去重，队列防止同时重复回调竞态；不重算评分、胜负、MVP、队友身份或战斗统计；
   只有 achievementId + teamScope 首次写入且整个文件保存成功，返回值才暴露本局新增记录。
   */
-  async recordMatchResult(matchResult, humanPlayerId) {
+  recordMatchResult(matchResult, humanPlayerId, mode = MATCH_MODE.SINGLEPLAYER) {
+    // 串行提交使同时到达的同局回调也只能从成功落盘的快照累计经验；失败不阻塞重试。
+    const pending = this.matchWriteQueue.then(() => this.persistMatchResult(matchResult, humanPlayerId, mode));
+    this.matchWriteQueue = pending.catch(() => {});
+    return pending;
+  }
+
+  /*
+  功能
+  查询当前累计经验与指定对局已经落盘的经验增量。
+
+  调用方
+  main、UIManager、NetworkGameView。
+
+  输入
+  可选 gameId；多人展示不提供该值。
+
+  输出
+  冻结的 afterExp 与 gained。
+
+  读取状态
+  成功落盘后的 profile 快照。
+
+  写入状态
+  无。
+
+  调用函数
+  normalizeExperience。
+
+  边界与不变量
+  展示不触发结算；无档案默认为零，多人本局增量始终为零。
+  */
+  getExperienceProgress(gameId = null) {
+    return Object.freeze({
+      afterExp: normalizeExperience(this.data?.profile?.experience),
+      gained: this.data?.profile?.experienceSettlements.find((entry) => entry.gameId === gameId)?.gained ?? 0
+    });
+  }
+
+  /*
+  功能
+  把真人正式结果、原有历史统计与单人经验作为一次档案写入提交。
+
+  调用方
+  recordMatchResult 的串行写入队列。
+
+  输入
+  正式 MatchResult、真人 ID 与对局模式。
+
+  输出
+  保存后的档案与本次新增成就；写盘失败抛错。
+
+  读取状态
+  已提交档案、终局胜负和 MVP 事实。
+
+  写入状态
+  history_data.json，成功后替换内存快照。
+
+  调用函数
+  initialize、normalizeHistoryData、calculateMatchExperience、evaluateMatchAchievements、storage.write。
+
+  边界与不变量
+  多人不写档；经验与 gameId 凭据原子保存且凭据不随最近十局裁剪；不重算胜负或 MVP，不改变既有历史累计语义。
+  */
+  async persistMatchResult(matchResult, humanPlayerId, mode) {
     if (!this.data) await this.initialize();
+    if (mode !== MATCH_MODE.SINGLEPLAYER) return Object.freeze({
+      ...buildArchiveData(this.data), newlyUnlockedAchievements: Object.freeze([])
+    });
     const player = matchResult?.players?.find((entry) => entry.playerId === humanPlayerId);
     if (!player) throw new TypeError("MatchResult 中缺少真人玩家终局结果");
     if (!player.characterId || !player.characterName || !["dawn", "dusk"].includes(player.teamId)) {
       throw new TypeError("MatchResult 真人行缺少角色或阵营终局字段");
     }
     const next = normalizeHistoryData(this.data);
+    const gameId = matchResult.gameId;
+    if (typeof gameId === "string" && gameId && !next.profile.experienceSettlements.some((entry) => entry.gameId === gameId)) {
+      const gained = calculateMatchExperience(mode, player);
+      next.profile.experience += gained;
+      next.profile.experienceSettlements.push({ gameId, gained });
+    }
     const score = nonNegativeNumber(player.finalScore);
     const rounds = nonNegativeNumber(player.effectiveRounds, true);
     const teammateCharacterIds = Array.isArray(player.teammateCharacterIds)

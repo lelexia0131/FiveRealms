@@ -317,7 +317,7 @@ NetworkSession.open/addParticipant。
 不启动 Socket、浏览器、Electron 或真实对局循环。
 */
 
-async function connectedRoom(humanCount) {
+async function connectedRoom(humanCount, experiences = []) {
   const receivers = new Map(), events = [];
   let roomId, host;
   const capability = (connectionId) => ({
@@ -333,13 +333,13 @@ async function connectedRoom(humanCount) {
     },
     close() {}
   });
-  host = new NetworkSession({ capability: capability("host"), random: () => 0.25 });
+  host = new NetworkSession({ capability: capability("host"), random: () => 0.25, getExperience: () => experiences[0] ?? 0 });
   await host.open(R.HOST);
   host.setMaxHumanCount(5);
   const guests = [];
   for (let index = 1; index < humanCount; index += 1) {
     const connectionId = `connection-${index}`;
-    const guest = new NetworkSession({ capability: capability(connectionId), random: () => { throw Error("Guest RNG"); } });
+    const guest = new NetworkSession({ capability: capability(connectionId), random: () => { throw Error("Guest RNG"); }, getExperience: () => experiences[index] ?? 0 });
     await guest.open(R.GUEST, { host: "test-room", port: NETWORK_DEFAULT_PORT });
     assert.equal(host.addParticipant({ connectionId, remoteAddress: `::ffff:10.0.0.${index + 1}` }).ok, true);
     guests.push(guest);
@@ -384,6 +384,97 @@ function chooseRoom(room) {
 }
 
 export function registerNetworkTests(test, { makeUi, instance }) {
+  test("Network·征召取消：Host 与多 Guest 只释放自身角色席位且广播后允许他人选用", async () => {
+    const room = await connectedRoom(3);
+    try {
+      chooseRoom(room);
+      const [guest, other] = room.guests;
+      const guestId = guest.snapshot().participantId;
+      const original = room.host.snapshot();
+      const released = guest.snapshot().localSelection;
+      assert.equal(guest.snapshot().localReady, true);
+      guest.cancelSelection();
+      for (const session of [room.host, ...room.guests]) {
+        const snapshot = session.snapshot();
+        assert.equal(snapshot.participants[guestId].selection, null);
+        assert.equal(snapshot.participants[guestId].ready, false);
+        assert.deepEqual(snapshot.participants[other.snapshot().participantId], original.participants[other.snapshot().participantId]);
+        assert.deepEqual(snapshot.participants[room.host.snapshot().participantId], original.participants[room.host.snapshot().participantId]);
+      }
+      assert.equal(guest.snapshot().state, S.SELECTING);
+      other.cancelSelection();
+      other.select(released);
+      assert.deepEqual(other.snapshot().localSelection, released);
+      const hostSelection = room.host.snapshot().localSelection;
+      room.host.cancelSelection();
+      assert.equal(room.host.snapshot().localReady, false);
+      assert.equal(room.host.snapshot().localSelection, null);
+      guest.select(hostSelection);
+      assert.deepEqual(guest.snapshot().localSelection, hostSelection);
+      assert.ok(room.events.some((event) => event.type === E.SELECTION_CANCELLED));
+    } finally { room.close(); }
+  });
+
+  test("Network·征召取消：认证连接拒绝他人身份且 locked 与开始后不接受撤销", async () => {
+    const room = await connectedRoom(3);
+    try {
+      chooseRoom(room);
+      const [guest, other] = room.guests;
+      const before = room.host.snapshot().participants;
+      const forged = { type: E.SELECTION_CANCELLED, sender: R.GUEST, roomId: room.roomId,
+        connectionId: "connection-1", participantId: other.snapshot().participantId, sequence: 1000, payload: {} };
+      assert.equal(room.host.receive(forged), false);
+      assert.deepEqual(room.host.snapshot().participants, before);
+      // payload 中伪造目标也只能撤销认证发送者，不能触碰另一个 Guest。
+      assert.equal(room.host.receive({ ...forged, participantId: guest.snapshot().participantId,
+        payload: { participantId: other.snapshot().participantId } }), true);
+      assert.deepEqual(room.host.snapshot().participants[other.snapshot().participantId], before[other.snapshot().participantId]);
+      assert.equal(room.host.snapshot().participants[guest.snapshot().participantId].selection, null);
+    } finally { room.close(); }
+    const locked = await connectedRoom(3);
+    try {
+      chooseRoom(locked);
+      assert.equal(locked.host.start().ok, true);
+      const participants = locked.host.snapshot().participants;
+      assert.throws(() => locked.host.cancelSelection(), /锁定/);
+      assert.throws(() => locked.guests[0].cancelSelection(), /锁定/);
+      const intent = { type: E.SELECTION_CANCELLED, sender: R.GUEST, roomId: locked.roomId,
+        connectionId: "connection-1", participantId: locked.guests[0].snapshot().participantId, sequence: 1000, payload: {} };
+      assert.equal(locked.host.receive(intent), false);
+      assert.deepEqual(locked.host.snapshot().participants, participants);
+      locked.host.gameReady();
+      // 合法第二条连接与第一条高序号拒绝无关；用已认证高序号继续该连接准备。
+      locked.host.receive({ ...intent, type: E.GAME_READY, sequence: 1001 });
+      locked.guests[1].gameReady();
+      assert.equal(locked.host.snapshot().state, S.IN_GAME);
+      const started = locked.host.snapshot().participants;
+      assert.throws(() => locked.host.cancelSelection(), /锁定/);
+      assert.equal(locked.host.receive({ ...intent, sequence: 1002 }), false);
+      assert.deepEqual(locked.host.snapshot().participants, started);
+    } finally { locked.close(); }
+  });
+
+  test("Network·经验徽章：Host 与所有 Guest 同步展示经验且不能改写他人档案", async () => {
+    const room = await connectedRoom(3, [100, 500, 10000]);
+    try {
+      chooseRoom(room);
+      const sessions = [room.host, ...room.guests];
+      for (const viewer of sessions) {
+        assert.deepEqual(sessions.map((owner) => viewer.snapshot().participants[owner.snapshot().participantId].experience), [100, 500, 10000]);
+      }
+      const before = room.host.snapshot().participants;
+      assert.equal(room.host.receive({ type: E.PARTICIPANT_HELLO, roomId: room.roomId, sender: R.GUEST,
+        connectionId: "connection-1", participantId: room.guests[1].snapshot().participantId,
+        sequence: 1000, payload: { experience: 2000 } }), false);
+      assert.deepEqual(room.host.snapshot().participants, before);
+      assert.equal(room.host.start().ok, true);
+      const setup = room.host.snapshot().matchSetup;
+      assert.ok(setup.players.every((player) => !Object.hasOwn(player.controller, "experience")), "经验不进入控制权元数据");
+      room.host.markParticipantDisconnected(room.guests[1].snapshot().participantId);
+      assert.equal(room.host.snapshot().participants[room.guests[0].snapshot().participantId].experience, 500);
+      assert.equal(room.guests[0].snapshot().participants[room.host.snapshot().participantId].experience, 100);
+    } finally { room.close(); }
+  });
 
   test("Network：正式回合提示按viewer归属且Guest保留主提示与hand hint", async () => {
     const pair = await connectedPair();
@@ -2947,6 +3038,68 @@ test。
 只测试页面行为与标记，不更改生产 capability。
 */
 export function registerNetworkUiTests(test) {
+  test("UI·Network：征召确认可取消并由正式广播清空 draft，退出仍关闭原房间", async () => {
+    let markup = "", closes = 0, disposed = 0;
+    const ui = { showNetworkPage: (html) => { markup = html; }, playSound() {}, setPrompt() {} };
+    const flow = createNetworkFlow({ ui, getExperience: () => 2000, onPrepareMatch() {}, onStartMatch() {}, onDisposeMatch: () => { disposed += 1; },
+      capability: { createRoom: async (room) => room, subscribe: () => () => {}, close() { closes += 1; } } });
+    const click = (dataset) => flow.handleClick({ target: { closest: () => ({ dataset }) } });
+    try {
+      click({ networkAction: "create" });
+      await Promise.resolve();
+      const snapshot = flow.session.snapshot();
+      click({ characterId: snapshot.candidates[0] });
+      click({ networkSeat: snapshot.seats[0].seatId });
+      assert.deepEqual(ui.networkExperiences, {}, "尚未形成正式对局席位时不推测 playerId");
+      click({ networkAction: "confirm" });
+      assert.equal(flow.session.snapshot().localReady, true);
+      assert.match(markup, /data-network-action="cancel-selection"\s*>取消选择/);
+      click({ networkAction: "cancel-selection" });
+      assert.equal(flow.session.snapshot().localSelection, null);
+      assert.equal(flow.session.snapshot().localReady, false);
+      assert.doesNotMatch(markup, /aria-pressed="true" data-character-id|你的席位|class="candidate-card network-selected"/);
+      assert.match(markup, /data-network-action="confirm" disabled>确认角色与席位/);
+      assert.match(markup, /data-network-action="cancel">退出房间/);
+      assert.doesNotMatch(markup, /取消并返回/);
+      click({ characterId: snapshot.candidates[0] });
+      click({ networkSeat: snapshot.seats[0].seatId });
+      click({ networkAction: "confirm" });
+      click({ networkAction: "start" });
+      const player = flow.session.snapshot().matchSetup.players.find((entry) => entry.controller.participantId === snapshot.participantId);
+      assert.deepEqual(ui.networkExperiences, { [player.playerId]: 2000 });
+      const previousCloses = closes;
+      click({ networkAction: "cancel" });
+      assert.equal(closes, previousCloses + 1);
+      assert.equal(disposed, 1);
+      assert.equal(flow.session.snapshot().state, S.IDLE);
+      assert.equal(ui.networkExperiences, null);
+      assert.match(markup, /创建房间/);
+    } finally { flow.session.close(); }
+  });
+
+  test("UI·Network：所有视角的正式战场展示各自与其他真人的正确徽章", async () => {
+    const room = await connectedRoom(3, [100, 500, 10000]);
+    try {
+      chooseRoom(room);
+      room.host.start();
+      for (const session of [room.host, ...room.guests]) {
+        const snapshot = session.snapshot();
+        const players = snapshot.matchSetup.players.map((seat) => ({ id: seat.playerId, name: "旅者", battleTeam: seat.teamId,
+          hand: [], alive: true, hp: 3, statuses: {}, controller: seat.controller }));
+        const self = players.find((player) => player.controller.participantId === snapshot.participantId);
+        const ui = { networkExperiences: Object.fromEntries(Object.values(snapshot.participants)
+          .map((participant) => [`network-${participant.selection.seatId}`, participant.experience])),
+          elements: { cpu_grid: { innerHTML: "" }, human_panel: { innerHTML: "" }, status_metrics: { innerHTML: "" } } };
+        UIManager.prototype.renderBattlefield.call(ui, { gameId: "network", metrics: [],
+          opponents: players.filter((player) => player !== self).map((player) => ({ player, options: {} })),
+          self: { player: self, options: { isHuman: true } } });
+        const markup = ui.elements.cpu_grid.innerHTML + ui.elements.human_panel.innerHTML;
+        for (const tier of ["silver", "gold", "legend"]) assert.match(markup, new RegExp(`data-badge-tier="${tier}"`));
+        assert.doesNotMatch(markup, /青铜|白银|黄金|钻石|史诗|王者|传奇/);
+        assert.equal((markup.match(/class="experience-badge /g) ?? []).length, 3);
+      }
+    } finally { room.close(); }
+  });
 
   test("UI·Network：多人退出房间只改文案且下一局使用独立callback", async () => {
     const previousWindow = globalThis.window, previousDocument = globalThis.document;

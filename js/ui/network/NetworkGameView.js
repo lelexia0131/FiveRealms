@@ -370,7 +370,7 @@ export class NetworkGameView {
       if (event.view === "hideDying") ui.hideDying();
       if (event.view === "hideDuel") ui.hideDuel();
       if (event.view === "resetCurrentCard") ui.resetCurrentCard();
-    } else if (event.kind === "result") ui.matchMvpResultView.render(event.result, this.projection.viewerId, "");
+    } else if (event.kind === "result") ui.matchMvpResultView.render(event.result, this.projection.viewerId, "", ui.historyStatsManager?.getExperienceProgress());
     ui.animationController.flush(globalThis.document);
   }
 

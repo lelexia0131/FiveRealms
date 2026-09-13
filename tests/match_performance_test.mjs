@@ -1343,7 +1343,8 @@ export function registerMatchPerformanceTests(test) {
     assert.deepEqual(calls, [[
       viewModel,
       "local",
-      '<div class="match-achievement-empty">本局没有新的征途铭刻</div>'
+      '<div class="match-achievement-empty">本局没有新的征途铭刻</div>',
+      undefined
     ]]);
   });
 

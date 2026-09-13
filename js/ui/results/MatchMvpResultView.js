@@ -1,4 +1,4 @@
-import { escapeHtml } from "../templates.js";
+import { escapeHtml, experienceProgressTemplate } from "../templates.js";
 import {
   MATCH_PERFORMANCE_DIMENSIONS,
   MATCH_PERFORMANCE_LABELS
@@ -108,7 +108,7 @@ export class MatchMvpResultView {
   UIManager.showMatchPerformance。
 
   输入
-  immutable MatchResultViewModel、仅用于展示的真人玩家 ID，以及 AchievementView 生成的本局成就标记。
+  immutable MatchResultViewModel、真人玩家 ID、本局成就标记与已落盘经验展示值。
 
   输出
   无返回值。
@@ -120,12 +120,12 @@ export class MatchMvpResultView {
   root markup、viewModel 与 selectedPlayerId。
 
   调用函数
-  escapeHtml、formatNumber、renderSelection。
+  escapeHtml、formatNumber、renderSelection、experienceProgressTemplate。
 
   边界与不变量
   排名只使用已派生结果，不在 DOM 层重新评分或排序；本局成就标记不由此 View 推断；真人身份与队伍图案只影响展示。
   */
-  render(viewModel, humanPlayerId = null, matchAchievementMarkup = '<div class="match-achievement-empty">本局没有新的征途铭刻</div>') {
+  render(viewModel, humanPlayerId = null, matchAchievementMarkup = '<div class="match-achievement-empty">本局没有新的征途铭刻</div>', experience = undefined) {
     if (!this.root || !viewModel?.players?.length) return;
     this.viewModel = viewModel;
     this.selectedPlayerId = viewModel.defaultSelectedPlayerId;
@@ -152,7 +152,7 @@ export class MatchMvpResultView {
         </section>` : ""}
       </section>
       <section class="match-mvp-detail" data-match-performance-detail aria-live="polite"></section>
-    </div>`;
+    </div>${experienceProgressTemplate(experience)}`;
     this.renderSelection();
   }
 

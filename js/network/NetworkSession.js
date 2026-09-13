@@ -1,4 +1,5 @@
 import { NetworkGameChannel } from "./NetworkGameChannel.js";
+import { normalizeExperience } from "../adapters/ui/PresentationMetadata.js";
 import { MATCH_MODE } from "../application/match/MatchMode.js";
 import { NETWORK_EVENT as E, NETWORK_ROLE as R, NETWORK_CAPABILITY_SENDER, NETWORK_CHAT_MAX_LENGTH, NETWORK_CHAT_INTERVAL_MS, normalizeConnectionInfo, normalizeNetworkEndpoint } from "./NetworkProtocol.js";
 import { NETWORK_STATE as S, transitionNetworkState } from "./NetworkLobbyState.js";
@@ -10,6 +11,7 @@ export class NetworkSession {
   #capability;
   #random;
   #displayName;
+  #getExperience;
   #generation = 0;
   #sequence = 0;
   #peerSequence = new Map();
@@ -25,7 +27,7 @@ export class NetworkSession {
 NetworkFlow 与测试。
 
 输入
-Transport capability、Host RNG 与本端 displayName。
+Transport capability、Host RNG、本端 displayName 与已落盘经验查询。
 
 输出
 NetworkSession。
@@ -34,18 +36,19 @@ NetworkSession。
 无。
 
 写入状态
-私有会话、展示名和通道。
+私有会话、展示名、经验查询 capability 和通道。
 
 调用函数
 normalizeParticipantDisplayName、reset、NetworkGameChannel。
 
 边界与不变量
-Guest 不创建 Match authority；displayName 只作为 participant 展示 metadata。
+Guest 不创建 Match authority；displayName 与 experience 只作为 participant 展示 metadata。
 */
-  constructor({ capability = null, random = Math.random, displayName = null } = {}) {
+  constructor({ capability = null, random = Math.random, displayName = null, getExperience = () => 0 } = {}) {
     this.#capability = capability;
     this.#random = random;
     this.#displayName = normalizeParticipantDisplayName(displayName);
+    this.#getExperience = getExperience;
     this.reset();
     this.gameChannel = new NetworkGameChannel({
       getSession: () => this.snapshot(), send: (type, payload, participantId) => this.send(type, payload, participantId)
@@ -330,6 +333,7 @@ normalizeNetworkEndpoint、normalizeConnectionInfo、createNetworkSetup、move�
         // Host 没有 Transport remoteAddress 时，用创建房间已有的 LAN host 作为连接来源 metadata；IP 不参与身份认证或权限。
         d.participants[d.participantId] = { participantId: d.participantId, role: R.HOST, guestOrdinal: null,
           connectionId: null, remoteAddress: result?.remoteAddress ?? d.connectionInfo?.host ?? null, displayName: this.#displayName,
+          experience: normalizeExperience(this.#getExperience()),
           connected: true, kicked: false, selection: null, ready: false, gameReady: false };
         d.setup = createNetworkSetup(this.#random);
         this.move(S.SELECTING);
@@ -387,6 +391,7 @@ assertHost、publish、normalizeParticipantDisplayName。
     const participantId = crypto.randomUUID();
     d.participants[participantId] = { participantId, role: R.GUEST, guestOrdinal, connectionId,
       remoteAddress: typeof remoteAddress === "string" ? remoteAddress : null, displayName: normalizedDisplayName,
+      experience: 0,
       connected: true, kicked: false, selection: null, ready: false, gameReady: false };
     this.#peerSequence.delete(connectionId);
     d.error = null;
@@ -562,7 +567,7 @@ connectionId 映射、成员身份、revision。
 addParticipant、selectFor、confirmFor、acceptSnapshot、gameChannel.receive、acceptChat、emitChat、publish。
 
 边界与不变量
-connectionId 必须由 capability 注入而非 payload；无元数据的既有 Transport 使用默认连接标识；PARTICIPANT_HELLO 只按已认证 connectionId 补充 displayName。
+connectionId 必须由 capability 注入而非 payload；无元数据的既有 Transport 使用默认连接标识；PARTICIPANT_HELLO 只按已认证 connectionId 补充 displayName 与 experience，撤销选择同样只作用于该身份。
 */
   receive(event, generation = this.#generation) {
     const d = this.#data;
@@ -599,8 +604,10 @@ connectionId 必须由 capability 注入而非 payload；无元数据的既有 T
       }
       if (event.type === E.PARTICIPANT_HELLO && d.role === R.HOST) {
         const displayName = normalizeParticipantDisplayName(event.payload?.displayName);
-        if (displayName && participant.displayName !== displayName) {
-          participant.displayName = displayName;
+        const experience = normalizeExperience(event.payload?.experience);
+        if ((displayName && participant.displayName !== displayName) || participant.experience !== experience) {
+          if (displayName) participant.displayName = displayName;
+          participant.experience = experience;
           this.publish(E.ROLE_POOL_ASSIGNED);
         }
         return true;
@@ -623,6 +630,7 @@ connectionId 必须由 capability 注入而非 payload；无元数据的既有 T
       if (event.type === E.MATCH_RESTART) return this.nextMatch(event.payload?.gameId ?? null).ok;
       if (event.type === E.SELECTION_CHANGED) this.selectFor(participant.participantId, event.payload);
       else if (event.type === E.SELECTION_CONFIRMED) this.confirmFor(participant.participantId, event.payload);
+      else if (event.type === E.SELECTION_CANCELLED) this.cancelSelectionFor(participant.participantId);
       else if (event.type === E.GAME_READY && d.locked && !participant.gameReady) {
         participant.gameReady = true;
         this.publish(E.GAME_READY);
@@ -658,7 +666,7 @@ Guest 房间只读副本。
 isNetworkSetupValid、finalizeNetworkSetup、send、move、notify。
 
 边界与不变量
-不合并 Guest 自有状态；锁房后固定角色与席位，只允许 Guest controller 转 AI；仅 Host 的回组快照可解锁并清空本局选择；displayName 差异只触发认证连接上的补报。
+不合并 Guest 自有状态；锁房后固定角色与席位，只允许 Guest controller 转 AI；仅 Host 的回组快照可解锁并清空本局选择；displayName 与 experience 差异只触发认证连接上的展示补报。
 */
   acceptSnapshot(event) {
     const d = this.#data;
@@ -693,9 +701,11 @@ isNetworkSetupValid、finalizeNetworkSetup、send、move、notify。
     if (restarting) this.gameChannel.reset();
     Object.assign(d, { participantId: localId, setup: p.setup, participants: p.participants,
       maxHumanCount: p.maxHumanCount, locked: p.locked, finalSetup: p.finalSetup, revision: event.revision, error: null });
-    // 无元数据旧 Transport 可在首次成员快照后按已认证 connectionId 补报 displayName；到齐后不会再重发。
-    if (this.#displayName && d.participants[localId]?.displayName !== this.#displayName) {
-      this.send(E.PARTICIPANT_HELLO, { displayName: this.#displayName });
+    // 展示资料沿认证连接补报，成功同步后不再重发；经验不进入 finalSetup 或控制权。
+    const experience = normalizeExperience(this.#getExperience());
+    if ((this.#displayName && d.participants[localId]?.displayName !== this.#displayName)
+      || normalizeExperience(d.participants[localId]?.experience) !== experience) {
+      this.send(E.PARTICIPANT_HELLO, { displayName: this.#displayName, experience });
     }
     if (d.state === S.WAITING_PEER) this.move(S.SELECTING);
     this.move(event.type === E.MATCH_START ? S.IN_GAME : d.locked ? S.LOADING_GAME
@@ -953,6 +963,75 @@ confirmFor、send。
     const d = this.#data;
     if (d.role === R.HOST) this.confirmFor(d.participantId, d.participants[d.participantId]?.selection);
     else this.send(E.SELECTION_CONFIRMED, d.participants[d.participantId]?.selection);
+  }
+
+  /*
+功能
+提交本端撤销征召选择的正式意图。
+
+调用方
+NetworkFlow 的取消选择按钮。
+
+输入
+无。
+
+输出
+无；房间不再征召时抛错。
+
+读取状态
+本端身份、房间阶段与 locked。
+
+写入状态
+Host 提交正式状态或 Guest 发送意图。
+
+调用函数
+cancelSelectionFor、send。
+
+边界与不变量
+Guest 不乐观清空；不接受外部目标身份。
+*/
+  cancelSelection() {
+    const d = this.#data;
+    if (d.locked || ![S.SELECTING, S.WAITING_REMOTE].includes(d.state)) throw new Error("房间已锁定或不在征召阶段");
+    if (d.role === R.HOST) this.cancelSelectionFor(d.participantId);
+    else this.send(E.SELECTION_CANCELLED, {});
+  }
+
+  /*
+功能
+由 Host 同时释放认证成员的角色、阵营与席位并撤销 ready。
+
+调用方
+本地 cancelSelection 与 receive 的认证连接入口。
+
+输入
+由连接归属校验确定的 participantId。
+
+输出
+无；非征召阶段或失效成员抛错。
+
+读取状态
+正式成员、locked、finalSetup 与征召阶段。
+
+写入状态
+当前成员的 selection 与 ready，正式房间 revision。
+
+调用函数
+assertHost、publish。
+
+边界与不变量
+身份不读取 payload；开始后不允许释放；其他成员保持原值。
+*/
+  cancelSelectionFor(participantId) {
+    this.assertHost();
+    const d = this.#data;
+    const participant = d.participants[participantId];
+    if (d.locked || d.finalSetup || ![S.SELECTING, S.WAITING_REMOTE].includes(d.state)
+      || !participant?.connected || participant.kicked) throw new Error("房间已锁定或成员不在征召阶段");
+    participant.selection = null;
+    participant.ready = false;
+    d.error = null;
+    this.publish(E.SELECTION_CHANGED);
   }
 
   /*

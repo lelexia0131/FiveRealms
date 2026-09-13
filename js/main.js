@@ -40,7 +40,7 @@ HistoryStatsManager.recordMatchResult、UIManager.presentMatchAchievementUnlocks
 */
 async function recordHistoryMatchResult(matchResult, humanPlayerId) {
   try {
-    const archive = await historyStatsManager.recordMatchResult(matchResult, humanPlayerId);
+    const archive = await historyStatsManager.recordMatchResult(matchResult, humanPlayerId, MATCH_MODE.SINGLEPLAYER);
     ui.presentMatchAchievementUnlocks(
       archive.newlyUnlockedAchievements,
       archive.achievements.cards
@@ -271,6 +271,7 @@ function playAgain() {
 
 networkFlow = createNetworkFlow({
   ui,
+  getExperience: () => historyStatsManager.getExperienceProgress().afterExp,
   capability: globalThis.fiveRealmsNetworkCapability ?? null,
   onSingleplayer: startRecruitment,
   onHome: returnToStart,

@@ -16,7 +16,7 @@ import { renderNetworkSquadSelectionView } from "../ui/network/NetworkSquadSelec
 main.js。
 
 输入
-UI、可选 Transport capability、本端 displayName、单人/首页/准备/开始/清理 callbacks。
+UI、可选 Transport capability、本端 displayName、已落盘经验查询与单人/首页/准备/开始/清理 callbacks。
 
 输出
 冻结 navigation handle。
@@ -31,12 +31,13 @@ NetworkSession snapshot 与页面表单 draft。
 NetworkSession、NetworkChatView、三种页面 renderer、注入 Match callbacks。
 
 边界与不变量
-Game UI 准备完成后才发 GAME_READY；本模块不拥有 GameLoop、规则或持久化；displayName 只交给 participant metadata。
+Game UI 准备完成后才发 GAME_READY；本模块不拥有 GameLoop、规则或持久化；姓名与经验只交给 participant 展示 metadata。
 */
-export function createNetworkFlow({ ui, capability = null, displayName = null, onSingleplayer, onHome, onPrepareMatch, onStartMatch, onDisposeMatch }) {
-  const session = new NetworkSession({ capability, displayName });
+export function createNetworkFlow({ ui, capability = null, displayName = null, getExperience = () => 0, onSingleplayer, onHome, onPrepareMatch, onStartMatch, onDisposeMatch }) {
+  const session = new NetworkSession({ capability, displayName, getExperience });
   let page = "mode";
   let draft = {};
+  let wasReady = false;
   let prepared = false;
   let started = false;
   let guestView = null;
@@ -55,10 +56,10 @@ NetworkSession subscription。
 无。
 
 读取状态
-page、prepared、started。
+page、prepared、started、上次 ready 与正式 participant 展示经验。
 
 写入状态
-页面与 Match lifecycle 标记。
+页面、徽章展示映射与 Match lifecycle 标记。
 
 调用函数
 onPrepareMatch、gameReady、onStartMatch、showNetworkPage。
@@ -68,6 +69,12 @@ onPrepareMatch、gameReady、onStartMatch、showNetworkPage。
 */
   function update(snapshot) {
     if (page !== "squad") return;
+    // 只有正式广播撤销确认后才清理 draft，保留尚未选完角色/席位的本地输入。
+    if (wasReady && !snapshot.localReady && !snapshot.localSelection) draft = {};
+    wasReady = snapshot.localReady;
+    ui.networkExperiences = Object.fromEntries((snapshot.matchSetup?.players ?? [])
+      .filter((player) => snapshot.participants[player.controller.participantId])
+      .map((player) => [player.playerId, snapshot.participants[player.controller.participantId].experience ?? 0]));
     if ([S.DISCONNECTED, S.SELECTING].includes(snapshot.state) && prepared) {
       if (snapshot.role === R.HOST) onDisposeMatch();
       guestView?.dispose();
@@ -145,6 +152,8 @@ session.close、onDisposeMatch、showNetworkPage。
     prepared = false;
     started = false;
     draft = {};
+    wasReady = false;
+    ui.networkExperiences = null;
     ui.showNetworkPage(destination === "mode" ? renderPlayModeSelectionView() : renderNetworkEntryView());
   }
 
@@ -168,7 +177,7 @@ session snapshot、本地 draft。
 导航、表单 draft；选择仅经 session authority。
 
 调用函数
-show、session.open/select/confirm、normalizeNetworkEndpoint、callbacks。
+show、session.open/select/confirm/cancelSelection、normalizeNetworkEndpoint、callbacks。
 
 边界与不变量
 disabled 元素不提交；候选与席位全部齐备后才向 Host 提交；复制地址只读取被点击按钮 dataset。
@@ -198,6 +207,7 @@ disabled 元素不提交；候选与席位全部齐备后才向 Host 提交；�
     } else if (action === MATCH_MODE.SINGLEPLAYER) {
       page = "singleplayer";
       session.close();
+      ui.networkExperiences = null;
       onSingleplayer();
     } else if (action === MATCH_MODE.NETWORK || action === "entry" || action === "cancel") show("entry");
     else if (action === "mode") show();
@@ -213,6 +223,8 @@ disabled 元素不提交；候选与席位全部齐备后才向 Host 提交；�
       void session.open(R.HOST);
     } else if (action === "confirm") {
       try { session.confirm(); } catch (error) { ui.setPrompt(error.message); }
+    } else if (action === "cancel-selection") {
+      try { session.cancelSelection(); } catch (error) { ui.setPrompt(error.message); }
     } else if (["start", "kick", "capacity"].includes(action)) {
       try {
         const result = action === "start" ? session.start()

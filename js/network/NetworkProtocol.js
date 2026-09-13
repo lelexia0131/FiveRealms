@@ -7,6 +7,7 @@ export const NETWORK_EVENT = Object.freeze({
   ROLE_POOL_ASSIGNED: "ROLE_POOL_ASSIGNED",
   SELECTION_CHANGED: "SELECTION_CHANGED",
   SELECTION_CONFIRMED: "SELECTION_CONFIRMED",
+  SELECTION_CANCELLED: "SELECTION_CANCELLED",
   PEER_READY: "PEER_READY",
   GAME_READY: "GAME_READY",
   MATCH_START: "MATCH_START",
@@ -36,7 +37,8 @@ export const NETWORK_EVENT = Object.freeze({
 // roomId + connectionId + sequence 标识消息；participantId 必须匹配 Host 保存的连接映射。
 // Host 的 recipientParticipantId 指定唯一接收成员；Transport 不可把私有消息广播给其他 Guest。
 // PEER_CONNECTED 的 remoteAddress/displayName 由 Transport 注入；无元数据的既有连接使用 default 标识。
-// PARTICIPANT_HELLO 只允许 Guest 通过已认证 connectionId 补充 displayName，不得携带或改写 participantId。
+// PARTICIPANT_HELLO 只允许 Guest 通过已认证 connectionId 补充 displayName/experience，不得改写其他 participant。
+// SELECTION_CANCELLED 是本端征召撤销意图；Host 通过原 ownership 校验清空 selection/ready，再广播 SELECTION_CHANGED。
 // revision 是 Host 房间快照版本；Guest 身份由首个定向房间快照的接收人确定。
 // CHAT_SEND 的 payload 仅含 scope/text，身份取自认证连接；CHAT_MESSAGE/CHAT_REJECTED 仅由 Host 定向发送。
 // 聊天是独立展示事件，不进入 GAME_SNAPSHOT、MatchState 或 Action transaction。

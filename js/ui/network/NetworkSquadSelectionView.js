@@ -40,7 +40,8 @@ UI 不计算房间人数或决定权限；玩家身份展示 displayName，连�
 */
 
 export function renderNetworkSquadSelectionView(snapshot, draft = {}) {
-  const editable = snapshot.state === S.SELECTING && !snapshot.localReady;
+  const recruiting = !snapshot.locked && [S.SELECTING, S.WAITING_REMOTE].includes(snapshot.state);
+  const editable = recruiting && !snapshot.localReady;
   const isHost = snapshot.role === "HOST";
   const participants = Object.values(snapshot.participants ?? {});
   const others = participants.filter((participant) => participant.participantId !== snapshot.participantId);
@@ -97,9 +98,11 @@ export function renderNetworkSquadSelectionView(snapshot, draft = {}) {
     <div class="network-room-info">${connectionCard}<div class="network-members">${members}${capacity}</div></div>
     ${cards ? `<div class="candidate-grid">${cards}</div><div class="network-seat-row" aria-label="阵营与席位">${seats}</div>`
       : `<div class="network-waiting"><h3>${STATUS[snapshot.state] ?? ""}</h3></div>`}
-    <footer class="network-squad-footer"><button class="ghost-button" type="button" data-network-action="cancel">取消并返回</button>
+    <footer class="network-squad-footer"><button class="ghost-button" type="button" data-network-action="cancel">退出房间</button>
       <p class="network-notice" role="status">${escapeHtml(snapshot.error ?? "晨星 2 席 · 暮影 3 席 · 剩余席位由电脑角色补齐")}</p>
-      <button class="primary-button" type="button" data-network-action="confirm" ${!editable || !snapshot.localSelection || selected.characterId !== snapshot.localSelection.characterId || selected.seatId !== snapshot.localSelection.seatId ? "disabled" : ""}>${snapshot.localReady ? "已确认" : "确认角色与席位"}</button>
+      ${snapshot.localReady
+        ? `<button class="primary-button" type="button" data-network-action="cancel-selection" ${recruiting ? "" : "disabled"}>取消选择</button>`
+        : `<button class="primary-button" type="button" data-network-action="confirm" ${!editable || !snapshot.localSelection || selected.characterId !== snapshot.localSelection.characterId || selected.seatId !== snapshot.localSelection.seatId ? "disabled" : ""}>确认角色与席位</button>`}
       ${isHost ? `<button class="primary-button" type="button" data-network-action="start" ${snapshot.canStart ? "" : "disabled"}>开始游戏</button>` : ""}
     </footer></div>`;
 }

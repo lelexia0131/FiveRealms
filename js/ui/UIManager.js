@@ -205,6 +205,8 @@ export class UIManager {
   UI 只提交 ID/token/intent，不直接修改权威游戏状态。
   */
   constructor({ historyStatsManager = null } = {}) {
+    this.historyStatsManager = historyStatsManager;
+    this.networkExperiences = null;
     this.elements = Object.fromEntries([
       "username-screen", "username-form", "username-input", "username-error", "username-submit",
       "network-screen", "start-screen", "history-archive-screen", "game-info-screen", "squad-selection-screen", "selection-screen", "game-screen", "start-button", "history-button", "game-info-button", "rules-button",
@@ -1224,7 +1226,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   无返回值。
 
   读取状态
-  仅传入展示模型与卡牌滚动位置。
+  传入展示模型、卡牌滚动位置，以及本地已落盘经验或正式房间徽章映射。
 
   写入状态
   正式人物、装备、距离、指标 DOM。
@@ -1233,7 +1235,7 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
   playerPanelTemplate、restoreHorizontalCardScroll。
 
   边界与不变量
-  不接收 MatchState，不调用合法性、规则或随机源；双方复用同一模板与布局。
+  不接收 MatchState，不调用合法性、规则或随机源；双方复用同一模板与布局，徽章不写入玩家状态。
   */
   renderBattlefield({ gameId, metrics, opponents, self }) {
     const scroll = new Map();
@@ -1244,8 +1246,13 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
       }
     }
     this.elements.status_metrics.innerHTML = metrics.map(([label, value, key]) => `<span class="metric metric-${key}" data-pile="${key}"><small>${label}</small><strong>${escapeHtml(value)}</strong></span>`).join("");
-    this.elements.cpu_grid.innerHTML = opponents.map(({ player, options }) => playerPanelTemplate(player, options)).join("");
-    this.elements.human_panel.innerHTML = playerPanelTemplate(self.player, self.options);
+    this.elements.cpu_grid.innerHTML = opponents.map(({ player, options }) => playerPanelTemplate(player, {
+      ...options, experience: this.networkExperiences?.[player.id]
+    })).join("");
+    this.elements.human_panel.innerHTML = playerPanelTemplate(self.player, {
+      ...self.options, experience: this.networkExperiences
+        ? this.networkExperiences[self.player.id] : this.historyStatsManager?.getExperienceProgress().afterExp ?? 0
+    });
     for (const panel of this.elements.cpu_grid.querySelectorAll?.("[data-player-id]") ?? []) {
       if (scroll.has(panel.dataset.playerId)) restoreHorizontalCardScroll(panel.querySelector?.(".opponent-hand-strip"), scroll.get(panel.dataset.playerId));
     }
@@ -3484,7 +3491,10 @@ Network 页面只渲染 Session 提供的数据，不存放角色分池 authorit
     const achievementMarkup = isMatchPersistenceEligible(this.game?.mode)
       ? this.historyArchiveView.achievementView.renderMatchUnlockList(this.newlyUnlockedAchievements)
       : "";
-    this.matchMvpResultView.render(viewModel, humanPlayerId, achievementMarkup);
+    const experience = this.historyStatsManager?.getExperienceProgress(
+      isMatchPersistenceEligible(this.game?.mode) ? viewModel.gameId : null
+    );
+    this.matchMvpResultView.render(viewModel, humanPlayerId, achievementMarkup, experience);
   }
 
   /*

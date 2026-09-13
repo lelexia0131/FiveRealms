@@ -1,7 +1,83 @@
-import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js";
+import { TEAM_PRESENTATION, getBadgeTierFromExperience, normalizeExperience } from "../adapters/ui/PresentationMetadata.js";
 import { presentCard } from "../adapters/ui/CardPresentationDefinitions.js";
 import { presentCharacter } from "../adapters/ui/CharacterPresentationDefinitions.js";
 import { ACTIVE_SKILL_DEFINITIONS, PASSIVE_SKILL_DEFINITIONS } from "../domain/definitions/skills/SkillDefinitions.js";
+
+/*
+功能
+渲染可缩小且不依赖远程资源的统一等级纹章。
+
+调用方
+playerPanelTemplate、experienceProgressTemplate。
+
+输入
+玩家累计经验。
+
+输出
+包含中性可访问标签的内联 SVG 标记。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+getBadgeTierFromExperience、normalizeExperience。
+
+边界与不变量
+等级仅由图形和配色表达；内部 ID 只用于样式，不渲染等级名称。
+*/
+export function experienceBadgeTemplate(exp) {
+  const tier = getBadgeTierFromExperience(exp);
+  return `<span class="experience-badge badge-${tier.id}" data-badge-tier="${tier.id}" role="img" aria-label="经验徽章" title="${normalizeExperience(exp)} EXP">
+    <svg viewBox="0 0 32 36" aria-hidden="true"><path class="badge-wings" d="M9 13 2 7 4 22 12 29M23 13 30 7 28 22 20 29"/>
+    <path class="badge-body" d="M16 2 27 8 26 24 16 34 6 24 5 8Z"/>
+    <path class="badge-facet" d="M16 5 24 10 16 29 8 10Z"/>
+    <path class="badge-crown" d="m9 13 1 8h12l1-8-5 3-2-6-2 6Z"/>
+    <path class="badge-star" d="m16 10 2 6 6 2-6 2-2 6-2-6-6-2 6-2Z"/>
+    <path class="badge-glint" d="M9 9 16 5 23 9M9 24l7 7 7-7"/></svg></span>`;
+}
+
+/*
+功能
+展示最终等级进度以及本局已成功落盘的蓝色推进段。
+
+调用方
+MatchMvpResultView、HistoryArchiveView。
+
+输入
+afterExp 总经验、gained 本局经验与 overview 征途总览行标记；默认展示零。
+
+输出
+结果页经验条或总览内部横向经验行 HTML。
+
+读取状态
+无。
+
+写入状态
+无。
+
+调用函数
+getBadgeTierFromExperience、normalizeExperience、experienceBadgeTemplate。
+
+边界与不变量
+跨级仅显示最终等级区间内推进；传奇满条且继续累计，不创造下一等级。
+*/
+export function experienceProgressTemplate({ afterExp = 0, gained = 0, overview = false } = {}) {
+  afterExp = normalizeExperience(afterExp);
+  gained = overview ? 0 : Math.min(afterExp, normalizeExperience(gained));
+  const tier = getBadgeTierFromExperience(afterExp);
+  const range = tier.upperBound === null ? null : tier.upperBound - tier.lowerBound;
+  const after = range === null ? 100 : (afterExp - tier.lowerBound) * 100 / range;
+  const before = range === null ? 100 : Math.max(0, afterExp - gained - tier.lowerBound) * 100 / range;
+  const track = `<div class="experience-track" role="progressbar" aria-label="经验进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${after}" aria-valuetext="${afterExp} EXP">
+      <span class="experience-existing" style="width:${before}%"></span>${gained > 0 ? `<span class="experience-gain" style="left:${before}%;width:${Math.max(0, after - before)}%"></span>` : ""}</div>`;
+  if (overview) return `<div class="history-experience-row">${experienceBadgeTemplate(afterExp)}${track}<strong>${afterExp} EXP</strong></div>`;
+  return `<section class="match-experience" aria-label="经验">
+    <div class="experience-summary">${experienceBadgeTemplate(afterExp)}<span>当前经验 ${afterExp} EXP</span><b>本局 +${gained} EXP</b></div>
+    ${track}</section>`;
+}
 
 /*
 功能
@@ -165,7 +241,7 @@ export function skillDetailsTemplate(player) {
   UIManager.renderBattlefield 与模板测试。
 
   输入
-  公开玩家展示字段、手牌数量、真实 Network role 及已脱敏的对手槽位。
+  公开玩家展示字段、手牌数量、真实 Network role、已脱敏对手槽位与可选展示经验。
 
   输出
   安全 HTML。
@@ -177,7 +253,7 @@ export function skillDetailsTemplate(player) {
   无。
 
   调用函数
-  presentCharacter、equipmentSlotTemplate、opponentHandStripTemplate。
+  presentCharacter、equipmentSlotTemplate、opponentHandStripTemplate、experienceBadgeTemplate。
 
   边界与不变量
   手牌数量可以独立于牌实体提供；真人 badge 只接受 controller 投影的 displayName，AI 标签保持原控制权语义；不得为未知手牌创建虚假实体。
@@ -187,6 +263,7 @@ export function playerPanelTemplate(player, options = {}) {
   const character = presentCharacter(player.character) ?? {};
   const { humanTeam = player.battleTeam, isHuman = false, isViewer = isHuman, isCurrent = false, isLegalTarget = false, isSelectedTarget = false, isTargeting = false, isThinking = false, distanceInfo = null, distanceState = null, opponentHandSlots = null } = options;
   const networkRole = options.displayName ?? player.displayName ?? options.networkRole ?? player.networkRole;
+  const badge = options.experience == null ? "" : experienceBadgeTemplate(options.experience);
   const networkRoleBadge = networkRole
     ? `<span class="network-role-badge" aria-label="联机玩家 ${escapeHtml(networkRole)}">${escapeHtml(networkRole)}</span>`
     : "";
@@ -210,7 +287,7 @@ export function playerPanelTemplate(player, options = {}) {
       ${!player.alive ? `<span class="death-stamp"><b>${escapeHtml(character.glyph)}</b> 阵亡</span>` : ""}
     </button>
     <div class="seat-main">
-      <div class="seat-heading"><button type="button" class="seat-name-button" data-skill-player-id="${escapeHtml(player.id)}"><strong>${escapeHtml(player.name)}${isViewer ? " · 你" : ""}</strong><small>${escapeHtml(player.loreFaction)}</small></button><span class="turn-state">${networkRoleBadge}<i aria-hidden="true"></i>${statusText}</span></div>
+      <div class="seat-heading"><button type="button" class="seat-name-button" data-skill-player-id="${escapeHtml(player.id)}"><strong>${escapeHtml(player.name)}${isViewer ? " · 你" : ""}</strong><small>${escapeHtml(player.loreFaction)}</small></button>${badge}<span class="turn-state">${networkRoleBadge}<i aria-hidden="true"></i>${statusText}</span></div>
       <div class="vitals">
         <div class="life-readout"><span class="life-label">生命</span><div class="life-cells">${lifeCells(player)}</div><strong>${player.hp}<small>/${player.maxHp}</small></strong></div>
         <div class="resource-pills"><span class="resource-pill energy"><small>能量</small><strong>${player.energy}/${player.maxEnergy}</strong></span><span class="resource-pill shield"><small>护盾</small><strong>${player.shield}</strong></span><span class="resource-pill hand-count"><small>手牌</small><strong>${handCount}</strong></span></div>
