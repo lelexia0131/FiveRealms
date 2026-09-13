@@ -966,7 +966,7 @@ WorkerSearchRuntime、headless transport 与定向等价性测试。
 data-only decision request 与 Worker runtime control。
 
 输出
-最终 bool、selection、cardId 或救援 assessment；真实错误抛出。
+最终 bool、selection、cardId 或救援 assessment；Response 预算中断返回 false，真实错误抛出。
 
 读取状态
 合法输入 World、固定决策配置。
@@ -975,10 +975,10 @@ data-only decision request 与 Worker runtime control。
 只写本次本地 runtime/投影；不消费搜索或真实 RNG。
 
 调用函数
-createRuntimeComposition、computePostCounterSelection、materializeResponseDecision、Evaluator。
+createRuntimeComposition、executeResponseDecision、computePostCounterSelection、materializeResponseDecision、Evaluator。
 
 边界与不变量
-不执行真实 Action；没有超时降级或裁剪；结果不含中间反事实 Worlds。
+不执行真实 Action；Response 仅发布完整结果或预算中断后的 false，其余决策不设截止；结果不含中间反事实 Worlds。
 */
 export async function executeDecisionRequest(request, runtimeControl = {}) {
   const { input, actorId, kind, decisionConfig } = request;
@@ -988,6 +988,9 @@ export async function executeDecisionRequest(request, runtimeControl = {}) {
     getDifficultyMultiplier:() => decisionConfig.difficultyMultiplier,
     forceAiRescueHuman:decisionConfig.forceAiRescueHuman
   });
+  if (kind === "RESPONSE_DECISION") {
+    return executeResponseDecision(input, composition, runtimeControl);
+  }
   const runtime = {
     ...composition,
     actionGenerator:new Generator(),
@@ -999,12 +1002,11 @@ export async function executeDecisionRequest(request, runtimeControl = {}) {
   if (kind === "PUBLIC_CARD") {
     return runtime.simulatorFactory().resolvePublicCardChoice(world, actorId, input.cards);
   }
-  if (kind !== "RESPONSE_DECISION" && kind !== "RESCUE_ASSESSMENT") {
+  if (kind !== "RESCUE_ASSESSMENT") {
     throw new Error(`Unknown AI decision kind: ${kind}`);
   }
   const decision = await materializeResponseDecision(input, runtime);
   if (!decision) return null;
-  if (kind === "RESPONSE_DECISION") return composition.evaluator.shouldRespond(decision);
   return composition.evaluator.assessDyingRescue({
     responder:decision.responder,
     target:decision.context.target,
@@ -1014,6 +1016,92 @@ export async function executeDecisionRequest(request, runtimeControl = {}) {
     recoverDensity:decision.recoverDensity,
     remainingCardCounts:decision.remainingCardCounts
   });
+}
+
+/*
+功能
+为一次完整响应拥有独立有限预算，未完成的计算统一收束为 false。
+
+调用方
+executeDecisionRequest。
+
+输入
+合法响应 input、共享语义 composition 与时钟/让步/诊断 capability。
+
+输出
+完整响应 bool；TIME/CANCELLED 返回 false；真实计算异常继续抛出。
+
+读取状态
+本次响应 World、Evaluator 与 SearchBudget 单调时钟。
+
+写入状态
+本次 SearchBudget、局部反事实与 responseDiagnostics.stopReason。
+
+调用函数
+SearchBudget、materializeResponseDecision、simulatorFactory、Evaluator.shouldRespond。
+
+边界与不变量
+只复用预算能力，不进入 Searcher；3 秒 cooperative 资源上限与 10 秒 Worker hard watchdog 相互独立。
+只捕获本预算的 unwind signal，最终 checkpoint 通过前不得发布任何计算结果。
+*/
+async function executeResponseDecision(input, composition, runtimeControl) {
+  const budget = new SearchBudget({ timeBudget:3000, now:runtimeControl.now });
+  /*
+  功能
+  在响应让步前后检查同一预算，并把取消转换为预算中断。
+
+  调用方
+  materializeResponseDecision、buildFutureResourceCounterProjection。
+
+  输入
+  当前 gameId。
+
+  输出
+  可继续时为 true；TIME/CANCELLED 抛出本次预算 signal。
+
+  读取状态
+  budget 与 runtimeControl.yieldControl。
+
+  写入状态
+  budget 停止原因。
+
+  调用函数
+  checkpointCurrentWork、yieldControl、cancel。
+
+  边界与不变量
+  await 期间经过的时间也属于本次响应；取消后不得消费已构造的部分 Worlds。
+  */
+  async function yieldResponseWork(gameId) {
+    budget.checkpointCurrentWork();
+    if (runtimeControl.yieldControl && !(await runtimeControl.yieldControl(gameId))) {
+      budget.cancel();
+    }
+    budget.checkpointCurrentWork();
+    return true;
+  }
+  const runtime = {
+    ...composition,
+    actionGenerator:new Generator(),
+    simulatorFactory:() => composition.simulatorFactory({ searchBudget:budget }),
+    yieldControl:yieldResponseWork
+  };
+  try {
+    budget.checkpointCurrentWork();
+    const decision = await materializeResponseDecision(input, runtime);
+    budget.checkpointCurrentWork();
+    const result = composition.evaluator.shouldRespond(decision);
+    // Evaluator 不接收预算；即便它在完整比较期间越过期限，结果也不得发布。
+    budget.checkpointCurrentWork();
+    budget.complete();
+    return result;
+  } catch (error) {
+    if (!budget.isCurrentWorkInterruption(error)) throw error;
+    return false;
+  } finally {
+    if (runtimeControl.responseDiagnostics) {
+      runtimeControl.responseDiagnostics.stopReason = budget.stopReason;
+    }
+  }
 }
 
 export class Controller {
@@ -1116,7 +1204,7 @@ export class Controller {
   request kind、当前角色、已过滤 input 与 preparation 起点。
 
   输出
-  data-only decision；取消/过期为 null，真实 Worker 异常抛出。
+  data-only decision；Response 预算/取消为 false，过期及其它决策取消为 null；真实 Worker 异常抛出。
 
   读取状态
   当前 session、gameId、stateVersion、phase、round、轮到的角色与参与者身份。
@@ -1134,8 +1222,7 @@ export class Controller {
     const state = this.getState();
     if (!actor?.alive || !state.players.includes(actor) || !this.isSessionValid(state.gameId)) return null;
     const participants = [...state.players];
-    // 完整响应/资源决策原本没有截止时间；不可套用 Search 的失联 watchdog，
-    // 否则没有 SearchBudget 检查点的合法长计算会被误杀。退出仍由同一 transport 终止 Worker。
+    // Response 的资源期限由 Worker 内预算和 transport 绝对 watchdog 各自拥有。
     const request = {
       kind, requestId:this.createId(), gameId:state.gameId,
       stateVersion:state.stateVersion, phase:state.phase, currentRound:state.currentRound,
@@ -1157,6 +1244,18 @@ export class Controller {
       outcome = await this.searchExecutor.search(request);
     } catch (error) {
       diagnostics.status = error?.name === "AbortError" ? "CANCELLED" : "ERROR";
+      if (kind === "RESPONSE_DECISION") {
+        if (error?.code === "RESPONSE_HARD_TIMEOUT") {
+          diagnostics.status = "TIME";
+          diagnostics.stopReason = "TIME";
+          diagnostics.watchdogFired = true;
+          return false;
+        }
+        if (error?.name === "AbortError") {
+          diagnostics.stopReason = "CANCELLED";
+          return false;
+        }
+      }
       if (error?.name === "AbortError") return null;
       throw error;
     } finally {
@@ -1187,6 +1286,13 @@ export class Controller {
     }
     diagnostics.status = outcome.cancelled ? "CANCELLED" : "ACCEPTED";
     diagnostics.acceptanceMs = decisionNow() - receivedAt;
+    if (kind === "RESPONSE_DECISION") {
+      diagnostics.stopReason = outcome.stats?.responseStopReason ?? (outcome.cancelled ? "CANCELLED" : "COMPLETE");
+      if (["TIME", "CANCELLED"].includes(diagnostics.stopReason)) {
+        diagnostics.status = diagnostics.stopReason;
+        return false;
+      }
+    }
     return outcome.cancelled ? null : outcome.decision;
   }
 
@@ -2453,7 +2559,7 @@ export class Controller {
   响应者、响应类型、公开 context 与合法响应卡。
 
   输出
-  Promise<boolean>；失效或取消为 null，真实异常向上抛出。
+  Promise<boolean>；失效、预算耗尽或取消为 false，真实异常向上抛出。
 
   读取状态
   当前合法响应输入。
@@ -2470,7 +2576,7 @@ export class Controller {
   async shouldRespond(player, type, context, cards = []) {
     const startedAt = decisionNow();
     const input = this.createResponseDecisionInput(player, type, context, cards);
-    return this.requestDecision("RESPONSE_DECISION", player, input, startedAt);
+    return (await this.requestDecision("RESPONSE_DECISION", player, input, startedAt)) ?? false;
   }
 
   /*

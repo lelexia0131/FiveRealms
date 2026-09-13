@@ -161,7 +161,7 @@ async function handleMessage(message) {
   global performance/Date 时钟。
 
   写入状态
-  可能经 reportHeartbeat 更新 lastHeartbeatAt。
+  SEARCH 可能经 reportHeartbeat 更新 lastHeartbeatAt。
 
   调用函数
   reportHeartbeat、performance.now、Date.now。
@@ -171,7 +171,8 @@ async function handleMessage(message) {
   */
   function runtimeNow() {
     const now = globalThis.performance?.now?.() ?? Date.now();
-    reportHeartbeat(false, now);
+    // Response 使用绝对 watchdog；细粒度概率 checkpoint 不需要发送 liveness 消息。
+    if (type === "SEARCH") reportHeartbeat(false, now);
     return now;
   }
 

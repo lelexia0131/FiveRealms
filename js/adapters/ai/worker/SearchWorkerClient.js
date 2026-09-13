@@ -70,7 +70,7 @@ Worker 引用与 pending map。
 Worker、addEventListener、postMessage、terminate、scheduleTimeout、cancelTimeout。
 
 边界与不变量
-一个 requestId 只 settle 一次；duplicate RESULT ignored；watchdog 只测量最后一次 Worker liveness 后的静默时间，正常长搜索的 HEARTBEAT 会续期而不会被当成通信故障。
+一个 requestId 只 settle 一次；duplicate RESULT ignored；Search watchdog 测量静默时间，Response 则使用不随 HEARTBEAT 续期的绝对 10 秒期限。
 */
 export function createSearchWorkerClient(workerUrl, timers = {}) {
   const scheduleTimeout = typeof timers.setTimeout === "function"
@@ -177,7 +177,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
 
   /*
   功能
-  从当前 Worker liveness 时刻重新武装静默 watchdog。
+  武装当前请求的 watchdog；Response 只在发送时武装绝对期限。
 
   调用方
   search 首次发送与 Worker HEARTBEAT handler。
@@ -198,7 +198,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
   cancelTimeout、scheduleTimeout、Worker.postMessage、settlePending、terminateWorker、spawnWorker。
 
   边界与不变量
-  watchdog 测量的是 Worker 连续失联时间，不是搜索总耗时；旧 timer 即使已进入任务队列，也必须由 generation 检查失效。
+  Response 期限不被 heartbeat 延长；Search 仍测量连续失联时间。旧 timer 即使已进入任务队列，也必须由 generation 检查失效。
   */
   const armWatchdog = (record) => {
     const watchdogMs = Number(record?.watchdogMs);
@@ -211,8 +211,10 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
       try {
         record.worker.postMessage({ type:"CANCEL", requestId:record.requestId });
       } catch { /* worker 已不可用，settlePending 仍必须收束 pending。 */ }
-      settlePending("WATCHDOG", new Error("AI search hard watchdog"));
+      const error = new Error(record.absoluteWatchdog ? "AI response hard watchdog" : "AI search hard watchdog");
+      if (record.absoluteWatchdog) error.code = "RESPONSE_HARD_TIMEOUT";
       terminateWorker(record.worker);
+      settlePending("WATCHDOG", error);
       if (!disposed) spawnWorker();
     }, watchdogMs);
   };
@@ -254,7 +256,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
         || pending.worker !== spawned || message.requestId !== pending.requestId) return;
       if (message.type === "HEARTBEAT") {
         lifecycle.searchHeartbeats += 1;
-        armWatchdog(pending);
+        if (!pending.absoluteWatchdog) armWatchdog(pending);
       } else if (message.type === "RESULT") {
         const kind = message.outcome?.searchStopReason === "TIME"
           ? "TIME"
@@ -311,7 +313,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
     worker.postMessage、armWatchdog。
 
     边界与不变量
-    所有 kind 共用一个 pending、requestId、cancel/dispose 和 watchdog；HEARTBEAT 只续期当前 request 的失联监测；TIME/NODE outcome 不得被 transport 降级为 CANCEL。
+    所有 kind 共用 pending、requestId、cancel/dispose；Response 固定 10 秒绝对期限，HEARTBEAT 仅续期其它请求的失联监测；TIME/NODE outcome 不得被 transport 降级为 CANCEL。
     */
     search(request) {
       if (disposed) return Promise.reject(new Error("AI Worker disposed"));
@@ -323,9 +325,12 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
           resolve,
           reject,
           worker:occupiedWorker,
-          watchdogMs:Number(request.searchConfig?.hardWatchdogMs)
+          absoluteWatchdog:request.kind === "RESPONSE_DECISION",
+          watchdogMs:request.kind === "RESPONSE_DECISION" ? 10000 : Number(request.searchConfig?.hardWatchdogMs)
         };
         lifecycle.searchStarted += 1;
+        // 绝对期限从派发前开始，包含同步 postMessage 的成本；其它请求维持既有失联计时。
+        if (pending.absoluteWatchdog) armWatchdog(pending);
         const postMessageStartedAt = transportNow();
         try {
           occupiedWorker.postMessage({ type:request.kind ?? "SEARCH", requestId:request.requestId, request });
@@ -343,7 +348,7 @@ export function createSearchWorkerClient(workerUrl, timers = {}) {
           requestId:request.requestId,
           postMessageMs:Math.max(0, transportNow() - postMessageStartedAt)
         });
-        armWatchdog(pending);
+        if (!pending?.absoluteWatchdog) armWatchdog(pending);
       });
     },
     /*

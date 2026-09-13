@@ -49,19 +49,22 @@ Rng.restore、consume canonical root Action、createSearchEngine、Searcher.sear
 
 边界与不变量
 搜索 rngAfter 必须存在；未产出完整 Searcher action 的 global invariant failure 只返回 searchFault。
-非搜索决策不消耗 RNG，不经过 SearchBudget 或故障降级；workerError 只由 Worker transport/protocol 层产生。
+非搜索决策不消耗 RNG；Response 的有限预算由 Controller 拥有，真实异常仍由协议 ERROR 运输。
 */
 export async function runSearchRequest(request, runtimeControl = {}) {
   const workerStartedAt = globalThis.performance?.now?.() ?? Date.now();
   if (request.kind && request.kind !== "SEARCH") {
-    // 资源/响应没有 SearchBudget，也不消耗 RNG；真实计算异常沿 ERROR 运输，不能改写为 PASS/END。
-    const decision = await executeDecisionRequest(request, runtimeControl);
+    const responseDiagnostics = {};
+    const decision = await executeDecisionRequest(request, { ...runtimeControl, responseDiagnostics });
     return {
       kind:request.kind,
       requestId:request.requestId,
       gameId:request.gameId,
       decision,
-      stats:{ workerComputeMs:Math.max(0, (globalThis.performance?.now?.() ?? Date.now()) - workerStartedAt) }
+      stats:{
+        workerComputeMs:Math.max(0, (globalThis.performance?.now?.() ?? Date.now()) - workerStartedAt),
+        ...(request.kind === "RESPONSE_DECISION" ? { responseStopReason:responseDiagnostics.stopReason } : {})
+      }
     };
   }
   try {

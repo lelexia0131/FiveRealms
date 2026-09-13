@@ -65,7 +65,11 @@ REAL GAME
 
 浏览器使用同一个 Dedicated Worker 和同一个 `SearchWorkerClient`，除普通 `SEARCH` 外，还接收完整的 `POST_COUNTER_RESOURCE`、`RESPONSE_DECISION`、`RESCUE_ASSESSMENT` 和 `PUBLIC_CARD`。Renderer 经现有 Fact/World authority 过滤输入；资源候选枚举、Future resource projection、响应反事实、Lightning outcomes 与最终 Evaluator 比较在 Worker 内完成，只返回最终 selection、bool、assessment 或 cardId。公开池领取/换装的 receipt Worlds 同样在 Worker 内计算；不逐候选发消息，不回传中间 Worlds。
 
-所有请求共用单个 pending、requestId、cancel/dispose 和 Worker lifecycle。普通 Search 的预算数值、owner 与 watchdog 保持原契约，TIME 中断粒度采用上述 admission boundary；完整响应/资源决策没有搜索截止时间，也不套用 Search 的失联 watchdog，因为其合法同步工作可能没有可发送 heartbeat 的检查点。取消或退出仍由 client 终止占用的 Worker。真实计算异常通过 ERROR reject，不能改写为 PASS/END。
+所有请求共用单个 pending、requestId、cancel/dispose 和 Worker lifecycle。普通 Search 的预算数值、owner 与 watchdog 保持原契约，TIME 中断粒度采用上述 admission boundary。`RESPONSE_DECISION` 由 Controller 的 `executeResponseDecision` 为每次请求独立创建 3 秒 SearchBudget，经同一 Simulator factory 传给现有 Simulator/Probability checkpoints；Response 不进入 Searcher。TIME/CANCELLED unwind 丢弃整次计算，最终 Evaluator 比较返回后也必须通过 checkpoint，才可发布 bool；未完成时返回 false，并经 `stats.responseStopReason` 与 `lastAuxiliaryDecisionDiagnostics` 区分正常 false。
+
+`SearchWorkerClient` 在 Response 派发前设置绝对 10 秒 watchdog，HEARTBEAT 不续期；到期必须 terminate 占用实例、清空 pending 并重建同一 capability，Controller 收束为 false。Worker 实例、requestId 与 timer generation 共同阻断旧消息/旧 timer；完成、异常、取消和销毁均清理 timer。其它资源/救援决策仍不设搜索截止；取消或退出由 client 终止占用 Worker，真实计算异常继续通过 ERROR reject。
+
+AI response policy 的资源牌强制反制由 `AiChoiceAdapter` 在 canonical ChoiceRequest 边界执行：当前响应对象的 `definitionId` 为 `destroy/plunder/transfer`、当前 context.source 与 responder 的 canonical battleTeam 均明确且敌对、普通 counter 响应且全部合法 options 绑定为 counter 时，直接沿既有 option 顺序选择支付，不进入 Controller/Simulator/Probability。判定只消费 Application 提供的合法集合，不扫描原始手牌；队友或来源/阵营未知、当前对象为 counter 的嵌套响应、混合选项和其它响应仍走原决策。真实 legality、重新绑定与原子支付仍归 ResponseWorkflow。
 
 返回后 Controller 检查 session、gameId、stateVersion、phase、round、当前轮到的角色及实体身份，再按 Generator 的规范 selection 与当前资源重绑；Application 保留最终合法性校验和真实支付/结算权威。纯响应/资源计算不消耗 RNG；unknown hand 实体绑定仍由 Main 在验收成功后按原顺序推进 AI RNG。`lastAuxiliaryDecisionDiagnostics` 分别记录 preparation、postMessage、Worker compute、异步等待和 acceptance 时间，不把等待误报成 Renderer 同步阻塞。
 

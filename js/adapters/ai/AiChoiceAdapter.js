@@ -84,7 +84,7 @@ export function createAiChoiceAdapter({
     getChoiceContext、shouldRespond、choosePublicCard、choosePostCounterResource、createChoiceResult。
 
     边界与不变量
-    AI policy/search/planner 不变；不拥有 Application delay 或 presentation state。
+    强制反制只读取 canonical response options 及其私有实体绑定；支付仍由既有 selection/workflow 完成，不拥有 timing 或 legality。
     */
     async request(choiceRequest) {
       if (choiceRequest?.kind === "hiddenCard") {
@@ -150,7 +150,20 @@ export function createAiChoiceAdapter({
       if (choiceRequest.options.length < choiceRequest.constraints.requiredCount) {
         return createChoiceResult("declined");
       }
-      const use = await shouldRespond(
+      // 这里只检查 Application 已筛出的合法选项，不以原始手牌推断响应能力。
+      // card 是当前被响应的对象；rootCard 可能属于更早的反制链，不能用于强制覆盖反制反制。
+      // source 与 card 同属当前响应层；复用 Domain 的 battleTeam 事实，缺失阵营不能按“不相等”猜成敌人。
+      const sourceTeam = choiceContext.context?.source?.battleTeam;
+      const responderTeam = choiceContext.responder.battleTeam;
+      const forceCounter = choiceRequest.constraints.responseType === "counter"
+        && choiceRequest.constraints.requiredCount === 1
+        && Boolean(sourceTeam) && Boolean(responderTeam) && sourceTeam !== responderTeam
+        && ["destroy", "plunder", "transfer"].includes(choiceContext.context?.card?.definitionId)
+        && choiceRequest.options.length > 0
+        && choiceRequest.options.every((option) => choiceContext.cards?.find(
+          (card) => card.id === option.optionId
+        )?.definitionId === "counter");
+      const use = forceCounter || await shouldRespond(
         choiceContext.responder,
         choiceRequest.constraints.responseType,
         choiceContext.context,

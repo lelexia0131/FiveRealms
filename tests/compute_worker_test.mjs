@@ -958,7 +958,7 @@ function registerSlowWorkerTests(slowTest, gameFixtures) {
     game.dispose();
   });
 
-  slowTest("AI·Worker 决策：所有 kind 共用取消与销毁且完整决策没有搜索截止时间", async () => {
+  slowTest("AI·Worker 决策：所有 kind 共用取消与销毁且仅 Response 有绝对期限", async () => {
     const { createSearchWorkerClient } = await import("../js/adapters/ai/worker/SearchWorkerClient.js");
     const previousWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
     const workers = [];
@@ -973,7 +973,8 @@ function registerSlowWorkerTests(slowTest, gameFixtures) {
     const { game, actor, owner, receiver, rootCard, context } = makeWorkerDecisionFixture("transfer");
     game.searchExecutor.dispose();
     const client = createSearchWorkerClient("searchWorker.js", {
-      setTimeout: () => { throw new Error("完整决策不得创建 watchdog/deadline"); }
+      setTimeout: (_callback, ms) => { assert.equal(workers.at(-1).messages.length, 0); assert.equal(ms, 10000); return 1; },
+      clearTimeout: () => {}
     });
     game.aiController.searchExecutor = client;
     try {
@@ -990,7 +991,7 @@ function registerSlowWorkerTests(slowTest, gameFixtures) {
         assert.ok(message.request.kind);
         assert.equal(message.request.searchConfig, undefined);
         client.cancel(message.requestId);
-        assert.equal(await pending, null);
+        assert.equal(await pending, message.type === "RESPONSE_DECISION" ? false : null);
         assert.equal(occupied.terminated, true);
         assert.equal(client.getLifecycleDiagnostics().activeSearchCount, 0);
         assert.equal(client.getLifecycleDiagnostics().activeWorkerCount, 1);
@@ -1003,11 +1004,11 @@ function registerSlowWorkerTests(slowTest, gameFixtures) {
         await Promise.resolve();
         assert.equal(settled, false, "旧实例结果不能结算当前 request");
         client.cancel(currentMessage.requestId);
-        assert.equal(await next, null);
+        assert.equal(await next, currentMessage.type === "RESPONSE_DECISION" ? false : null);
       }
       const pending = calls[1]();
       client.dispose();
-      assert.equal(await pending, null);
+      assert.equal(await pending, false);
       assert.equal(client.getLifecycleDiagnostics().activeWorkerCount, 0);
       assert.equal(client.getLifecycleDiagnostics().activeSearchCount, 0);
     } finally {

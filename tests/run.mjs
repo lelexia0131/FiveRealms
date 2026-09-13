@@ -217,6 +217,7 @@ import {
 import { configureAllAiRoster } from "./headless_match_setup.mjs";
 import { CandidateCompute } from "../js/ai/Searcher/CandidateCompute.js";
 import { registerComputeWorkerTests } from "./compute_worker_test.mjs";
+import { verifyResponseBudget, verifyResponseWatchdog, verifyForcedCounter, verifyForcedCounterTeams } from "./response_resource_test.mjs";
 import { registerMatchPerformanceTests } from "./match_performance_test.mjs";
 import { registerHistoryStatsTests } from "./history_stats_test.mjs";
 import { registerHistoryAchievementTests } from "./history_achievements_test.mjs";
@@ -24035,6 +24036,8 @@ test("AI·Action：all root action families 跨 Worker clone 无损", canonicalR
 
 // ---- AI·Worker ----
 
+test("AI·Worker：Response 绝对 watchdog 终止重建、迟到隔离与后续请求恢复", () => verifyResponseWatchdog({ makeGame, makePlayer, instance }));
+
 registerComputeWorkerTests(test, slowTest, {
   CARD_COUNTS,
   buildLocalResponseDecisionContext,
@@ -31515,7 +31518,7 @@ Promise<void>；断言失败时抛错。
 buildResponseDecisionContext、Evaluator.shouldRespond、Controller.shouldRespond。
 
 边界与不变量
-每组同步 Evaluator 输入与 cooperative Controller 输入完全相同；不得引入 timeout、预算或 fallback。
+每组同步 Evaluator 输入与 cooperative Controller 输入完全相同；预算内完整响应必须保持同一结果。
 */
 async function responseCooperativeYieldParity() {
   const fixtures = [
@@ -31599,6 +31602,8 @@ async function responseCooperativeYieldParity() {
 
 test("AI·响应：Worker 与本地完整 Block/Counter/Guardian/状态/Lightning 决定相同", responseCooperativeYieldParity);
 
+test("AI·响应：独立预算贯穿概率 checkpoint 且 TIME/CANCELLED 不发布部分 utility", () => verifyResponseBudget({ makeGame, makePlayer, instance }));
+
 test("AI·响应：Block mixed distribution 逐分支应用 willingness", () => {
   const source = makePlayer("mixed-block-source", 0, "dusk", "ai", 4);
   const target = makePlayer("mixed-block-target", 1, "dawn", "ai", 0);
@@ -31647,6 +31652,10 @@ test("AI·响应：Block mixed distribution 逐分支应用 willingness", () => 
 });
 
 // ---- AI·反制 ----
+
+test("AI·反制：资源牌仅有合法反制选项时直接响应并复用 canonical 支付", () => verifyForcedCounter({ makeGame, makePlayer, instance }));
+
+test("AI·反制：资源牌强制响应只认当前来源的明确敌对阵营", () => verifyForcedCounterTeams({ instance }));
 
 const counterPlayer = (id, team, overrides = {}) => (
   {

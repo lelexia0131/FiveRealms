@@ -1643,7 +1643,7 @@ export class SearchBudget {
   shouldStop。
 
   边界与不变量
-  signal 只允许由拥有该 SearchBudget 的 Searcher 捕获；不得把 partial action 或 World 登记为候选。
+  signal 只允许由本次预算 owner（Searcher 或 Controller 的完整响应边界）捕获；不得发布 partial action、World 或 utility。
   */
   checkpointCurrentWork() {
     if (!this.shouldStop()) return true;
