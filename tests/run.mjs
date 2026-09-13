@@ -41883,9 +41883,9 @@ test("UI·首页布局：开启本局与声音控制保持同一水平布局且�
 
 // ---- UI·入局说明 ----
 
-test("UI·入局说明：二十三页目录覆盖完整新手路径且页面 ID 唯一", () => {
+test("UI·入局说明：三十页目录覆盖完整新手与多人路径且页面 ID 唯一", () => {
   const pages = buildRulebookPages();
-  assert.equal(pages.length, 23);
+  assert.equal(pages.length, 30);
   assert.equal(new Set(pages.map((page) => page.id)).size, pages.length);
   assert.deepEqual(
     pages.map((page) => page.id),
@@ -41894,15 +41894,41 @@ test("UI·入局说明：二十三页目录覆盖完整新手路径且页面 ID 
       "assault-response", "control-tactics", "pressure-tactics", "supply-tactics",
       "equipment", "distance", "resources", "characters-one", "characters-two",
       "characters-three", "characters-four", "judgment", "death", "hidden-information",
-      "example-one", "example-two", "horizontal-card-view"
+      "example-one", "example-two", "horizontal-card-view", "multiplayer-overview",
+      "multiplayer-create", "multiplayer-join", "multiplayer-room-management",
+      "multiplayer-squad-selection", "multiplayer-chat-interface", "multiplayer-exit-errors"
     ]
   );
   const content = pages.map((page) => `${page.title}\n${page.html}`).join("\n");
   for (const required of [
     "晨星 VS 暮影", "战斗界面解剖", "完整回合流程", "卡牌入门", "突袭与响应",
     "唯一装备槽", "存活环与距离", "生命、护盾与能量", "濒死、阵亡与观战",
-    "隐藏与公开信息", "从摸牌到一次格挡。", "横向牌区，左右滑动查看"
+    "隐藏与公开信息", "从摸牌到一次格挡。", "横向牌区，左右滑动查看",
+    "创建房间", "加入房间", "房间管理", "编队与角色选择", "聊天与房间界面", "退出与异常状态"
   ]) assert.match(content, new RegExp(required));
+});
+
+test("UI·入局说明：多人章节复用正式房间界面并只描述已实现能力", () => {
+  const pages = Object.fromEntries(buildRulebookPages().map((page) => [page.id, page.html]));
+  assert.match(pages["multiplayer-overview"], /创建 \/ 加入[\s\S]*等待玩家[\s\S]*选择编队[\s\S]*确认选择[\s\S]*房主开局/);
+  assert.match(pages["multiplayer-create"], /data-network-action="copy-address"/);
+  assert.match(pages["multiplayer-create"], /局域网[\s\S]*Tailscale[\s\S]*继续选角/);
+  assert.match(pages["multiplayer-join"], /name="host"[\s\S]*name="port"[\s\S]*房间已满/);
+  assert.match(pages["multiplayer-join"], /房间已锁定[\s\S]*没有单独的“房间不存在”提示/);
+  assert.match(pages["multiplayer-room-management"], /data-network-action="capacity"/);
+  assert.match(pages["multiplayer-room-management"], /data-network-action="kick"/);
+  assert.match(pages["multiplayer-room-management"], /data-network-action="start" disabled/);
+  assert.equal((pages["multiplayer-room-management"].match(/class="network-callout/g) ?? []).length, 7);
+  assert.equal((pages["multiplayer-squad-selection"].match(/data-character-id=/g) ?? []).length, 8);
+  assert.doesNotMatch(pages["multiplayer-squad-selection"], /data-network-action="(?:kick|capacity|start)"/);
+  assert.match(pages["multiplayer-chat-interface"], /maxlength="50"[\s\S]*按 Enter 发送/);
+  assert.match(pages["multiplayer-chat-interface"], /开局前的房间页[\s\S]*载入游戏时显示，进入对局后才可发送/);
+  assert.match(pages["multiplayer-exit-errors"], /加入玩家离开[\s\S]*电脑接管/);
+  assert.match(pages["multiplayer-exit-errors"], /房主离开[\s\S]*当前房间结束[\s\S]*没有房主转移/);
+  assert.match(pages["multiplayer-exit-errors"], /没有断线重连或自动恢复房间/);
+  const visibleCopy = Object.entries(pages).filter(([id]) => id.startsWith("multiplayer-"))
+    .map(([, html]) => html.replace(/<[^>]*>/g, " ")).join(" ");
+  assert.doesNotMatch(visibleCopy, /WebSocket|TCP|IPC|Transport|NetworkSession|connectionId|ACK|authority|socket|protocol|worker|Electron 网络封装实现/i);
 });
 
 test("UI·入局说明：定向修正文案、站位、按钮与牌背保持玩家视角", async () => {

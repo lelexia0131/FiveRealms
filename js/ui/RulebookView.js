@@ -25,6 +25,10 @@ import { CARD_PRESENTATION } from "../adapters/ui/CardPresentationDefinitions.js
 import { CHARACTER_PRESENTATION } from "../adapters/ui/CharacterPresentationDefinitions.js";
 import { TEAM_PRESENTATION } from "../adapters/ui/PresentationMetadata.js";
 import { escapeHtml, hiddenCardBackTemplate } from "./templates.js";
+import { renderPlayModeSelectionView } from "./network/PlayModeSelectionView.js";
+import { renderNetworkEntryView } from "./network/NetworkEntryView.js";
+import { renderNetworkSquadSelectionView } from "./network/NetworkSquadSelectionView.js";
+import { NETWORK_STATE } from "../network/NetworkLobbyState.js";
 
 const USAGE_LABELS = Object.freeze({
   active:"出牌阶段",
@@ -302,7 +306,61 @@ function characterPage(number, ids, title, kicker) {
 
 /*
 功能
-构建全部二十三页插画式规则书内容。
+为规则书多人章节生成只读的房间界面示例。
+
+调用方
+buildRulebookPages。
+
+输入
+本地身份为 HOST 或 GUEST。
+
+输出
+可直接交给正式房间 renderer 的展示快照。
+
+读取状态
+CHARACTER_DEFINITIONS、NETWORK_STATE。
+
+写入状态
+无。
+
+调用函数
+Array.map。
+
+边界与不变量
+示例只复现当前三名真人、八名候选与五个正式席位的公开 UI，不创建房间或修改游戏状态。
+*/
+function rulebookNetworkSnapshot(role) {
+  const candidates = CHARACTER_DEFINITIONS.map((character) => character.id);
+  const seats = [
+    { seatId:"seat-0", teamId:"dawn" },
+    { seatId:"seat-1", teamId:"dusk" },
+    { seatId:"seat-2", teamId:"dawn" },
+    { seatId:"seat-3", teamId:"dusk" },
+    { seatId:"seat-4", teamId:"dusk" }
+  ];
+  const participants = {
+    "manual-host": { participantId:"manual-host", role:"HOST", displayName:"青禾", connected:true, ready:false,
+      selection:{ characterId:candidates[0], ...seats[0] } },
+    "manual-guest-one": { participantId:"manual-guest-one", role:"GUEST", guestOrdinal:1, displayName:"北辰", connected:true, ready:false,
+      selection:{ characterId:candidates[1], ...seats[1] } },
+    "manual-guest-two": { participantId:"manual-guest-two", role:"GUEST", guestOrdinal:2, displayName:"小满", connected:true, ready:true,
+      selection:{ characterId:candidates[2], ...seats[2] } }
+  };
+  const participantId = role === "HOST" ? "manual-host" : "manual-guest-one";
+  return {
+    state:NETWORK_STATE.SELECTING, role, participantId, participants, candidates, seats,
+    currentHumanCount:3, maxHumanCount:4, locked:false, canStart:false,
+    localSelection:participants[participantId].selection, localReady:false,
+    connectionInfo:{ host:"192.168.1.24", port:38520, addresses:[
+      { host:"192.168.1.24", port:38520, kind:"lan" },
+      { host:"100.86.12.34", port:38520, kind:"tailscale" }
+    ] }
+  };
+}
+
+/*
+功能
+构建全部三十页插画式规则书内容。
 
 调用方
 RulebookView.render 与 UI 回归测试。
@@ -314,13 +372,13 @@ RulebookView.render 与 UI 回归测试。
 按阅读顺序排列的冻结页面对象数组。
 
 读取状态
-公开规则、卡牌、角色、技能与展示素材定义。
+公开规则、卡牌、角色、技能、多人页面 renderer 与展示素材定义。
 
 写入状态
 无。
 
 调用函数
-pageHead、cardGridTemplate、manualCardTemplate、characterPage。
+pageHead、cardGridTemplate、manualCardTemplate、characterPage、rulebookNetworkSnapshot、正式多人页面 renderer。
 
 边界与不变量
 卡牌效果和技能效果只从正式定义读取；静态流程文案必须与 Application workflow 保持一致。
@@ -330,6 +388,8 @@ export function buildRulebookPages() {
   const large = RULESET_DEFINITION.largeTeamRules;
   const cast = ["blade-walker", "spirit-medic", "oath-warden"]
     .map((id) => CHARACTER_PRESENTATION[id].portrait);
+  const hostLobby = renderNetworkSquadSelectionView(rulebookNetworkSnapshot("HOST"));
+  const guestLobby = renderNetworkSquadSelectionView(rulebookNetworkSnapshot("GUEST"));
   const pages = [
     {
       id:"cover",
@@ -565,6 +625,117 @@ export function buildRulebookPages() {
           <div><strong>所有横向卡牌区</strong><span>自己的手牌区、对手手牌区、隐藏牌选择区与私密展示区，都可以用鼠标左右拖动或滑动查看当前未显示的牌。</span></div>
           <div><strong>所有横向卡牌池</strong><span>公共牌池等沿水平方向排列的卡牌池，同样可以左右拖动或滑动，查看牌区中暂时未显示的剩余卡牌。</span></div>
           <div><strong>牌面不因查看改变</strong><span>拖动或滑动只改变当前可见位置，不改变卡牌顺序、归属、公开状态或结算结果。</span></div>
+        </div>`
+    },
+    {
+      id:"multiplayer-overview",
+      title:"多人游玩",
+      html:`${pageHead(24, "MULTIPLAYER", "多人游玩", "从游玩方式页进入多人模式；房主创建房间，其他玩家使用房主分享的信息加入。")}
+        <div class="rulebook-network-entry rulebook-network-entry-overview" aria-label="多人游玩入口界面示意">${renderPlayModeSelectionView()}</div>
+        <div class="rulebook-network-flow" aria-label="多人开局流程">
+          <div><b>01</b><strong>创建 / 加入</strong><span>选择进入方式</span></div>
+          <i>→</i><div><b>02</b><strong>等待玩家</strong><span>按需要等待成员</span></div>
+          <i>→</i><div><b>03</b><strong>选择编队</strong><span>角色与席位</span></div>
+          <i>→</i><div><b>04</b><strong>确认选择</strong><span>状态显示“已确认”</span></div>
+          <i>→</i><div><b>05</b><strong>房主开局</strong><span>全员确认后开始</span></div>
+        </div>
+        <div class="rulebook-rule-strip">
+          <div><strong>房主</strong><span>创建房间、分享连接地址，并管理人数与开局。</span></div>
+          <div><strong>加入玩家</strong><span>输入房主提供的信息，进入同一选择界面。</span></div>
+          <div><strong>最多五位真人</strong><span>没有真人选择的席位，会由电脑角色补齐。</span></div>
+        </div>`
+    },
+    {
+      id:"multiplayer-create",
+      title:"创建房间",
+      html:`${pageHead(25, "CREATE ROOM", "创建房间", "在“多人游玩”页选择“创建房间”；创建完成后，你会以房主身份进入角色与席位选择页。")}
+        <div class="rulebook-network-capture is-room-focus" aria-label="房主创建成功后的房间界面示意">${hostLobby}</div>
+        <div class="rulebook-rule-strip">
+          <div><strong>① 查看连接地址</strong><span>房主可看到局域网或 Tailscale 地址；以当前房间实际显示为准。</span></div>
+          <div><strong>② 复制并分享</strong><span>点击“复制”，把完整地址发给要加入的玩家；复制失败时可手动选中地址。</span></div>
+          <div><strong>③ 继续选角</strong><span>创建房间不会自动开局；接下来选择自己的角色与席位，并等待需要的玩家。</span></div>
+        </div>`
+    },
+    {
+      id:"multiplayer-join",
+      title:"加入房间",
+      html:`${pageHead(26, "JOIN ROOM", "加入房间", "选择“加入房间”，分别填写房主提供的 IP 地址或主机名与端口，再点击“连接”。")}
+        <div class="rulebook-network-entry is-join-focus" aria-label="加入房间表单示意">${renderNetworkEntryView({ join:true, error:"房间已满" })}</div>
+        <div class="rulebook-network-errors">
+          <article><b>填写检查</b><strong>请输入 IP 地址或主机名</strong><span>端口须为 1–65535 的整数；粘贴完整地址时，界面会尝试自动拆分。</span></article>
+          <article><b>加入被拒绝</b><strong>“房间已满”或“房间已锁定”</strong><span>房间达到真人上限，或房主已经开始游戏时，会显示对应提示。</span></article>
+          <article><b>连接未成功</b><strong>显示当前失败原因</strong><span>当前没有单独的“房间不存在”提示；地址不可达时会显示实际连接失败原因。</span></article>
+        </div>
+        <div class="rulebook-note">加入成功后会进入与房主相同的角色与席位选择页；加入玩家看不到房主专属的连接地址与管理按钮。</div>`
+    },
+    {
+      id:"multiplayer-room-management",
+      title:"房间管理",
+      html:`${pageHead(27, "ROOM MANAGEMENT", "房间管理", "房间页同时显示成员、选择状态与开局条件；管理按钮只出现在房主一侧。")}
+        <div class="rulebook-network-annotated">
+          <div class="rulebook-network-capture is-room-map" aria-label="完整房间界面示意">${hostLobby}</div>
+          <span class="network-callout callout-room-role"><b>③</b>本地身份</span>
+          <span class="network-callout callout-room-info"><b>①</b>房间信息</span>
+          <span class="network-callout callout-room-members"><b>②</b>玩家列表</span>
+          <span class="network-callout callout-room-capacity"><b>④</b>真人上限</span>
+          <span class="network-callout callout-room-ready"><b>⑤</b>确认状态</span>
+          <span class="network-callout callout-room-confirm"><b>⑥</b>确认选择</span>
+          <span class="network-callout callout-room-start"><b>⑦</b>开始游戏</span>
+        </div>
+        <div class="rulebook-room-permissions">
+          <p><strong>房主：</strong>可把真人上限设为 2～5 人、移出加入玩家，并在所有当前成员都“已确认”后点击“开始游戏”。</p>
+          <p><strong>加入玩家：</strong>可选择并确认自己的角色与席位；房间人数、成员状态和设置只读，不能移出成员或开始游戏。</p>
+        </div>`
+    },
+    {
+      id:"multiplayer-squad-selection",
+      title:"编队与角色选择",
+      html:`${pageHead(28, "SQUAD & CHARACTER", "编队与角色选择", "每位真人都从同一组八名角色与五个席位中选择；房主与加入玩家遵循相同的占用规则。")}
+        <div class="rulebook-network-capture is-selection-focus" aria-label="加入玩家的角色与席位选择界面示意">${guestLobby}</div>
+        <div class="rulebook-selection-legend">
+          <span><b>①</b><strong>选择角色</strong>已被其他真人选中的角色会变为不可选。</span>
+          <span><b>②</b><strong>选择席位</strong>晨星固定 2 席、暮影固定 3 席；已占席位显示占用者姓名。</span>
+          <span><b>③</b><strong>确认选择</strong>角色与席位都会同步显示；确认后不能在本轮选角中改选。</span>
+          <span><b>④</b><strong>等待开局</strong>确认只代表准备完成，不会自动开局；空席位由电脑角色补齐。</span>
+        </div>`
+    },
+    {
+      id:"multiplayer-chat-interface",
+      title:"聊天与房间界面",
+      html:`${pageHead(29, "CHAT & ROOM UI", "聊天与房间界面", "开局前的房间页显示成员与确认状态；聊天栏在载入游戏时显示，进入对局后才可发送。")}
+        <div class="rulebook-network-room-chat">
+          <div class="rulebook-network-capture is-members-focus" aria-label="加入玩家看到的房间成员区">${guestLobby}</div>
+          <aside class="rulebook-chat-panel" aria-label="对局中的聊天与记录界面示意">
+            <header><small>战局编年</small><strong>对局记录</strong><span>12 条</span></header>
+            <div class="rulebook-chat-log">
+              <p><em>[全体]</em><b class="team-dawn">刃行者（青禾）</b>：大家准备好了吗？</p>
+              <p><em>[队伍]</em><b class="team-dusk">炎术师（北辰）</b>：这一轮先保留格挡。</p>
+              <p><span>小满使用了「聚能」。</span></p>
+            </div>
+            <div class="network-chat-bar"><select aria-label="聊天范围"><option>全体</option><option>队伍</option></select><input type="text" maxlength="50" placeholder="输入聊天内容……" aria-label="聊天内容"><button type="button">屏蔽</button></div>
+            <small class="network-chat-status">输入 1～50 个字符，按 Enter 发送</small>
+          </aside>
+        </div>
+        <div class="rulebook-rule-strip">
+          <div><strong>身份与状态</strong><span>房间页顶部说明你是房主或房间成员；成员列表显示玩家名称和“选择中 / 已确认”。</span></div>
+          <div><strong>全体 / 队伍</strong><span>每条聊天显示范围、角色和玩家名称；队伍消息只发给同阵营真人。</span></div>
+          <div><strong>屏蔽与发送限制</strong><span>可在本地屏蔽其他玩家；每条最多 50 个字符，连续发送过快会保留正文并提示。</span></div>
+        </div>`
+    },
+    {
+      id:"multiplayer-exit-errors",
+      title:"退出与异常状态",
+      html:`${pageHead(30, "EXIT & INTERRUPTIONS", "退出与异常状态", "多人模式不会在连接中断后自动回到原房间；请按当前页面提示退出或重新进入多人流程。")}
+        <div class="rulebook-exit-map">
+          <article><b>开局前</b><strong>取消并返回</strong><span>主动离开后返回多人入口；加入玩家的角色与席位会释放。</span></article>
+          <i>→</i><article><b>加入玩家离开</b><strong>房主继续等待</strong><span>开局前成员从列表移除；对局中离开则原角色保持当前状态并由电脑接管。</span></article>
+          <i>→</i><article><b>房主离开</b><strong>当前房间结束</strong><span>其他玩家进入“连接已断开”；当前没有房主转移。</span></article>
+          <i>→</i><article><b>异常中断</b><strong>显示断开状态</strong><span>聊天停止发送，当前没有断线重连或自动恢复房间。</span></article>
+        </div>
+        <div class="rulebook-network-errors is-exit-errors">
+          <article><b>连接失败</b><strong>停留在断开状态</strong><span>页面显示当前失败原因；点击“取消并返回”可回到多人入口。</span></article>
+          <article><b>房间已满 / 已锁定</b><strong>本次加入不会进入房间</strong><span>请向房主确认房间人数与当前状态；本次加入已经结束。</span></article>
+          <article><b>对局内主动退出</b><strong>“退出房间”返回游玩方式页</strong><span>离开的加入玩家由电脑接管；房主退出会关闭整个房间。</span></article>
         </div>`
     }
   ];
