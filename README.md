@@ -20,9 +20,10 @@ py tools/dev-server.py
 
 ```bash
 npm test
+npm run test:all
 ```
 
-`npm test` 运行快速规则、隐藏信息、AI、UI 模板和完整对局测试。AI 与自动化流程只允许运行正确性、回归、架构和性能测试，不得将其扩展为数值平衡评估。
+`npm test` 运行默认快速套件，包含规则、隐藏信息、AI、UI、完整对局以及 NetworkSession、Electron Transport 和多人聊天回归，但排除标记为 slow 的真实 Worker 与完整搜索压力专项。`npm run test:all` 在默认套件基础上纳入这些慢速专项，是完整发行门禁。AI 与自动化流程只允许运行正确性、回归、架构和性能测试，不得将其扩展为数值平衡评估。
 
 `npm run test:balance`、AI 自博弈统计和 `tests/ai-card-study` 研究实验仅允许由项目所有者本人手动运行。禁止 Codex、Claude、DeepSeek、任何其他 AI 或自动化流程执行平衡测试，或根据结果调整、试探、搜索、拟合平衡常数、权重、阈值、倍率、utility 参数及类似数值。平衡常数对 AI 而言是只读既定规则，不得以优化平衡为目的修改。详细的所有者专属 Balance 操作说明见 [`test.md`](./test.md)。
 
@@ -47,9 +48,9 @@ npm test
 
 ## 阵营与交错座位
 
-每局严格生成 2V3：二人阵营固定为晨星，三人阵营固定为暮影。`TeamManager` 只随机旋转、翻转合法座次，使晨星两名成员永不相邻；真人可能落入任一阵营，角色背景势力不影响对局阵营。
+每局严格生成 2V3：二人阵营固定为晨星，三人阵营固定为暮影。`TeamAssignment` 只随机旋转、翻转合法座次，使晨星两名成员永不相邻；真人可能落入任一阵营，角色背景势力不影响对局阵营。
 
-阵营规则集中在 `TeamRuleService`：
+阵营规则集中在 `js/domain/rules/team/TeamRules.js`：
 
 | 规则 | 二人阵营 | 三人阵营 |
 | --- | ---: | ---: |
@@ -136,19 +137,19 @@ npm test
 
 ## 动态存活距离环
 
-`DistanceSystem` 每次计算都从实时玩家状态构造：
+`js/domain/rules/distance/DistanceRules.js` 每次计算都从实时玩家状态构造存活座位环：
 
 ```js
-const aliveRing = game.state.players
+const aliveRing = players
   .filter((player) => player.alive)
   .sort((a, b) => a.seatIndex - b.seatIndex);
 ```
 
 `seatIndex` 只保存原始顺时针顺序，不直接等于当前距离。阵亡角色立即移出规则距离环，剩余角色保持顺序并自然收拢；距离不做整局缓存，复活或任何 `alive` 变化也会即时生效。所有存活角色都占位，因此不能穿过队友攻击后方敌人。正式阵亡会清空该角色的状态，阵亡席位不再显示状态或距离信息。
 
-普通突袭要求敌对、存活、非自身且 `DistanceSystem.getDistance(game, source, target) <= source.attackRange`。转移的来源和接收者都必须在施牌者距离 1 内，掠夺目标必须在距离 2 内；震荡、挑衅、窥探、破坏、决斗、互利、共生和影客窃取显式忽略距离。主动技能通过 `rangeRule: "attack" | "fixed" | "unlimited" | "ally" | "self"` 声明距离语义，不从 `targetType` 猜测。
+普通突袭要求敌对、存活、非自身且 `getDistance(players, source, target) <= source.attackRange`。转移的来源和接收者都必须在施牌者距离 1 内，掠夺目标必须在距离 2 内；震荡、挑衅、窥探、破坏、决斗、互利、共生和影客窃取显式忽略距离。主动技能通过 `rangeRule: "attack" | "fixed" | "unlimited" | "ally" | "self"` 声明距离语义，不从 `targetType` 猜测。
 
-视觉座位不会因阵亡跳动，但目标选择文案会立即从“距离 2 · 超出攻击范围”更新为“距离 1 · 可突袭”。AI 的真实动作与深层模拟动作都走 `RuleEngine → DistanceSystem`，所以击杀中间角色后，第二张突袭可以发现新相邻目标。
+视觉座位不会因阵亡跳动，但目标选择文案会立即从“距离 2 · 超出攻击范围”更新为“距离 1 · 可突袭”。真实动作由 Domain Card/Skill/Distance Rules 判定，AI Generator 与 Simulator 消费同一规则事实，所以击杀中间角色后，第二张突袭可以发现新相邻目标。
 
 ## 回合流程与能量
 
@@ -162,7 +163,7 @@ const aliveRing = game.state.players
 6. `discard`：手牌上限为当前生命，超出部分必须弃置。
 7. `turnEnd`：触发回合结束事件并移交下一名存活角色。
 
-合法来源杀死敌方角色后，从 `gameConfig.js` 的 `killRewardDrawCount` 读取奖励并额外摸 1 张牌；击杀队友或没有明确伤害来源的阵亡不获得奖励。
+合法来源杀死敌方角色后，从 `RulesetDefinition.killRewardDrawCount` 读取奖励并额外摸 1 张牌；击杀队友或没有明确伤害来源的阵亡不获得奖励。
 
 能量增长发生在摸牌之前，并触发 `beforeTurnEnergyGain` 和 `afterTurnEnergyGain`。二人、三人阵营无装备时均为 `baseAmount: 1`、`teamBonus: 0`、`equipmentBonus: 0`；充能桩令 `equipmentBonus` 变为 1。事件继续公开 `amount`、`actualAmount`、`cancelled` 与 `metadata`，所有来源最终分别受二人阵营 4 点、三人阵营 3 点的能量上限约束。
 
@@ -251,7 +252,7 @@ const aliveRing = game.state.players
 
 伤害不会把生命钳制到 0。例如 1 点生命受到 3 点伤害会变成 -2，需要恢复 3 点生命才能回到 1；实际需要的「调息」数量取决于每次治疗的生效量。
 
-`DyingSystem` 时序：
+`DyingWorkflow` 时序：
 
 1. `beforePlayerDying` 可取消或修改进入流程。
 2. 触发 `playerDying`，显示当前负生命与脱离濒死还需恢复的生命值。
@@ -262,23 +263,23 @@ const aliveRing = game.state.players
 7. 全员无牌或放弃后，正式阵亡并把生命固定为 0；随后清理手牌与装备并触发 `playerDead`。
 8. 若仍存活的伤害来源属于敌对阵营，则在检查胜负前摸 1 张牌；救回、队友误伤、环境伤害和无来源死亡均不触发，同一名阵亡角色只奖励一次。
 
-AI 濒死且有调息时必定自救。`GAME_CONFIG.forceAiRescueHuman` 默认为 `true`：同阵营真人濒死时，所有持有调息的存活 AI 队友必须逐轮救援，即使这是最后一张调息、AI 只有 1 点生命，或现有总牌数仍不足以完全救活真人。设为 `false` 后，AI 救援真人才恢复普通效用策略；真人自己的响应选择不受影响，敌人始终不能救援。
+AI 濒死且有调息时必定自救。`AI_RUNTIME_POLICY.forceAiRescueHuman` 默认为 `true`：同阵营真人濒死时，所有持有调息的存活 AI 队友必须逐轮救援，即使这是最后一张调息、AI 只有 1 点生命，或现有总牌数仍不足以完全救活真人。设为 `false` 后，AI 救援真人才恢复普通效用策略；真人自己的响应选择不受影响，敌人始终不能救援。
 
-强制规则位于 `ResponseSystem.requestDyingRescue()`，在短暂且可取消的 AI 响应动画后直接使用调息，不调用 `AiResponsePolicy`。不能只修改策略层：策略是可替换、可测试覆盖的决策组件，而“AI 必救真人”是必须在所有入口都成立的体验规则。`AiResponsePolicy` 仍保留防御性判断，并继续负责 AI 救 AI，以及关闭强制配置后的普通救援。
+强制兼容策略位于 `ResponseWorkflow.requestDyingRescue()` 与 `ParticipantPolicy`，在短暂且可取消的 AI 响应动画后提交调息；救援资格、实体重绑和原子支付仍由 Domain Rules 与 Application workflow 负责。关闭强制配置后的普通救援由现行 AI Controller/Evaluator 决策边界处理。
 
-普通 AI 救援职责判断使用稳定的英文 `roleTags`，不依赖界面显示的中文标签。多人协作救援按当前一张「调息」的边际价值决策，不再要求当前 AI 先证明整次救援必然成功；后续未知手牌的贡献使用“未知张数 × 剩余调息密度”估算。该计算只读取公开手牌数量与自己合法记住的牌，不会访问队友或敌人的真实隐藏手牌。`DyingSystem` 每轮重新读取各救援者手牌，因此同一 AI 可以继续使用第二、第三张「调息」。濒死「调息」统一调用 `Game.heal()`，因此保留治疗事件、统计和动画；灵医每回合前两次救援自己或队友并造成实际治疗时也会触发「回春」各摸 1 张牌，但不会增加治疗量。重新征召会取消尚未完成的救援等待、响应请求、救援队列和旧会话。
+普通 AI 救援职责判断使用稳定的英文 `roleTags`，不依赖界面显示的中文标签。多人协作救援按当前一张「调息」的边际价值决策，不再要求当前 AI 先证明整次救援必然成功；后续未知手牌的贡献使用“未知张数 × 剩余调息密度”估算。该计算只读取公开手牌数量与自己合法记住的牌，不会访问队友或敌人的真实隐藏手牌。`DyingWorkflow` 每轮重新读取各救援者手牌，因此同一 AI 可以继续使用第二、第三张「调息」。濒死「调息」统一经过 `CombatWorkflow.heal()`，因此保留治疗事件、统计和动画；灵医每回合前两次救援自己或队友并造成实际治疗时也会触发「回春」各摸 1 张牌，但不会增加治疗量。重新征召会取消尚未完成的救援等待、响应请求、救援队列和旧会话。
 
 ## 响应系统与事件系统
 
-借势要求第一目标使用「突袭」时复用同一 `ResponseSystem`：真人只看到自己合法持有的实体「突袭」，AI 通过 `AiResponsePolicy` 决定使用或拒绝；确认使用后仍由 `Game.playCard()` 完整结算普通「突袭」。
+借势要求第一目标使用「突袭」时复用同一 `ResponseWorkflow`：真人只看到自己合法持有的实体「突袭」，AI 通过统一 Choice/Controller 决策边界决定使用或拒绝；确认使用后仍由现有 Action workflow 完整结算普通「突袭」。
 
-`ResponseSystem` 为格挡、反制、挑衅交牌、决斗、濒死调息和响应型技能建立统一异步请求。反制本身也能被反制：每次打出反制后，从该响应者的下一座位继续开启响应窗口；偶数次反制令原牌恢复生效，奇数次反制令原牌取消。震荡等逐目标群伤效果采用目标级反制，目标只能取消自己承受的那一段效果，不能令整张群伤牌停止结算。每张反制会先公开进入弃牌堆，因此链条受实体手牌数量限制，不会无限循环。真人响应有超时和明确的接受/放弃按钮；AI 使用确定性团队效用策略，只在近似同分时允许极小扰动。所有等待都通过 `CleanupManager`，`dispose()` 后返回失效结果而不会遗留计时器。
+`ResponseWorkflow` 为格挡、反制、挑衅交牌、决斗、濒死调息和响应型技能建立统一异步请求。反制本身也能被反制：每次打出反制后，从该响应者的下一座位继续开启响应窗口；偶数次反制令原牌恢复生效，奇数次反制令原牌取消。震荡等逐目标群伤效果采用目标级反制，目标只能取消自己承受的那一段效果，不能令整张群伤牌停止结算。每张反制会先公开进入弃牌堆，因此链条受实体手牌数量限制，不会无限循环。真人响应有超时和明确的接受/放弃按钮；AI 使用现行 Controller/Evaluator 的团队效用决策。所有等待都通过 `CleanupManager`，`dispose()` 后返回失效结果而不会遗留计时器。
 
-`EventBus` 用唯一监听键注册角色被动与规则钩子。常用事件包括回合、摸牌、用牌、目标、移动、伤害、治疗、能量、濒死、阵亡和胜负。UI 只提交用户意图；生命、能量、手牌、装备、状态和胜负只能由 `Game` 及核心系统修改。
+`EventDispatcher` 用唯一监听键注册角色被动与规则钩子。常用事件包括回合、摸牌、用牌、目标、移动、伤害、治疗、能量、濒死、阵亡和胜负。UI 只提交用户意图；生命、能量、手牌、装备、状态和胜负只能由 Application workflows 依据 Domain Rules 并通过 Domain Transitions 修改。
 
 ## 多阶段选择与隐藏信息边界
 
-`InteractionController` 管理目标、来源、接收者、隐藏牌和公共牌池阶段。`CardSelectionSystem` 为每次背面选择生成不透明 token，token 只映射实体 `card.id` 与当时的 `handVersion`：
+`InteractionController` 管理目标、来源、接收者、隐藏牌和公共牌池阶段。`HiddenCardSelectionStore`、`HiddenCardSelectionAdapter` 与 `HiddenCardChoiceWorkflow` 为每次背面选择生成和验证不透明 token，token 只映射实体 `card.id` 与当时的 `handVersion`：
 
 - DOM 只有不透明 token 和纯牌背，不显示位置、编号，也不含牌名、`definitionId`、类别、描述或图片路径。
 - 手牌发生任何移动后 `handVersion` 增加，旧 token 立即失效。
@@ -292,31 +293,23 @@ AI 可见状态包含自己的完整手牌、公开生命/能量/护盾/装备/�
 
 ## AI 规划、难度与节奏
 
-`AIController` 只是编排门面，职责拆分为：
+当前生产 AI 使用冻结的 19 模块架构：
 
-- `AiActionGenerator`：通过 `RuleEngine` 生成当前合法动作和模拟后的后续动作。
-- `AiEvaluator`：按整队存活、生命、资源、斩杀、治疗净收益和状态评分。
-- `AiPlanner`：深度 4、宽度 10 的 beam search；浏览器每步时间预算来自当前速度档位本次采样的 `Tmax`。
-- `AiSimulator`：只克隆过滤后的快照，无 UI、日志、事件或真实状态副作用。
-- `AiKnowledge`：从 165 张组成减去公开/合法已知牌，采样 10 个隐藏世界。
-- `AiResponsePolicy`：评估格挡、反制、借势突袭、交牌、决斗和救援的团队效用。
-- `AiCardSelector`：处理弃牌、公共牌与隐藏位置；未知牌不能按真实牌面筛选。
+- `Controller.js`：真实 GameState 与 canonical World/Action 之间的唯一运行边界，并负责 Worker 请求、结果验收和当前实体重绑。
+- `Generator/{Generator,Action}.js`：消费 Domain Rules 枚举合法 canonical Action，不拥有策略价值或真实结算。
+- `Searcher/{Searcher,CandidateCompute,Pattern,Rng}.js`：拥有遍历、预算、候选并行计算、探索调度与搜索随机源。
+- `Event/Fact.js` 与 `Event/Probability/**`：分别拥有确定知识与有界不确定性。
+- `Simulator/{Simulator,World,Damage,Resource,Response}.js`：只转换 canonical World，不写真实 MatchState。
+- `Evaluator/{Evaluator,StateValue,CardValue}.js`：拥有最终 utility、响应意愿、候选比较和价值 primitives。
+- `js/adapters/ai/worker/**` 只负责 Dedicated Worker 的隔离与消息传输；`AiChoiceAdapter` 把 Application ChoiceRequest 接到公开 AI 决策能力。
 
-搜索会推演卡牌消耗、突袭/调息次数、能量、八种装备（包括泡泡机的下一回合首层护盾 Future，以及望远镜与屏障的方向性距离修正）、破势、格挡/反制概率、挑衅、决斗、互利、共生与濒死救援期望。破坏、掠夺和窃取只生成敌方目标；转移只联合评估拥有手牌的来源、接收者、手牌上限压力与未知手牌期望，不会生成装备区转移，未知牌也不会读取真实 `definitionId`。反制按真实座位规则考虑全部非施牌者，并按各自阵营净收益估计响应意愿；雷达会计入判定得到格挡并立即使用的概率。模拟中的 `alive` 始终是离散规则：预计调息足量才以 1 血获救，否则以 0 血进入阵亡分支，`survivalChance` 只参与评分。深层节点也会生成主动技能，因此能够发现“先聚能，再发动主动技能”；结束出牌和重复装备评分读取当前模拟节点，而不是根节点的旧玩家状态。深搜序列只用于评价当前根动作；每执行一个真实动作后，AI 都会从最新局面重新生成候选并搜索下一步。
+搜索会推演卡牌消耗、突袭/调息次数、能量、八种装备（包括泡泡机的下一回合首层护盾 Future，以及望远镜与屏障的方向性距离修正）、破势、格挡/反制概率、挑衅、决斗、互利、共生与濒死救援期望。Domain Rules 允许破坏和掠夺选择符合资源与距离条件的其他存活角色；Generator 保留该规则空间，但非调律师不会生成破坏队友手牌的候选。影客窃取仍只生成持有手牌或装备的敌方目标。转移只联合评估拥有手牌的来源、接收者、手牌上限压力与未知手牌期望，不会生成装备区转移，未知牌也不会读取真实 `definitionId`。反制按真实座位规则考虑全部非施牌者，并按各自阵营净收益估计响应意愿；雷达会计入判定得到格挡并立即使用的概率。模拟中的 `alive` 始终是离散规则：预计调息足量才以 1 血获救，否则以 0 血进入阵亡分支，`survivalChance` 只参与评分。深层节点也会生成主动技能，因此能够发现“先聚能，再发动主动技能”；结束出牌和重复装备评分读取当前模拟节点，而不是根节点的旧玩家状态。深搜序列只用于评价当前根动作；每执行一个真实动作后，AI 都会从最新局面重新生成候选并搜索下一步。
 
 借势搜索枚举“第一目标、公开装备实体、第二目标”的合法组合；第二目标与真人选择器一致，只按第一目标的攻击距离枚举其他角色，随后综合实际「突袭」概率、双方关系、装备价值和防御风险评分。
 
 浏览器生产路径在每次真实 AI 决策前由 Application 使用独立 timing RNG 采样 `{Tmin,Tmax}`：`Tmax` 通过 data-only `SearchRequest` 成为本次 Worker `SearchBudget` 的 wall-clock 上限，搜索自然完成后只补足 `Tmin - elapsed`，超过 `Tmin` 即立即行动。进入出牌阶段时会立即显示观察战场的 thinking 文案，但首个动作不会再额外等待一轮 initial pacing。1×、2×、3× 共用同一搜索深度、束宽、隐藏样本、价值、合法性和随机选择规则；更长窗口只会让复杂局面有机会物化更多完整候选。`SearchBudget.TIME` 是正常时间截止的唯一权威，完整候选可轻微越过 Tmax 后在下一检查点正常收束；node-budget 模式只按 NODE、session cancel 或 10 秒 hard watchdog 停止。hard watchdog 只处理 Worker 卡死。timing RNG、AI search RNG 与真实游戏 RNG 相互隔离；response、discard 等没有 Planner 搜索的阶段继续只使用 presentation pacing。
 
-修改 AI：
-
-下列数值和策略位置只用于说明既定实现。所有平衡测试、结果解释及以平衡为目的的数值调整仅由项目所有者本人执行；AI 可以做正确性、回归、架构和性能验证，但不得调参或把验证扩展为平衡评估。
-
-- 单步时间窗口：调整 `js/application/policy/RuntimePolicy.js` 中 `AI_PACING` 的三档 `{baseMinMs,baseMaxMs,jitter}`；`Tmin` 控制最低自然节奏，`Tmax` 同时控制本次真实搜索上限。
-- 搜索结构：调整 `js/ai/policy/AiRuntimePolicy.js` 中的 `searchDepth`、`beamWidth`、`hiddenStateSamples` 与相关 policy。`searchTimeBudgetMs` 只是没有 Application 单步窗口时的直接调用 fallback；浏览器正常决策使用显式 `Tmax`。
-- 行为倾向：优先修改 `AiEvaluator` 与 `AiResponsePolicy`，不要让 AI 访问完整隐藏手牌。
-- 随机性：`randomnessRange` 控制近似同分候选的评分扰动范围，设为 `0` 时稳定选择最高分。
-- 难度：`difficultyMultiplier` 缩放公开威胁优先级；`ThreatCalculator` 的稳定 `roleTags`、斩杀线、公开资源、状态和近期攻击者会直接影响攻击/控制目标。AI 不得试探或调整这些数值，也不得运行 Balance 入口；相关工作只由项目所有者本人执行。
+AI 的物理结构、owner、信息边界和验证契约以 [`docs/architecture/AI_ENGINE.md`](./docs/architecture/AI_ENGINE.md) 的 Current Architecture Snapshot 与最终架构章节为准。所有平衡测试、结果解释及以平衡为目的的数值调整仅由项目所有者本人执行；AI 可以做正确性、回归、架构和性能验证，但不得调参或把验证扩展为平衡评估。
 
 ## 角色、卡牌和 UI 资源
 
@@ -408,7 +401,7 @@ FiveRealms/
 
 重复结算：检查实体牌是否已从手牌进入结算区、响应是否原子消费、事件监听键是否唯一、`resolutionId`/每回合标记是否已使用，并确认群体牌在胜负成立后停止。
 
-信息泄露：检查电脑席位 DOM 的未知牌只出现脱敏 ViewModel 与不透明 token；不得出现位置、真实实体 ID、定义、名称、描述或图片。AI 模拟器构造参数只能是 `createAiVisibleState()` 的结果；公开日志不得写真人尚不知道的隐藏牌名。
+信息泄露：检查电脑席位 DOM 的未知牌只出现脱敏 ViewModel 与不透明 token；不得出现位置、真实实体 ID、定义、名称、描述或图片。AI Controller 只能从合法观察构造 canonical World，未知身份必须保留在 Probability/World 表达中；公开日志不得写真人尚不知道的隐藏牌名。
 
 ## 已实现功能与当前限制
 
